@@ -4,175 +4,136 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Kaelyn's Academy (kaelyns.academy) is an interactive learning platform designed to help parents work with their children on foundational academic skills. The site provides visual, engaging tools that make learning together fun and effective.
+Kaelyn's Academy (kaelyns.academy) is an AI-tutored learning app for a 6-7 year old. It provides adaptive math and reading exercises with a conversational AI tutor that speaks aloud via TTS. The app is intentionally minimal — two subjects, no configuration, no navigation maze.
 
-**Current Focus Areas:**
-- **Math**: Place value, addition/subtraction (with carrying and borrowing), multiplication, and division
-- **Reading**: Sight words (Dolch word lists) and alphabet/phonics fundamentals
+**Subjects:**
+- **Math**: Addition/subtraction (5 levels), place value, multiplication intro (skip counting to times tables)
+- **Reading**: Dolch sight words (8 levels), phonics (letter sounds, CVC blending)
 
-The platform emphasizes parent-child collaboration with colorful animations, audio feedback, and progressive difficulty levels that adapt to the child's learning pace.
+**Key features:**
+- Adaptive difficulty engine (levels up/down based on performance)
+- AI tutor via OpenRouter (scaffolding on wrong answers, encouragement, hints)
+- OpenAI TTS via OpenRouter (every tutor response is spoken aloud)
+- Cookie-based progress persistence (no accounts, no login)
 
 ## Commands
 
 ```bash
 bun install          # Install dependencies
-bun run dev          # Development server with hot reload (localhost:3000)
+bun run dev          # Development server (localhost:3000)
 bun run build        # Production build
 bun start            # Run production server
-bun run lint         # ESLint with Next.js TypeScript config
+bun run lint         # ESLint
+bun test             # Run tests
 ```
-
-Optional: `node test-math-audit.js` runs a Chrome DevTools-based smoke test capturing screenshots to `docs/screenshots/` (requires dev server on port 3030).
 
 ## Architecture
 
 ### Tech Stack
-- Next.js 16 with App Router
+- Next.js 16 with App Router (actual routes, not SPA)
 - React 19 with TypeScript (strict mode)
-- Redux Toolkit for state management
 - Tailwind CSS v4 with CSS variable theming
+- OpenRouter API for chat completions + TTS
+- No Redux — React context + useProgress hook
 
 ### Directory Structure
 
 ```
 src/
-├── app/                    # Next.js App Router
-│   ├── api/               # API routes (state, progress, practice, etc.)
-│   ├── layout.tsx         # Root layout with Providers wrapper
-│   ├── page.tsx           # Main SPA with section switching
-│   └── globals.css        # Tailwind + CSS variable theme tokens
+├── app/
+│   ├── page.tsx              # Home: Math or Reading picker
+│   ├── math/page.tsx         # Math exercise loop (10 questions)
+│   ├── reading/page.tsx      # Reading exercise loop (10 questions)
+│   ├── api/
+│   │   ├── chat/route.ts     # OpenRouter chat proxy
+│   │   ├── tts/route.ts      # OpenRouter TTS proxy
+│   │   └── progress/route.ts # Load/save progress cookies
+│   ├── layout.tsx            # Root layout with ProgressProvider
+│   └── globals.css           # Tailwind + CSS variables + animations
 ├── components/
-│   ├── sections/          # Learning module sections (one per module)
-│   │   ├── HomeSection.tsx        # Landing with subject-specific module cards
-│   │   ├── SightWordsSection.tsx  # Reading: Dolch sight word flashcards
-│   │   ├── LettersSection.tsx     # Reading: Alphabet learning
-│   │   └── [Math modules...]      # NumberPlaces, StackedMath, etc.
-│   ├── math/              # Math visualization components
-│   ├── layout/            # Header, Navigation, SubjectTabs, FloatingShapes
-│   └── common/            # Reusable UI (Button, Card, Input, StepIcon, etc.)
-├── store/
-│   ├── sessionSlice.ts    # User progress, stars, achievements (math + reading)
-│   └── navigationSlice.ts # Active section and subject state
+│   ├── Tutor.tsx             # Chat bubble with owl avatar + TTS
+│   ├── Problem.tsx           # Math or reading problem display
+│   ├── AnswerButtons.tsx     # 2x2 colored answer grid
+│   ├── ProgressBar.tsx       # Session progress bar
+│   └── StarDisplay.tsx       # Star count display
 ├── lib/
-│   ├── session.ts         # Signed cookie-based session persistence
-│   ├── csrf.ts            # Double-submit CSRF protection
-│   ├── constants.ts       # SUBJECTS config, NAV_ITEMS, helpers
-│   ├── sightWordLists.ts  # Dolch sight word lists by level (8 levels)
-│   ├── mathUtils.ts       # Carry/borrow calculation utilities
-│   └── problemGenerators.ts # Quiz and problem generation
-├── hooks/                 # Typed Redux hooks, useAudio for speech synthesis
-└── types/                 # TypeScript interfaces and type definitions
+│   ├── engine.ts             # Adaptive difficulty (level up/down, skill picking)
+│   ├── mathProblems.ts       # Deterministic math problem generators
+│   ├── readingProblems.ts    # Sight words + phonics generators
+│   ├── openrouter.ts         # OpenRouter client (chat + TTS)
+│   ├── tutorPrompt.ts        # AI tutor system prompt
+│   ├── progress.ts           # Signed cookie persistence
+│   └── sightWordLists.ts     # Dolch word data (8 levels)
+├── hooks/
+│   ├── useProgress.tsx       # Progress context provider + hook
+│   └── useTutor.ts           # AI tutor state + TTS playback
+└── types/
+    └── index.ts              # All TypeScript interfaces
 ```
 
-### State Flow
-
-The app uses a dual-layer state approach:
-
-1. **Client-side Redux** (`sessionSlice`, `navigationSlice`) for immediate UI updates
-2. **Server-side cookies** (signed JSON in httpOnly cookie) for persistence across sessions
+### Core Flow
 
 ```
-User Action → Redux dispatch → Async thunk → API route → Cookie update
-                    ↓
-            Immediate UI update
+Home (/) → Pick Math or Reading
+  → /math or /reading
+  → pickNextSkill() → getEffectiveLevel() → generateProblem()
+  → Show problem + 4 answer buttons
+  → On answer: processAnswer() → updateSkill() → ask tutor
+  → Correct: encouragement → next problem
+  → Wrong: scaffolding (AI) → next problem
+  → After 10: summary + stars
 ```
 
-Session state persists for 30 days and includes per-module progress (questions attempted/correct, streaks), practice history, stars earned, and achievements.
+### Adaptive Engine
 
-### Subject-Based Navigation
+- Tracks per-skill: level, correctInLevel, consecutiveCorrect/Wrong
+- 3 correct in a row → problems get harder (within level)
+- 2 wrong in a row → problems get easier
+- 10 correct at level → level up + star
+- 5 wrong in session → level down
+- Skill unlocking: placeValue at addSub L2, multiply at addSub L3
 
-The app uses tab-based subject navigation (`SubjectTabs` component):
+### AI Integration
 
-| Subject | Color | Modules |
-|---------|-------|---------|
-| Math | Coral | Number Places, Stacked Math, Carry Over, Borrowing, Multiplication, Division, Practice |
-| Reading | Sage | Sight Words, Letters |
+- **OpenRouter** for model flexibility (swap via `OPENROUTER_MODEL` env var)
+- **System prompt** in `src/lib/tutorPrompt.ts` — tutor persona for 6-7 year old
+- **Structured context** sent with each request (problem data, answer, steps) — AI never does math
+- **TTS** via `openai/tts-1` through OpenRouter, voice: `nova`
 
-The `activeSubject` state in `navigationSlice` controls which modules appear in the Navigation bar and HomeSection.
+### Environment Variables
 
-### Learning Modules
-
-**Math Modules:**
-
-| Section ID | Component | Description |
-|------------|-----------|-------------|
-| `home` | HomeSection | Landing page with subject-specific module cards |
-| `number-places` | NumberPlacesSection | Place value visualization with blocks |
-| `stacked-math` | StackedMathSection | Vertical addition/subtraction |
-| `carry-over` | CarryOverSection | Animated step-by-step carrying demos |
-| `borrowing` | BorrowingSection | Animated borrowing with click-to-borrow |
-| `multiplication` | MultiplicationSection | Visual grids and times tables |
-| `division` | DivisionSection | Sharing scenarios with grouping visuals |
-| `practice` | PracticeSection | Configurable mixed practice sessions |
-
-**Reading Modules:**
-
-| Section ID | Component | Description |
-|------------|-----------|-------------|
-| `sight-words` | SightWordsSection | Dolch word flashcards with explore/quiz modes, 8 difficulty levels |
-| `letters` | LettersSection | Alphabet learning with letter sounds, uppercase/lowercase matching |
-
-### Problem Generation
-
-**Math:** Generated via `src/lib/problemGenerators.ts` with difficulty tiers:
-- **easy**: 1-10
-- **medium**: 10-100
-- **hard**: 100-1000
-
-Multiplication/division are capped at 12x12. Carry/borrow problems use iterative generation to ensure the operation is actually required.
-
-**Reading:** Sight words use Dolch word lists in `src/lib/sightWordLists.ts`:
-- 8 levels from "First Words" (a, I, the) to "Story Words" (have, make, want)
-- Quiz mode generates 4-option multiple choice from current level
-
-### Security
-
-- **CSRF**: Double-submit cookie pattern via `x-csrf-token` header matching cookie value
-- **Session signing**: HMAC-SHA256 signature cookie alongside session cookie
-- Requires `SESSION_SECRET` env var in production (falls back to dev secret)
+```
+OPENROUTER_API_KEY=     # Required
+OPENROUTER_MODEL=anthropic/claude-sonnet-4  # Swappable
+TTS_MODEL=openai/tts-1
+SESSION_SECRET=change-me-in-production
+```
 
 ## Key Patterns
 
 ### Path Aliases
-Use `@/*` for imports (e.g., `@/components/common`, `@/lib/mathUtils`).
+Use `@/*` for imports (e.g., `@/components/Tutor`, `@/lib/engine`).
 
-### Animation Cleanup
-Carry-over and borrowing modules use `setInterval` for step animations. Always clear intervals when unmounting or starting new animations.
+### Problem Generation
+All deterministic — no AI needed. Problems generated instantly via `mathProblems.ts` and `readingProblems.ts`. Options always include 4 choices (correct answer + 3 distractors).
 
-### Audio Feedback
-The `useAudio` hook provides:
-- `speak(text)` - Text-to-speech for words, letters, feedback
-- `clickSound()` - UI interaction feedback
-- `playSound('correct' | 'incorrect' | 'celebrate')` - Quiz feedback sounds
+### Progress Persistence
+Signed cookie (HMAC-SHA256). No database, no accounts. 30-day expiry.
 
-### Explore/Quiz Pattern
-Reading modules follow a consistent dual-mode pattern:
-1. **Explore mode**: Flashcard-style learning with audio pronunciation
-2. **Quiz mode**: Multiple-choice recognition with streak tracking
-
-### API Routes
-All state-mutating endpoints require CSRF validation via `requireCsrf()`. Response format is `{ success: boolean, ...data }`.
-
-### Styling
-Uses Tailwind v4 with CSS variables defined in `globals.css`. Key color tokens: `--color-coral`, `--color-yellow`, `--color-sage`, `--color-sky`, `--color-cream` for the paper-craft aesthetic.
-
-Touch targets are minimum 48px for child-friendly interaction.
+### Audio
+All tutor text is spoken via `/api/tts` → OpenAI TTS → blob URL → `<audio>` playback. Managed by `useTutor` hook.
 
 ## Coding Style
 
 - TypeScript strict mode; functional React components with hooks
 - `'use client'` directive required for client components
-- Two-space indentation; PascalCase for components/files, camelCase for functions/variables, UPPER_SNAKE for constants
-- Keep components side-effect free; move calculations to `src/lib`, state to `src/store`
+- Two-space indentation; PascalCase for components, camelCase for functions
+- No Redux — use `useProgress` context hook for state
+- Never disable linter rules — fix the root cause
+- Use `bun` for all operations (never npm/yarn)
 
 ## Testing
 
-- Run `bun run lint` before pushing (baseline gate)
-- Manual QA: verify navigation between sections, subject switching, session state persistence
-- For animation/layout changes: capture before/after screenshots via the audit script
-
-## Commits
-
-- Short imperative subjects (e.g., "Add sight words module with Dolch word lists")
-- PRs include summary, linked issue, and screenshots for visual changes
-- List commands run (lint, dev smoke, audit) in PR body
+- `bun test` runs all tests in `src/`
+- Unit tests for: types, sight word data, math generators, reading generators, adaptive engine, progress signing
+- Manual QA: verify exercise loops, TTS playback, progress persistence
