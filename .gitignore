@@ -38,6 +38,7 @@ yarn-error.log*
 
 # backup
 /backup/
+/src.bak/
 
 # typescript
 *.tsbuildinfo
