@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Backup of original vanilla JS app
     "backup/**",
+    // Archived v1 source code
+    "src.bak/**",
   ]),
   // Allow underscore-prefixed unused variables (common convention)
   {
