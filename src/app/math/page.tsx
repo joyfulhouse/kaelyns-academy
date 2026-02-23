@@ -54,8 +54,7 @@ export default function MathPage() {
       setCurrentProblem(problem);
     }, 100);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [ask, progress.math]);
 
   const handleAnswer = useCallback(
     (answer: string | number) => {

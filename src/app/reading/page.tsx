@@ -62,8 +62,7 @@ export default function ReadingPage() {
       }
     }, 100);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [ask, progress.reading, speak]);
 
   const handleAnswer = useCallback(
     (answer: string | number) => {
