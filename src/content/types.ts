@@ -1,0 +1,107 @@
+import type { ComponentType } from "react";
+import type { ZodType } from "zod";
+import type {
+  ActivityKind,
+  JournalPromptConfig,
+  MathTenframeConfig,
+  PhonicsWordbuildConfig,
+  SightwordGameConfig,
+} from "./activity-configs";
+
+export type { ActivityKind };
+
+export type Band = "ready" | "stretch";
+export type SkillDomain = "phonics" | "reading" | "writing" | "math" | "habits";
+export type SkillTag = string; // "phonics.digraphs"
+export type StandardTag = string; // "CCSS.RF.1.3"
+
+/** Per-program visual world (sets --accent over the stable shell). */
+export type World = "sunshine" | "ocean" | "space" | "garden" | "bigtop";
+
+export interface Skill {
+  slug: SkillTag;
+  domain: SkillDomain;
+  label: string;
+  readyIndicator: string;
+  stretchIndicator?: string;
+}
+
+interface ActivityBase {
+  id: string;
+  title: string;
+  blurb?: string;
+  estMinutes?: number;
+  skillTags: SkillTag[];
+  standardTags?: StandardTag[];
+  band: Band;
+}
+
+/** Discriminated by kind so `config` is type-checked at authoring time. */
+type ActivityOf<K extends ActivityKind, C> = ActivityBase & { kind: K; config: C };
+
+export type Activity =
+  | ActivityOf<"phonics-wordbuild", PhonicsWordbuildConfig>
+  | ActivityOf<"sightword-game", SightwordGameConfig>
+  | ActivityOf<"math-tenframe", MathTenframeConfig>
+  | ActivityOf<"journal-prompt", JournalPromptConfig>;
+
+export type CheckpointKind = "baseline" | "mid" | "final";
+
+export interface Lesson {
+  id: string;
+  order: number;
+  title: string; // "Monday"
+  activities: Activity[];
+}
+
+export interface Unit {
+  id: string;
+  order: number;
+  title: string; // "Under the Sea"
+  emoji: string;
+  world: World;
+  bigIdea: string;
+  phonicsFocus: string;
+  mathFocus: string;
+  project: string;
+  checkpoint?: CheckpointKind;
+  lessons: Lesson[];
+}
+
+export interface Program {
+  slug: string;
+  title: string;
+  subtitle: string;
+  ageBand: string;
+  summary: string;
+  units: Unit[];
+}
+
+/* ── Activity-type plugin contract ──────────────────────────────────────────
+   Each interactive activity kind is a self-contained module: a schema that
+   validates content/AI-generated config, a Player UI, and scoring that emits
+   skill evidence. A registry maps kind → ActivityType (see registry.ts). */
+
+export type SkillOutcome = "not_yet" | "emerging" | "solid";
+
+export interface ActivityScore {
+  correct: number;
+  total: number;
+  stars: 0 | 1 | 2 | 3;
+  skillEvidence: { skill: SkillTag; outcome: SkillOutcome }[];
+}
+
+export interface ActivityPlayerProps<Config, Response> {
+  config: Config;
+  onComplete: (response: Response, score: ActivityScore) => void;
+  onExit?: () => void;
+}
+
+export interface ActivityType<Config = unknown, Response = unknown> {
+  kind: ActivityKind;
+  label: string;
+  schema: ZodType<Config>;
+  Player: ComponentType<ActivityPlayerProps<Config, Response>>;
+  score: (config: Config, response: Response) => ActivityScore;
+  skillsAffected: (config: Config) => SkillTag[];
+}
