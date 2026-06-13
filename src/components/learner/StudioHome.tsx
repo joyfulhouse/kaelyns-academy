@@ -1,13 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import {
   ArrowRightIcon,
+  CompassIcon,
   LockSimpleIcon,
+  SparkleIcon,
   StarIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import type { Program } from "@/content";
+import { nextBest, strandProgress, type Recommendation } from "@/lib/tutor";
 import { cn } from "@/lib/cn";
 import { Mascot } from "@/components/art/Mascot";
 import { Sun } from "@/components/art/Decorations";
@@ -16,7 +19,8 @@ import { Stars } from "@/components/ui/Stars";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner, LEARNERS } from "./learners";
 import { useProgress, computeUnitProgress, computeProgramRatio } from "./useProgress";
-import { PROGRAM_SLUG } from "./activityMeta";
+import { useSkillState } from "./useSkillState";
+import { ACTIVITY_META, PROGRAM_SLUG } from "./activityMeta";
 
 /**
  * The studio home: pick-a-learner, then Program 01 as a world map. Units are
@@ -109,15 +113,18 @@ function WorldMap({
   onSwitchLearner: () => void;
 }) {
   const reduce = useReducedMotion();
-  const { getStars, ready } = useProgress(learnerId, PROGRAM_SLUG);
+  const { getStars, isComplete, ready } = useProgress(learnerId, PROGRAM_SLUG);
+  const { skillState, ready: skillReady } = useSkillState(learnerId, PROGRAM_SLUG);
 
   // Build a stable, hydration-safe snapshot. Before storage is read, treat the
   // map as empty (matches SSR), then progress fills in.
   const progressMap: Record<string, 0 | 1 | 2 | 3> = {};
+  const completed = new Set<string>();
   if (ready) {
     for (const unit of program.units) {
       for (const lesson of unit.lessons) {
         for (const activity of lesson.activities) {
+          if (isComplete(activity.id)) completed.add(activity.id);
           const s = getStars(activity.id);
           if (s > 0) progressMap[activity.id] = s;
         }
@@ -126,6 +133,27 @@ function WorldMap({
   }
 
   const overall = computeProgramRatio(program, progressMap);
+
+  // The tutor's per-strand state + ranked next-best. Both derive purely from the
+  // engine, so they only become meaningful once storage is read (skillReady).
+  const strands = useMemo(
+    () => (skillReady ? strandProgress(program, skillState) : []),
+    [program, skillState, skillReady],
+  );
+  const strandByUnitId = useMemo(
+    () => new Map(strands.map((s) => [s.unit.id, s])),
+    [strands],
+  );
+  // A stable key over the completed set so the next-best memo recomputes only
+  // when the set actually changes (not on every render that rebuilds the Set).
+  const completedKey = [...completed].sort().join("|");
+  const topPick = useMemo(
+    () =>
+      ready && skillReady
+        ? nextBest(program, skillState, new Set(completedKey ? completedKey.split("|") : []))[0]
+        : undefined,
+    [program, skillState, ready, skillReady, completedKey],
+  );
 
   return (
     <AppShellKid
@@ -160,6 +188,9 @@ function WorldMap({
         </div>
       </div>
 
+      {/* Your next thing: the tutor's single best recommendation. */}
+      {topPick && <NextThingCard pick={topPick} reduce={Boolean(reduce)} />}
+
       {/* The path of worlds */}
       <ol className="relative flex flex-col gap-5">
         {program.units.map((unit, i) => {
@@ -171,6 +202,7 @@ function WorldMap({
           // a sense of journey.
           const locked = !prevDone;
           const alignRight = i % 2 === 1;
+          const strand = strandByUnitId.get(unit.id);
 
           return (
             <li
@@ -186,7 +218,9 @@ function WorldMap({
                 checkpoint={Boolean(unit.checkpoint)}
                 href={`/learn/${unit.id}`}
                 locked={locked}
-                ratio={up.ratio}
+                ratio={strand ? strand.ratio : up.ratio}
+                level={strand ? strand.currentLessonIndex : null}
+                totalLevels={unit.lessons.length}
                 stars={up.stars}
                 maxStars={up.maxStars}
                 done={up.done}
@@ -205,6 +239,63 @@ function WorldMap({
   );
 }
 
+/* ── Your next thing ───────────────────────────────────────────────────────
+   The tutor's single best pick. Deep-links to the activity, leads with its
+   kind icon, and reads aloud as a warm invitation. */
+
+function NextThingCard({ pick, reduce }: { pick: Recommendation; reduce: boolean }) {
+  const meta = ACTIVITY_META[pick.activity.kind];
+  const Icon = meta.icon;
+  const href = `/learn/${pick.unit.id}/${pick.activity.id}`;
+
+  const motionProps = reduce
+    ? {}
+    : {
+        initial: { opacity: 0, y: 12 },
+        animate: { opacity: 1, y: 0 },
+        transition: { duration: 0.34, ease: [0.16, 1, 0.3, 1] as const },
+      };
+
+  return (
+    <motion.a
+      {...motionProps}
+      href={href}
+      data-world={pick.unit.world}
+      aria-label={`Your next thing: ${pick.activity.title}. ${meta.label}. ${pick.reason}.`}
+      className={cn(
+        "group relative mb-8 flex w-full items-center gap-4 overflow-hidden rounded-2xl px-5 py-5",
+        "border-[3px] border-ink bg-accent/15 shadow-pop transition",
+        "active:translate-y-1 active:shadow-none motion-safe:hover:-translate-y-0.5",
+      )}
+    >
+      <span
+        aria-hidden
+        className="grid size-20 shrink-0 place-items-center rounded-2xl border-[3px] border-ink bg-paper-raised"
+      >
+        <Icon weight="duotone" className="size-11 text-ink" />
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <div className="inline-flex items-center gap-1.5 font-display text-sm font-semibold text-accent-deep">
+          <SparkleIcon weight="fill" className="size-4" />
+          {pick.isPractice ? "A little more practice" : "Your next thing"}
+        </div>
+        <div className="mt-0.5 truncate font-display text-2xl font-semibold tracking-tight">
+          {pick.activity.title}
+        </div>
+        <p className="mt-1 truncate text-base text-ink-soft">{pick.reason}</p>
+      </div>
+
+      <span
+        aria-hidden
+        className="grid size-12 shrink-0 place-items-center rounded-full border-[3px] border-ink bg-honey text-ink shadow-pop"
+      >
+        <CompassIcon weight="bold" className="size-7" />
+      </span>
+    </motion.a>
+  );
+}
+
 function WorldTile({
   index,
   order,
@@ -214,6 +305,8 @@ function WorldTile({
   href,
   locked,
   ratio,
+  level,
+  totalLevels,
   stars,
   maxStars,
   done,
@@ -227,11 +320,18 @@ function WorldTile({
   href: string;
   locked: boolean;
   ratio: number;
+  /** Her current rung in this strand (1-based), or null before skill state loads. */
+  level: number | null;
+  totalLevels: number;
   stars: number;
   maxStars: number;
   done: boolean;
   reduce: boolean;
 }) {
+  // Strands advance independently: a strong strand can be Level 4 while another
+  // is Level 1. Show the rung so that asynchrony is visible, not hidden.
+  const showLevel = !locked && level !== null && totalLevels > 0;
+
   const Inner = (
     <>
       <div className="relative shrink-0">
@@ -251,9 +351,16 @@ function WorldTile({
       </div>
 
       <div className="min-w-0 flex-1">
-        <div className="font-display text-sm font-semibold text-accent-deep">
-          World {order}
-          {checkpoint ? " · check-in" : ""}
+        <div className="flex items-center gap-2 font-display text-sm font-semibold text-accent-deep">
+          <span>
+            World {order}
+            {checkpoint ? " · check-in" : ""}
+          </span>
+          {showLevel && (
+            <span className="rounded-pill border-2 border-ink/15 bg-paper/70 px-2 py-0.5 text-xs text-ink-soft">
+              Level {level} of {totalLevels}
+            </span>
+          )}
         </div>
         <div className="mt-0.5 truncate font-display text-xl font-semibold tracking-tight">
           {title}
