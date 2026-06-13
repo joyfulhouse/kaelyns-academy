@@ -10,7 +10,7 @@ import { ACTIVITY_CONFIG_SCHEMAS, type ActivityKind } from "@/content/activity-c
 const KINDS = Object.keys(ACTIVITY_CONFIG_SCHEMAS) as ActivityKind[];
 
 describe("activity-type registration", () => {
-  it("registers all four activity-type plugins", () => {
+  it("registers every activity-type plugin", () => {
     registerActivityTypes();
     for (const kind of KINDS) {
       expect(isActivityKindRegistered(kind)).toBe(true);

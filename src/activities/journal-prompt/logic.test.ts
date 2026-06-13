@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { score, skillsAffected } from "./logic";
+import { schema, score, skillsAffected } from "./logic";
 import type { JournalPromptConfig } from "@/content/activity-configs";
 
 const config: JournalPromptConfig = {
@@ -28,5 +28,40 @@ describe("journal-prompt score", () => {
 
   it("reports the writing + stamina skill tags", () => {
     expect(skillsAffected(config)).toEqual(["writing.sentence", "habits.stamina"]);
+  });
+});
+
+describe("journal-prompt compose mode (writing bridge)", () => {
+  it("defaults mode to draw and allowModes to [type], preserving draw activities", () => {
+    const parsed = schema.parse({ prompt: "Tell me about it." });
+    expect(parsed.mode).toBe("draw");
+    expect(parsed.drawing).toBe(true);
+    expect(parsed.allowModes).toEqual(["type"]);
+    expect(parsed.frames).toEqual([]);
+    expect(parsed.wordBank).toEqual([]);
+  });
+
+  it("parses a compose config with frames, word bank, and dictate", () => {
+    const compose = schema.parse({
+      prompt: "What happened at the volcano?",
+      mode: "compose",
+      frames: ["The ___ erupted because ___."],
+      wordBank: ["lava", "ash", "rumble"],
+      allowModes: ["type", "dictate"],
+    });
+    expect(compose.mode).toBe("compose");
+    expect(compose.frames).toHaveLength(1);
+    expect(compose.allowModes).toContain("dictate");
+  });
+
+  it("still celebrates compose with 3 stars (ideas, never spelling)", () => {
+    const compose: JournalPromptConfig = { prompt: "Tell a story.", mode: "compose" };
+    const result = score(compose, { text: "the dog ran fast", didDraw: false });
+    expect(result.stars).toBe(3);
+    expect(result.correct).toBe(1);
+    expect(result.skillEvidence).toEqual([
+      { skill: "writing.sentence", outcome: "solid" },
+      { skill: "habits.stamina", outcome: "solid" },
+    ]);
   });
 });
