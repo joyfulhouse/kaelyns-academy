@@ -1,139 +1,89 @@
-# CLAUDE.md
+# Kaelyn's Academy (v3)
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+A pluggable, multi-user, AI-agentic learning platform for young children. Ground-up rebuild (v3) — see `docs/specs/2026-06-13-platform-v3-design.md`. The first content program is the **Summer Bridge: Kindergarten → 1st Grade** curriculum in `docs/curriculum/summer-k-to-grade1/`. Pilot learner: a just-finished-kindergarten, on-track child.
 
-## Project Overview
+> **Status:** P0 (foundation + deploy pipeline) in progress on branch work. v2 source is archived under `_archive/v2/` (do not build or import from it).
 
-Kaelyn's Academy (kaelyns.academy) is an AI-tutored learning app for a 6-7 year old. It provides adaptive math and reading exercises with a conversational AI tutor that speaks aloud via TTS. The app is intentionally minimal — two subjects, no configuration, no navigation maze.
+## Tech Stack (Locked)
 
-**Subjects:**
-- **Math**: Addition/subtraction (5 levels), place value, multiplication intro (skip counting to times tables)
-- **Reading**: Dolch sight words (8 levels), phonics (letter sounds, CVC blending)
+| Layer | Choice | Notes |
+|---|---|---|
+| Framework | Next.js 16 (App Router, RSC + Server Actions) | All request APIs async. |
+| Language | TypeScript (strict) | No `@ts-ignore`. |
+| Package manager | **bun** | ALWAYS. Never npm/yarn/pnpm. |
+| Styling | Tailwind CSS v4 + bespoke "Wonder Studio" system | Static class maps only (JIT-safe). Tokens land in P2. |
+| Icons | Phosphor | Never Lucide. |
+| DB | PostgreSQL via **CloudNativePG** (`kaelyns-academy-db`, amd64-pinned) | Drizzle ORM. Barman→B2 backups. |
+| ORM | Drizzle ORM | Migrations in `drizzle/`. |
+| Auth | Better Auth (Drizzle adapter) | Parent accounts → child profiles (modeling lands in P4). |
+| AI | **LiteLLM gateway** (OpenAI-compatible) | `LITELLM_URL` + `LITELLM_API_KEY`. Tutor = Claude route via LiteLLM. NEVER call provider SDKs directly — go through `@/lib/ai/models` (lands in P5). |
+| Errors | Sentry (`@sentry/nextjs`) | `captureNonCritical` from `@/lib/capture`. |
+| Hosting | homelab k3s via **ArgoCD GitOps** | Harbor registry, Traefik, Cloudflare Tunnel for `kaelyns.academy`. |
+| Lint | ESLint 9 (flat config) | `eslint .` — NOT `next lint` (removed in Next 16). ESLint pinned to 9 (eslint-plugin-react incompatible with ESLint 10). |
 
-**Key features:**
-- Adaptive difficulty engine (levels up/down based on performance)
-- AI tutor via OpenRouter (scaffolding on wrong answers, encouragement, hints)
-- OpenAI TTS via OpenRouter (every tutor response is spoken aloud)
-- Cookie-based progress persistence (no accounts, no login)
+## Non-negotiables
+
+- **Build-safety:** NEVER call `getDb()` / `getAuth()` (or connect to any service) at module top-level — it breaks `next build`. Lazy factories only; invoke per-request.
+- **All AI via the LiteLLM gateway.** No raw provider SDKs.
+- **Child-data posture:** no child PII beyond display name + birth month; **no open-ended child↔LLM chat** (all child-facing AI is bounded + schema-validated server-side). See spec §8.
+- **Never `:latest`** in deployed manifests (CI pins the SHA). **Never commit plaintext secrets** — sealed-secrets only.
+- **Never disable a linter rule** (`eslint-disable`, `@ts-ignore`, `// noqa`) or ignore a warning — fix the root cause.
+- Run `bun run lint && bun run typecheck && bun run test && bun run build` before merge.
 
 ## Commands
 
 ```bash
-bun install          # Install dependencies
-bun run dev          # Development server (localhost:3000)
-bun run build        # Production build
-bun start            # Run production server
-bun run lint         # ESLint
-bun test             # Run tests
+bun install
+bun run dev          # dev server (localhost:3000)
+bun run build        # production build (standalone)
+bun run lint         # eslint .
+bun run typecheck    # tsc --noEmit
+bun run test         # vitest run
+bun run db:generate  # drizzle-kit generate
+bun run db:migrate   # drizzle-kit migrate
+scripts/db.sh -c "…" # psql against CNPG (-rw) in-cluster, or $DATABASE_URL locally
 ```
 
-## Architecture
+## Deploy
 
-### Tech Stack
-- Next.js 16 with App Router (actual routes, not SPA)
-- React 19 with TypeScript (strict mode)
-- Tailwind CSS v4 with CSS variable theming
-- OpenRouter API for chat completions + TTS
-- No Redux — React context + useProgress hook
+GitOps only — see `DEPLOY.md`. Push app → Forgejo CI builds → Harbor → SHA pinned in `k3s-infra` → ArgoCD rolls → Traefik + Cloudflare Tunnel. Use `/ship` for the full gated pipeline (review gates + canary). Until the pipeline lands (P0 tasks T8–T12), deploy is manual per DEPLOY.md.
 
-### Directory Structure
+## Dev workflow
+
+Ported from askcv.ai (homelab-adapted): `/ship`, `/sprint`, `/sprint-plan`, `/sprint-loop`, `work-item`, `process-sentry`. Bug reporting = in-app feedback widget → `work_items` table + Sentry, feeding the sprint→ship pipeline. The `work_items`/`sprints` schema + feedback widget land in P6 — until then the sprint/work-item skills are inert (Sentry + process-sentry work today).
+
+## Task Routing (domain docs arrive as phases land)
+
+| Working on… | Read first |
+|---|---|
+| Architecture / directory map | `docs/architecture/STRUCTURE.md` |
+| Deploy / CI / canary | `DEPLOY.md` |
+| Platform design (source of truth) | `docs/specs/2026-06-13-platform-v3-design.md` |
+| Curriculum content (Program 01) | `docs/curriculum/summer-k-to-grade1/` |
+| Implementation plans | `docs/superpowers/plans/` |
+| Frontend / design system (Wonder Studio) | `PRODUCT.md` + `DESIGN.md` *(created in P2)* |
+| Content model / activity plugins | *(P1 — `docs/architecture/CONTENT.md`)* |
+| Agentic tutor | *(P5 — `docs/architecture/AGENT.md`)* |
+
+## Directory Structure (current)
 
 ```
 src/
 ├── app/
-│   ├── page.tsx              # Home: Math or Reading picker
-│   ├── math/page.tsx         # Math exercise loop (10 questions)
-│   ├── reading/page.tsx      # Reading exercise loop (10 questions)
-│   ├── api/
-│   │   ├── chat/route.ts     # OpenRouter chat proxy
-│   │   ├── tts/route.ts      # OpenRouter TTS proxy
-│   │   └── progress/route.ts # Load/save progress cookies
-│   ├── layout.tsx            # Root layout with ProgressProvider
-│   └── globals.css           # Tailwind + CSS variables + animations
-├── components/
-│   ├── Tutor.tsx             # Chat bubble with owl avatar + TTS
-│   ├── Problem.tsx           # Math or reading problem display
-│   ├── AnswerButtons.tsx     # 2x2 colored answer grid
-│   ├── ProgressBar.tsx       # Session progress bar
-│   └── StarDisplay.tsx       # Star count display
+│   ├── layout.tsx, page.tsx, globals.css
+│   └── api/
+│       ├── health/route.ts        # schema-drift canary (200/503)
+│       └── auth/[...all]/route.ts # Better Auth handler (lazy, per-request)
 ├── lib/
-│   ├── engine.ts             # Adaptive difficulty (level up/down, skill picking)
-│   ├── mathProblems.ts       # Deterministic math problem generators
-│   ├── readingProblems.ts    # Sight words + phonics generators
-│   ├── openrouter.ts         # OpenRouter client (chat + TTS)
-│   ├── tutorPrompt.ts        # AI tutor system prompt
-│   ├── progress.ts           # Signed cookie persistence
-│   └── sightWordLists.ts     # Dolch word data (8 levels)
-├── hooks/
-│   ├── useProgress.tsx       # Progress context provider + hook
-│   └── useTutor.ts           # AI tutor state + TTS playback
-└── types/
-    └── index.ts              # All TypeScript interfaces
+│   ├── env.ts            # getEnv(key, fallback?)
+│   ├── capture.ts        # captureNonCritical
+│   ├── db/
+│   │   ├── index.ts      # lazy getDb() + schema export
+│   │   ├── schema.ts     # health_check + re-exports auth-schema
+│   │   ├── auth-schema.ts# better-auth tables (user/session/account/verification)
+│   │   └── health.ts     # REQUIRED_COLUMNS, missingColumns, liveColumns
+│   └── auth.ts           # lazy getAuth()
+drizzle/                  # generated migrations
+scripts/db.sh             # CNPG psql wrapper
+_archive/v2/              # old v2 app (do not build/import)
 ```
-
-### Core Flow
-
-```
-Home (/) → Pick Math or Reading
-  → /math or /reading
-  → pickNextSkill() → getEffectiveLevel() → generateProblem()
-  → Show problem + 4 answer buttons
-  → On answer: processAnswer() → updateSkill() → ask tutor
-  → Correct: encouragement → next problem
-  → Wrong: scaffolding (AI) → next problem
-  → After 10: summary + stars
-```
-
-### Adaptive Engine
-
-- Tracks per-skill: level, correctInLevel, consecutiveCorrect/Wrong
-- 3 correct in a row → problems get harder (within level)
-- 2 wrong in a row → problems get easier
-- 10 correct at level → level up + star
-- 5 wrong in session → level down
-- Skill unlocking: placeValue at addSub L2, multiply at addSub L3
-
-### AI Integration
-
-- **OpenRouter** for model flexibility (swap via `OPENROUTER_MODEL` env var)
-- **System prompt** in `src/lib/tutorPrompt.ts` — tutor persona for 6-7 year old
-- **Structured context** sent with each request (problem data, answer, steps) — AI never does math
-- **TTS** via `openai/tts-1` through OpenRouter, voice: `nova`
-
-### Environment Variables
-
-```
-OPENROUTER_API_KEY=     # Required
-OPENROUTER_MODEL=anthropic/claude-sonnet-4  # Swappable
-TTS_MODEL=openai/tts-1
-SESSION_SECRET=change-me-in-production
-```
-
-## Key Patterns
-
-### Path Aliases
-Use `@/*` for imports (e.g., `@/components/Tutor`, `@/lib/engine`).
-
-### Problem Generation
-All deterministic — no AI needed. Problems generated instantly via `mathProblems.ts` and `readingProblems.ts`. Options always include 4 choices (correct answer + 3 distractors).
-
-### Progress Persistence
-Signed cookie (HMAC-SHA256). No database, no accounts. 30-day expiry.
-
-### Audio
-All tutor text is spoken via `/api/tts` → OpenAI TTS → blob URL → `<audio>` playback. Managed by `useTutor` hook.
-
-## Coding Style
-
-- TypeScript strict mode; functional React components with hooks
-- `'use client'` directive required for client components
-- Two-space indentation; PascalCase for components, camelCase for functions
-- No Redux — use `useProgress` context hook for state
-- Never disable linter rules — fix the root cause
-- Use `bun` for all operations (never npm/yarn)
-
-## Testing
-
-- `bun test` runs all tests in `src/`
-- Unit tests for: types, sight word data, math generators, reading generators, adaptive engine, progress signing
-- Manual QA: verify exercise loops, TTS playback, progress persistence
