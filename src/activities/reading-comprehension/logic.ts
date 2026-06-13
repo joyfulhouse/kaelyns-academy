@@ -24,17 +24,16 @@ export interface ReadingComprehensionResponse {
 }
 
 /**
- * Each question kind exercises a different reading muscle. The skill rubric
- * (src/content/skills.ts) only names two reading slugs, so comprehension kinds
- * map to "reading.decodable" (reads & retells) and word-meaning maps to the
- * vocab strand. Kept narrow + intentional so evidence stays meaningful.
+ * Each question kind exercises a different reading muscle, mapped to the
+ * canonical Program 02 reading rubric (src/content/skills.ts). Literal recall
+ * is the retell/story-elements rung; word-meaning is vocabulary-in-context.
  */
 const KIND_SKILL: Record<NonNullable<QuestionKind>, SkillTag> = {
-  literal: "reading.decodable",
-  inference: "reading.inference",
-  "main-idea": "reading.main-idea",
-  vocabulary: "vocab.context",
-  author: "reading.author-purpose",
+  literal: "reading.comprehension.retell",
+  inference: "reading.comprehension.inference",
+  "main-idea": "reading.comprehension.main-idea",
+  vocabulary: "reading.vocabulary.context",
+  author: "reading.comprehension.author-craft",
 };
 
 /** The reading skills this passage exercises, de-duplicated, source order. */

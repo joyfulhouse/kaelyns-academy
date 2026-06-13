@@ -32,29 +32,43 @@ export const SAMPLE_LEARNER: SampleLearner = {
   id: "kaelyn",
   name: "Kaelyn",
   birthMonth: "August",
-  programSlug: "summer-k-to-grade1",
+  programSlug: "kaelyn-adaptive",
   enrolledOn: "June 2026",
-  currentUnitOrder: 3,
+  currentUnitOrder: 1,
 };
 
-/** Illustrative skill states keyed by the real Program 01 skill slugs. */
+/**
+ * Illustrative skill states keyed by the Program 02 leveled slugs. Deliberately
+ * shows Kaelyn's asynchronous profile: reading and math climbing high while
+ * writing-transcription sits low, so the parent skill-map normalizes the spread
+ * (assessment.md §3) instead of hiding it.
+ */
 export const SAMPLE_SKILL_STATE: Partial<Record<SkillTag, SkillOutcome>> = {
-  // Phonics
-  "phonics.cvc": "solid",
-  "phonics.digraphs": "solid",
-  "phonics.blends.initial": "emerging",
-  "phonics.blends.final": "emerging",
-  "phonics.silent-e": "not_yet",
-  // Reading
-  "reading.sight-words": "emerging",
-  "reading.decodable": "emerging",
-  // Writing
-  "writing.sentence": "emerging",
-  // Math
-  "math.counting": "solid",
-  "math.place-value": "emerging",
-  "math.addition": "emerging",
-  "math.subtraction": "not_yet",
+  // Reading (strong)
+  "reading.fluency.phrasing": "solid",
+  "reading.comprehension.retell": "solid",
+  "reading.comprehension.inference": "emerging",
+  "reading.comprehension.main-idea": "emerging",
+  "reading.nonfiction.text-features": "not_yet",
+  // Word study & vocabulary (climbing)
+  "word.vowel-teams.multisyllable": "solid",
+  "word.syllables.types": "emerging",
+  "word.morphology.prefixes": "emerging",
+  "word.morphology.roots": "not_yet",
+  "vocab.shades-of-meaning": "emerging",
+  // Math (strong)
+  "math.equal-groups.arrays": "solid",
+  "math.mult.meaning": "solid",
+  "math.mult.facts": "emerging",
+  "math.div.fact-families": "not_yet",
+  "math.place-value.thousands": "emerging",
+  "math.regrouping": "emerging",
+  "math.fractions.unit": "not_yet",
+  // Writing (the lagging strand: ideas race ahead, the hand catches up)
+  "writing.compose.sentence": "emerging",
+  "writing.compose.two-sentences": "not_yet",
+  "writing.transcription.letter-formation": "emerging",
+  "writing.transcription.spacing": "not_yet",
   // Habits
   "habits.stamina": "solid",
 };
@@ -73,11 +87,11 @@ export interface SampleActivityRecord {
 
 /** Illustrative recent activity, newest first. */
 export const SAMPLE_RECENT: SampleActivityRecord[] = [
-  { id: "r1", title: "Digraph dive", kindLabel: "Build a word", when: "Today", correct: 3, total: 3, stars: 3 },
-  { id: "r2", title: "Make a teen", kindLabel: "Ten-frame", when: "Today", correct: 4, total: 5, stars: 2 },
-  { id: "r3", title: "Treasure words", kindLabel: "Sight words", when: "Yesterday", correct: 3, total: 4, stars: 2 },
-  { id: "r4", title: "Build a CVC word", kindLabel: "Build a word", when: "2 days ago", correct: 3, total: 3, stars: 3 },
-  { id: "r5", title: "Show this number", kindLabel: "Ten-frame", when: "3 days ago", correct: 6, total: 7, stars: 2 },
+  { id: "r1", title: "The volcano wakes up", kindLabel: "Read & think", when: "Today", correct: 4, total: 5, stars: 2 },
+  { id: "r2", title: "Build the array: 4 × 3", kindLabel: "Make an array", when: "Today", correct: 1, total: 1, stars: 3 },
+  { id: "r3", title: "Prefix power: re-", kindLabel: "Build a word", when: "Yesterday", correct: 3, total: 3, stars: 3 },
+  { id: "r4", title: "My whale fact", kindLabel: "Compose", when: "Yesterday", correct: 1, total: 1, stars: 3 },
+  { id: "r5", title: "Share 12 into groups", kindLabel: "Make an array", when: "2 days ago", correct: 1, total: 1, stars: 2 },
 ];
 
 /** Illustrative week-over-week activity counts (for a calm sparkline-free summary). */

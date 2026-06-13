@@ -24,8 +24,9 @@ import type { Skill, SkillDomain } from "@/content";
 export const metadata: Metadata = { title: `${SAMPLE_LEARNER.name} · Learner` };
 
 const DOMAIN_ORDER: { key: SkillDomain; label: string }[] = [
-  { key: "phonics", label: "Phonics" },
-  { key: "reading", label: "Reading" },
+  { key: "reading", label: "Reading & Comprehension" },
+  { key: "word", label: "Word Study" },
+  { key: "vocab", label: "Vocabulary" },
   { key: "writing", label: "Writing" },
   { key: "math", label: "Math" },
   { key: "habits", label: "Habits" },

@@ -57,18 +57,19 @@ export function score(config: MathArrayConfig, response: MathArrayResponse): Act
 }
 
 /**
- * Arrays are the intro-to-multiplication manipulative (math.skip-count names
- * "builds arrays" in the rubric). area adds a geometry lens; divide adds
- * fluency (sharing). build is pure array construction → skip-count.
+ * Arrays map to the canonical Program 02 math rubric: building an array is the
+ * equal-groups/arrays rung; multiply exercises facts; area adds the geometry
+ * (area-via-array) lens; divide is the sharing/fact-family rung.
  */
 export function skillsAffected(config: MathArrayConfig): SkillTag[] {
   switch (config.mode) {
     case "area":
-      return ["math.skip-count", "math.geometry"];
+      return ["math.geometry.area-arrays", "math.mult.facts"];
     case "divide":
-      return ["math.skip-count", "math.fluency"];
+      return ["math.div.fact-families"];
     case "multiply":
+      return ["math.mult.facts"];
     case "build":
-      return ["math.skip-count"];
+      return ["math.equal-groups.arrays"];
   }
 }

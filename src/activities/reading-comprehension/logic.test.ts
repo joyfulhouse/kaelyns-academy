@@ -36,7 +36,7 @@ describe("reading-comprehension schema", () => {
 
 describe("reading-comprehension skillsAffected", () => {
   it("maps question kinds to distinct reading skill tags, in order", () => {
-    expect(skillsAffected(config)).toEqual(["reading.decodable", "reading.inference"]);
+    expect(skillsAffected(config)).toEqual(["reading.comprehension.retell", "reading.comprehension.inference"]);
   });
 
   it("de-duplicates repeated kinds", () => {
@@ -44,7 +44,7 @@ describe("reading-comprehension skillsAffected", () => {
       ...config,
       questions: [config.questions[0], { ...config.questions[0], prompt: "Again?" }],
     };
-    expect(skillsAffected(twoLiteral)).toEqual(["reading.decodable"]);
+    expect(skillsAffected(twoLiteral)).toEqual(["reading.comprehension.retell"]);
   });
 });
 
@@ -55,8 +55,8 @@ describe("reading-comprehension score", () => {
     expect(result.correct).toBe(2);
     expect(result.total).toBe(2);
     expect(result.skillEvidence).toEqual([
-      { skill: "reading.decodable", outcome: "solid" },
-      { skill: "reading.inference", outcome: "solid" },
+      { skill: "reading.comprehension.retell", outcome: "solid" },
+      { skill: "reading.comprehension.inference", outcome: "solid" },
     ]);
   });
 
@@ -65,8 +65,8 @@ describe("reading-comprehension score", () => {
     expect(result.stars).toBe(2);
     expect(result.correct).toBe(1);
     expect(result.skillEvidence).toEqual([
-      { skill: "reading.decodable", outcome: "solid" },
-      { skill: "reading.inference", outcome: "not_yet" },
+      { skill: "reading.comprehension.retell", outcome: "solid" },
+      { skill: "reading.comprehension.inference", outcome: "not_yet" },
     ]);
   });
 

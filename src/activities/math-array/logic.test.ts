@@ -44,15 +44,14 @@ describe("math-array score", () => {
     expect(result.stars).toBe(3);
     expect(result.correct).toBe(1);
     expect(result.total).toBe(1);
-    expect(result.skillEvidence).toEqual([{ skill: "math.skip-count", outcome: "solid" }]);
+    expect(result.skillEvidence).toEqual([{ skill: "math.mult.facts", outcome: "solid" }]);
   });
 
   it("2 stars + emerging on the second attempt", () => {
     const result = score(divide, { entered: 4, attempts: 2 });
     expect(result.stars).toBe(2);
     expect(result.skillEvidence).toEqual([
-      { skill: "math.skip-count", outcome: "emerging" },
-      { skill: "math.fluency", outcome: "emerging" },
+      { skill: "math.div.fact-families", outcome: "emerging" },
     ]);
   });
 
@@ -72,9 +71,9 @@ describe("math-array score", () => {
 
 describe("math-array skillsAffected", () => {
   it("maps each mode to its skill tags", () => {
-    expect(skillsAffected(multiply)).toEqual(["math.skip-count"]);
-    expect(skillsAffected(build)).toEqual(["math.skip-count"]);
-    expect(skillsAffected(area)).toEqual(["math.skip-count", "math.geometry"]);
-    expect(skillsAffected(divide)).toEqual(["math.skip-count", "math.fluency"]);
+    expect(skillsAffected(multiply)).toEqual(["math.mult.facts"]);
+    expect(skillsAffected(build)).toEqual(["math.equal-groups.arrays"]);
+    expect(skillsAffected(area)).toEqual(["math.geometry.area-arrays", "math.mult.facts"]);
+    expect(skillsAffected(divide)).toEqual(["math.div.fact-families"]);
   });
 });
