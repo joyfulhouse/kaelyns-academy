@@ -8,6 +8,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    exclude: ["_archive/**", "node_modules/**"],
+    // .next/** keeps vitest from discovering third-party *.spec.js inside the
+    // standalone build output (and **/node_modules for any worktree symlinks).
+    exclude: ["_archive/**", "node_modules/**", "**/node_modules/**", ".next/**"],
   },
 });
