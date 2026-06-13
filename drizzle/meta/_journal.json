@@ -8,6 +8,13 @@
       "when": 1781353755074,
       "tag": "0000_faulty_paibok",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781355327434,
+      "tag": "0001_cute_puck",
+      "breakpoints": true
     }
   ]
 }
