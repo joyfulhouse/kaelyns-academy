@@ -33,8 +33,14 @@ const KIND_BRIEF: Record<ActivityKind, string> = {
     'Ten-frame items. Each: {instruction, mode:"represent"|"add", target:0-20, addend?:0-20, frames:1|2}. ' +
     'For "add", include addend and set frames so target+addend fits (≤10 per frame). Numbers age-appropriate.',
   "journal-prompt":
-    "Draw-and-write prompts. Each: {prompt, sentenceStarter?, drawing:true}. " +
-    "Warm, concrete, open-ended prompts a 5 to 6 year old can answer. No correct answer.",
+    "Draw-or-compose prompts. Each: {prompt, sentenceStarter?, drawing, mode:'draw'|'compose', frames:[sentence frames], wordBank:[words], allowModes:['scribe'|'type'|'dictate']}. " +
+    "For 'compose', supply 1 to 3 sentence frames and a small word bank; the child supplies ideas, not handwriting. Warm, concrete, open-ended.",
+  "reading-comprehension":
+    'Reading items. Each: {instruction, title?, passage, questions:[{prompt, choices:[2-4 strings], answerIndex, kind:"literal"|"inference"|"main-idea"|"vocabulary"|"author"}], retellPrompt?}. ' +
+    "Passage is 3 to 6 short, knowledge-rich sentences at an early-chapter-book level. answerIndex is the 0-based correct choice. 1 to 3 questions.",
+  "math-array":
+    'Array items. Each: {instruction, mode:"build"|"multiply"|"divide"|"area", rows:1-12, cols:1-12, answer?, emoji?}. ' +
+    "answer defaults to rows*cols (the product/area; for divide, rows*cols is the total shared). emoji is one symbol to tile the array. Keep factors friendly.",
 };
 
 const MODEL_FOR_BAND: Record<Band, TutorModel> = {

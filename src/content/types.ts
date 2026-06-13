@@ -3,15 +3,24 @@ import type { ZodType } from "zod";
 import type {
   ActivityKind,
   JournalPromptConfig,
+  MathArrayConfig,
   MathTenframeConfig,
   PhonicsWordbuildConfig,
+  ReadingComprehensionConfig,
   SightwordGameConfig,
 } from "./activity-configs";
 
 export type { ActivityKind };
 
 export type Band = "ready" | "stretch";
-export type SkillDomain = "phonics" | "reading" | "writing" | "math" | "habits";
+export type SkillDomain =
+  | "phonics" // Program 01 (archived)
+  | "reading"
+  | "word" // word study: multisyllable decoding + morphology
+  | "vocab" // vocabulary depth
+  | "writing"
+  | "math"
+  | "habits";
 export type SkillTag = string; // "phonics.digraphs"
 export type StandardTag = string; // "CCSS.RF.1.3"
 
@@ -43,7 +52,9 @@ export type Activity =
   | ActivityOf<"phonics-wordbuild", PhonicsWordbuildConfig>
   | ActivityOf<"sightword-game", SightwordGameConfig>
   | ActivityOf<"math-tenframe", MathTenframeConfig>
-  | ActivityOf<"journal-prompt", JournalPromptConfig>;
+  | ActivityOf<"journal-prompt", JournalPromptConfig>
+  | ActivityOf<"reading-comprehension", ReadingComprehensionConfig>
+  | ActivityOf<"math-array", MathArrayConfig>;
 
 export type CheckpointKind = "baseline" | "mid" | "final";
 

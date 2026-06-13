@@ -1,4 +1,6 @@
 import {
+  BookOpenTextIcon,
+  DotsNineIcon,
   GridFourIcon,
   HandTapIcon,
   NotePencilIcon,
@@ -19,4 +21,6 @@ export const ACTIVITY_META: Record<ActivityKind, { icon: Icon; label: string }> 
   "sightword-game": { icon: HandTapIcon, label: "Word hunt" },
   "math-tenframe": { icon: GridFourIcon, label: "Count it" },
   "journal-prompt": { icon: NotePencilIcon, label: "Draw & tell" },
+  "reading-comprehension": { icon: BookOpenTextIcon, label: "Read & think" },
+  "math-array": { icon: DotsNineIcon, label: "Make an array" },
 };
