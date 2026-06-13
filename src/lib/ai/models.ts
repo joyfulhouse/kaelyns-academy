@@ -10,17 +10,19 @@ import { getEnv } from "@/lib/env";
  */
 
 /**
- * Tutor routes on the homelab LiteLLM gateway.
- *  - fast: `ha-assist` (Qwen3.6-35B on dgx0, reasoning DISABLED) — sub-second,
- *    direct JSON, ideal for bounded practice generation.
- *  - rich: `chat-default` (same model, reasoning ON) — slower but richer prose
- *    for parent progress reports.
- * Both are local + free + always warm. To move the tutor to Claude later, add a
- * Claude route to the LiteLLM config (k3s-infra/k8s/litellm) + an Anthropic key
- * sealed-secret, then point these two constants at it. Model names are config.
+ * Tutor routes on the homelab LiteLLM gateway. Both point at `ha-assist`
+ * (Qwen3.6-35B on dgx0 with reasoning DISABLED): sub-second, direct, reliable
+ * JSON. We deliberately do NOT use a reasoning route (e.g. `chat-default`) here
+ * because chatJSON requires clean structured output, and a reasoning model's
+ * thinking tokens corrupt/slow the JSON path (observed: stretch-band practice
+ * 502'd at ~31s via chat-default; ha-assist returns valid items in ~4s).
+ *
+ * `RICH` is kept as a distinct name so a genuinely stronger route (a Claude
+ * route added to LiteLLM + an Anthropic key sealed-secret, or a reasoning-off
+ * larger model) can be slotted in for richer prose later. Model names are config.
  */
 export const TUTOR_FAST = "ha-assist" as const;
-export const TUTOR_RICH = "chat-default" as const;
+export const TUTOR_RICH = "ha-assist" as const;
 
 export type TutorModel = typeof TUTOR_FAST | typeof TUTOR_RICH | (string & {});
 
