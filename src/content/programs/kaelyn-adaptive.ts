@@ -1,0 +1,840 @@
+import type { Program } from "../types";
+
+/**
+ * Program 02 — Kaelyn's Adaptive Curriculum.
+ * Typed from docs/curriculum/kaelyn-adaptive/ (README + the four strand ladders).
+ * The curriculum docs are the human source of truth; this is the machine
+ * representation the app renders and the tutor levels against.
+ *
+ * The platform's content model (Program → Unit → Lesson → Activity) is reused
+ * pragmatically here: the four STRANDS become Units, each rung becomes a Lesson
+ * (title = rung name), and activities are leveled, skill-tagged samples drawn
+ * straight from the strand docs (band: "ready" = at-rung, "stretch" = the reach
+ * that points at the next rung). This is genuinely at Kaelyn's level —
+ * multiplication, morphology, inference, composition — not review.
+ *
+ * Unit fields are repurposed (the UI just renders them): bigIdea = the strand's
+ * purpose, phonicsFocus/mathFocus = two short descriptors, project = the
+ * strand's big goal. Strands are independent ladders; there is no week order.
+ */
+export const kaelynAdaptive: Program = {
+  slug: "kaelyn-adaptive",
+  title: "Kaelyn's Adaptive Curriculum",
+  subtitle: "Four strands, each at her real level",
+  ageBand: "Advanced & asynchronous · just finished K",
+  summary:
+    "A personalized, mastery-based curriculum where every strand starts where she actually is and climbs from there, one mastered skill at a time. Reading and math run at full speed; writing is bridged so big ideas are never trapped by a small hand. She is here to learn new things, not review.",
+  units: [
+    // ── Strand 1: Reading & Comprehension ──────────────────────────────────
+    {
+      id: "reading",
+      order: 1,
+      title: "Reading & Comprehension",
+      emoji: "📖",
+      world: "sunshine",
+      bigIdea:
+        "The words are already hers. Now read them like she means it, and understand them deeply, across fiction and nonfiction.",
+      phonicsFocus: "Fluency → inference → summary",
+      mathFocus: "8 levels",
+      project: "Lead a 60-second book talk on a longer expedition book she finished.",
+      lessons: [
+        {
+          id: "reading-r1",
+          order: 1,
+          title: "Fluency on early-chapter text",
+          activities: [
+            {
+              id: "reading-r1-a1",
+              kind: "reading-comprehension",
+              title: "Read it like you mean it",
+              blurb: "Pick the voice that fits the moment.",
+              estMinutes: 8,
+              band: "ready",
+              skillTags: ["reading.fluency.phrasing"],
+              config: {
+                instruction: "Read this part out loud first. Then pick the voice that fits.",
+                title: "Frog and Toad: The Lost Button",
+                passage:
+                  "Toad looked everywhere. He looked under the chairs and behind the door. \"I will never find my button!\" he cried. He sat down hard and put his head in his hands.",
+                questions: [
+                  {
+                    prompt: "Toad says this right after he loses the button. Which voice fits best?",
+                    choices: ["A sleepy, quiet voice", "An upset, frustrated voice", "A silly, giggly voice"],
+                    answerIndex: 1,
+                    kind: "inference",
+                  },
+                  {
+                    prompt: "Where should your voice get bigger?",
+                    choices: ["On \"He looked under the chairs\"", "On \"I will never find my button!\"", "On \"He sat down hard\""],
+                    answerIndex: 1,
+                    kind: "literal",
+                  },
+                ],
+              },
+            },
+            {
+              id: "reading-r1-a2",
+              kind: "reading-comprehension",
+              title: "Punctuation drive",
+              blurb: "Read to the marks: stop, slow, big voice.",
+              estMinutes: 6,
+              band: "stretch",
+              skillTags: ["reading.fluency.phrasing", "reading.comprehension.retell"],
+              config: {
+                instruction: "Read it to the marks. Then say in one breath who it was about and what happened.",
+                title: "Expedition: Volcanoes",
+                passage:
+                  "The mountain rumbled. Smoke poured out of the top, dark and fast. Then, with a roar, it erupted! Hot lava ran down the side like a river of fire.",
+                questions: [
+                  {
+                    prompt: "Which sentence gets the biggest voice?",
+                    choices: ["The mountain rumbled.", "Then, with a roar, it erupted!", "Smoke poured out of the top."],
+                    answerIndex: 1,
+                    kind: "literal",
+                  },
+                ],
+                retellPrompt: "In one breath: who or what was this about, and what happened?",
+              },
+            },
+          ],
+        },
+        {
+          id: "reading-r2",
+          order: 2,
+          title: "Story elements & retell",
+          activities: [
+            {
+              id: "reading-r2-a1",
+              kind: "reading-comprehension",
+              title: "Who, where, problem, solution",
+              blurb: "Find the four parts, then retell it.",
+              estMinutes: 10,
+              band: "ready",
+              skillTags: ["reading.comprehension.retell"],
+              config: {
+                instruction: "Read the story, then answer and retell it in order.",
+                title: "Magic Tree House: Lost in the Pyramid",
+                passage:
+                  "Jack and Annie climbed into the dark tomb. The door slid shut behind them with a thud. \"We're trapped!\" said Annie. Jack remembered the book said to follow the painted birds on the wall. They followed the birds around three corners and found a small door that led them back out into the sunlight.",
+                questions: [
+                  {
+                    prompt: "What is the characters' problem?",
+                    choices: ["They are hungry", "They are trapped in the tomb", "They lost their book"],
+                    answerIndex: 1,
+                    kind: "literal",
+                  },
+                  {
+                    prompt: "How do they solve it?",
+                    choices: ["They dig through the wall", "They follow the painted birds to a door", "They wait for help"],
+                    answerIndex: 1,
+                    kind: "literal",
+                  },
+                ],
+                retellPrompt: "Retell it in order: who, where, the problem, and how it got solved.",
+              },
+            },
+          ],
+        },
+        {
+          id: "reading-r3",
+          order: 3,
+          title: "Inference: feelings, motivation, cause & effect",
+          activities: [
+            {
+              id: "reading-r3-a1",
+              kind: "reading-comprehension",
+              title: "How do you know?",
+              blurb: "Name the feeling and the clue that tells you.",
+              estMinutes: 10,
+              band: "ready",
+              skillTags: ["reading.comprehension.inference"],
+              config: {
+                instruction: "Read between the lines. The story does not say it outright, so find the clue.",
+                title: "Expedition: Oceans & Whales",
+                passage:
+                  "The little whale swam in circles near the boat. It slapped its tail again and again on the water. Its mother was nowhere in sight. It made a long, low call and then waited, listening.",
+                questions: [
+                  {
+                    prompt: "How does the little whale most likely feel?",
+                    choices: ["Sleepy", "Worried and looking for its mother", "Angry at the boat"],
+                    answerIndex: 1,
+                    kind: "inference",
+                  },
+                  {
+                    prompt: "Which clue tells you that?",
+                    choices: ["It swims in the ocean", "Its mother is nowhere in sight and it calls and waits", "It is little"],
+                    answerIndex: 1,
+                    kind: "inference",
+                  },
+                ],
+              },
+            },
+            {
+              id: "reading-r3-a2",
+              kind: "reading-comprehension",
+              title: "Detective conclusion",
+              blurb: "Three clues. Who is it?",
+              estMinutes: 8,
+              band: "stretch",
+              skillTags: ["reading.comprehension.inference", "reading.comprehension.main-idea"],
+              config: {
+                instruction: "The story never says who this is. Use the clues to figure it out.",
+                title: "Expedition: Space",
+                passage:
+                  "She checked the straps on her helmet one more time. Outside the small window, the Earth was a blue marble far below. When she let go of her pencil, it did not fall. It floated in the air in front of her face.",
+                questions: [
+                  {
+                    prompt: "Who is she, most likely?",
+                    choices: ["A swimmer", "An astronaut in space", "A pilot on a plane"],
+                    answerIndex: 1,
+                    kind: "inference",
+                  },
+                  {
+                    prompt: "Which clue is the strongest?",
+                    choices: ["She has a pencil", "The pencil floats instead of falling", "She has a helmet"],
+                    answerIndex: 1,
+                    kind: "inference",
+                  },
+                ],
+                retellPrompt: "What was this whole part mostly about, in one idea?",
+              },
+            },
+          ],
+        },
+        {
+          id: "reading-r4",
+          order: 4,
+          title: "Nonfiction text features & evidence",
+          activities: [
+            {
+              id: "reading-r4-a1",
+              kind: "reading-comprehension",
+              title: "Prove it",
+              blurb: "Answer, then point to the exact words.",
+              estMinutes: 10,
+              band: "ready",
+              skillTags: ["reading.nonfiction.text-features"],
+              config: {
+                instruction: "Use the headings and the words on the page to find the answer and prove it.",
+                title: "How Volcanoes Work",
+                passage:
+                  "HOW HOT IS LAVA?\nLava is melted rock that pours out of a volcano. It can reach 2,000 degrees Fahrenheit, hot enough to melt metal.\n\nWHAT IS MAGMA?\nBefore it erupts, the melted rock waits underground. There it is called magma. Magma rises when pressure builds up below.",
+                questions: [
+                  {
+                    prompt: "How hot can lava get?",
+                    choices: ["100 degrees", "About 2,000 degrees Fahrenheit", "It does not say"],
+                    answerIndex: 1,
+                    kind: "literal",
+                  },
+                  {
+                    prompt: "Which heading would you read to learn what melted rock is called underground?",
+                    choices: ["HOW HOT IS LAVA?", "WHAT IS MAGMA?", "Neither one"],
+                    answerIndex: 1,
+                    kind: "main-idea",
+                  },
+                  {
+                    prompt: "Find the evidence: what is melted rock called before it erupts?",
+                    choices: ["Lava", "Magma", "Ash"],
+                    answerIndex: 1,
+                    kind: "literal",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        {
+          id: "reading-r5",
+          order: 5,
+          title: "Author's purpose, comparing texts & theme",
+          activities: [
+            {
+              id: "reading-r5-a1",
+              kind: "reading-comprehension",
+              title: "Why did they write it?",
+              blurb: "Inform, entertain, or teach a lesson?",
+              estMinutes: 10,
+              band: "stretch",
+              skillTags: ["reading.comprehension.author-craft"],
+              config: {
+                instruction: "Read both short pieces about the same topic, then think about why each author wrote it.",
+                title: "Two Pieces About Volcanoes",
+                passage:
+                  "PIECE ONE: Once there was a grumpy dragon who lived deep inside a mountain. When he sneezed, fire and smoke shot out the top, and the villagers called it a volcano.\n\nPIECE TWO: A volcano is an opening in the Earth's crust. When pressure builds underground, magma is pushed up and erupts as lava and ash.",
+                questions: [
+                  {
+                    prompt: "Why did the author write Piece One?",
+                    choices: ["To inform you with facts", "To entertain you with a story", "To sell you a dragon"],
+                    answerIndex: 1,
+                    kind: "author",
+                  },
+                  {
+                    prompt: "Why did the author write Piece Two?",
+                    choices: ["To entertain you with a story", "To inform you about how volcanoes work", "To make you laugh"],
+                    answerIndex: 1,
+                    kind: "author",
+                  },
+                  {
+                    prompt: "Which piece would you use to answer a real question about how volcanoes erupt?",
+                    choices: ["Piece One", "Piece Two", "Either one is equally good"],
+                    answerIndex: 1,
+                    kind: "main-idea",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    },
+
+    // ── Strand 2: Word Study & Vocabulary ──────────────────────────────────
+    {
+      id: "word-study",
+      order: 2,
+      title: "Word Study & Vocabulary",
+      emoji: "🌊",
+      world: "ocean",
+      bigIdea:
+        "Unlock big, unfamiliar words on her own, by hearing their syllables, seeing their parts, and reasoning out their meaning. The real engine of a large vocabulary.",
+      phonicsFocus: "Syllables → morphology → depth",
+      mathFocus: "15 levels",
+      project: "Collect a deck of Greek and Latin root cards and unlock new words with them.",
+      lessons: [
+        {
+          id: "word-r4",
+          order: 1,
+          title: "The six syllable types",
+          activities: [
+            {
+              id: "word-r4-a1",
+              kind: "phonics-wordbuild",
+              title: "Build by syllable type",
+              blurb: "Build the word, then say if the vowel is short or long.",
+              estMinutes: 10,
+              band: "ready",
+              skillTags: ["word.syllables.types"],
+              config: {
+                focus: "the six syllable types (closed, open, silent-e, vowel team, r-controlled, consonant-le)",
+                instruction: "Build each word from its syllable tiles, then say whether the vowel is short or long and why.",
+                tiles: ["rab", "bit", "ta", "ble", "ti", "ger", "gar", "den"],
+                words: [
+                  { word: "rabbit" },
+                  { word: "table" },
+                  { word: "tiger" },
+                  { word: "garden" },
+                ],
+              },
+            },
+          ],
+        },
+        {
+          id: "word-r5",
+          order: 2,
+          title: "Dividing & decoding long words",
+          activities: [
+            {
+              id: "word-r5-a1",
+              kind: "phonics-wordbuild",
+              title: "Chop it and read it",
+              blurb: "Order the scrambled syllables, then read the whole word.",
+              estMinutes: 10,
+              band: "ready",
+              skillTags: ["word.syllables.division"],
+              config: {
+                focus: "dividing multisyllable words (VC/CV, V/CV, C+le)",
+                instruction: "These expedition words are split into syllables. Put them in order, read each part, then blend.",
+                tiles: ["ad", "ven", "ture", "vol", "can", "ic", "con", "ti", "nent"],
+                words: [
+                  { word: "adventure" },
+                  { word: "volcanic" },
+                  { word: "continent" },
+                ],
+              },
+            },
+            {
+              id: "word-r5-a2",
+              kind: "reading-comprehension",
+              title: "Cold-read challenge",
+              blurb: "Chop a never-seen word, then use the sentence for its meaning.",
+              estMinutes: 8,
+              band: "stretch",
+              skillTags: ["word.syllables.division", "vocab.context-clues"],
+              config: {
+                instruction: "Read the sentence. Chop the bold word into syllables, read it, then use the sentence to figure out what it means.",
+                passage:
+                  "The diggers found a chamber so enormous that the whole team could stand inside it. The room went back farther than their lights could reach.",
+                questions: [
+                  {
+                    prompt: "What does \"enormous\" most likely mean?",
+                    choices: ["Very small", "Very large", "Very dark"],
+                    answerIndex: 1,
+                    kind: "vocabulary",
+                  },
+                  {
+                    prompt: "Which clue told you?",
+                    choices: ["\"found a chamber\"", "\"the whole team could stand inside it\"", "\"their lights\""],
+                    answerIndex: 1,
+                    kind: "vocabulary",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        {
+          id: "word-r10",
+          order: 3,
+          title: "Prefixes (un-, re-, pre-, dis-, mis-, non-)",
+          activities: [
+            {
+              id: "word-r10-a1",
+              kind: "phonics-wordbuild",
+              title: "Snap on a prefix",
+              blurb: "Add the prefix, read it, say the new meaning.",
+              estMinutes: 10,
+              band: "ready",
+              skillTags: ["word.morphology.prefixes"],
+              config: {
+                focus: "prefixes that change meaning (un-, re-, pre-, dis-, mis-, non-)",
+                instruction: "Snap a prefix onto each base word. Read what you made, then say what the prefix did to the meaning.",
+                tiles: ["un", "re", "pre", "dis", "happy", "play", "heat", "appear"],
+                words: [
+                  { word: "unhappy" },
+                  { word: "replay" },
+                  { word: "preheat" },
+                  { word: "disappear" },
+                ],
+              },
+            },
+            {
+              id: "word-r10-a2",
+              kind: "sightword-game",
+              title: "Tap the prefix that means \"again\"",
+              blurb: "Find the word part that means again.",
+              estMinutes: 5,
+              band: "ready",
+              skillTags: ["word.morphology.prefixes"],
+              config: {
+                instruction: "Tap every word part that means \"again.\" Watch out for the ones that mean something else.",
+                words: ["re-", "redo", "rebuild"],
+                decoys: ["un-", "pre-", "dis-", "mis-"],
+              },
+            },
+          ],
+        },
+        {
+          id: "word-r11",
+          order: 4,
+          title: "Greek & Latin roots",
+          activities: [
+            {
+              id: "word-r11-a1",
+              kind: "phonics-wordbuild",
+              title: "Build from roots",
+              blurb: "Combine roots, read the word, infer the meaning.",
+              estMinutes: 12,
+              band: "ready",
+              skillTags: ["word.morphology.roots"],
+              config: {
+                focus: "Greek and Latin roots (tele = far, graph = write, geo = earth, port = carry, struct = build, meter = measure)",
+                instruction: "Each tile is a root that carries meaning. Build the word, read it, then reason out what it means from its parts.",
+                tiles: ["tele", "graph", "geo", "trans", "port", "thermo", "meter"],
+                words: [
+                  { word: "telegraph" },
+                  { word: "geography" },
+                  { word: "transport" },
+                  { word: "thermometer" },
+                ],
+              },
+            },
+            {
+              id: "word-r11-a2",
+              kind: "reading-comprehension",
+              title: "Infer the unknown word",
+              blurb: "Break a brand-new word into roots, then check the sentence.",
+              estMinutes: 8,
+              band: "stretch",
+              skillTags: ["word.morphology.roots", "vocab.context-clues"],
+              config: {
+                instruction: "You may never have seen the bold word. Break it into roots you know, build the meaning, then check it against the sentence.",
+                passage:
+                  "The scientist wrote a biography of the famous explorer, telling the story of his whole life from the day he was born.",
+                questions: [
+                  {
+                    prompt: "Using bio (life) and graph (write), what is a \"biography\"?",
+                    choices: ["A drawing of a place", "The written story of someone's life", "A tool that measures heat"],
+                    answerIndex: 1,
+                    kind: "vocabulary",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        {
+          id: "word-r12",
+          order: 5,
+          title: "Synonyms, antonyms & shades of meaning",
+          activities: [
+            {
+              id: "word-r12-a1",
+              kind: "sightword-game",
+              title: "Tap the synonym",
+              blurb: "Which words mean almost the same as enormous?",
+              estMinutes: 6,
+              band: "ready",
+              skillTags: ["vocab.shades-of-meaning"],
+              config: {
+                instruction: "Tap every word that means almost the same as \"enormous.\" Leave the opposites alone.",
+                words: ["gigantic", "huge", "massive"],
+                decoys: ["tiny", "small", "little"],
+              },
+            },
+            {
+              id: "word-r12-a2",
+              kind: "reading-comprehension",
+              title: "Pick the strongest word",
+              blurb: "Order three words from weak to strong.",
+              estMinutes: 6,
+              band: "stretch",
+              skillTags: ["vocab.shades-of-meaning"],
+              config: {
+                instruction: "Read the sentence, then choose the word that shows the strongest degree.",
+                passage:
+                  "The volcano was hot. As they got closer, the air was warm, then hot, then absolutely scorching.",
+                questions: [
+                  {
+                    prompt: "Which word means the strongest amount of heat?",
+                    choices: ["Warm", "Hot", "Scorching"],
+                    answerIndex: 2,
+                    kind: "vocabulary",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    },
+
+    // ── Strand 3: Writing & Composition (the bridge) ───────────────────────
+    {
+      id: "writing",
+      order: 3,
+      title: "Writing & Composition",
+      emoji: "🚀",
+      world: "space",
+      bigIdea:
+        "Her ideas are years ahead of her hand. So composition runs at her thinking level today, scribed or typed, while handwriting climbs its own gentle ladder. She is an author from rung one.",
+      phonicsFocus: "Sentence → paragraph → revise",
+      mathFocus: "Bridged: ideas first",
+      project: "Compose, revise, and \"publish\" a real piece, then read it aloud as the author.",
+      lessons: [
+        {
+          id: "writing-r2",
+          order: 1,
+          title: "One complete sentence",
+          activities: [
+            {
+              id: "writing-r2-a1",
+              kind: "journal-prompt",
+              title: "Finish the frame",
+              blurb: "You bring the idea. The frame holds the words.",
+              estMinutes: 8,
+              band: "ready",
+              skillTags: ["writing.compose.sentence"],
+              config: {
+                prompt: "Tell one true thing about today's expedition. Say it as a whole sentence.",
+                drawing: false,
+                mode: "compose",
+                frames: ["The volcano erupted because ______.", "I learned that ______."],
+                wordBank: ["pressure", "magma", "erupted", "lava", "underground"],
+                allowModes: ["scribe", "type", "dictate"],
+              },
+            },
+          ],
+        },
+        {
+          id: "writing-r3",
+          order: 2,
+          title: "Expand a sentence",
+          activities: [
+            {
+              id: "writing-r3-a1",
+              kind: "journal-prompt",
+              title: "Grow the sentence",
+              blurb: "Add a who, a where, a why. Trade a stronger verb.",
+              estMinutes: 10,
+              band: "ready",
+              skillTags: ["writing.compose.sentence-expand"],
+              config: {
+                prompt: "Start with \"The boat went on the water.\" Make it richer: add a detail, an adjective, or a stronger verb.",
+                drawing: false,
+                mode: "compose",
+                frames: ["The ______ boat ______ across the ______ water."],
+                wordBank: ["little", "raced", "drifted", "crashed", "stormy", "calm", "quickly"],
+                allowModes: ["scribe", "type", "dictate"],
+              },
+            },
+          ],
+        },
+        {
+          id: "writing-r5",
+          order: 3,
+          title: "Three-sentence pieces (narrative, info, opinion)",
+          activities: [
+            {
+              id: "writing-r5-a1",
+              kind: "journal-prompt",
+              title: "Tiny story",
+              blurb: "Beginning, middle, end, in three sentences.",
+              estMinutes: 12,
+              band: "ready",
+              skillTags: ["writing.compose.narrative"],
+              config: {
+                prompt: "Tell a tiny story about a volcano with a beginning, a middle, and an end.",
+                drawing: false,
+                mode: "compose",
+                frames: ["First, ______.", "Then, ______.", "Finally, ______."],
+                wordBank: ["the ground shook", "smoke poured out", "it erupted", "everyone ran to safety"],
+                allowModes: ["scribe", "type", "dictate"],
+              },
+            },
+            {
+              id: "writing-r5-a2",
+              kind: "journal-prompt",
+              title: "I think... because",
+              blurb: "Give an opinion and back it with reasons.",
+              estMinutes: 10,
+              band: "ready",
+              skillTags: ["writing.compose.opinion"],
+              config: {
+                prompt: "What is the best ocean animal? Tell me what you think and why.",
+                drawing: false,
+                mode: "compose",
+                frames: ["I think ______ is the best ocean animal because ______."],
+                wordBank: ["whales", "huge", "gentle", "they sing", "they are smart"],
+                allowModes: ["scribe", "type", "dictate"],
+              },
+            },
+          ],
+        },
+        {
+          id: "writing-r6",
+          order: 4,
+          title: "A short paragraph",
+          activities: [
+            {
+              id: "writing-r6-a1",
+              kind: "journal-prompt",
+              title: "Topic + three details",
+              blurb: "Open with a topic sentence, then stay on one idea.",
+              estMinutes: 14,
+              band: "ready",
+              skillTags: ["writing.compose.paragraph"],
+              config: {
+                prompt: "Write a short paragraph about whales. Start with a topic sentence, then add three facts you know, all about whales.",
+                drawing: false,
+                mode: "compose",
+                frames: ["Whales are amazing ocean animals.", "First, ______.", "Also, ______.", "Best of all, ______."],
+                wordBank: ["biggest animals", "they breathe air", "they sing songs", "they live in pods"],
+                allowModes: ["type", "dictate"],
+              },
+            },
+          ],
+        },
+        {
+          id: "writing-r7",
+          order: 5,
+          title: "Revise & edit",
+          activities: [
+            {
+              id: "writing-r7-a1",
+              kind: "journal-prompt",
+              title: "Make it stronger",
+              blurb: "Swap a weak word. Add a detail. Say why it's better.",
+              estMinutes: 12,
+              band: "stretch",
+              skillTags: ["writing.compose.revise"],
+              config: {
+                prompt: "Here is a draft sentence: \"The volcano was big and it went.\" Make it stronger. Swap a bland word for a livelier one and add one detail. Then say why your change is better.",
+                drawing: false,
+                mode: "compose",
+                frames: ["The ______ volcano ______."],
+                wordBank: ["enormous", "erupted", "exploded", "towering", "suddenly"],
+                allowModes: ["type", "scribe"],
+              },
+            },
+          ],
+        },
+      ],
+    },
+
+    // ── Strand 4: Math ─────────────────────────────────────────────────────
+    {
+      id: "math",
+      order: 4,
+      title: "Math",
+      emoji: "🎪",
+      world: "bigtop",
+      bigIdea:
+        "She already multiplies and reads place value into the hundreds. So we teach forward: multiplication and division, regrouping, fractions, and reasoning. Growing a mathematician, not a calculator.",
+      phonicsFocus: "Multiplication → fractions",
+      mathFocus: "11 levels",
+      project: "Author a two-step word problem for an expedition and the equation that solves it.",
+      lessons: [
+        {
+          id: "math-r1",
+          order: 1,
+          title: "Equal groups & arrays",
+          activities: [
+            {
+              id: "math-r1-a1",
+              kind: "math-array",
+              title: "Build the rocket seats",
+              blurb: "4 rows of 5. Skip-count to the total.",
+              estMinutes: 8,
+              band: "ready",
+              skillTags: ["math.equal-groups.arrays"],
+              config: {
+                instruction: "The rocket has 4 rows of seats, 5 seats in each row. Build it, then skip-count one row at a time to find the total.",
+                mode: "build",
+                rows: 4,
+                cols: 5,
+                emoji: "🚀",
+              },
+            },
+          ],
+        },
+        {
+          id: "math-r2",
+          order: 2,
+          title: "Multiplication means equal groups",
+          activities: [
+            {
+              id: "math-r2-a1",
+              kind: "math-array",
+              title: "Say it three ways",
+              blurb: "Array, repeated addition, and 3 x 4 = 12.",
+              estMinutes: 8,
+              band: "ready",
+              skillTags: ["math.mult.meaning"],
+              config: {
+                instruction: "Build 3 rows of 4. Then say it as 4 + 4 + 4, as 3 x 4, and find the product.",
+                mode: "multiply",
+                rows: 3,
+                cols: 4,
+                answer: 12,
+                emoji: "🍪",
+              },
+            },
+            {
+              id: "math-r2-a2",
+              kind: "math-tenframe",
+              title: "Skip-count the groups",
+              blurb: "Four groups of five, counted on the frames.",
+              estMinutes: 6,
+              band: "ready",
+              skillTags: ["math.mult.meaning"],
+              config: {
+                instruction: "Show four groups of five by filling the frames, then count them: 5, 10, 15, 20.",
+                mode: "represent",
+                target: 20,
+                frames: 2,
+              },
+            },
+          ],
+        },
+        {
+          id: "math-r5",
+          order: 3,
+          title: "Division & fact families",
+          activities: [
+            {
+              id: "math-r5-a1",
+              kind: "math-array",
+              title: "Share the treasure",
+              blurb: "15 gold coins, 3 explorers. How many each?",
+              estMinutes: 8,
+              band: "ready",
+              skillTags: ["math.div.fact-families"],
+              config: {
+                instruction: "Deal 15 gold coins fairly to 3 explorers. How many does each one get? Then write all four facts this array holds.",
+                mode: "divide",
+                rows: 3,
+                cols: 5,
+                answer: 5,
+                emoji: "🪙",
+              },
+            },
+          ],
+        },
+        {
+          id: "math-r7",
+          order: 4,
+          title: "Regrouping (trading tens & ones)",
+          activities: [
+            {
+              id: "math-r7-a1",
+              kind: "math-tenframe",
+              title: "Trade up",
+              blurb: "Combine the ones. Too many? Trade ten for a ten.",
+              estMinutes: 10,
+              band: "ready",
+              skillTags: ["math.regrouping"],
+              config: {
+                instruction: "Add 7 and 8 on the frames. When the ones fill past ten, trade ten of them for one full ten. That is regrouping.",
+                mode: "add",
+                target: 7,
+                addend: 8,
+                frames: 2,
+              },
+            },
+          ],
+        },
+        {
+          id: "math-r8",
+          order: 5,
+          title: "Fractions: equal parts of a whole",
+          activities: [
+            {
+              id: "math-r8-a1",
+              kind: "math-array",
+              title: "Area is an array",
+              blurb: "Tile the rectangle, then find its area.",
+              estMinutes: 8,
+              band: "ready",
+              skillTags: ["math.geometry.area-arrays", "math.fractions.unit"],
+              config: {
+                instruction: "Tile this rectangle with unit squares. How many squares cover it? Notice you can multiply the rows by the columns instead of counting each one.",
+                mode: "area",
+                rows: 3,
+                cols: 4,
+                answer: 12,
+                emoji: "🟦",
+              },
+            },
+            {
+              id: "math-r8-a2",
+              kind: "math-array",
+              title: "Fair shares must be equal",
+              blurb: "Split the flatbread into 4 equal parts.",
+              estMinutes: 8,
+              band: "stretch",
+              skillTags: ["math.fractions.unit"],
+              config: {
+                instruction: "Share the Egyptian flatbread among 4 diggers. Build it as a 1 by 4 row of equal parts, then point to one part: that is 1/4. Would an unequal piece still be 1/4?",
+                mode: "area",
+                rows: 1,
+                cols: 4,
+                answer: 4,
+                emoji: "🫓",
+              },
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
