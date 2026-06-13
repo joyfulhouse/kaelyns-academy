@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, type SyntheticEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -56,7 +56,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [formError, setFormError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError(null);
 
