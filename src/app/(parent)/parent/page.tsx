@@ -13,6 +13,7 @@ import { Surface } from "@/components/ui/Surface";
 import { Stars } from "@/components/ui/Stars";
 import { ProgressRing } from "@/components/ui/ProgressRing";
 import { SampleBadge } from "@/components/parent/SampleBadge";
+import { ProgressReportCard } from "@/components/parent/ProgressReportCard";
 import { outcomeDisplay } from "@/components/parent/skill-display";
 import {
   SAMPLE_LEARNER,
@@ -167,6 +168,11 @@ export default function ParentHomePage() {
             <p className="text-ink-soft">No active week yet. Enrollment starts the first unit.</p>
           </div>
         )}
+      </section>
+
+      {/* AI weekly report (sample-grounded narrative) */}
+      <section className="mt-10">
+        <ProgressReportCard notice={SAMPLE_NOTICE} />
       </section>
 
       {/* Progress summary + recent activity */}
