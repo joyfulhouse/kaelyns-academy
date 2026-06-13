@@ -8,8 +8,11 @@ import {
   ArrowRightIcon,
   HammerIcon,
   MapTrifoldIcon,
+  SparkleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import type { Activity, ActivityScore, World } from "@/content";
+import { getSkill } from "@/content";
+import { outcomeOf } from "@/lib/tutor";
 import "@/activities"; // side-effect: registers every available activity-type plugin
 import { getActivityType } from "@/activities";
 import { cn } from "@/lib/cn";
@@ -19,17 +22,35 @@ import { Button } from "@/components/ui/Button";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner } from "./learners";
 import { useProgress } from "./useProgress";
+import { useSkillState } from "./useSkillState";
 import { ACTIVITY_META, PROGRAM_SLUG } from "./activityMeta";
 import { stopSpeaking } from "./speak";
 
-type Phase = { kind: "play" } | { kind: "reward"; stars: 0 | 1 | 2 | 3 };
+/** How many AI-generated items may be played back to back, so the loop stays
+ *  bounded no matter how much a child taps "more". */
+const MAX_GENERATED = 3;
+
+/** Request timeout for generation: a child should never wait long. */
+const PRACTICE_TIMEOUT_MS = 12_000;
+
+type Phase =
+  | { kind: "play" }
+  | { kind: "reward"; stars: 0 | 1 | 2 | 3 }
+  | { kind: "generating" }
+  | { kind: "practice"; config: unknown }
+  | { kind: "practice-failed" };
 
 /**
  * The activity host. Imports `@/activities` for side-effect registration, then
  * looks up the activity-type by kind. A registered kind renders its Player; an
  * unregistered kind degrades gracefully to a friendly "coming soon" placeholder
- * (so the learner surface builds and runs before the plugins land). On
- * completion it records progress and shows a forgiving reward screen.
+ * (so the learner surface builds and runs before the plugins land).
+ *
+ * On completion it records progress AND skill evidence (the single source of
+ * mastery truth), then shows a forgiving reward screen. From the reward screen
+ * the child can ask for "more, made just for me": the host calls the bounded,
+ * schema-validated /api/practice endpoint and renders the generated config
+ * through the same Player. Generation is capped and fails gently.
  */
 export function ActivityHost({
   activity,
@@ -45,23 +66,92 @@ export function ActivityHost({
   const router = useRouter();
   const { learner } = useActiveLearner();
   const { complete } = useProgress(learner.id, PROGRAM_SLUG);
+  const { skillState, record } = useSkillState(learner.id, PROGRAM_SLUG);
   const [phase, setPhase] = useState<Phase>({ kind: "play" });
+  const [generatedCount, setGeneratedCount] = useState(0);
 
   const activityType = getActivityType(activity.kind);
 
+  // The authored activity records both star progress and skill evidence.
   const handleComplete = useCallback(
     (_response: unknown, score: ActivityScore) => {
       stopSpeaking();
       complete(activity.id, score.stars);
+      record(score.skillEvidence);
       setPhase({ kind: "reward", stars: score.stars });
     },
-    [activity.id, complete],
+    [activity.id, complete, record],
+  );
+
+  // A generated practice item records skill evidence too (it exercises the same
+  // skills), but not star progress: it isn't an authored, trackable activity.
+  const handlePracticeComplete = useCallback(
+    (_response: unknown, score: ActivityScore) => {
+      stopSpeaking();
+      record(score.skillEvidence);
+      setPhase({ kind: "reward", stars: score.stars });
+    },
+    [record],
   );
 
   const handleExit = useCallback(() => {
     stopSpeaking();
     router.push(backHref);
   }, [router, backHref]);
+
+  // Ask the bounded generator for one more item at this activity's level.
+  const handleMore = useCallback(async () => {
+    stopSpeaking();
+    setPhase({ kind: "generating" });
+
+    const primarySkill = activity.skillTags[0];
+    const focus = (primarySkill ? getSkill(primarySkill)?.label : undefined) ?? activity.title;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PRACTICE_TIMEOUT_MS);
+    try {
+      const res = await fetch("/api/practice", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: activity.kind,
+          band: activity.band,
+          focus,
+          n: 1,
+          skillHints: activity.skillTags.slice(0, 8),
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        setPhase({ kind: "practice-failed" });
+        return;
+      }
+      const data: unknown = await res.json();
+      const items =
+        data && typeof data === "object" && Array.isArray((data as { items?: unknown }).items)
+          ? (data as { items: unknown[] }).items
+          : [];
+      const first = items[0];
+      if (first === undefined) {
+        setPhase({ kind: "practice-failed" });
+        return;
+      }
+      setGeneratedCount((n) => n + 1);
+      setPhase({ kind: "practice", config: first });
+    } catch {
+      // Timeout/abort/network: never a scary error, just "another time".
+      setPhase({ kind: "practice-failed" });
+    } finally {
+      clearTimeout(timer);
+    }
+  }, [activity]);
+
+  // Auto-offer more when this activity's primary skill is still emerging, and
+  // only while we're under the generation cap and the kind is renderable.
+  const primarySkill = activity.skillTags[0];
+  const canGenerate = Boolean(activityType) && generatedCount < MAX_GENERATED;
+  const autoOffer =
+    canGenerate && primarySkill !== undefined && outcomeOf(skillState, primarySkill) === "emerging";
 
   return (
     <div data-world={world}>
@@ -73,7 +163,26 @@ export function ActivityHost({
               stars={phase.stars}
               backHref={backHref}
               nextHref={nextHref}
+              canGenerate={canGenerate}
+              autoOffer={autoOffer}
+              onMore={handleMore}
             />
+          ) : phase.kind === "generating" ? (
+            <GeneratingScreen key="generating" />
+          ) : phase.kind === "practice-failed" ? (
+            <PracticeFailed
+              key="practice-failed"
+              backHref={backHref}
+              nextHref={nextHref}
+            />
+          ) : phase.kind === "practice" && activityType ? (
+            <PlayerFrame key={`practice-${generatedCount}`}>
+              <activityType.Player
+                config={phase.config}
+                onComplete={handlePracticeComplete}
+                onExit={handleExit}
+              />
+            </PlayerFrame>
           ) : activityType ? (
             <PlayerFrame key="play">
               <activityType.Player
@@ -115,10 +224,18 @@ function RewardScreen({
   stars,
   backHref,
   nextHref,
+  canGenerate,
+  autoOffer,
+  onMore,
 }: {
   stars: 0 | 1 | 2 | 3;
   backHref: string;
   nextHref: string | null;
+  /** True while more AI practice may be offered (under the cap, kind renderable). */
+  canGenerate: boolean;
+  /** True when the just-finished skill is still emerging (offer more prominently). */
+  autoOffer: boolean;
+  onMore: () => void;
 }) {
   const reduce = useReducedMotion();
   const earned = Math.max(0, Math.min(3, stars));
@@ -174,6 +291,101 @@ function RewardScreen({
           );
         })}
       </div>
+
+      {autoOffer && (
+        <p className="mt-6 text-lg text-ink-soft">Want a little more, just for you?</p>
+      )}
+
+      <div className="mt-6 flex w-full flex-col items-stretch gap-3">
+        {/* When the skill is still emerging, "more practice" leads; otherwise it
+            is a gentle honey option below Next so the journey stays primary. */}
+        {canGenerate && autoOffer && (
+          <Button type="button" onClick={onMore} variant="primary" size="kid">
+            <SparkleIcon weight="fill" className="size-6" />
+            More, made just for me
+          </Button>
+        )}
+        {nextHref && (
+          <Button href={nextHref} variant={autoOffer ? "soft" : "primary"} size="kid">
+            Next
+            <ArrowRightIcon weight="bold" className="size-6" />
+          </Button>
+        )}
+        {canGenerate && !autoOffer && (
+          <Button type="button" onClick={onMore} variant="honey" size="kid">
+            <SparkleIcon weight="fill" className="size-6" />
+            More, made just for me
+          </Button>
+        )}
+        <Button href={backHref} variant="soft" size="kid">
+          <MapTrifoldIcon weight="duotone" className="size-6" />
+          Back to the map
+        </Button>
+      </div>
+    </motion.div>
+  );
+}
+
+/* ── Generating (AI practice in flight) ─────────────────────────────────────
+   A calm "making something for you" beat. No spinner that reads as loading
+   chrome; the floating mascot + gentle pulse keeps it playful. */
+
+function GeneratingScreen() {
+  const reduce = useReducedMotion();
+  return (
+    <motion.div
+      initial={reduce ? false : { opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+      className="mx-auto flex max-w-md flex-col items-center pt-12 text-center"
+    >
+      <p className="sr-only" role="status" aria-live="polite">
+        Making something just for you.
+      </p>
+      <motion.div
+        animate={reduce ? undefined : { scale: [1, 1.06, 1] }}
+        transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+        className="grid size-24 place-items-center rounded-2xl border-[3px] border-ink bg-honey shadow-pop"
+      >
+        <SparkleIcon weight="fill" className="size-12 text-ink" />
+      </motion.div>
+      <Mascot mood="think" size={108} className={reduce ? "mt-6" : "mt-6 motion-safe:animate-float"} />
+      <h1 className="mt-4 font-display text-3xl font-semibold tracking-tight">
+        Making something just for you...
+      </h1>
+      <p className="mt-3 text-lg text-ink-soft">One moment!</p>
+    </motion.div>
+  );
+}
+
+/* ── Practice unavailable (graceful fallback) ───────────────────────────────
+   Never a scary error: a warm "another time" with the normal next/back. */
+
+function PracticeFailed({
+  backHref,
+  nextHref,
+}: {
+  backHref: string;
+  nextHref: string | null;
+}) {
+  const reduce = useReducedMotion();
+  return (
+    <motion.div
+      initial={reduce ? false : { opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+      className="mx-auto flex max-w-md flex-col items-center pt-10 text-center"
+    >
+      <p className="sr-only" role="status" aria-live="polite">
+        Let us do that another time.
+      </p>
+      <Mascot mood="happy" size={120} />
+      <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight">
+        Let&rsquo;s do that another time!
+      </h1>
+      <p className="mt-3 text-lg text-ink-soft">You did great. Keep going when you&rsquo;re ready.</p>
 
       <div className="mt-9 flex w-full flex-col items-stretch gap-3">
         {nextHref && (
