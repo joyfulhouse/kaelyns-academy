@@ -41,7 +41,7 @@ const FAMILY_POINTS = [
 ];
 
 export default function Home() {
-  const program = getProgram("summer-k-to-grade1");
+  const program = getProgram("kaelyn-adaptive");
   const stats = program ? programStats(program) : { units: 0, lessons: 0, activities: 0 };
 
   return (

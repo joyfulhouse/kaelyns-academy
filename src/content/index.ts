@@ -1,10 +1,13 @@
-import { summerKToGrade1 } from "./programs/summer-k-to-grade1";
+import { kaelynAdaptive } from "./programs/kaelyn-adaptive";
 import type { Activity, Lesson, Program, Unit } from "./types";
 
 export * from "./types";
 export { SKILLS, getSkill } from "./skills";
 
-export const PROGRAMS: Program[] = [summerKToGrade1];
+// Program 02 — Kaelyn's Adaptive Curriculum — is the program the app serves.
+// Program 01 (summer-k-to-grade1.ts) stays on disk, archived, but is no longer
+// in PROGRAMS; it was review, not learning, for this learner.
+export const PROGRAMS: Program[] = [kaelynAdaptive];
 
 export function listPrograms(): Program[] {
   return PROGRAMS;
