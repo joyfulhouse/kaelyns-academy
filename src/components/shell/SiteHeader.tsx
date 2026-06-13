@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/Button";
 import { Mascot } from "@/components/art/Mascot";
 
 const NAV = [
-  { href: "/#program", label: "The Summer Program" },
+  { href: "/#program", label: "The curriculum" },
   { href: "/#how", label: "How it works" },
   { href: "/#families", label: "For families" },
 ];

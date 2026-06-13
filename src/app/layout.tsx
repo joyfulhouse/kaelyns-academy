@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     template: "%s · Kaelyn's Academy",
   },
   description:
-    "A warm, adaptive learning studio for young children. Pluggable programs, gentle AI tutoring, and a summer bridge from kindergarten into first grade.",
+    "A warm, adaptive learning studio for young children. Every subject meets each child at her real level and teaches forward, one mastered skill at a time, with gentle AI tutoring.",
   applicationName: "Kaelyn's Academy",
 };
 

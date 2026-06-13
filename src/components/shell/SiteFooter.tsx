@@ -5,7 +5,7 @@ const COLUMNS = [
   {
     heading: "Learn",
     links: [
-      { href: "/#program", label: "Summer Bridge K→1" },
+      { href: "/#program", label: "Her curriculum" },
       { href: "/learn", label: "Open the studio" },
       { href: "/#how", label: "How it works" },
     ],

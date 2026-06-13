@@ -65,15 +65,15 @@ export default function Home() {
           <div className="relative mx-auto grid max-w-6xl items-center gap-10 px-5 py-16 md:grid-cols-[1.1fr_0.9fr] md:py-24">
             <div>
               <Pill tone="accent" icon={<SparkleIcon weight="fill" className="text-honey-deep" />}>
-                Program 01 · Summer 2026
+                A personalized learning studio
               </Pill>
               <h1 className="mt-5 text-balance font-display text-4xl font-semibold leading-[1.04] tracking-tight md:text-5xl">
-                Where summer turns into a head start.
+                Meet her exactly where she&rsquo;s ready.
               </h1>
               <p className="mt-5 max-w-xl text-lg text-ink-soft">
-                A warm, ten-week studio that carries your kindergartner into first grade
-                confident and curious, with second-grade skills already within reach. Little
-                and often. Joyful always.
+                Every subject starts at her real level and teaches forward, one mastered skill
+                at a time. Reading, words, writing, and math each climb at their own pace, so
+                she is always learning something new, never reviewing or waiting. Joyful always.
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <Button href="/learn" variant="primary" size="lg">
@@ -81,11 +81,11 @@ export default function Home() {
                   <ArrowRightIcon weight="bold" />
                 </Button>
                 <Button href="#program" variant="soft" size="lg">
-                  See the ten weeks
+                  See her curriculum
                 </Button>
               </div>
               <p className="mt-5 text-sm text-ink-faint">
-                Ages 5–6 · ready for 1st grade, reaching for 2nd · no ads, ever
+                Personalized to each child · teaches forward, never busywork · no ads, ever
               </p>
             </div>
 
@@ -141,13 +141,13 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ── The Summer Program ── */}
+        {/* ── Her curriculum ── */}
         {program && (
           <section id="program" className="bg-paper-raised py-20 md:py-28">
             <div className="mx-auto max-w-6xl px-5">
               <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
                 <div className="max-w-2xl">
-                  <Pill tone="ready">Program 01</Pill>
+                  <Pill tone="ready">Her curriculum</Pill>
                   <h2 className="mt-4 text-balance font-display text-3xl font-semibold tracking-tight md:text-4xl">
                     {program.title}: {program.subtitle}
                   </h2>
@@ -155,7 +155,7 @@ export default function Home() {
                 </div>
                 <dl className="flex gap-7">
                   {[
-                    { n: stats.units, l: "weeks" },
+                    { n: stats.units, l: "strands" },
                     { n: stats.activities, l: "activities" },
                     { n: "∞", l: "tries" },
                   ].map((s) => (
@@ -179,8 +179,7 @@ export default function Home() {
                         {unit.emoji}
                       </span>
                       <span className="font-display text-sm font-semibold text-accent-deep">
-                        Week {unit.order}
-                        {unit.checkpoint ? " · check-in" : ""}
+                        {unit.mathFocus}
                       </span>
                     </div>
                     <h3 className="mt-3 font-display text-xl font-semibold tracking-tight">
@@ -189,7 +188,6 @@ export default function Home() {
                     <p className="mt-1 text-sm text-ink-soft">{unit.bigIdea}</p>
                     <div className="mt-4 flex flex-wrap gap-1.5">
                       <Pill tone="neutral">{unit.phonicsFocus}</Pill>
-                      <Pill tone="neutral">{unit.mathFocus}</Pill>
                     </div>
                   </li>
                 ))}
