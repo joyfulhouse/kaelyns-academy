@@ -96,6 +96,14 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
+  if (loading) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center bg-cream">
+        <p className="font-display text-xl text-chocolate-muted animate-pulse">Loading...</p>
+      </div>
+    );
+  }
+
   return (
     <ProgressContext value={{ progress, updateSkill, addStar, loading }}>
       {children}

@@ -71,40 +71,45 @@ interface FillBlankTemplate {
 }
 
 const FILL_BLANK_TEMPLATES: Record<number, FillBlankTemplate[]> = {
+  // Level 1: SIPPS 1-10 words (see, I, the, you, can, me, and, we, on, is, yes, are, no, he)
   1: [
-    { sentence: 'I see ___ dog.', answer: 'a', distractors: ['is', 'it', 'we'] },
-    { sentence: '___ like to play.', answer: 'I', distractors: ['a', 'it', 'is'] },
-    { sentence: 'It ___ a cat.', answer: 'is', distractors: ['I', 'the', 'my'] },
-    { sentence: '___ sun is up.', answer: 'The', distractors: ['A', 'Is', 'My'] },
-    { sentence: 'You and ___ are friends.', answer: 'I', distractors: ['a', 'is', 'to'] },
+    { sentence: 'I ___ a cat.', answer: 'see', distractors: ['is', 'on', 'no'] },
+    { sentence: '___ can run fast.', answer: 'I', distractors: ['me', 'on', 'no'] },
+    { sentence: '___ is on the mat.', answer: 'He', distractors: ['We', 'No', 'On'] },
+    { sentence: 'You ___ me are pals.', answer: 'and', distractors: ['is', 'on', 'no'] },
+    { sentence: '___ you see me?', answer: 'Can', distractors: ['Are', 'Is', 'On'] },
   ],
+  // Level 2: SIPPS 11-20 words (she, get, to, was, go, down, saw, my, where, here, they, little, put, what)
   2: [
-    { sentence: 'The sky is ___.', answer: 'blue', distractors: ['run', 'big', 'red'] },
-    { sentence: 'I see a ___ apple.', answer: 'red', distractors: ['go', 'my', 'blue'] },
-    { sentence: 'The sun is ___.', answer: 'yellow', distractors: ['green', 'run', 'pink'] },
-    { sentence: 'Grass is ___.', answer: 'green', distractors: ['pink', 'see', 'brown'] },
-    { sentence: 'The ___ cat sat down.', answer: 'black', distractors: ['red', 'up', 'white'] },
+    { sentence: '___ went to the park.', answer: 'She', distractors: ['My', 'Go', 'Put'] },
+    { sentence: 'I ___ a big dog.', answer: 'saw', distractors: ['was', 'go', 'get'] },
+    { sentence: 'Come ___ and sit.', answer: 'here', distractors: ['they', 'what', 'down'] },
+    { sentence: 'The ___ cat is cute.', answer: 'little', distractors: ['where', 'what', 'down'] },
+    { sentence: '___ is your name?', answer: 'What', distractors: ['Where', 'Go', 'My'] },
   ],
+  // Level 3: SIPPS 21-30 words (do, like, have, home, said, her, of, out, name, some, come, make, say)
   3: [
-    { sentence: 'I ___ a bird.', answer: 'see', distractors: ['go', 'red', 'run'] },
-    { sentence: 'We ___ to play.', answer: 'like', distractors: ['see', 'run', 'go'] },
-    { sentence: '___ at the dog!', answer: 'Look', distractors: ['Run', 'Go', 'Come'] },
-    { sentence: 'She ___ to the park.', answer: 'went', distractors: ['said', 'can', 'run'] },
-    { sentence: 'I ___ run fast.', answer: 'can', distractors: ['see', 'go', 'said'] },
+    { sentence: 'I ___ to play.', answer: 'like', distractors: ['said', 'come', 'make'] },
+    { sentence: 'We ___ a big dog.', answer: 'have', distractors: ['come', 'make', 'say'] },
+    { sentence: 'He ___ it was fun.', answer: 'said', distractors: ['like', 'have', 'make'] },
+    { sentence: '___ play with me!', answer: 'Come', distractors: ['Make', 'Say', 'Do'] },
+    { sentence: 'I can ___ a cake.', answer: 'make', distractors: ['say', 'do', 'come'] },
   ],
+  // Level 4: SIPPS 31-55 words (be, look, there, over, want, water, from, for, find, people, again, your, very, could, would, one, two, good, every)
   4: [
-    { sentence: '___ is my mom.', answer: 'She', distractors: ['He', 'We', 'They'] },
-    { sentence: 'Give it to ___.', answer: 'me', distractors: ['he', 'we', 'they'] },
-    { sentence: 'My ___ is nice.', answer: 'dad', distractors: ['he', 'she', 'him'] },
-    { sentence: '___ are going home.', answer: 'They', distractors: ['Him', 'Her', 'She'] },
-    { sentence: 'I see ___ over there.', answer: 'him', distractors: ['she', 'we', 'me'] },
+    { sentence: '___ at the bird!', answer: 'Look', distractors: ['Find', 'Want', 'From'] },
+    { sentence: 'I ___ to play.', answer: 'want', distractors: ['look', 'find', 'from'] },
+    { sentence: 'Can you ___ my hat?', answer: 'find', distractors: ['want', 'look', 'over'] },
+    { sentence: 'That was ___ good!', answer: 'very', distractors: ['your', 'from', 'over'] },
+    { sentence: 'I ___ like some cake.', answer: 'would', distractors: ['could', 'every', 'again'] },
   ],
+  // Level 5: Dolch Pre-Primer (a, big, blue, funny, help, in, it, jump, not, play, red, run, up)
   5: [
-    { sentence: '___ is your name?', answer: 'What', distractors: ['How', 'Are', 'Who'] },
-    { sentence: '___ do you live?', answer: 'Where', distractors: ['What', 'Who', 'When'] },
-    { sentence: '___ are you today?', answer: 'How', distractors: ['Who', 'When', 'What'] },
-    { sentence: '___ is at the door?', answer: 'Who', distractors: ['What', 'Why', 'How'] },
-    { sentence: '___ you ready?', answer: 'Are', distractors: ['Were', 'Was', 'Do'] },
+    { sentence: 'I see ___ big dog.', answer: 'a', distractors: ['it', 'up', 'in'] },
+    { sentence: 'The frog can ___.', answer: 'jump', distractors: ['help', 'play', 'run'] },
+    { sentence: 'The clown is ___.', answer: 'funny', distractors: ['big', 'red', 'blue'] },
+    { sentence: 'Can you ___ me?', answer: 'help', distractors: ['run', 'play', 'jump'] },
+    { sentence: 'It is ___ the box.', answer: 'in', distractors: ['up', 'big', 'not'] },
   ],
 };
 

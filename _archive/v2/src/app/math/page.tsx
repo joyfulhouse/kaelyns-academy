@@ -9,70 +9,55 @@ import AnswerButtons from '@/components/AnswerButtons';
 import ProgressBar from '@/components/ProgressBar';
 import Tutor from '@/components/Tutor';
 import StarDisplay from '@/components/StarDisplay';
-import { generateReadingProblem } from '@/lib/readingProblems';
+import { generateMathProblem } from '@/lib/mathProblems';
 import { processAnswer, getEffectiveLevel, pickNextSkill } from '@/lib/engine';
-import type { ReadingProblem, ReadingSkill } from '@/types';
+import type { MathProblem, MathSkill } from '@/types';
 
 const TOTAL_QUESTIONS = 10;
 const RESULT_DELAY_MS = 1500;
 const BONUS_STAR_THRESHOLD = 0.8;
 
-export default function ReadingPage() {
+export default function MathPage() {
   const { progress, updateSkill, addStar } = useProgress();
-  const { messages, speaking, ask, speak } = useTutor();
+  const { messages, speaking, ask } = useTutor();
 
-  const [currentProblem, setCurrentProblem] = useState<ReadingProblem | null>(null);
-  const [currentSkill, setCurrentSkill] = useState<ReadingSkill>('sightWords');
+  // Progress is guaranteed loaded (ProgressProvider gates children)
+  const [{ skill: currentSkill, problem: currentProblem }, setCurrentState] = useState(() => {
+    const skill = pickNextSkill('math', progress.math) as MathSkill;
+    const level = getEffectiveLevel(progress.math[skill]);
+    return { skill, problem: generateMathProblem(skill, level) };
+  });
   const [questionNum, setQuestionNum] = useState(0);
   const [sessionCorrect, setSessionCorrect] = useState(0);
   const [showResult, setShowResult] = useState(false);
   const [answered, setAnswered] = useState(false);
   const [sessionDone, setSessionDone] = useState(false);
-  const initialized = useRef(false);
 
-  const loadProblem = useCallback(() => {
-    const skill = pickNextSkill('reading', progress.reading) as ReadingSkill;
-    const level = getEffectiveLevel(progress.reading[skill]);
-    const problem = generateReadingProblem(skill, level);
-    setCurrentSkill(skill);
-    setCurrentProblem(problem);
+  // Greet once on mount
+  const greeted = useRef(false);
+  useEffect(() => {
+    if (greeted.current) return;
+    greeted.current = true;
+    void ask({ action: 'greet' });
+  }, [ask]);
+
+  const nextProblem = useCallback(() => {
+    const skill = pickNextSkill('math', progress.math) as MathSkill;
+    const level = getEffectiveLevel(progress.math[skill]);
+    setCurrentState({ skill, problem: generateMathProblem(skill, level) });
     setShowResult(false);
     setAnswered(false);
-
-    // For hearAndTap: speak the target word automatically
-    if (problem.type === 'hearAndTap') {
-      void speak(problem.answer);
-    }
-  }, [progress.reading, speak]);
-
-  // Greet and generate first problem on mount
-  useEffect(() => {
-    if (initialized.current) return;
-    initialized.current = true;
-    void ask({ action: 'greet' });
-    const timer = setTimeout(() => {
-      const skill = pickNextSkill('reading', progress.reading) as ReadingSkill;
-      const level = getEffectiveLevel(progress.reading[skill]);
-      const problem = generateReadingProblem(skill, level);
-      setCurrentSkill(skill);
-      setCurrentProblem(problem);
-      // For hearAndTap: speak the target word automatically
-      if (problem.type === 'hearAndTap') {
-        void speak(problem.answer);
-      }
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [ask, progress.reading, speak]);
+  }, [progress.math]);
 
   const handleAnswer = useCallback(
     (answer: string | number) => {
-      if (answered || !currentProblem) return;
+      if (answered) return;
       setAnswered(true);
 
-      const wasCorrect = String(answer) === currentProblem.answer;
-      const result = processAnswer(currentSkill, progress.reading[currentSkill], wasCorrect);
+      const wasCorrect = Number(answer) === currentProblem.answer;
+      const result = processAnswer(currentSkill, progress.math[currentSkill], wasCorrect);
 
-      updateSkill('reading', currentSkill, result.progress);
+      updateSkill('math', currentSkill, result.progress);
       if (result.earnedStar) {
         addStar();
       }
@@ -85,7 +70,7 @@ export default function ReadingPage() {
       void ask({
         action: wasCorrect ? 'correct' : 'scaffold',
         problem: currentProblem,
-        studentAnswer: String(answer),
+        studentAnswer: Number(answer),
         wasCorrect,
         currentLevel: result.progress.level,
         recentStreak: result.progress.consecutiveCorrect,
@@ -105,7 +90,7 @@ export default function ReadingPage() {
           }
         } else {
           setQuestionNum(nextQ);
-          loadProblem();
+          nextProblem();
         }
       }, RESULT_DELAY_MS);
     },
@@ -113,29 +98,23 @@ export default function ReadingPage() {
       answered,
       currentProblem,
       currentSkill,
-      progress.reading,
+      progress.math,
       questionNum,
       sessionCorrect,
       updateSkill,
       addStar,
       ask,
-      loadProblem,
+      nextProblem,
     ],
   );
 
   const handleHint = useCallback(() => {
-    if (!currentProblem) return;
     void ask({
       action: 'hint',
       problem: currentProblem,
       currentLevel: currentProblem.level,
     });
   }, [ask, currentProblem]);
-
-  const handleSpeakWord = useCallback(() => {
-    if (!currentProblem) return;
-    void speak(currentProblem.display);
-  }, [speak, currentProblem]);
 
   const handlePlayAgain = useCallback(() => {
     setQuestionNum(0);
@@ -144,10 +123,9 @@ export default function ReadingPage() {
     setShowResult(false);
     setAnswered(false);
     void ask({ action: 'greet' });
-    loadProblem();
-  }, [ask, loadProblem]);
+    nextProblem();
+  }, [ask, nextProblem]);
 
-  // Session done screen
   if (sessionDone) {
     return (
       <div className="flex min-h-dvh flex-col items-center justify-center bg-cream p-6">
@@ -156,12 +134,12 @@ export default function ReadingPage() {
             {'\u2B50'}
           </span>
           <h1 className="font-display text-4xl font-bold text-chocolate">
-            Amazing!
+            Great Job!
           </h1>
           <p className="font-display text-2xl text-chocolate-muted">
             You got{' '}
-            <span className="font-bold text-sage">{sessionCorrect}</span> out of{' '}
-            <span className="font-bold">{TOTAL_QUESTIONS}</span> correct!
+            <span className="font-bold text-coral">{sessionCorrect}</span> out
+            of <span className="font-bold">{TOTAL_QUESTIONS}</span> correct!
           </p>
           {sessionCorrect / TOTAL_QUESTIONS >= BONUS_STAR_THRESHOLD && (
             <p className="font-display text-lg text-sage-dark font-semibold">
@@ -172,13 +150,13 @@ export default function ReadingPage() {
             <button
               type="button"
               onClick={handlePlayAgain}
-              className="bg-sage hover:bg-sage-dark text-white font-display text-xl font-bold py-4 px-8 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95 shadow-medium"
+              className="bg-coral hover:bg-coral-dark text-white font-display text-xl font-bold py-4 px-8 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95 shadow-medium"
             >
               Play Again
             </button>
             <Link
               href="/"
-              className="bg-coral hover:bg-coral-dark text-white font-display text-xl font-bold py-4 px-8 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95 shadow-medium text-center"
+              className="bg-sage hover:bg-sage-dark text-white font-display text-xl font-bold py-4 px-8 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95 shadow-medium text-center"
             >
               Home
             </Link>
@@ -193,7 +171,6 @@ export default function ReadingPage() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-cream">
-      {/* Top bar */}
       <header className="flex items-center gap-3 px-4 py-3 bg-paper border-b-2 border-cream-dark">
         <Link
           href="/"
@@ -203,43 +180,22 @@ export default function ReadingPage() {
           {'\u2190'}
         </Link>
         <div className="flex-1">
-          <ProgressBar current={questionNum} total={TOTAL_QUESTIONS} label="Reading" />
+          <ProgressBar current={questionNum} total={TOTAL_QUESTIONS} label="Math" />
         </div>
         <StarDisplay />
       </header>
 
-      {/* Center: problem + answers */}
       <main className="flex flex-1 flex-col items-center justify-center gap-6 px-4 pb-28">
-        {currentProblem ? (
-          <>
-            <Problem problem={currentProblem} />
-            {/* Speaker button for seeAndSay problems */}
-            {currentProblem.type === 'seeAndSay' && !answered && (
-              <button
-                type="button"
-                onClick={handleSpeakWord}
-                className="flex items-center justify-center w-14 h-14 rounded-full bg-sky hover:bg-sky-dark text-white text-2xl transition-all duration-200 hover:scale-105 active:scale-95 shadow-medium"
-                aria-label="Hear the word"
-              >
-                {'\uD83D\uDD0A'}
-              </button>
-            )}
-            <AnswerButtons
-              options={currentProblem.options}
-              onAnswer={handleAnswer}
-              disabled={answered}
-              correctAnswer={currentProblem.answer}
-              showResult={showResult}
-            />
-          </>
-        ) : (
-          <p className="font-display text-xl text-chocolate-muted">
-            Loading...
-          </p>
-        )}
+        <Problem problem={currentProblem} />
+        <AnswerButtons
+          options={currentProblem.options}
+          onAnswer={handleAnswer}
+          disabled={answered}
+          correctAnswer={currentProblem.answer}
+          showResult={showResult}
+        />
       </main>
 
-      {/* Bottom: Tutor */}
       <Tutor messages={messages} speaking={speaking} onTap={handleHint} />
     </div>
   );

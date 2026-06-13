@@ -1,24 +1,16 @@
-import type { Metadata } from 'next';
-import { Fredoka, Nunito } from 'next/font/google';
-import { ProgressProvider } from '@/hooks/useProgress';
-import './globals.css';
-
-const fredoka = Fredoka({ subsets: ['latin'], variable: '--font-fredoka' });
-const nunito = Nunito({ subsets: ['latin'], variable: '--font-nunito' });
+import type { Metadata } from "next";
+import type { ReactNode } from "react";
+import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Kaelyn's Academy",
-  description: 'Learn math and reading with your AI tutor',
+  description: "A joyful, adaptive learning platform for young children.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`${fredoka.variable} ${nunito.variable}`}>
-      <body>
-        <ProgressProvider>
-          {children}
-        </ProgressProvider>
-      </body>
+    <html lang="en">
+      <body>{children}</body>
     </html>
   );
 }
