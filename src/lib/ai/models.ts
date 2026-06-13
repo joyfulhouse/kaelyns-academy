@@ -9,9 +9,18 @@ import { getEnv } from "@/lib/env";
  * exported async functions, never at import time, so `next build` is safe.
  */
 
-/** Named tutor routes configured in LiteLLM (Claude models behind the gateway). */
-export const TUTOR_FAST = "kaelyn-tutor-fast" as const;
-export const TUTOR_RICH = "kaelyn-tutor-rich" as const;
+/**
+ * Tutor routes on the homelab LiteLLM gateway.
+ *  - fast: `ha-assist` (Qwen3.6-35B on dgx0, reasoning DISABLED) — sub-second,
+ *    direct JSON, ideal for bounded practice generation.
+ *  - rich: `chat-default` (same model, reasoning ON) — slower but richer prose
+ *    for parent progress reports.
+ * Both are local + free + always warm. To move the tutor to Claude later, add a
+ * Claude route to the LiteLLM config (k3s-infra/k8s/litellm) + an Anthropic key
+ * sealed-secret, then point these two constants at it. Model names are config.
+ */
+export const TUTOR_FAST = "ha-assist" as const;
+export const TUTOR_RICH = "chat-default" as const;
 
 export type TutorModel = typeof TUTOR_FAST | typeof TUTOR_RICH | (string & {});
 
