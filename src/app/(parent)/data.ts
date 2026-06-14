@@ -49,6 +49,8 @@ const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
   "journal-prompt": "Draw & write",
   "reading-comprehension": "Read & answer",
   "math-array": "Array builder",
+  "lang-symbol-intro": "Meet the symbols",
+  "lang-listen-match": "Listen & find",
 };
 
 /** Plain-language label for an attempt's kind (falls back to the raw kind). */

@@ -5,6 +5,8 @@ import {
   HandTapIcon,
   NotePencilIcon,
   PuzzlePieceIcon,
+  SpeakerHighIcon,
+  TranslateIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import type { Icon } from "@phosphor-icons/react";
 import type { ActivityKind } from "@/content";
@@ -23,4 +25,6 @@ export const ACTIVITY_META: Record<ActivityKind, { icon: Icon; label: string }> 
   "journal-prompt": { icon: NotePencilIcon, label: "Draw & tell" },
   "reading-comprehension": { icon: BookOpenTextIcon, label: "Read & think" },
   "math-array": { icon: DotsNineIcon, label: "Make an array" },
+  "lang-symbol-intro": { icon: TranslateIcon, label: "Meet the symbols" },
+  "lang-listen-match": { icon: SpeakerHighIcon, label: "Listen & find" },
 };

@@ -29,7 +29,7 @@ function isSupported(): boolean {
   return getSynth() !== null && typeof window !== "undefined" && "SpeechSynthesisUtterance" in window;
 }
 
-export function useSpeech(): SpeechController {
+export function useSpeech(locale = "en-US"): SpeechController {
   const supported = useSyncExternalStore(subscribe, isSupported, () => false);
   const synthRef = useRef<SpeechSynthesis | null>(null);
 
@@ -49,10 +49,11 @@ export function useSpeech(): SpeechController {
     if (!trimmed) return;
     synth.cancel();
     const utterance = new SpeechSynthesisUtterance(trimmed);
+    utterance.lang = locale;
     utterance.rate = 0.92; // a touch slow for early ears
     utterance.pitch = 1.05;
     synth.speak(utterance);
-  }, []);
+  }, [locale]);
 
   const cancel = useCallback(() => {
     (synthRef.current ?? getSynth())?.cancel();

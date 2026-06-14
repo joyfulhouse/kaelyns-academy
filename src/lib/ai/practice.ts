@@ -41,6 +41,12 @@ const KIND_BRIEF: Record<ActivityKind, string> = {
   "math-array":
     'Array items. Each: {instruction, mode:"build"|"multiply"|"divide"|"area", rows:1-12, cols:1-12, answer?, emoji?}. ' +
     "answer defaults to rows*cols (the product/area; for divide, rows*cols is the total shared). emoji is one symbol to tile the array. Keep factors friendly.",
+  "lang-symbol-intro":
+    "Symbol-introduction items. Each: {locale, instruction, skillTags:[...], symbols:[{id, symbol, romanization, spoken, audioKey?, example?, exampleSpoken?, meaning?}], verify:[{prompt, spokenPrompt?, choices:[2-6], answerIndex}]}. " +
+    "Introduce 1 to 6 symbols the learner is studying, then 1 to 4 quick checks. Use ONLY symbols from the language's authored inventory; never invent glyphs. `spoken` is the text TTS says; `id` is the inventory id.",
+  "lang-listen-match":
+    "Listening-discrimination items. Each: {locale, instruction, skillTags:[...], items:[{spoken, audioKey?, choices:[2-6 symbols/words], choiceLabels?:[romanization], answerIndex}]}. " +
+    "The child hears `spoken` and taps the matching choice. Every choice and the answer MUST come from the authored inventory. 2 to 8 items.",
 };
 
 const MODEL_FOR_BAND: Record<Band, TutorModel> = {

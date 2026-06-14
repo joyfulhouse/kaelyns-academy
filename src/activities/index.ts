@@ -16,6 +16,8 @@ import { mathTenframe } from "./math-tenframe";
 import { journalPrompt } from "./journal-prompt";
 import { readingComprehension } from "./reading-comprehension";
 import { mathArray } from "./math-array";
+import { langSymbolIntro } from "./lang-symbol-intro";
+import { langListenMatch } from "./lang-listen-match";
 
 let registered = false;
 
@@ -29,6 +31,8 @@ export function registerActivityTypes(): void {
   registerActivityType(journalPrompt);
   registerActivityType(readingComprehension);
   registerActivityType(mathArray);
+  registerActivityType(langSymbolIntro);
+  registerActivityType(langListenMatch);
 }
 
 registerActivityTypes();
