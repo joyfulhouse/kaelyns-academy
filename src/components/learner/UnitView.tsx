@@ -9,8 +9,8 @@ import { Pill } from "@/components/ui/Pill";
 import { Stars } from "@/components/ui/Stars";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner } from "./learners";
-import { useProgress } from "./useProgress";
-import { ACTIVITY_META, PROGRAM_SLUG } from "./activityMeta";
+import { useLearnerState } from "./useLearnerState";
+import { ACTIVITY_META } from "./activityMeta";
 
 /**
  * A unit (the week's world): theme, big idea, phonics/math focus + project,
@@ -20,7 +20,9 @@ import { ACTIVITY_META, PROGRAM_SLUG } from "./activityMeta";
 export function UnitView({ unit }: { unit: Unit }) {
   const reduce = useReducedMotion();
   const { learner } = useActiveLearner();
-  const { getStars, ready } = useProgress(learner.id, PROGRAM_SLUG);
+  // Stars come from the active surface: DB in account mode, localStorage guest
+  // otherwise. The mock learner id only matters in guest mode.
+  const { getStars, ready } = useLearnerState(learner.id);
 
   const readAloud = `${unit.title}. ${unit.bigIdea} Pick something to do.`;
 
