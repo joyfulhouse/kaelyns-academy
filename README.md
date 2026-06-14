@@ -79,3 +79,5 @@ Sessions persist for 30 days.
 - Tailwind CSS v4 with CSS variable theming
 - Bun runtime (Node.js compatible)
 - Signed cookie sessions for persistence
+
+<!-- ci: auto-deploy smoke-test marker (2026-06-14); push to main → Forgejo poll → Harbor → ArgoCD roll -->
