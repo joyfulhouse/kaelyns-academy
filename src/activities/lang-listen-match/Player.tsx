@@ -6,21 +6,21 @@ import type { LangListenMatchConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { RewardOverlay } from "../_shared/RewardOverlay";
-import { useSpeech } from "../_shared/useSpeech";
+import { useAudio } from "../_shared/useAudio";
 import { schema, score, type LangListenMatchResponse } from "./logic";
 
 /**
  * Audio-first discrimination: the child hears a sound/word (big play button,
  * auto-played on each item) and taps the symbol or word that matches. Forgiving
- * — a wrong tap is data for the tutor, never a failure. Locale-aware via
- * useSpeech; Wave-2 plays pre-recorded clips through useAudio when present.
+ * — a wrong tap is data for the tutor, never a failure. Hybrid + locale-aware
+ * audio via useAudio: a pre-recorded clip when present, else browser TTS.
  */
 export function LangListenMatchPlayer({
   config,
   onComplete,
 }: ActivityPlayerProps<LangListenMatchConfig, LangListenMatchResponse>) {
   const parsed = useMemo(() => schema.parse(config), [config]);
-  const speech = useSpeech(parsed.locale);
+  const audio = useAudio(parsed.locale);
 
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<number[]>([]);
@@ -30,8 +30,8 @@ export function LangListenMatchPlayer({
   const item = parsed.items[step];
 
   const play = useCallback(() => {
-    speech.speak(item.spoken);
-  }, [speech, item.spoken]);
+    audio.play({ audioKey: item.audioKey, text: item.spoken });
+  }, [audio, item.audioKey, item.spoken]);
 
   // Auto-play the prompt when a new item appears.
   useEffect(() => {
@@ -53,7 +53,7 @@ export function LangListenMatchPlayer({
     if (picked !== null) return;
     setPicked(i);
     const nextAnswers = [...answers, i];
-    speech.speak(parsed.items[step].choices[i]);
+    audio.play({ text: parsed.items[step].choices[i] });
     window.setTimeout(() => {
       if (step + 1 >= parsed.items.length) {
         setDone({ answers: nextAnswers });

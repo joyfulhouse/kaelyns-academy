@@ -1,25 +1,26 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { SpeakerHighIcon } from "@phosphor-icons/react/dist/ssr";
 import type { LangSymbolIntroConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
-import { Prompt } from "../_shared/ActivityChrome";
 import { RewardOverlay } from "../_shared/RewardOverlay";
-import { useSpeech } from "../_shared/useSpeech";
+import { useAudio } from "../_shared/useAudio";
 import { schema, score, type LangSymbolIntroResponse } from "./logic";
 
 /**
  * Meet a small set of symbols (see the glyph, tap to hear it), then a short,
- * forgiving check. Audio is locale-aware via useSpeech; Wave-2 swaps in
- * pre-recorded clips through useAudio when an `audioKey` is present.
+ * forgiving check. Audio is hybrid + locale-aware via useAudio: a pre-recorded
+ * clip plays when one exists for the symbol's id, otherwise the browser speaks
+ * the `spoken` text in the right language.
  */
 export function LangSymbolIntroPlayer({
   config,
   onComplete,
 }: ActivityPlayerProps<LangSymbolIntroConfig, LangSymbolIntroResponse>) {
   const parsed = useMemo(() => schema.parse(config), [config]);
-  const speech = useSpeech(parsed.locale);
+  const audio = useAudio(parsed.locale);
 
   const [phase, setPhase] = useState<"learn" | "quiz">("learn");
   const [step, setStep] = useState(0);
@@ -31,8 +32,8 @@ export function LangSymbolIntroPlayer({
   useEffect(() => {
     if (introRef.current) return;
     introRef.current = true;
-    speech.speak(parsed.instruction);
-  }, [parsed.instruction, speech]);
+    audio.play({ text: parsed.instruction });
+  }, [parsed.instruction, audio]);
 
   if (done) {
     const result = score(parsed, done);
@@ -48,29 +49,39 @@ export function LangSymbolIntroPlayer({
   if (phase === "learn") {
     return (
       <div className="grid gap-8">
-        <Prompt speech={speech} instruction={parsed.instruction} />
+        <div className="flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => audio.play({ text: parsed.instruction })}
+            aria-label="Hear what to do"
+            className="grid size-12 shrink-0 place-items-center rounded-full border-[3px] border-ink bg-honey/30 text-ink shadow-pop transition active:translate-y-0.5 active:shadow-none"
+          >
+            <SpeakerHighIcon size={24} weight="fill" aria-hidden="true" />
+          </button>
+          <p className="text-center text-lg text-ink-soft">{parsed.instruction}</p>
+        </div>
+
         <div className="mx-auto grid max-w-2xl grid-cols-2 gap-4 sm:grid-cols-3">
           {parsed.symbols.map((s) => (
             <button
               key={s.id}
               type="button"
-              onClick={() => speech.speak(s.spoken)}
+              onClick={() => audio.play({ audioKey: s.audioKey ?? s.id, text: s.spoken })}
               aria-label={`${s.symbol}, says ${s.romanization}`}
               className="grid min-h-32 place-items-center gap-1 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-5 shadow-pop transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none"
             >
               <span className="font-display text-5xl text-ink">{s.symbol}</span>
               <span className="text-base text-ink-soft">{s.romanization}</span>
-              {s.example ? (
-                <span className="text-sm text-ink-soft">{s.example}</span>
-              ) : null}
+              {s.example ? <span className="text-sm text-ink-soft">{s.example}</span> : null}
             </button>
           ))}
         </div>
+
         <div className="flex justify-center">
           <button
             type="button"
             onClick={() => {
-              speech.cancel();
+              audio.cancel();
               setPhase("quiz");
             }}
             className="rounded-full border-[3px] border-ink bg-success/25 px-8 py-4 font-display text-xl text-ink shadow-pop transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none"
@@ -88,7 +99,7 @@ export function LangSymbolIntroPlayer({
     if (picked !== null) return;
     setPicked(i);
     const nextAnswers = [...answers, i];
-    speech.speak(q.choices[i]);
+    audio.play({ text: q.choices[i] });
     window.setTimeout(() => {
       if (step + 1 >= parsed.verify.length) {
         setDone({ verifyAnswers: nextAnswers });
@@ -102,7 +113,6 @@ export function LangSymbolIntroPlayer({
 
   return (
     <div className="grid gap-8">
-      <Prompt speech={speech} instruction={q.spokenPrompt ?? q.prompt} />
       <p className="text-center font-display text-2xl text-ink">{q.prompt}</p>
       <div className="mx-auto grid max-w-2xl grid-cols-2 gap-4 sm:grid-cols-4">
         {q.choices.map((c, i) => {
