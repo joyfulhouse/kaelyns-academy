@@ -5,6 +5,11 @@ export type ColumnMap = Record<string, string[]>;
 
 export const REQUIRED_COLUMNS: ColumnMap = {
   health_check: ["id", "note", "checked_at"],
+  // Tutor data model (must be migrated before the app expects it).
+  learner: ["id", "account_id", "display_name", "birth_month"],
+  enrollment: ["id", "learner_id", "program_slug"],
+  attempt: ["id", "learner_id", "activity_id", "kind", "score", "day"],
+  skill_state: ["id", "learner_id", "skill", "outcome", "evidence"],
 };
 
 export function missingColumns(required: ColumnMap, live: ColumnMap): string[] {
