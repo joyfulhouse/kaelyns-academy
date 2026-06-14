@@ -6,6 +6,7 @@ import {
   CheckCircleIcon,
   CircleHalfIcon,
   LightbulbIcon,
+  PlantIcon,
   SparkleIcon,
   SpinnerGapIcon,
   WarningCircleIcon,
@@ -13,30 +14,38 @@ import {
 import { Button } from "@/components/ui/Button";
 import { Pill } from "@/components/ui/Pill";
 import { Surface } from "@/components/ui/Surface";
-import { SampleBadge } from "@/components/parent/SampleBadge";
 import { requestProgressReport, type ProgressReportResult } from "@/app/(parent)/actions";
 import type { ProgressReport } from "@/lib/ai/report";
 
 /**
  * "This week" AI report card on the parent dashboard. Calm, parent-facing: an
  * initial invite, a loading state, a graceful "unavailable" fallback (never a
- * stack trace), and the rendered narrative in the .surface-parent style. Built
- * on sample data today, so it is marked <SampleBadge>. Motion honors
- * prefers-reduced-motion via motion-safe: (DESIGN.md §4).
+ * stack trace), an honest "not enough activity yet" state (we never invent
+ * progress), and the rendered narrative. Grounded in the learner's REAL
+ * skill_state + recent attempts via requestProgressReport(learnerId). Motion
+ * honors prefers-reduced-motion via motion-safe: (DESIGN.md §4).
  */
 
 type ViewState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "ready"; report: ProgressReport }
+  | { status: "empty"; learnerName: string }
   | { status: "error" };
 
 function nextState(result: ProgressReportResult): ViewState {
   if (result.ok) return { status: "ready", report: result.report };
+  if (result.reason === "empty") return { status: "empty", learnerName: result.learnerName };
   return { status: "error" };
 }
 
-export function ProgressReportCard({ notice }: { notice: string }) {
+export function ProgressReportCard({
+  learnerId,
+  learnerName,
+}: {
+  learnerId: string;
+  learnerName: string;
+}) {
   const [view, setView] = useState<ViewState>({ status: "idle" });
   const [isPending, startTransition] = useTransition();
 
@@ -44,7 +53,7 @@ export function ProgressReportCard({ notice }: { notice: string }) {
     setView({ status: "loading" });
     startTransition(async () => {
       try {
-        const result = await requestProgressReport();
+        const result = await requestProgressReport(learnerId);
         setView(nextState(result));
       } catch {
         // A transport failure invoking the action: still show the calm fallback.
@@ -56,12 +65,7 @@ export function ProgressReportCard({ notice }: { notice: string }) {
   const busy = isPending || view.status === "loading";
 
   return (
-    <Surface
-      as="section"
-      tone="raised"
-      aria-labelledby="weekly-report-heading"
-      className="p-6"
-    >
+    <Surface as="section" tone="raised" aria-labelledby="weekly-report-heading" className="p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <span
@@ -80,13 +84,15 @@ export function ProgressReportCard({ notice }: { notice: string }) {
             <p className="text-sm text-ink-faint">A short, honest read on how things are going.</p>
           </div>
         </div>
-        <SampleBadge />
       </div>
 
       <div className="mt-5">
         {view.status === "idle" && (
           <div className="flex flex-col items-start gap-3">
-            <p className="max-w-prose text-sm text-ink-soft">{notice}</p>
+            <p className="max-w-prose text-sm text-ink-soft">
+              A warm, specific summary of {learnerName}&rsquo;s week, grounded only in what she has
+              actually done.
+            </p>
             <Button variant="accent" size="md" onClick={run} disabled={busy}>
               <SparkleIcon weight="fill" className="size-5" />
               Write this week&rsquo;s report
@@ -102,6 +108,18 @@ export function ProgressReportCard({ notice }: { notice: string }) {
           >
             <SpinnerGapIcon weight="bold" className="size-5 motion-safe:animate-spin" />
             Reading the week and writing a calm summary&hellip;
+          </div>
+        )}
+
+        {!busy && view.status === "empty" && (
+          <div className="flex flex-col items-start gap-3">
+            <p className="inline-flex items-start gap-2 text-sm text-ink-soft">
+              <PlantIcon weight="regular" className="mt-0.5 size-5 shrink-0 text-accent-deep" />
+              <span>
+                There is not enough activity yet to write {view.learnerName} a report. Once she
+                completes a few activities, a warm summary will appear here.
+              </span>
+            </p>
           </div>
         )}
 
