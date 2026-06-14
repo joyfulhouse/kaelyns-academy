@@ -54,8 +54,12 @@ export function useAudio(locale = "en-US"): AudioController {
       // A missing/undecodable clip is expected (not every entry is pre-generated) —
       // fall back to TTS rather than surfacing an error.
       el.onerror = () => {
-        if (audioRef.current === el) audioRef.current = null;
-        speech.speak(text);
+        // Only fall back when this element is still the current one — a play that
+        // was already superseded by cancel()/a newer clip must stay silent.
+        if (audioRef.current === el) {
+          audioRef.current = null;
+          speech.speak(text);
+        }
       };
       el.onended = () => {
         if (audioRef.current === el) audioRef.current = null;

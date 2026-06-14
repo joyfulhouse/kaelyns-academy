@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SpeakerHighIcon } from "@phosphor-icons/react/dist/ssr";
 import type { LangListenMatchConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
@@ -38,6 +38,16 @@ export function LangListenMatchPlayer({
     play();
   }, [play]);
 
+  // Clear the answer-reveal timer on unmount so a mid-reveal navigation can't
+  // set state (or stall) after the component is gone.
+  const timerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
   if (done) {
     const result = score(parsed, done);
     return (
@@ -54,7 +64,7 @@ export function LangListenMatchPlayer({
     setPicked(i);
     const nextAnswers = [...answers, i];
     audio.play({ text: parsed.items[step].choices[i] });
-    window.setTimeout(() => {
+    timerRef.current = window.setTimeout(() => {
       if (step + 1 >= parsed.items.length) {
         setDone({ answers: nextAnswers });
       } else {

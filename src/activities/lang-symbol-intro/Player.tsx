@@ -35,6 +35,16 @@ export function LangSymbolIntroPlayer({
     audio.play({ text: parsed.instruction });
   }, [parsed.instruction, audio]);
 
+  // Clear the answer-reveal timer on unmount so a mid-reveal navigation can't
+  // set state (or stall) after the component is gone.
+  const timerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
   if (done) {
     const result = score(parsed, done);
     return (
@@ -100,7 +110,7 @@ export function LangSymbolIntroPlayer({
     setPicked(i);
     const nextAnswers = [...answers, i];
     audio.play({ text: q.choices[i] });
-    window.setTimeout(() => {
+    timerRef.current = window.setTimeout(() => {
       if (step + 1 >= parsed.verify.length) {
         setDone({ verifyAnswers: nextAnswers });
       } else {

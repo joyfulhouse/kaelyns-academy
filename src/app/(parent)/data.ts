@@ -16,6 +16,7 @@ import { deriveOutcome, type SkillState } from "@/lib/tutor/mastery";
 import {
   SKILLS,
   findActivity,
+  findProgramByActivityId,
   getProgram,
   skillTagsForProgram,
   type ActivityKind,
@@ -121,10 +122,17 @@ export interface ActivityRow {
 }
 
 function toActivityRow(program: Program | undefined, a: RecentAttempt): ActivityRow {
-  const found = program ? findActivity(program, a.activityId) : undefined;
+  let found = program ? findActivity(program, a.activityId) : undefined;
+  if (!found) {
+    // Attempts can span programs (e.g. a World Languages activity shown on the
+    // core dashboard) — resolve the owning program so the parent sees a real
+    // title, not the raw id.
+    const owner = findProgramByActivityId(a.activityId);
+    found = owner ? findActivity(owner, a.activityId) : undefined;
+  }
   return {
     activityId: a.activityId,
-    title: found?.activity.title ?? a.activityId,
+    title: found?.activity.title ?? kindLabel(a.kind),
     kindLabel: kindLabel(a.kind),
     stars: a.stars,
     day: a.day,
