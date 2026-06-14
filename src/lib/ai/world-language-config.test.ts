@@ -1,0 +1,168 @@
+import { describe, expect, it } from "vitest";
+import { getLanguage } from "@/content/languages";
+import {
+  inventorySlice,
+  isLangKind,
+  languageForSkillHints,
+  validateLangItems,
+} from "./world-language-config";
+
+/**
+ * Pure-guard tests for bounded World-Languages generation. No network: these
+ * exercise the language-derivation + the anti-hallucination guard only.
+ */
+
+const zhuyin = getLanguage("zhuyin");
+if (!zhuyin) throw new Error("test setup: zhuyin language missing");
+const spanish = getLanguage("spanish");
+if (!spanish) throw new Error("test setup: spanish language missing");
+
+// Real inventory glyphs to build valid fixtures from.
+const bGlyph = "ㄅ"; // zhuyin-b (U+3105)
+const pGlyph = "ㄆ"; // zhuyin-p (U+3106)
+const mGlyph = "ㄇ"; // zhuyin-m (U+3107)
+
+describe("languageForSkillHints", () => {
+  it("maps a zhuyin skill hint to the zhuyin language", () => {
+    expect(languageForSkillHints(["zhuyin.symbols.initials"])?.id).toBe("zhuyin");
+  });
+
+  it("maps a spanish skill hint to the spanish language", () => {
+    expect(languageForSkillHints(["spanish.greetings"])?.id).toBe("spanish");
+  });
+
+  it("maps japanese and korean hints to their languages", () => {
+    expect(languageForSkillHints(["japanese.hiragana-vowels"])?.id).toBe("japanese");
+    expect(languageForSkillHints(["korean.vowels"])?.id).toBe("korean");
+  });
+
+  it("skips non-language hints and uses the first language hint", () => {
+    // reading.* is a real skill but not a language domain; spanish.* wins.
+    expect(
+      languageForSkillHints(["reading.fluency.phrasing", "spanish.numbers"])?.id,
+    ).toBe("spanish");
+  });
+
+  it("returns undefined for unknown or non-language-only hints", () => {
+    expect(languageForSkillHints(["not.a.real.skill"])).toBeUndefined();
+    expect(languageForSkillHints(["math.mult.facts"])).toBeUndefined();
+    expect(languageForSkillHints([])).toBeUndefined();
+  });
+});
+
+describe("isLangKind", () => {
+  it("recognizes the two language kinds and rejects others", () => {
+    expect(isLangKind("lang-symbol-intro")).toBe(true);
+    expect(isLangKind("lang-listen-match")).toBe(true);
+    expect(isLangKind("phonics-wordbuild")).toBe(false);
+  });
+});
+
+describe("inventorySlice", () => {
+  it("narrows to a matching group by keyword and caps the size", () => {
+    const slice = inventorySlice(zhuyin, "initials", ["zhuyin.symbols.initials"]);
+    expect(slice.length).toBeGreaterThan(0);
+    expect(slice.length).toBeLessThanOrEqual(40);
+    // Every entry in the slice is an "initials" group member.
+    expect(slice.every((e) => e.group === "initials")).toBe(true);
+    expect(slice.some((e) => e.symbol === bGlyph)).toBe(true);
+  });
+
+  it("falls back to the whole inventory when nothing matches the focus", () => {
+    const slice = inventorySlice(zhuyin, "xyzzy-nonsense", []);
+    // Capped, but drawn from the full inventory (not empty).
+    expect(slice.length).toBeGreaterThan(0);
+    expect(slice.length).toBeLessThanOrEqual(40);
+  });
+});
+
+describe("validateLangItems — lang-symbol-intro", () => {
+  function symbolItem(symbol: string, choices: string[], answerIndex = 0) {
+    return {
+      locale: "zh-TW",
+      instruction: "Tap the one you hear.",
+      skillTags: ["zhuyin.symbols.initials"],
+      // id intentionally wrong so we can assert the repair to the inventory id.
+      symbols: [{ id: "wrong-id", symbol, romanization: "b", spoken: "ㄅㄛ" }],
+      verify: [{ prompt: "Which one?", choices, answerIndex }],
+    };
+  }
+
+  it("keeps a valid item and repairs the symbol id to the inventory id", () => {
+    const item = symbolItem(bGlyph, [bGlyph, pGlyph], 0);
+    const kept = validateLangItems("lang-symbol-intro", [item], zhuyin, []);
+    expect(kept).toHaveLength(1);
+    // id repaired from "wrong-id" to the canonical inventory id for ㄅ.
+    expect(kept[0].symbols[0].id).toBe("zhuyin-b");
+  });
+
+  it("DROPS an item whose shown symbol is a made-up glyph", () => {
+    // "Ｂ" (fullwidth latin B, U+FF22) is NOT in the zhuyin inventory.
+    const item = symbolItem("Ｂ", [bGlyph, pGlyph], 0);
+    expect(() => validateLangItems("lang-symbol-intro", [item], zhuyin, [])).toThrow();
+  });
+
+  it("DROPS an item whose verify choice is a CJK look-alike, keeping the valid sibling", () => {
+    // Katakana 'ハ' (U+30CF) visually rhymes with a bopomofo glyph but is NOT
+    // in the zhuyin inventory — the anti-hallucination guard must reject it.
+    const bad = symbolItem(bGlyph, [bGlyph, "ハ"], 0);
+    const good = symbolItem(mGlyph, [mGlyph, pGlyph], 0);
+    const kept = validateLangItems("lang-symbol-intro", [bad, good], zhuyin, []);
+    expect(kept).toHaveLength(1);
+    expect(kept[0].symbols[0].symbol).toBe(mGlyph);
+  });
+
+  it("DROPS an item with an out-of-range answerIndex", () => {
+    const item = symbolItem(bGlyph, [bGlyph, pGlyph], 5);
+    expect(() => validateLangItems("lang-symbol-intro", [item], zhuyin, [])).toThrow();
+  });
+});
+
+describe("validateLangItems — lang-listen-match", () => {
+  function listenItem(choices: string[], answerIndex = 0) {
+    return {
+      locale: "zh-TW",
+      instruction: "Tap what you hear.",
+      skillTags: ["zhuyin.symbols.initials"],
+      items: [{ spoken: "ㄅㄛ", choices, answerIndex }],
+    };
+  }
+
+  it("keeps an item whose every choice is an inventory glyph", () => {
+    const kept = validateLangItems(
+      "lang-listen-match",
+      [listenItem([bGlyph, pGlyph, mGlyph], 0)],
+      zhuyin,
+      [],
+    );
+    expect(kept).toHaveLength(1);
+  });
+
+  it("DROPS an item with a glyph not in the inventory", () => {
+    // 'B' is a plain ASCII letter, never an inventory symbol.
+    expect(() =>
+      validateLangItems("lang-listen-match", [listenItem([bGlyph, "B"], 0)], zhuyin, []),
+    ).toThrow();
+  });
+
+  it("validates Spanish word-choices against the Spanish inventory", () => {
+    const hola = "Hola"; // es-hola
+    const adios = "Adiós"; // es-adios
+    const good = {
+      locale: "es-MX",
+      instruction: "Tap what you hear.",
+      skillTags: ["spanish.greetings"],
+      items: [{ spoken: "Hola", choices: [hola, adios], answerIndex: 0 }],
+    };
+    expect(validateLangItems("lang-listen-match", [good], spanish, [])).toHaveLength(1);
+
+    // A plausible but non-inventory Spanish word must be rejected.
+    const bad = {
+      locale: "es-MX",
+      instruction: "Tap what you hear.",
+      skillTags: ["spanish.greetings"],
+      items: [{ spoken: "Hola", choices: [hola, "Buenas"], answerIndex: 0 }],
+    };
+    expect(() => validateLangItems("lang-listen-match", [bad], spanish, [])).toThrow();
+  });
+});

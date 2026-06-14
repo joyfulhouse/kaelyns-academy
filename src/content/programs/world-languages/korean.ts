@@ -1,9 +1,16 @@
 import type { Unit } from "../../types";
 
 /**
- * Korean — a new language with a logical, learnable alphabet. Letters combine
- * into syllable blocks; start with the basic vowel jamo. Starter ladder; the
- * content pass extends through consonant jamo, syllable blocks, and greetings.
+ * Korean — a new language with a logical, learnable alphabet. Letters snap into
+ * syllable blocks, so the ladder climbs: vowel jamo -> consonant jamo (in two
+ * passes) -> CV blocks -> everyday greetings. Built for an English-speaking
+ * ~6-year-old; Revised Romanization is the helper label.
+ *
+ * Every jamo, block, and phrase below is copied EXACTLY from the authored
+ * inventory in src/content/languages/korean.ts (id / symbol / romanization /
+ * spoken / meaning). TTS note: a bare jamo does not voice well, so each symbol's
+ * `spoken` is a full syllable (vowel ->its IEUNG-onset block, consonant ->its
+ * "a" block); we use the inventory's `spoken` as-is and `audioKey` = inventory id.
  */
 export const koreanUnit: Unit = {
   id: "korean",
@@ -34,15 +41,16 @@ export const koreanUnit: Unit = {
             instruction: "Korean vowels are simple lines. Tap each one to hear it.",
             skillTags: ["korean.vowels"],
             symbols: [
-              { id: "jamo-a", symbol: "ㅏ", romanization: "a", spoken: "아" },
-              { id: "jamo-eo", symbol: "ㅓ", romanization: "eo", spoken: "어" },
-              { id: "jamo-o", symbol: "ㅗ", romanization: "o", spoken: "오" },
-              { id: "jamo-u", symbol: "ㅜ", romanization: "u", spoken: "우" },
-              { id: "jamo-i", symbol: "ㅣ", romanization: "i", spoken: "이" },
+              { id: "jamo-a", symbol: "ㅏ", romanization: "a", spoken: "아", audioKey: "jamo-a" },
+              { id: "jamo-eo", symbol: "ㅓ", romanization: "eo", spoken: "어", audioKey: "jamo-eo" },
+              { id: "jamo-o", symbol: "ㅗ", romanization: "o", spoken: "오", audioKey: "jamo-o" },
+              { id: "jamo-u", symbol: "ㅜ", romanization: "u", spoken: "우", audioKey: "jamo-u" },
+              { id: "jamo-i", symbol: "ㅣ", romanization: "i", spoken: "이", audioKey: "jamo-i" },
             ],
             verify: [
               { prompt: "Which vowel says “a”?", choices: ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ"], answerIndex: 0 },
               { prompt: "Which vowel says “o”?", choices: ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ"], answerIndex: 2 },
+              { prompt: "Which vowel says “i”?", choices: ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ"], answerIndex: 4 },
             ],
           },
         },
@@ -61,15 +69,391 @@ export const koreanUnit: Unit = {
             items: [
               {
                 spoken: "아",
+                audioKey: "jamo-a",
                 choices: ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ"],
                 choiceLabels: ["a", "eo", "o", "u", "i"],
                 answerIndex: 0,
               },
               {
                 spoken: "오",
+                audioKey: "jamo-o",
                 choices: ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ"],
                 choiceLabels: ["a", "eo", "o", "u", "i"],
                 answerIndex: 2,
+              },
+              {
+                spoken: "우",
+                audioKey: "jamo-u",
+                choices: ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ"],
+                choiceLabels: ["a", "eo", "o", "u", "i"],
+                answerIndex: 3,
+              },
+              {
+                spoken: "이",
+                audioKey: "jamo-i",
+                choices: ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ"],
+                choiceLabels: ["a", "eo", "o", "u", "i"],
+                answerIndex: 4,
+              },
+            ],
+          },
+        },
+      ],
+    },
+    {
+      id: "korean-l2",
+      order: 2,
+      title: "Consonants (ㄱ ㄴ ㄷ ㄹ ㅁ)",
+      activities: [
+        {
+          id: "korean-l2-a1",
+          kind: "lang-symbol-intro",
+          title: "Five starting consonants",
+          blurb: "These letters start a sound. We say them with “a”.",
+          estMinutes: 7,
+          band: "ready",
+          skillTags: ["korean.consonants"],
+          config: {
+            locale: "ko-KR",
+            instruction: "A consonant is hard to say alone, so we add “a”. Tap to hear each one.",
+            skillTags: ["korean.consonants"],
+            symbols: [
+              { id: "jamo-g", symbol: "ㄱ", romanization: "g", spoken: "가", audioKey: "jamo-g" },
+              { id: "jamo-n", symbol: "ㄴ", romanization: "n", spoken: "나", audioKey: "jamo-n" },
+              { id: "jamo-d", symbol: "ㄷ", romanization: "d", spoken: "다", audioKey: "jamo-d" },
+              { id: "jamo-r", symbol: "ㄹ", romanization: "r", spoken: "라", audioKey: "jamo-r" },
+              { id: "jamo-m", symbol: "ㅁ", romanization: "m", spoken: "마", audioKey: "jamo-m" },
+            ],
+            verify: [
+              { prompt: "Which letter makes the “g” sound?", choices: ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ"], answerIndex: 0 },
+              { prompt: "Which letter makes the “m” sound?", choices: ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ"], answerIndex: 4 },
+              { prompt: "Which letter makes the “n” sound?", choices: ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ"], answerIndex: 1 },
+            ],
+          },
+        },
+        {
+          id: "korean-l2-a2",
+          kind: "lang-listen-match",
+          title: "Hear the sound, tap the letter",
+          blurb: "Listen to the “a” syllable, then tap its consonant.",
+          estMinutes: 5,
+          band: "ready",
+          skillTags: ["korean.listening", "korean.consonants"],
+          config: {
+            locale: "ko-KR",
+            instruction: "Listen to the syllable. Then tap the consonant you heard.",
+            skillTags: ["korean.listening", "korean.consonants"],
+            items: [
+              {
+                spoken: "가",
+                audioKey: "jamo-g",
+                choices: ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ"],
+                choiceLabels: ["g", "n", "d", "r", "m"],
+                answerIndex: 0,
+              },
+              {
+                spoken: "나",
+                audioKey: "jamo-n",
+                choices: ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ"],
+                choiceLabels: ["g", "n", "d", "r", "m"],
+                answerIndex: 1,
+              },
+              {
+                spoken: "다",
+                audioKey: "jamo-d",
+                choices: ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ"],
+                choiceLabels: ["g", "n", "d", "r", "m"],
+                answerIndex: 2,
+              },
+              {
+                spoken: "마",
+                audioKey: "jamo-m",
+                choices: ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ"],
+                choiceLabels: ["g", "n", "d", "r", "m"],
+                answerIndex: 4,
+              },
+            ],
+          },
+        },
+      ],
+    },
+    {
+      id: "korean-l3",
+      order: 3,
+      title: "More consonants (ㅂ ㅅ ㅈ ㅊ ㅋ ㅌ ㅍ ㅎ)",
+      activities: [
+        {
+          id: "korean-l3-a1",
+          kind: "lang-symbol-intro",
+          title: "The rest of the consonants",
+          blurb: "More sounds for building words. Say each with “a”.",
+          estMinutes: 8,
+          band: "ready",
+          skillTags: ["korean.consonants"],
+          config: {
+            locale: "ko-KR",
+            instruction: "Here are the rest of the consonants. Tap each one to hear it with “a”.",
+            skillTags: ["korean.consonants"],
+            symbols: [
+              { id: "jamo-b", symbol: "ㅂ", romanization: "b", spoken: "바", audioKey: "jamo-b" },
+              { id: "jamo-s", symbol: "ㅅ", romanization: "s", spoken: "사", audioKey: "jamo-s" },
+              { id: "jamo-j", symbol: "ㅈ", romanization: "j", spoken: "자", audioKey: "jamo-j" },
+              { id: "jamo-ch", symbol: "ㅊ", romanization: "ch", spoken: "차", audioKey: "jamo-ch" },
+              { id: "jamo-k", symbol: "ㅋ", romanization: "k", spoken: "카", audioKey: "jamo-k" },
+              { id: "jamo-h", symbol: "ㅎ", romanization: "h", spoken: "하", audioKey: "jamo-h" },
+            ],
+            verify: [
+              { prompt: "Which letter makes the “b” sound?", choices: ["ㅂ", "ㅅ", "ㅈ", "ㅊ", "ㅋ", "ㅎ"], answerIndex: 0 },
+              { prompt: "Which letter makes the “s” sound?", choices: ["ㅂ", "ㅅ", "ㅈ", "ㅊ", "ㅋ", "ㅎ"], answerIndex: 1 },
+              { prompt: "Which letter makes the “h” sound?", choices: ["ㅂ", "ㅅ", "ㅈ", "ㅊ", "ㅋ", "ㅎ"], answerIndex: 5 },
+            ],
+          },
+        },
+        {
+          id: "korean-l3-a2",
+          kind: "lang-listen-match",
+          title: "Hear the sound, tap the letter",
+          blurb: "Listen, then tap the new consonant you heard.",
+          estMinutes: 5,
+          band: "ready",
+          skillTags: ["korean.listening", "korean.consonants"],
+          config: {
+            locale: "ko-KR",
+            instruction: "Listen to the syllable. Then tap the consonant you heard.",
+            skillTags: ["korean.listening", "korean.consonants"],
+            items: [
+              {
+                spoken: "바",
+                audioKey: "jamo-b",
+                choices: ["ㅂ", "ㅅ", "ㅈ", "ㅊ", "ㅋ", "ㅎ"],
+                choiceLabels: ["b", "s", "j", "ch", "k", "h"],
+                answerIndex: 0,
+              },
+              {
+                spoken: "사",
+                audioKey: "jamo-s",
+                choices: ["ㅂ", "ㅅ", "ㅈ", "ㅊ", "ㅋ", "ㅎ"],
+                choiceLabels: ["b", "s", "j", "ch", "k", "h"],
+                answerIndex: 1,
+              },
+              {
+                spoken: "자",
+                audioKey: "jamo-j",
+                choices: ["ㅂ", "ㅅ", "ㅈ", "ㅊ", "ㅋ", "ㅎ"],
+                choiceLabels: ["b", "s", "j", "ch", "k", "h"],
+                answerIndex: 2,
+              },
+              {
+                spoken: "차",
+                audioKey: "jamo-ch",
+                choices: ["ㅂ", "ㅅ", "ㅈ", "ㅊ", "ㅋ", "ㅎ"],
+                choiceLabels: ["b", "s", "j", "ch", "k", "h"],
+                answerIndex: 3,
+              },
+              {
+                spoken: "하",
+                audioKey: "jamo-h",
+                choices: ["ㅂ", "ㅅ", "ㅈ", "ㅊ", "ㅋ", "ㅎ"],
+                choiceLabels: ["b", "s", "j", "ch", "k", "h"],
+                answerIndex: 5,
+              },
+            ],
+          },
+        },
+      ],
+    },
+    {
+      id: "korean-l4",
+      order: 4,
+      title: "Blocks (가 나 다 마 바 사)",
+      activities: [
+        {
+          id: "korean-l4-a1",
+          kind: "lang-symbol-intro",
+          title: "Snap a consonant and a vowel together",
+          blurb: "Consonant + ㅏ makes one little block.",
+          estMinutes: 8,
+          band: "ready",
+          skillTags: ["korean.syllables"],
+          config: {
+            locale: "ko-KR",
+            instruction: "Put a consonant with the vowel ㅏ and it becomes one block. Tap to hear it.",
+            skillTags: ["korean.syllables"],
+            symbols: [
+              { id: "syl-ga", symbol: "가", romanization: "ga", spoken: "가", audioKey: "syl-ga" },
+              { id: "syl-na", symbol: "나", romanization: "na", spoken: "나", audioKey: "syl-na", meaning: "I / me" },
+              { id: "syl-da", symbol: "다", romanization: "da", spoken: "다", audioKey: "syl-da" },
+              { id: "syl-ma", symbol: "마", romanization: "ma", spoken: "마", audioKey: "syl-ma" },
+              { id: "syl-ba", symbol: "바", romanization: "ba", spoken: "바", audioKey: "syl-ba" },
+              { id: "syl-sa", symbol: "사", romanization: "sa", spoken: "사", audioKey: "syl-sa" },
+            ],
+            verify: [
+              { prompt: "ㄱ + ㅏ makes which block?", choices: ["가", "나", "다", "마", "바", "사"], answerIndex: 0 },
+              { prompt: "Which block means “I / me”?", choices: ["가", "나", "다", "마", "바", "사"], answerIndex: 1 },
+              { prompt: "ㅅ + ㅏ makes which block?", choices: ["가", "나", "다", "마", "바", "사"], answerIndex: 5 },
+            ],
+          },
+        },
+        {
+          id: "korean-l4-a2",
+          kind: "lang-listen-match",
+          title: "Hear the block, tap it",
+          blurb: "Listen, then tap the syllable block you heard.",
+          estMinutes: 5,
+          band: "ready",
+          skillTags: ["korean.listening", "korean.syllables"],
+          config: {
+            locale: "ko-KR",
+            instruction: "Listen to the block. Then tap the one you heard.",
+            skillTags: ["korean.listening", "korean.syllables"],
+            items: [
+              {
+                spoken: "가",
+                audioKey: "syl-ga",
+                choices: ["가", "나", "다", "마", "바", "사"],
+                choiceLabels: ["ga", "na", "da", "ma", "ba", "sa"],
+                answerIndex: 0,
+              },
+              {
+                spoken: "나",
+                audioKey: "syl-na",
+                choices: ["가", "나", "다", "마", "바", "사"],
+                choiceLabels: ["ga", "na", "da", "ma", "ba", "sa"],
+                answerIndex: 1,
+              },
+              {
+                spoken: "마",
+                audioKey: "syl-ma",
+                choices: ["가", "나", "다", "마", "바", "사"],
+                choiceLabels: ["ga", "na", "da", "ma", "ba", "sa"],
+                answerIndex: 3,
+              },
+              {
+                spoken: "바",
+                audioKey: "syl-ba",
+                choices: ["가", "나", "다", "마", "바", "사"],
+                choiceLabels: ["ga", "na", "da", "ma", "ba", "sa"],
+                answerIndex: 4,
+              },
+              {
+                spoken: "사",
+                audioKey: "syl-sa",
+                choices: ["가", "나", "다", "마", "바", "사"],
+                choiceLabels: ["ga", "na", "da", "ma", "ba", "sa"],
+                answerIndex: 5,
+              },
+            ],
+          },
+        },
+      ],
+    },
+    {
+      id: "korean-l5",
+      order: 5,
+      title: "Greetings (안녕하세요)",
+      activities: [
+        {
+          id: "korean-l5-a1",
+          kind: "lang-symbol-intro",
+          title: "Say hello and thank you",
+          blurb: "Real words made of the blocks you know.",
+          estMinutes: 7,
+          band: "ready",
+          skillTags: ["korean.greetings"],
+          config: {
+            locale: "ko-KR",
+            instruction: "These are real Korean words. Tap each one to hear it.",
+            skillTags: ["korean.greetings"],
+            symbols: [
+              {
+                id: "ko-annyeonghaseyo",
+                symbol: "안녕하세요",
+                romanization: "annyeonghaseyo",
+                spoken: "안녕하세요",
+                audioKey: "ko-annyeonghaseyo",
+                meaning: "Hello",
+              },
+              {
+                id: "ko-annyeong",
+                symbol: "안녕",
+                romanization: "annyeong",
+                spoken: "안녕",
+                audioKey: "ko-annyeong",
+                meaning: "Hi / Bye",
+              },
+              {
+                id: "ko-gamsahamnida",
+                symbol: "감사합니다",
+                romanization: "gamsahamnida",
+                spoken: "감사합니다",
+                audioKey: "ko-gamsahamnida",
+                meaning: "Thank you",
+              },
+              { id: "ko-ne", symbol: "네", romanization: "ne", spoken: "네", audioKey: "ko-ne", meaning: "yes" },
+              { id: "ko-aniyo", symbol: "아니요", romanization: "aniyo", spoken: "아니요", audioKey: "ko-aniyo", meaning: "no" },
+            ],
+            verify: [
+              {
+                prompt: "Which one means “Hello”?",
+                choices: ["안녕하세요", "감사합니다", "네", "아니요"],
+                answerIndex: 0,
+              },
+              {
+                prompt: "Which one means “Thank you”?",
+                choices: ["안녕하세요", "감사합니다", "네", "아니요"],
+                answerIndex: 1,
+              },
+              { prompt: "Which one means “yes”?", choices: ["안녕하세요", "감사합니다", "네", "아니요"], answerIndex: 2 },
+            ],
+          },
+        },
+        {
+          id: "korean-l5-a2",
+          kind: "lang-listen-match",
+          title: "Hear the word, tap it",
+          blurb: "Listen, then tap the greeting you heard.",
+          estMinutes: 5,
+          band: "ready",
+          skillTags: ["korean.listening", "korean.greetings"],
+          config: {
+            locale: "ko-KR",
+            instruction: "Listen to the word. Then tap the one you heard.",
+            skillTags: ["korean.listening", "korean.greetings"],
+            items: [
+              {
+                spoken: "안녕하세요",
+                audioKey: "ko-annyeonghaseyo",
+                choices: ["안녕하세요", "감사합니다", "안녕", "네", "아니요"],
+                choiceLabels: ["annyeonghaseyo", "gamsahamnida", "annyeong", "ne", "aniyo"],
+                answerIndex: 0,
+              },
+              {
+                spoken: "감사합니다",
+                audioKey: "ko-gamsahamnida",
+                choices: ["안녕하세요", "감사합니다", "안녕", "네", "아니요"],
+                choiceLabels: ["annyeonghaseyo", "gamsahamnida", "annyeong", "ne", "aniyo"],
+                answerIndex: 1,
+              },
+              {
+                spoken: "안녕",
+                audioKey: "ko-annyeong",
+                choices: ["안녕하세요", "감사합니다", "안녕", "네", "아니요"],
+                choiceLabels: ["annyeonghaseyo", "gamsahamnida", "annyeong", "ne", "aniyo"],
+                answerIndex: 2,
+              },
+              {
+                spoken: "네",
+                audioKey: "ko-ne",
+                choices: ["안녕하세요", "감사합니다", "안녕", "네", "아니요"],
+                choiceLabels: ["annyeonghaseyo", "gamsahamnida", "annyeong", "ne", "aniyo"],
+                answerIndex: 3,
+              },
+              {
+                spoken: "아니요",
+                audioKey: "ko-aniyo",
+                choices: ["안녕하세요", "감사합니다", "안녕", "네", "아니요"],
+                choiceLabels: ["annyeonghaseyo", "gamsahamnida", "annyeong", "ne", "aniyo"],
+                answerIndex: 4,
               },
             ],
           },
