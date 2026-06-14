@@ -184,26 +184,31 @@ export async function generatePracticeItems<K extends ActivityKind>(
   // The model output is validated as a strict envelope of per-kind items.
   const envelope = z.object({ items: z.array(itemSchema).min(1).max(MAX_ITEMS) });
 
-  // World-Languages kinds use a language + inventory-constrained prompt and a
-  // strict post-Zod guard. The language is derived from the skill hints; if none
-  // names a language we fall through to the default path (which will throw, so
-  // the route falls back to authored content exactly as a failed generation does).
+  // World-Languages kinds MUST go through the language + inventory-constrained
+  // path. The language is derived from the skill hints; if none names a language
+  // we hard-fail rather than fall through to the generic English generator —
+  // which would emit schema-valid but inventory-UNGUARDED language content. The
+  // route turns the throw into a 502 -> authored-content fallback.
   if (isLangKind(kind)) {
     const lang = languageForSkillHints(skillHints);
-    if (lang) {
-      const slice = inventorySlice(lang, focus, skillHints);
-      const result = await chatJSON({
-        model: MODEL_FOR_LANGUAGE[lang.id] ?? MODEL_FOR_BAND[band],
-        system: buildLangSystemPrompt(lang),
-        user: buildLangUserPrompt(kind, lang, band, focus, count, skillHints, slice),
-        schema: envelope,
-        signal: options.signal,
-      });
-      // Shape is valid (Zod); now enforce linguistic correctness. Returns only
-      // items whose every glyph is Unicode-exact in the inventory; throws if none.
-      const guarded = validateLangItems(kind, result.items, lang, slice);
-      return guarded as z.output<(typeof ACTIVITY_CONFIG_SCHEMAS)[K]>[];
+    if (!lang) {
+      throw new Error(
+        `generatePracticeItems: ${kind} needs a language skill hint (e.g. "zhuyin.symbols.initials"); none of [${skillHints.join(", ")}] names a language.`,
+      );
     }
+    const slice = inventorySlice(lang, focus, skillHints);
+    const result = await chatJSON({
+      model: MODEL_FOR_LANGUAGE[lang.id] ?? MODEL_FOR_BAND[band],
+      system: buildLangSystemPrompt(lang),
+      user: buildLangUserPrompt(kind, lang, band, focus, count, skillHints, slice),
+      schema: envelope,
+      signal: options.signal,
+    });
+    // Shape is valid (Zod); now enforce + canonicalize linguistic correctness:
+    // reject out-of-inventory glyphs, then rebuild child-facing fields from the
+    // authored inventory. Throws if none survive.
+    const guarded = validateLangItems(kind, result.items, lang, slice);
+    return guarded as z.output<(typeof ACTIVITY_CONFIG_SCHEMAS)[K]>[];
   }
 
   const result = await chatJSON({

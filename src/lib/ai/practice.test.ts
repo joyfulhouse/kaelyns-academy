@@ -90,4 +90,16 @@ describe("generatePracticeItems (bounded + schema-validated)", () => {
     const items = await generatePracticeItems("sightword-game", "ready", "the, and", 1);
     expect(items[0].decoys).toEqual([]); // .default([]) applied by the schema
   });
+
+  it("hard-fails a lang kind with no language skill hint (never an unguarded gateway call)", async () => {
+    // The guard must throw BEFORE any gateway call when the skill hints don't
+    // name a language, so a lang kind can never reach the generic,
+    // inventory-UNGUARDED generator.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      generatePracticeItems("lang-symbol-intro", "ready", "symbols", 1, { skillHints: [] }),
+    ).rejects.toThrow(/language skill hint/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

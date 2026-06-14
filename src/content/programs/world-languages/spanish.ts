@@ -247,7 +247,7 @@ export const spanishUnit: Unit = {
             instruction: "Now you can introduce yourself. Tap each one to hear it.",
             skillTags: ["spanish.phrases"],
             symbols: [
-              { id: "es-frase-me-llamo", symbol: "Me llamo ___", romanization: "meh YAH-moh ___", spoken: "Me llamo", audioKey: "es-frase-me-llamo", example: "Me llamo Kaelyn.", exampleSpoken: "Me llamo Kaelyn.", meaning: "My name is ___" },
+              { id: "es-frase-me-llamo", symbol: "Me llamo ___", romanization: "meh YAH-moh ___", spoken: "Me llamo", audioKey: "es-frase-me-llamo", example: "Me llamo Ana.", exampleSpoken: "Me llamo Ana.", meaning: "My name is ___" },
               { id: "es-frase-tengo-seis-anos", symbol: "Tengo seis años", romanization: "TEHN-goh SAYSS AH-nyohs", spoken: "Tengo seis años", audioKey: "es-frase-tengo-seis-anos", example: "Hola, tengo seis años.", exampleSpoken: "Hola, tengo seis años.", meaning: "I am six years old" },
               { id: "es-hola", symbol: "Hola", romanization: "OH-lah", spoken: "Hola", audioKey: "es-hola", meaning: "Hello" },
             ],

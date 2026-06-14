@@ -229,7 +229,7 @@ export const zhuyinUnit: Unit = {
                 id: "zhuyin-h",
                 symbol: "ㄏ",
                 romanization: "h",
-                spoken: "ㄏㄛ",
+                spoken: "ㄏㄜ",
                 audioKey: "zhuyin-h",
                 example: "ㄏㄨㄚ",
                 exampleSpoken: "huā",

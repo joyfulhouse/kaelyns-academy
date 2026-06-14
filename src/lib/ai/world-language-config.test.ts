@@ -96,6 +96,25 @@ describe("validateLangItems — lang-symbol-intro", () => {
     expect(kept[0].symbols[0].id).toBe("zhuyin-b");
   });
 
+  it("canonicalizes child-facing fields from the inventory (right glyph, wrong facts)", () => {
+    const entry = zhuyin.inventory.find((e) => e.symbol === bGlyph);
+    if (!entry) throw new Error("test setup: ㄅ missing");
+    const item = {
+      locale: "en-US", // wrong locale
+      instruction: "x",
+      skillTags: ["zhuyin.symbols.initials"],
+      // Right glyph, but wrong id / romanization / spoken / audioKey:
+      symbols: [{ id: "made-up", symbol: bGlyph, romanization: "WRONG", spoken: "ㄆㄛ", audioKey: "made-up" }],
+      verify: [{ prompt: "?", choices: [bGlyph, pGlyph], answerIndex: 0 }],
+    };
+    const [out] = validateLangItems("lang-symbol-intro", [item], zhuyin, []);
+    expect(out.locale).toBe(zhuyin.locale);
+    expect(out.symbols[0].id).toBe(entry.id);
+    expect(out.symbols[0].romanization).toBe(entry.romanization);
+    expect(out.symbols[0].spoken).toBe(entry.spoken); // the wrong "ㄆㄛ" is overwritten
+    expect(out.symbols[0].audioKey).toBe(entry.id);
+  });
+
   it("DROPS an item whose shown symbol is a made-up glyph", () => {
     // "Ｂ" (fullwidth latin B, U+FF22) is NOT in the zhuyin inventory.
     const item = symbolItem("Ｂ", [bGlyph, pGlyph], 0);
@@ -136,6 +155,25 @@ describe("validateLangItems — lang-listen-match", () => {
       [],
     );
     expect(kept).toHaveLength(1);
+  });
+
+  it("canonicalizes the heard sound + labels from the answer entry", () => {
+    const mEntry = zhuyin.inventory.find((e) => e.symbol === mGlyph);
+    const bEntry = zhuyin.inventory.find((e) => e.symbol === bGlyph);
+    if (!mEntry || !bEntry) throw new Error("test setup: glyph missing");
+    const item = {
+      locale: "en-US",
+      instruction: "x",
+      skillTags: ["zhuyin.symbols.initials"],
+      // Answer is ㄇ (index 1), but the model gave a wrong spoken / audioKey / labels:
+      items: [
+        { spoken: "WRONG", audioKey: "WRONG", choices: [bGlyph, mGlyph], choiceLabels: ["x", "y"], answerIndex: 1 },
+      ],
+    };
+    const [out] = validateLangItems("lang-listen-match", [item], zhuyin, []);
+    expect(out.items[0].spoken).toBe(mEntry.spoken); // played = the answer's canonical sound
+    expect(out.items[0].audioKey).toBe(mEntry.id);
+    expect(out.items[0].choiceLabels).toEqual([bEntry.romanization, mEntry.romanization]);
   });
 
   it("DROPS an item with a glyph not in the inventory", () => {

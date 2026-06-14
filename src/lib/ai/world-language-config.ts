@@ -142,18 +142,13 @@ type SymbolIntroItem = ReturnType<typeof langSymbolIntroConfig.parse>;
 type ListenMatchItem = ReturnType<typeof langListenMatchConfig.parse>;
 
 /**
- * Does this lang-symbol-intro item only reference real inventory glyphs?
- * Every shown `symbols[].symbol` and every `verify[].choices[]` glyph MUST be a
- * Unicode-exact inventory symbol; every `verify[].answerIndex` must be in range.
- * When true, `id`s are repaired in place to the matching inventory id.
+ * Validation predicate for a lang-symbol-intro item (pure, no mutation): every
+ * shown `symbols[].symbol` and every `verify[].choices[]` glyph MUST be a
+ * Unicode-exact inventory symbol, and every `verify[].answerIndex` in range.
  */
-function keepSymbolIntro(item: SymbolIntroItem, lang: LanguageDef, allowed: Set<string>): boolean {
+function keepSymbolIntro(item: SymbolIntroItem, allowed: Set<string>): boolean {
   for (const s of item.symbols) {
     if (!allowed.has(s.symbol)) return false;
-    // Repair: an `id` SHOULD be the inventory id; look it up by the (validated)
-    // glyph and correct it if missing or wrong. The glyph is the source of truth.
-    const entry = entryBySymbol(lang, s.symbol);
-    if (entry && s.id !== entry.id) s.id = entry.id;
   }
   for (const q of item.verify) {
     if (q.answerIndex < 0 || q.answerIndex >= q.choices.length) return false;
@@ -165,9 +160,9 @@ function keepSymbolIntro(item: SymbolIntroItem, lang: LanguageDef, allowed: Set<
 }
 
 /**
- * Does this lang-listen-match item only reference real inventory glyphs?
- * Every `items[].choices[]` glyph MUST be a Unicode-exact inventory symbol and
- * `answerIndex` must be in range.
+ * Validation predicate for a lang-listen-match item (pure): every
+ * `items[].choices[]` glyph MUST be a Unicode-exact inventory symbol and
+ * `answerIndex` in range.
  */
 function keepListenMatch(item: ListenMatchItem, allowed: Set<string>): boolean {
   for (const sub of item.items) {
@@ -180,16 +175,60 @@ function keepListenMatch(item: ListenMatchItem, allowed: Set<string>): boolean {
 }
 
 /**
- * STRICT post-generation guard. `items` have already passed the per-kind Zod
- * schema (shape is correct); this enforces *linguistic correctness* beyond shape:
- * every glyph the child sees or taps must be a Unicode-exact symbol from the
- * language's authored inventory. This is the core anti-hallucination check — it
- * catches CJK look-alikes and invented glyphs that Zod (a string is a string)
- * cannot. Returns ONLY the surviving items; throws if none survive so the caller
- * falls back to authored content.
- *
- * For lang-symbol-intro it also repairs each surviving symbol's `id` to the
- * inventory id (the glyph is canonical; the id is derived from it).
+ * Canonicalize every child-visible and child-HEARD field of a surviving
+ * lang-symbol-intro item from the authored inventory. The glyph is the source of
+ * truth, so `id`, `romanization`, `spoken` (what TTS says), `audioKey`, and any
+ * example/meaning come from the matching `ScriptEntry` — never from the model.
+ * This is what stops a real glyph paired with a wrong pronunciation or label from
+ * reaching the child.
+ */
+function canonicalizeSymbolIntro(item: SymbolIntroItem, lang: LanguageDef): void {
+  item.locale = lang.locale;
+  for (const s of item.symbols) {
+    const entry = entryBySymbol(lang, s.symbol);
+    if (!entry) continue; // unreachable after keepSymbolIntro; stay safe
+    s.id = entry.id;
+    s.romanization = entry.romanization;
+    s.spoken = entry.spoken;
+    s.audioKey = entry.id;
+    if (entry.example !== undefined) s.example = entry.example;
+    if (entry.exampleSpoken !== undefined) s.exampleSpoken = entry.exampleSpoken;
+    if (entry.meaning !== undefined) s.meaning = entry.meaning;
+  }
+}
+
+/**
+ * Canonicalize a surviving lang-listen-match item from the inventory: the played
+ * `spoken` + `audioKey` come from the ANSWER glyph's entry (so the child always
+ * hears what the answer actually is), and each choice's label is the inventory
+ * romanization. None of the heard/labelled content is left to the model.
+ */
+function canonicalizeListenMatch(item: ListenMatchItem, lang: LanguageDef): void {
+  item.locale = lang.locale;
+  for (const sub of item.items) {
+    const answer = entryBySymbol(lang, sub.choices[sub.answerIndex]);
+    if (answer) {
+      sub.spoken = answer.spoken;
+      sub.audioKey = answer.id;
+    }
+    sub.choiceLabels = sub.choices.map((c) => entryBySymbol(lang, c)?.romanization ?? "");
+  }
+}
+
+/**
+ * STRICT post-generation guard + canonicalizer. `items` have already passed the
+ * per-kind Zod schema (shape is correct); this enforces *linguistic correctness*
+ * beyond shape in two stages:
+ *   1. REJECT any item where a glyph the child sees or taps is not a Unicode-exact
+ *      symbol from the language's authored inventory — the anti-hallucination
+ *      check that catches CJK look-alikes and invented glyphs Zod can't ("a
+ *      string is a string").
+ *   2. CANONICALIZE every child-visible/child-HEARD field of the survivors (id,
+ *      romanization, spoken, audioKey, choice labels, locale) from the inventory,
+ *      so a real glyph paired with a wrong pronunciation/label never reaches the
+ *      child. The model only *selects* glyphs; the facts come from the inventory.
+ * Returns ONLY the surviving items; throws if none survive so the caller falls
+ * back to authored content.
  */
 export function validateLangItems<T>(
   kind: LangActivityKind,
@@ -198,11 +237,17 @@ export function validateLangItems<T>(
   _slice: ScriptEntry[],
 ): T[] {
   const allowed = allowedSymbols(lang);
-  const kept = items.filter((item) =>
-    kind === "lang-symbol-intro"
-      ? keepSymbolIntro(item as SymbolIntroItem, lang, allowed)
-      : keepListenMatch(item as ListenMatchItem, allowed),
-  );
+  const kept: T[] = [];
+  for (const item of items) {
+    if (kind === "lang-symbol-intro") {
+      if (!keepSymbolIntro(item as SymbolIntroItem, allowed)) continue;
+      canonicalizeSymbolIntro(item as SymbolIntroItem, lang);
+    } else {
+      if (!keepListenMatch(item as ListenMatchItem, allowed)) continue;
+      canonicalizeListenMatch(item as ListenMatchItem, lang);
+    }
+    kept.push(item);
+  }
 
   if (kept.length === 0) {
     throw new Error(

@@ -108,8 +108,8 @@ const greetings: ScriptEntry[] = [
     spoken: "Me llamo",
     group: "greetings",
     meaning: "My name is",
-    example: "Me llamo Kaelyn.",
-    exampleSpoken: "Me llamo Kaelyn.",
+    example: "Me llamo Ana.",
+    exampleSpoken: "Me llamo Ana.",
   },
 ];
 
@@ -433,8 +433,8 @@ const phrases: ScriptEntry[] = [
     spoken: "Me llamo",
     group: "phrases",
     meaning: "My name is ___",
-    example: "Me llamo Kaelyn.",
-    exampleSpoken: "Me llamo Kaelyn.",
+    example: "Me llamo Ana.",
+    exampleSpoken: "Me llamo Ana.",
   },
   {
     id: "es-frase-tengo-seis-anos",

@@ -419,7 +419,7 @@ export const zhuyin: LanguageDef = {
     {
       id: "zhuyin-tone1",
       symbol: "ˉ",
-      romanization: "1",
+      romanization: "mā (1)",
       spoken: "mā",
       tone: 1,
       group: "tones",
@@ -430,7 +430,7 @@ export const zhuyin: LanguageDef = {
     {
       id: "zhuyin-tone2",
       symbol: "ˊ",
-      romanization: "2",
+      romanization: "má (2)",
       spoken: "má",
       tone: 2,
       group: "tones",
@@ -441,7 +441,7 @@ export const zhuyin: LanguageDef = {
     {
       id: "zhuyin-tone3",
       symbol: "ˇ",
-      romanization: "3",
+      romanization: "mǎ (3)",
       spoken: "mǎ",
       tone: 3,
       group: "tones",
@@ -452,7 +452,7 @@ export const zhuyin: LanguageDef = {
     {
       id: "zhuyin-tone4",
       symbol: "ˋ",
-      romanization: "4",
+      romanization: "mà (4)",
       spoken: "mà",
       tone: 4,
       group: "tones",
