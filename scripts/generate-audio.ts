@@ -40,12 +40,20 @@ interface Backend {
   sayVoice: string;
   /** Kokoro speaking rate (0.25–4.0); a touch slow for young ears. */
   speed?: number;
+  /**
+   * Kokoro can only voice this language from a `ScriptEntry.tts` override, not the
+   * display `spoken`. True for Zhuyin: Kokoro reads the Mandarin `tts` hanzi, but
+   * an entry's `spoken` is Bopomofo it can't read — so an entry without `tts`
+   * falls back to `say`.
+   */
+  kokoroNeedsTts?: boolean;
 }
 
 const BACKEND_BY_LOCALE: Record<string, Backend> = {
-  // Kokoro has no Korean, and its Mandarin path wants pinyin/hanzi not Bopomofo,
-  // so zh-TW + ko-KR stay on `say`. es/ja read their native text on Kokoro.
-  "zh-TW": { engine: "say", sayVoice: "Meijia" },
+  // es/ja read their native text on Kokoro directly. Zhuyin uses Kokoro Mandarin
+  // via each entry's `tts` hanzi (its `spoken` is Bopomofo, unreadable by Kokoro);
+  // entries with no `tts` fall back to `say`. Korean has no Kokoro voice.
+  "zh-TW": { engine: "kokoro", kokoroVoice: "zf_xiaoxiao", sayVoice: "Meijia", speed: 0.9, kokoroNeedsTts: true },
   "es-MX": { engine: "kokoro", kokoroVoice: "ef_dora", sayVoice: "Paulina", speed: 0.9 },
   "ja-JP": { engine: "kokoro", kokoroVoice: "jf_alpha", sayVoice: "Kyoko", speed: 0.9 },
   "ko-KR": { engine: "say", sayVoice: "Yuna" },
@@ -96,23 +104,30 @@ async function kokoroReachable(): Promise<boolean> {
   }
 }
 
-/** Synthesize `text` to `out` (.m4a). Returns the engine actually used. */
+/** Synthesize a clip to `out` (.m4a). Kokoro reads `tts ?? spoken`; `say` reads
+ *  the human-facing `spoken`. Returns the engine actually used. */
 async function synth(
   backend: Backend,
-  text: string,
+  spoken: string,
+  tts: string | undefined,
   out: string,
   tmp: string,
   id: string,
   kokoroUp: boolean,
 ): Promise<Engine> {
-  if (backend.engine === "kokoro" && backend.kokoroVoice && kokoroUp) {
+  const useKokoro =
+    backend.engine === "kokoro" &&
+    !!backend.kokoroVoice &&
+    kokoroUp &&
+    (!backend.kokoroNeedsTts || !!tts);
+  if (useKokoro) {
     try {
       const res = await fetch(`${KOKORO_URL}/audio/speech`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           model: "kokoro",
-          input: text,
+          input: tts ?? spoken,
           voice: backend.kokoroVoice,
           response_format: "wav",
           speed: backend.speed ?? 1,
@@ -132,7 +147,7 @@ async function synth(
   }
   // say → AIFF, then afconvert → AAC in an MPEG-4 container (.m4a).
   const aiff = join(tmp, `s-${id}.aiff`);
-  execFileSync("say", ["-v", backend.sayVoice, "-o", aiff, text]);
+  execFileSync("say", ["-v", backend.sayVoice, "-o", aiff, spoken]);
   execFileSync("afconvert", [aiff, "-d", "aac", "-f", "m4af", out]);
   rmSync(aiff, { force: true });
   return "say";
@@ -187,7 +202,7 @@ async function run(): Promise<void> {
           continue;
         }
         try {
-          const used = await synth(backend, entry.spoken, out, tmp, entry.id, kokoroUp);
+          const used = await synth(backend, entry.spoken, entry.tts, out, tmp, entry.id, kokoroUp);
           byEngine[used] += 1;
           manifest[key] = true;
           generated += 1;
