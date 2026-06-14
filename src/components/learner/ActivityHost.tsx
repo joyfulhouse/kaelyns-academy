@@ -21,9 +21,8 @@ import { Sparkle } from "@/components/art/Decorations";
 import { Button } from "@/components/ui/Button";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner } from "./learners";
-import { useProgress } from "./useProgress";
-import { useSkillState } from "./useSkillState";
-import { ACTIVITY_META, PROGRAM_SLUG } from "./activityMeta";
+import { useLearnerState } from "./useLearnerState";
+import { ACTIVITY_META } from "./activityMeta";
 import { stopSpeaking } from "./speak";
 
 /** How many AI-generated items may be played back to back, so the loop stays
@@ -65,8 +64,10 @@ export function ActivityHost({
 }) {
   const router = useRouter();
   const { learner } = useActiveLearner();
-  const { complete } = useProgress(learner.id, PROGRAM_SLUG);
-  const { skillState, record } = useSkillState(learner.id, PROGRAM_SLUG);
+  // One state seam for both surfaces: DB-backed when a household is signed in,
+  // localStorage guest otherwise. The guest learner id only matters in guest
+  // mode; in account mode the hook resolves the selected account learner.
+  const { skillState, record } = useLearnerState(learner.id);
   const [phase, setPhase] = useState<Phase>({ kind: "play" });
   const [generatedCount, setGeneratedCount] = useState(0);
 
@@ -74,24 +75,23 @@ export function ActivityHost({
 
   // The authored activity records both star progress and skill evidence.
   const handleComplete = useCallback(
-    (_response: unknown, score: ActivityScore) => {
+    (response: unknown, score: ActivityScore) => {
       stopSpeaking();
-      complete(activity.id, score.stars);
-      record(score.skillEvidence);
+      record(activity, response, score);
       setPhase({ kind: "reward", stars: score.stars });
     },
-    [activity.id, complete, record],
+    [activity, record],
   );
 
   // A generated practice item records skill evidence too (it exercises the same
   // skills), but not star progress: it isn't an authored, trackable activity.
   const handlePracticeComplete = useCallback(
-    (_response: unknown, score: ActivityScore) => {
+    (response: unknown, score: ActivityScore) => {
       stopSpeaking();
-      record(score.skillEvidence);
+      record(activity, response, score, { generated: true });
       setPhase({ kind: "reward", stars: score.stars });
     },
-    [record],
+    [activity, record],
   );
 
   const handleExit = useCallback(() => {

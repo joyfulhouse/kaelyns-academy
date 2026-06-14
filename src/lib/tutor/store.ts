@@ -186,6 +186,47 @@ export async function getRecentAttempts(
   return rows.map((r) => ({ activityId: r.activityId, kind: r.kind, stars: r.score.stars, day: r.day }));
 }
 
+export interface CompletedActivity {
+  activityId: string;
+  /** Best stars (0..3) the learner earned on this authored activity. */
+  stars: number;
+}
+
+/** Clamp any stored stars value to the 0..3 range the UI renders. */
+function clampStars(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(3, Math.round(value)));
+}
+
+/**
+ * Authored activities the learner has completed (generated practice excluded),
+ * each with the best stars earned. This is the account-mode equivalent of the
+ * client's "completed" set + best-stars map: it feeds the next-best recommender,
+ * the world-map progress rings/locks, and the per-activity star glyphs (so they
+ * survive a reload, not just an in-session optimistic update).
+ *
+ * Best-stars is folded in TS (the score lives in a jsonb column and a learner's
+ * attempt volume is small) so there's no fragile jsonb-aggregate SQL.
+ */
+export async function getCompletedActivityIds(
+  accountId: string,
+  learnerId: string,
+): Promise<CompletedActivity[]> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return [];
+  const rows = await getDb()
+    .select({ activityId: attempt.activityId, score: attempt.score })
+    .from(attempt)
+    .where(and(eq(attempt.learnerId, learnerId), eq(attempt.generated, false)));
+  const best = new Map<string, number>();
+  for (const r of rows) {
+    const stars = clampStars(r.score.stars);
+    const prior = best.get(r.activityId) ?? 0;
+    if (stars > prior || !best.has(r.activityId)) best.set(r.activityId, Math.max(prior, stars));
+  }
+  return [...best.entries()].map(([activityId, stars]) => ({ activityId, stars }));
+}
+
 /** Outcome tally across a learner's skills (for the dashboard summary). */
 export async function skillOutcomeCounts(
   accountId: string,

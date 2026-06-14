@@ -18,45 +18,96 @@ import { ProgressRing } from "@/components/ui/ProgressRing";
 import { Stars } from "@/components/ui/Stars";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner, LEARNERS } from "./learners";
-import { useProgress, computeUnitProgress, computeProgramRatio } from "./useProgress";
-import { useSkillState } from "./useSkillState";
-import { ACTIVITY_META, PROGRAM_SLUG } from "./activityMeta";
+import { useLearnerState, type SurfaceLearner, type UseLearnerState } from "./useLearnerState";
+import { computeUnitProgress, computeProgramRatio } from "./useProgress";
+import { ACTIVITY_META } from "./activityMeta";
 
 /**
- * The studio home: pick-a-learner, then Program 01 as a world map. Units are
+ * The studio home: pick-a-learner, then the program as a world map. Units are
  * big tappable world tiles laid along a path, each themed by `data-world`, with
  * a progress ring + lock/stars state, plus overall progress.
+ *
+ * Backing is chosen at runtime by `useLearnerState`: a signed-in household plays
+ * DB-backed (real learners, progress that survives across devices and feeds the
+ * parent report); a signed-out visitor plays the localStorage guest surface with
+ * the mock learners. The picker + map both read the one hook so the two surfaces
+ * never diverge.
  */
 export function StudioHome({ program }: { program: Program }) {
-  const { learner, setLearnerId, ready } = useActiveLearner();
+  // The guest active-learner seam still drives mock-learner selection; in account
+  // mode the hook ignores this id and uses the selected real learner instead.
+  const { learner: guestLearner, setLearnerId } = useActiveLearner();
+  const state = useLearnerState(guestLearner.id);
   const [picked, setPicked] = useState(false);
 
-  // Wait for the persisted learner before showing the map, so we don't flash
-  // the wrong avatar; the picker itself needs no persisted state.
-  if (ready && picked) {
+  // While the session resolves we show a calm loading beat rather than flashing
+  // the mock picker at a signed-in household.
+  if (state.mode === "loading") {
+    return <ResolvingSurface />;
+  }
+
+  if (picked) {
     return (
-      <WorldMap
-        program={program}
-        learnerId={learner.id}
-        onSwitchLearner={() => setPicked(false)}
-      />
+      <WorldMap program={program} state={state} onSwitchLearner={() => setPicked(false)} />
     );
   }
 
   return (
     <LearnerPicker
-      onPick={(id) => {
+      state={state}
+      onPickGuest={(id) => {
         setLearnerId(id);
         setPicked(true);
+      }}
+      onPickAccount={(id) => {
+        state.selectLearner(id);
+        setPicked(true);
+      }}
+      onSetupProfile={async () => {
+        const ok = await state.setupProfile();
+        if (ok) setPicked(true);
+        return ok;
       }}
     />
   );
 }
 
+/* ── Resolving (session in flight) ──────────────────────────────────────────
+   A brief, chrome-free beat so we don't show the wrong picker before the
+   signed-in/guest decision is known. */
+
+function ResolvingSurface() {
+  const reduce = useReducedMotion();
+  return (
+    <AppShellKid backHref="/" readAloud="Getting your studio ready.">
+      <div className="mx-auto flex max-w-2xl flex-col items-center pt-10 text-center">
+        <Mascot mood="happy" size={96} className={reduce ? undefined : "motion-safe:animate-float"} />
+        <p className="mt-6 text-base text-ink-faint">Getting your studio ready...</p>
+      </div>
+    </AppShellKid>
+  );
+}
+
 /* ── Pick a learner ─────────────────────────────────────────────────────── */
 
-function LearnerPicker({ onPick }: { onPick: (id: string) => void }) {
+function LearnerPicker({
+  state,
+  onPickGuest,
+  onPickAccount,
+  onSetupProfile,
+}: {
+  state: UseLearnerState;
+  onPickGuest: (id: string) => void;
+  onPickAccount: (id: string) => void;
+  onSetupProfile: () => Promise<boolean>;
+}) {
   const reduce = useReducedMotion();
+
+  // Account mode: real learners (with avatars). Guest mode: the mock learners.
+  // Signed in but no profile yet: a gentle "set up a profile" tile.
+  const accountTiles: SurfaceLearner[] = state.mode === "account" ? state.learners : [];
+  const showSetup = state.mode === "guest" && state.signedIn;
+
   return (
     <AppShellKid backHref="/" readAloud="Who is learning today? Tap your picture.">
       <div className="mx-auto flex max-w-2xl flex-col items-center text-center">
@@ -66,38 +117,106 @@ function LearnerPicker({ onPick }: { onPick: (id: string) => void }) {
         </h1>
 
         <ul className="mt-10 flex w-full flex-wrap items-stretch justify-center gap-6">
-          {LEARNERS.map((l, i) => (
-            <motion.li
-              key={l.id}
-              initial={reduce ? false : { opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.36, delay: i * 0.06, ease: [0.16, 1, 0.3, 1] }}
-            >
-              <button
-                type="button"
-                onClick={() => onPick(l.id)}
-                className={cn(
-                  "flex w-40 flex-col items-center gap-3 rounded-2xl p-5",
-                  "border-[3px] border-ink bg-paper-raised shadow-pop",
-                  "transition active:translate-y-1 active:shadow-none",
-                  "motion-safe:hover:-translate-y-0.5",
-                )}
-              >
-                <span
-                  aria-hidden
-                  className="grid size-24 place-items-center rounded-full border-[3px] border-ink bg-accent/15 text-6xl"
-                >
-                  {l.avatar}
-                </span>
-                <span className="font-display text-xl font-semibold">{l.name}</span>
-              </button>
-            </motion.li>
-          ))}
+          {accountTiles.length > 0
+            ? accountTiles.map((l, i) => (
+                <LearnerTile
+                  key={l.id}
+                  index={i}
+                  name={l.displayName}
+                  avatar={l.avatar}
+                  reduce={Boolean(reduce)}
+                  onClick={() => onPickAccount(l.id)}
+                />
+              ))
+            : LEARNERS.map((l, i) => (
+                <LearnerTile
+                  key={l.id}
+                  index={i}
+                  name={l.name}
+                  avatar={l.avatar}
+                  reduce={Boolean(reduce)}
+                  onClick={() => onPickGuest(l.id)}
+                />
+              ))}
         </ul>
 
-        <p className="mt-8 text-base text-ink-faint">Tap your picture to start.</p>
+        {showSetup ? (
+          <SetupProfile onSetupProfile={onSetupProfile} />
+        ) : (
+          <p className="mt-8 text-base text-ink-faint">Tap your picture to start.</p>
+        )}
       </div>
     </AppShellKid>
+  );
+}
+
+function LearnerTile({
+  index,
+  name,
+  avatar,
+  reduce,
+  onClick,
+}: {
+  index: number;
+  name: string;
+  avatar: string;
+  reduce: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <motion.li
+      initial={reduce ? false : { opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.36, delay: index * 0.06, ease: [0.16, 1, 0.3, 1] }}
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(
+          "flex w-40 flex-col items-center gap-3 rounded-2xl p-5",
+          "border-[3px] border-ink bg-paper-raised shadow-pop",
+          "transition active:translate-y-1 active:shadow-none",
+          "motion-safe:hover:-translate-y-0.5",
+        )}
+      >
+        <span
+          aria-hidden
+          className="grid size-24 place-items-center rounded-full border-[3px] border-ink bg-accent/15 text-6xl"
+        >
+          {avatar}
+        </span>
+        <span className="font-display text-xl font-semibold">{name}</span>
+      </button>
+    </motion.li>
+  );
+}
+
+/* A signed-in household with no child profile yet: one warm tap to create a
+   default learner and start playing (DB-backed). Falls back silently to guest
+   if it can't be created. */
+function SetupProfile({ onSetupProfile }: { onSetupProfile: () => Promise<boolean> }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="mt-8 flex flex-col items-center gap-3">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          void onSetupProfile().finally(() => setBusy(false));
+        }}
+        className={cn(
+          "inline-flex min-h-16 items-center gap-2 rounded-pill px-6",
+          "border-[3px] border-ink bg-accent/15 font-display text-xl font-semibold text-ink shadow-pop",
+          "transition active:translate-y-1 active:shadow-none motion-safe:hover:-translate-y-0.5",
+          busy && "opacity-70",
+        )}
+      >
+        <SparkleIcon weight="fill" className="size-6" />
+        {busy ? "Setting up..." : "Set up my studio"}
+      </button>
+      <p className="text-base text-ink-faint">We will save your progress.</p>
+    </div>
   );
 }
 
@@ -105,40 +224,34 @@ function LearnerPicker({ onPick }: { onPick: (id: string) => void }) {
 
 function WorldMap({
   program,
-  learnerId,
+  state,
   onSwitchLearner,
 }: {
   program: Program;
-  learnerId: string;
+  state: UseLearnerState;
   onSwitchLearner: () => void;
 }) {
   const reduce = useReducedMotion();
-  const { getStars, isComplete, ready } = useProgress(learnerId, PROGRAM_SLUG);
-  const { skillState, ready: skillReady } = useSkillState(learnerId, PROGRAM_SLUG);
+  const { skillState, completed, getStars, ready } = state;
 
-  // Build a stable, hydration-safe snapshot. Before storage is read, treat the
-  // map as empty (matches SSR), then progress fills in.
+  // Build a stable, hydration-safe snapshot. Before state is read, treat the
+  // map as empty, then progress fills in once ready.
   const progressMap: Record<string, 0 | 1 | 2 | 3> = {};
-  const completed = new Set<string>();
   if (ready) {
-    for (const unit of program.units) {
-      for (const lesson of unit.lessons) {
-        for (const activity of lesson.activities) {
-          if (isComplete(activity.id)) completed.add(activity.id);
-          const s = getStars(activity.id);
-          if (s > 0) progressMap[activity.id] = s;
-        }
-      }
+    for (const id of completed) {
+      const s = getStars(id);
+      // Record completion (key presence) even at 0 stars so roll-ups count it.
+      progressMap[id] = s;
     }
   }
 
   const overall = computeProgramRatio(program, progressMap);
 
   // The tutor's per-strand state + ranked next-best. Both derive purely from the
-  // engine, so they only become meaningful once storage is read (skillReady).
+  // engine, so they only become meaningful once state is read (ready).
   const strands = useMemo(
-    () => (skillReady ? strandProgress(program, skillState) : []),
-    [program, skillState, skillReady],
+    () => (ready ? strandProgress(program, skillState) : []),
+    [program, skillState, ready],
   );
   const strandByUnitId = useMemo(
     () => new Map(strands.map((s) => [s.unit.id, s])),
@@ -149,10 +262,10 @@ function WorldMap({
   const completedKey = [...completed].sort().join("|");
   const topPick = useMemo(
     () =>
-      ready && skillReady
+      ready
         ? nextBest(program, skillState, new Set(completedKey ? completedKey.split("|") : []))[0]
         : undefined,
-    [program, skillState, ready, skillReady, completedKey],
+    [program, skillState, ready, completedKey],
   );
 
   return (
