@@ -11,9 +11,6 @@ import {
 import type { Icon } from "@phosphor-icons/react";
 import type { ActivityKind } from "@/content";
 
-/** The program this learner surface renders (single pilot program for v3). */
-export const PROGRAM_SLUG = "kaelyn-adaptive";
-
 /**
  * Per-kind icon + short kid-facing label. The child reads the *icon* first, so
  * each activity kind has a distinct, friendly glyph; the word is secondary.

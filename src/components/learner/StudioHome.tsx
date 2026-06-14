@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import {
   ArrowRightIcon,
+  ArrowsLeftRightIcon,
   CompassIcon,
   LockSimpleIcon,
   SparkleIcon,
@@ -37,7 +39,9 @@ export function StudioHome({ program }: { program: Program }) {
   // The guest active-learner seam still drives mock-learner selection; in account
   // mode the hook ignores this id and uses the selected real learner instead.
   const { learner: guestLearner, setLearnerId } = useActiveLearner();
-  const state = useLearnerState(guestLearner.id);
+  // The active program comes from the route (this component is rendered per
+  // program slug), so all state is scoped to the world the kid is in.
+  const state = useLearnerState(guestLearner.id, program.slug);
   const [picked, setPicked] = useState(false);
 
   // While the session resolves we show a calm loading beat rather than flashing
@@ -270,7 +274,7 @@ function WorldMap({
 
   return (
     <AppShellKid
-      backHref="/"
+      backHref="/learn"
       readAloud={`${program.title}. Pick a world to play. Tap a glowing tile.`}
     >
       {/* Overall progress banner */}
@@ -286,23 +290,34 @@ function WorldMap({
               <span className="text-sm">%</span>
             </span>
           </ProgressRing>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h1 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">
               {program.title}
             </h1>
-            <button
-              type="button"
-              onClick={onSwitchLearner}
-              className="mt-1 inline-flex min-h-11 items-center rounded-pill text-base font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
-            >
-              Not you? Switch learner
-            </button>
+            <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
+              <button
+                type="button"
+                onClick={onSwitchLearner}
+                className="inline-flex min-h-11 items-center rounded-pill text-base font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
+              >
+                Not you? Switch learner
+              </button>
+              <Link
+                href="/learn"
+                className="inline-flex min-h-11 items-center gap-1.5 rounded-pill text-base font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
+              >
+                <ArrowsLeftRightIcon weight="bold" className="size-5" />
+                Switch worlds
+              </Link>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Your next thing: the tutor's single best recommendation. */}
-      {topPick && <NextThingCard pick={topPick} reduce={Boolean(reduce)} />}
+      {topPick && (
+        <NextThingCard pick={topPick} programSlug={program.slug} reduce={Boolean(reduce)} />
+      )}
 
       {/* The path of worlds */}
       <ol className="relative flex flex-col gap-5">
@@ -329,7 +344,7 @@ function WorldMap({
                 title={unit.title}
                 emoji={unit.emoji}
                 checkpoint={Boolean(unit.checkpoint)}
-                href={`/learn/${unit.id}`}
+                href={`/learn/${program.slug}/${unit.id}`}
                 locked={locked}
                 ratio={strand ? strand.ratio : up.ratio}
                 level={strand ? strand.currentLessonIndex : null}
@@ -356,10 +371,18 @@ function WorldMap({
    The tutor's single best pick. Deep-links to the activity, leads with its
    kind icon, and reads aloud as a warm invitation. */
 
-function NextThingCard({ pick, reduce }: { pick: Recommendation; reduce: boolean }) {
+function NextThingCard({
+  pick,
+  programSlug,
+  reduce,
+}: {
+  pick: Recommendation;
+  programSlug: string;
+  reduce: boolean;
+}) {
   const meta = ACTIVITY_META[pick.activity.kind];
   const Icon = meta.icon;
-  const href = `/learn/${pick.unit.id}/${pick.activity.id}`;
+  const href = `/learn/${programSlug}/${pick.unit.id}/${pick.activity.id}`;
 
   const motionProps = reduce
     ? {}
