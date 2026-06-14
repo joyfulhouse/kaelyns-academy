@@ -6,8 +6,18 @@ import {
   ACTIVITY_CONFIG_SCHEMAS,
   type ActivityKind,
 } from "@/content/activity-configs";
+import type { LanguageDef, ScriptEntry } from "@/content/languages";
 import type { Band, SkillTag } from "@/content/types";
 import { chatJSON, TUTOR_FAST, TUTOR_RICH, type TutorModel } from "./models";
+import {
+  DEFAULT_LANGUAGE_LEVEL,
+  inventorySlice,
+  isLangKind,
+  LANGUAGE_LEVELS,
+  languageForSkillHints,
+  MODEL_FOR_LANGUAGE,
+  validateLangItems,
+} from "./world-language-config";
 
 /**
  * Bounded AI practice generation (spec §6/§8). The model proposes activity
@@ -41,6 +51,12 @@ const KIND_BRIEF: Record<ActivityKind, string> = {
   "math-array":
     'Array items. Each: {instruction, mode:"build"|"multiply"|"divide"|"area", rows:1-12, cols:1-12, answer?, emoji?}. ' +
     "answer defaults to rows*cols (the product/area; for divide, rows*cols is the total shared). emoji is one symbol to tile the array. Keep factors friendly.",
+  "lang-symbol-intro":
+    "Symbol-introduction items. Each: {locale, instruction, skillTags:[...], symbols:[{id, symbol, romanization, spoken, audioKey?, example?, exampleSpoken?, meaning?}], verify:[{prompt, spokenPrompt?, choices:[2-6], answerIndex}]}. " +
+    "Introduce 1 to 6 symbols the learner is studying, then 1 to 4 quick checks. Use ONLY symbols from the language's authored inventory; never invent glyphs. `spoken` is the text TTS says; `id` is the inventory id.",
+  "lang-listen-match":
+    "Listening-discrimination items. Each: {locale, instruction, skillTags:[...], items:[{spoken, audioKey?, choices:[2-6 symbols/words], choiceLabels?:[romanization], answerIndex}]}. " +
+    "The child hears `spoken` and taps the matching choice. Every choice and the answer MUST come from the authored inventory. 2 to 8 items.",
 };
 
 const MODEL_FOR_BAND: Record<Band, TutorModel> = {
@@ -81,6 +97,69 @@ function buildUserPrompt(
     .join(" ");
 }
 
+/**
+ * System prompt for World-Languages generation. Replaces the English
+ * "decodable / ages 5-6" framing with a language-teaching framing whose hard
+ * rule is: copy glyphs from the provided inventory exactly, never invent them.
+ */
+function buildLangSystemPrompt(lang: LanguageDef): string {
+  const level = LANGUAGE_LEVELS[lang.id] ?? DEFAULT_LANGUAGE_LEVEL;
+  return [
+    `You generate ${lang.displayName} (${lang.nativeName}) practice for a young child's learning app.`,
+    level,
+    "You return ONLY a JSON object of the exact shape requested. No prose, no markdown.",
+    "CRITICAL: use ONLY the symbols from the provided inventory and copy each glyph EXACTLY, character for character.",
+    "Never invent, translate, romanize, or substitute a look-alike glyph; the answer and every choice MUST be a glyph from the list.",
+    "Content must be gentle, encouraging, and age-appropriate. Instructions are short and spoken aloud.",
+    "Never include anything scary, violent, commercial, or that asks the child for personal information.",
+    "Do not use em dashes.",
+  ].join(" ");
+}
+
+/** Render the inventory slice as a copy-exactly constraint block for the prompt. */
+function inventoryLines(slice: ScriptEntry[]): string {
+  return slice
+    .map((e) => {
+      const gloss = e.meaning ? ` = ${e.meaning}` : "";
+      return `- id:${e.id}  symbol:${e.symbol}  (${e.romanization})${gloss}`;
+    })
+    .join("\n");
+}
+
+/**
+ * User prompt for World-Languages generation: inlines the inventory slice as a
+ * hard constraint and pins locale + romanization scheme + skillTags so the
+ * emitted config is self-describing and on-inventory.
+ */
+function buildLangUserPrompt(
+  kind: ActivityKind,
+  lang: LanguageDef,
+  band: Band,
+  focus: string,
+  n: number,
+  skillHints: SkillTag[],
+  slice: ScriptEntry[],
+): string {
+  const bandNote =
+    band === "stretch"
+      ? "Stretch a little: include a couple more symbols or a slightly harder check."
+      : "Keep it gentle and focused on just-introduced symbols.";
+  const tags = skillHints.length ? skillHints.join(", ") : `${lang.id}.symbols`;
+  return [
+    `Create ${n} "${kind}" practice item(s) for ${lang.displayName} focused on: ${focus}.`,
+    `Target skills: ${tags}. Set each item's "skillTags" to these.`,
+    `Use locale "${lang.locale}" and romanization scheme "${lang.romanization}".`,
+    bandNote,
+    KIND_BRIEF[kind],
+    "Use ONLY these symbols, and copy them EXACTLY (do not invent or modify glyphs):",
+    inventoryLines(slice),
+    'The answer and EVERY choice MUST be a "symbol" from this list. Set each emitted symbol\'s "id" to the matching id above.',
+    `Return JSON exactly as: { "items": [ <item>, ... ] } with ${n} item(s).`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 export interface GeneratePracticeOptions {
   /** Optional canonical skill tags to steer generation (e.g. ["phonics.digraphs"]). */
   skillHints?: SkillTag[];
@@ -100,14 +179,42 @@ export async function generatePracticeItems<K extends ActivityKind>(
   options: GeneratePracticeOptions = {},
 ): Promise<z.output<(typeof ACTIVITY_CONFIG_SCHEMAS)[K]>[]> {
   const count = Math.max(1, Math.min(MAX_ITEMS, Math.trunc(n)));
+  const skillHints = options.skillHints ?? [];
   const itemSchema = ACTIVITY_CONFIG_SCHEMAS[kind];
   // The model output is validated as a strict envelope of per-kind items.
   const envelope = z.object({ items: z.array(itemSchema).min(1).max(MAX_ITEMS) });
 
+  // World-Languages kinds MUST go through the language + inventory-constrained
+  // path. The language is derived from the skill hints; if none names a language
+  // we hard-fail rather than fall through to the generic English generator —
+  // which would emit schema-valid but inventory-UNGUARDED language content. The
+  // route turns the throw into a 502 -> authored-content fallback.
+  if (isLangKind(kind)) {
+    const lang = languageForSkillHints(skillHints);
+    if (!lang) {
+      throw new Error(
+        `generatePracticeItems: ${kind} needs a language skill hint (e.g. "zhuyin.symbols.initials"); none of [${skillHints.join(", ")}] names a language.`,
+      );
+    }
+    const slice = inventorySlice(lang, focus, skillHints);
+    const result = await chatJSON({
+      model: MODEL_FOR_LANGUAGE[lang.id] ?? MODEL_FOR_BAND[band],
+      system: buildLangSystemPrompt(lang),
+      user: buildLangUserPrompt(kind, lang, band, focus, count, skillHints, slice),
+      schema: envelope,
+      signal: options.signal,
+    });
+    // Shape is valid (Zod); now enforce + canonicalize linguistic correctness:
+    // reject out-of-inventory glyphs, then rebuild child-facing fields from the
+    // authored inventory. Throws if none survive.
+    const guarded = validateLangItems(kind, result.items, lang, slice);
+    return guarded as z.output<(typeof ACTIVITY_CONFIG_SCHEMAS)[K]>[];
+  }
+
   const result = await chatJSON({
     model: MODEL_FOR_BAND[band],
     system: buildSystemPrompt(),
-    user: buildUserPrompt(kind, band, focus, count, options.skillHints ?? []),
+    user: buildUserPrompt(kind, band, focus, count, skillHints),
     schema: envelope,
     signal: options.signal,
   });

@@ -3,6 +3,8 @@ import type { ZodType } from "zod";
 import type {
   ActivityKind,
   JournalPromptConfig,
+  LangListenMatchConfig,
+  LangSymbolIntroConfig,
   MathArrayConfig,
   MathTenframeConfig,
   PhonicsWordbuildConfig,
@@ -20,7 +22,12 @@ export type SkillDomain =
   | "vocab" // vocabulary depth
   | "writing"
   | "math"
-  | "habits";
+  | "habits"
+  // World Languages — one domain per language (one parent-report row each).
+  | "zhuyin"
+  | "spanish"
+  | "japanese"
+  | "korean";
 export type SkillTag = string; // "phonics.digraphs"
 export type StandardTag = string; // "CCSS.RF.1.3"
 
@@ -54,7 +61,9 @@ export type Activity =
   | ActivityOf<"math-tenframe", MathTenframeConfig>
   | ActivityOf<"journal-prompt", JournalPromptConfig>
   | ActivityOf<"reading-comprehension", ReadingComprehensionConfig>
-  | ActivityOf<"math-array", MathArrayConfig>;
+  | ActivityOf<"math-array", MathArrayConfig>
+  | ActivityOf<"lang-symbol-intro", LangSymbolIntroConfig>
+  | ActivityOf<"lang-listen-match", LangListenMatchConfig>;
 
 export type CheckpointKind = "baseline" | "mid" | "final";
 

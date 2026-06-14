@@ -22,6 +22,12 @@ import type { SkillDomain } from "@/content";
 
 export const metadata: Metadata = { title: "Learner" };
 
+/**
+ * Domains in the order the learner-detail page renders them, each with a
+ * friendly label. The four World-Languages strands each get their own section
+ * (one parent-report row per language) so language progress is shown and
+ * labelled, not dropped or lumped in with the core curriculum.
+ */
 const DOMAIN_ORDER: { key: SkillDomain; label: string }[] = [
   { key: "reading", label: "Reading & Comprehension" },
   { key: "word", label: "Word Study" },
@@ -29,6 +35,11 @@ const DOMAIN_ORDER: { key: SkillDomain; label: string }[] = [
   { key: "writing", label: "Writing" },
   { key: "math", label: "Math" },
   { key: "habits", label: "Habits" },
+  // World Languages
+  { key: "zhuyin", label: "Zhuyin (Bopomofo)" },
+  { key: "spanish", label: "Spanish" },
+  { key: "japanese", label: "Japanese" },
+  { key: "korean", label: "Korean" },
 ];
 
 export default async function LearnerDetailPage({

@@ -16,7 +16,9 @@ import { deriveOutcome, type SkillState } from "@/lib/tutor/mastery";
 import {
   SKILLS,
   findActivity,
+  findProgramByActivityId,
   getProgram,
+  skillTagsForProgram,
   type ActivityKind,
   type Program,
   type SkillOutcome,
@@ -31,11 +33,23 @@ import {
  * top level; `withAccount` resolves the session and opens the DB per-request.
  */
 
-/** The program every learner is enrolled in today (see ensureEnrollment). */
+/** The core program every learner is enrolled in by default (see ensureEnrollment). */
 export const ADAPTIVE_PROGRAM_SLUG = "kaelyn-adaptive";
 
-/** All skill slugs we track, in the curriculum's authored order. */
-const ALL_SKILL_TAGS: SkillTag[] = SKILLS.map((s) => s.slug);
+/**
+ * The skill tags the parent overview's "% solid" summary is scoped to. With more
+ * than one program now in the registry (e.g. world-languages), counting *all*
+ * SKILLS would dilute the core program's number with language strands the
+ * learner may not have touched. So the dashboard summary scopes to the core
+ * program's skills; the learner-detail page still renders every domain (incl.
+ * the language strands) in its own labelled section.
+ */
+function skillTagsForSlug(slug: string): SkillTag[] {
+  const program = getProgram(slug);
+  return program ? skillTagsForProgram(program) : SKILLS.map((s) => s.slug);
+}
+
+const ADAPTIVE_SKILL_TAGS: SkillTag[] = skillTagsForSlug(ADAPTIVE_PROGRAM_SLUG);
 
 /**
  * Parent-readable label per activity kind, mirroring each plugin's `label`
@@ -49,6 +63,8 @@ const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
   "journal-prompt": "Draw & write",
   "reading-comprehension": "Read & answer",
   "math-array": "Array builder",
+  "lang-symbol-intro": "Meet the symbols",
+  "lang-listen-match": "Listen & find",
 };
 
 /** Plain-language label for an attempt's kind (falls back to the raw kind). */
@@ -106,10 +122,17 @@ export interface ActivityRow {
 }
 
 function toActivityRow(program: Program | undefined, a: RecentAttempt): ActivityRow {
-  const found = program ? findActivity(program, a.activityId) : undefined;
+  let found = program ? findActivity(program, a.activityId) : undefined;
+  if (!found) {
+    // Attempts can span programs (e.g. a World Languages activity shown on the
+    // core dashboard) — resolve the owning program so the parent sees a real
+    // title, not the raw id.
+    const owner = findProgramByActivityId(a.activityId);
+    found = owner ? findActivity(owner, a.activityId) : undefined;
+  }
   return {
     activityId: a.activityId,
-    title: found?.activity.title ?? a.activityId,
+    title: found?.activity.title ?? kindLabel(a.kind),
     kindLabel: kindLabel(a.kind),
     stars: a.stars,
     day: a.day,
@@ -124,8 +147,8 @@ export async function listLearnerCards(): Promise<LearnerCard[]> {
     const program = getProgram(ADAPTIVE_PROGRAM_SLUG);
     return Promise.all(
       learners.map(async (learner) => {
-        const counts = await skillOutcomeCounts(accountId, learner.id, ALL_SKILL_TAGS);
-        return { learner, program, summary: summarize(counts, ALL_SKILL_TAGS.length) };
+        const counts = await skillOutcomeCounts(accountId, learner.id, ADAPTIVE_SKILL_TAGS);
+        return { learner, program, summary: summarize(counts, ADAPTIVE_SKILL_TAGS.length) };
       }),
     );
   });
@@ -211,8 +234,8 @@ export async function getOverview(): Promise<OverviewData> {
 
     const cards: LearnerCard[] = await Promise.all(
       learners.map(async (learner) => {
-        const counts = await skillOutcomeCounts(accountId, learner.id, ALL_SKILL_TAGS);
-        return { learner, program, summary: summarize(counts, ALL_SKILL_TAGS.length) };
+        const counts = await skillOutcomeCounts(accountId, learner.id, ADAPTIVE_SKILL_TAGS);
+        return { learner, program, summary: summarize(counts, ADAPTIVE_SKILL_TAGS.length) };
       }),
     );
 

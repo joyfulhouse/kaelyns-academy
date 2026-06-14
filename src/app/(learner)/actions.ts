@@ -7,9 +7,17 @@ import {
   ensureDefaultLearner,
   ensureEnrollment,
   getCompletedActivityIds,
+  getLearner,
   getSkillState,
+  listEnrollments,
   recordAttempt,
 } from "@/lib/tutor/store";
+import {
+  activityIdsForProgram,
+  getProgram,
+  listPrograms,
+  skillTagsForProgram,
+} from "@/content";
 import type { SkillState } from "@/lib/tutor";
 
 /**
@@ -26,8 +34,12 @@ import type { SkillState } from "@/lib/tutor";
  * failure yields a calm empty/`ok:false` result the hook can fall back from.
  */
 
-/** The single pilot program the learner surface enrolls into. */
-const PROGRAM_SLUG = "kaelyn-adaptive";
+/**
+ * The default program a new household learner is auto-enrolled into, so existing
+ * users keep their core curriculum unchanged. Additional programs (e.g.
+ * world-languages) are enrolled lazily when the learner first opens them.
+ */
+const DEFAULT_PROGRAM_SLUG = "kaelyn-adaptive";
 
 /** A learner as the kid surface needs it (a stable, client-safe shape). */
 export interface TutorLearner {
@@ -88,7 +100,7 @@ export async function ensureHouseholdLearner(): Promise<TutorLearner | null> {
       const session = await getAuth().api.getSession({ headers: await headers() });
       const displayName = session?.user?.name?.trim() || "Explorer";
       const learner = await ensureDefaultLearner(accountId, { displayName });
-      await ensureEnrollment(learner.id, PROGRAM_SLUG);
+      await ensureEnrollment(learner.id, DEFAULT_PROGRAM_SLUG);
       return {
         id: learner.id,
         displayName: learner.displayName,
@@ -101,6 +113,54 @@ export async function ensureHouseholdLearner(): Promise<TutorLearner | null> {
       captureNonCritical("ensureHouseholdLearner failed", error);
     }
     return null;
+  }
+}
+
+/**
+ * The program slugs the learner is enrolled in. Drives the `/learn` picker: one
+ * enrollment auto-redirects into that program; several render program tiles.
+ * Returns [] when unauthenticated or on failure (the picker then falls back to
+ * showing every program, which is also the guest-mode behavior).
+ */
+export async function getEnrollmentsAction(learnerId: string): Promise<string[]> {
+  if (!learnerId) return [];
+  try {
+    return await withAccount(({ accountId }) => listEnrollments(accountId, learnerId));
+  } catch (error) {
+    if (!(error instanceof UnauthenticatedError)) {
+      captureNonCritical("getEnrollmentsAction failed", error);
+    }
+    return [];
+  }
+}
+
+export type EnsureEnrollmentResult =
+  | { ok: true }
+  | { ok: false; reason: "unauthenticated" | "invalid" | "error" };
+
+/**
+ * Lazily enroll a learner into a program the first time they open it. The slug
+ * is validated against the program registry before any write, so an untrusted
+ * URL slug can never create a bogus enrollment. Never throws to the client.
+ */
+export async function ensureEnrollmentAction(
+  learnerId: string,
+  programSlug: string,
+): Promise<EnsureEnrollmentResult> {
+  if (!learnerId) return { ok: false, reason: "invalid" };
+  const known = listPrograms().some((p) => p.slug === programSlug);
+  if (!known) return { ok: false, reason: "invalid" };
+  try {
+    await withAccount(async ({ accountId }) => {
+      // Only enroll a learner the signed-in account actually owns (tenancy).
+      const owned = await getLearner(accountId, learnerId);
+      if (owned) await ensureEnrollment(learnerId, programSlug);
+    });
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) return { ok: false, reason: "unauthenticated" };
+    captureNonCritical("ensureEnrollmentAction failed", error);
+    return { ok: false, reason: "error" };
   }
 }
 
@@ -174,26 +234,50 @@ const EMPTY_STATE: LearnerStateResult = {
 };
 
 /**
- * Read a learner's mastery state + completed authored activities (the data the
- * adaptive UI needs: next-best, per-strand levels, completion checks, stars).
- * Returns empty state when unauthenticated or on any failure, so callers fall
- * back to a fresh surface rather than a broken one.
+ * Read a learner's mastery state + completed authored activities for ONE program
+ * (the data the adaptive UI needs: next-best, per-strand levels, completion
+ * checks, stars). The DB stores skill_state and attempts across all programs, so
+ * we scope here: completion/stars to the program's authored activity ids, and
+ * skill_state to the program's skills. This keeps a learner's progress in one
+ * world from leaking into another (e.g. language skills out of the core map).
+ *
+ * Returns empty state when unauthenticated, on any failure, or for an unknown
+ * program slug, so callers fall back to a fresh surface rather than a broken one.
  */
-export async function getLearnerStateAction(learnerId: string): Promise<LearnerStateResult> {
+export async function getLearnerStateAction(
+  learnerId: string,
+  programSlug: string,
+): Promise<LearnerStateResult> {
   if (!learnerId) return EMPTY_STATE;
+  const program = getProgram(programSlug);
+  if (!program) return EMPTY_STATE;
+
+  const activityIds = new Set(activityIdsForProgram(program));
+  const skillTags = new Set(skillTagsForProgram(program));
+
   try {
     return await withAccount(async ({ accountId }) => {
-      const [skillState, completed] = await Promise.all([
+      const [fullSkillState, completed] = await Promise.all([
         getSkillState(accountId, learnerId),
         getCompletedActivityIds(accountId, learnerId),
       ]);
+
+      // Scope skill_state to this program's skills.
+      const skillState: SkillState = {};
+      for (const [slug, record] of Object.entries(fullSkillState)) {
+        if (skillTags.has(slug)) skillState[slug] = record;
+      }
+
+      // Scope completion + best-stars to this program's authored activities.
       const starsByActivity: Record<string, number> = {};
-      for (const c of completed) starsByActivity[c.activityId] = c.stars;
-      return {
-        skillState,
-        completedActivityIds: completed.map((c) => c.activityId),
-        starsByActivity,
-      };
+      const completedActivityIds: string[] = [];
+      for (const c of completed) {
+        if (!activityIds.has(c.activityId)) continue;
+        completedActivityIds.push(c.activityId);
+        starsByActivity[c.activityId] = c.stars;
+      }
+
+      return { skillState, completedActivityIds, starsByActivity };
     });
   } catch (error) {
     if (!(error instanceof UnauthenticatedError)) {

@@ -53,11 +53,13 @@ type Phase =
  */
 export function ActivityHost({
   activity,
+  programSlug,
   world,
   backHref,
   nextHref,
 }: {
   activity: Activity;
+  programSlug: string;
   world: World;
   backHref: string;
   nextHref: string | null;
@@ -66,8 +68,9 @@ export function ActivityHost({
   const { learner } = useActiveLearner();
   // One state seam for both surfaces: DB-backed when a household is signed in,
   // localStorage guest otherwise. The guest learner id only matters in guest
-  // mode; in account mode the hook resolves the selected account learner.
-  const { skillState, record } = useLearnerState(learner.id);
+  // mode; in account mode the hook resolves the selected account learner. State
+  // is scoped to the active program by its slug.
+  const { skillState, record } = useLearnerState(learner.id, programSlug);
   const [phase, setPhase] = useState<Phase>({ kind: "play" });
   const [generatedCount, setGeneratedCount] = useState(0);
 

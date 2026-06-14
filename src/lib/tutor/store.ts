@@ -102,6 +102,17 @@ export async function ensureEnrollment(learnerId: string, programSlug: string): 
     .onConflictDoNothing({ target: [enrollment.learnerId, enrollment.programSlug] });
 }
 
+/** Program slugs a learner is enrolled in (verified to belong to the account). */
+export async function listEnrollments(accountId: string, learnerId: string): Promise<string[]> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return [];
+  const rows = await getDb()
+    .select({ programSlug: enrollment.programSlug })
+    .from(enrollment)
+    .where(eq(enrollment.learnerId, learnerId));
+  return rows.map((r) => r.programSlug);
+}
+
 export interface RecordAttemptInput {
   learnerId: string;
   activityId: string;

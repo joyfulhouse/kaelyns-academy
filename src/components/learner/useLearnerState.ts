@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Activity, ActivityScore } from "@/content";
-import { listPrograms } from "@/content";
+import { getProgram } from "@/content";
 import { applyEvidence, type SkillState } from "@/lib/tutor";
 import {
+  ensureEnrollmentAction,
   ensureHouseholdLearner,
   getLearnerStateAction,
   getTutorSession,
@@ -14,7 +15,6 @@ import {
 import { getKeySnapshot, subscribeKey, writeKey } from "./localStore";
 import { useSkillState } from "./useSkillState";
 import { useProgress } from "./useProgress";
-import { PROGRAM_SLUG } from "./activityMeta";
 
 /**
  * The learner surface's mode-picking state hook: the seam between the signed-in,
@@ -109,10 +109,12 @@ function readRememberedAccountLearner(raw: string | null): string | null {
   return raw && raw.length > 0 ? raw : null;
 }
 
-export function useLearnerState(guestLearnerId: string): UseLearnerState {
+export function useLearnerState(guestLearnerId: string, programSlug: string): UseLearnerState {
   // ── Guest path (always mounted; only read when mode === "guest") ──────────
-  const guestSkill = useSkillState(guestLearnerId, PROGRAM_SLUG);
-  const guestProgress = useProgress(guestLearnerId, PROGRAM_SLUG);
+  // Both guest hooks are program-scoped by their localStorage key, so passing the
+  // active program's slug is all guest mode needs to keep worlds separate.
+  const guestSkill = useSkillState(guestLearnerId, programSlug);
+  const guestProgress = useProgress(guestLearnerId, programSlug);
   // These callbacks are stable (each guest hook memoizes them), so depending on
   // them keeps `record`'s identity stable across renders.
   const { record: guestRecord } = guestSkill;
@@ -136,10 +138,11 @@ export function useLearnerState(guestLearnerId: string): UseLearnerState {
   const [accountSkill, setAccountSkill] = useState<SkillState>(EMPTY_STATE);
   const [accountCompleted, setAccountCompleted] = useState<Set<string>>(new Set());
   const [accountStars, setAccountStars] = useState<Record<string, 0 | 1 | 2 | 3>>({});
-  // Which learner the loaded DB state belongs to (null = nothing loaded yet).
-  // `ready` is derived from this matching the active learner, so we never need a
-  // synchronous setState to "reset" readiness when the learner changes.
-  const [loadedLearnerId, setLoadedLearnerId] = useState<string | null>(null);
+  // Which (learner, program) the loaded DB state belongs to (null = nothing
+  // loaded yet). `ready` is derived from this matching the active learner +
+  // program, so switching either shows a brief loading beat (not stale data)
+  // without a synchronous setState to "reset" readiness.
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -183,31 +186,39 @@ export function useLearnerState(guestLearnerId: string): UseLearnerState {
         ? guestLearnerId
         : null;
 
-  // Load (and reload) the selected account learner's DB state. The first
-  // statement is an await, so every setState below runs post-await (async),
-  // satisfying react-hooks/set-state-in-effect.
+  // Load (and reload) the selected account learner's DB state for this program.
+  // The first statement is an await, so every setState below runs post-await
+  // (async), satisfying react-hooks/set-state-in-effect.
   const reloadToken = useRef(0);
-  const loadAccountState = useCallback(async (learnerId: string) => {
-    const token = ++reloadToken.current;
-    const { skillState, completedActivityIds, starsByActivity } =
-      await getLearnerStateAction(learnerId);
-    // Stale-response guard: ignore all but the latest in-flight load.
-    if (!mountedRef.current || token !== reloadToken.current) return;
-    setAccountSkill(skillState);
-    setAccountCompleted(new Set(completedActivityIds));
-    // Server best-stars become the source of truth on load; this also clears any
-    // optimistic stars from a prior learner so glyphs match the loaded learner.
-    setAccountStars(starsByActivity as Record<string, 0 | 1 | 2 | 3>);
-    setLoadedLearnerId(learnerId);
-  }, []);
+  const loadAccountState = useCallback(
+    async (learnerId: string, slug: string) => {
+      const token = ++reloadToken.current;
+      const { skillState, completedActivityIds, starsByActivity } = await getLearnerStateAction(
+        learnerId,
+        slug,
+      );
+      // Stale-response guard: ignore all but the latest in-flight load.
+      if (!mountedRef.current || token !== reloadToken.current) return;
+      setAccountSkill(skillState);
+      setAccountCompleted(new Set(completedActivityIds));
+      // Server best-stars become the source of truth on load; this also clears
+      // any optimistic stars from a prior learner/program so glyphs match.
+      setAccountStars(starsByActivity as Record<string, 0 | 1 | 2 | 3>);
+      setLoadedKey(`${learnerId}:${slug}`);
+    },
+    [],
+  );
 
-  // Fetch DB state whenever the active account learner changes (an awaited
-  // action sets state from its result — not an external-store read in an effect).
+  // Fetch DB state whenever the active account learner OR program changes (an
+  // awaited action sets state from its result — not an external-store read in an
+  // effect). Lazily enroll the learner into this program on first open, so a
+  // learner who switches worlds is recorded as enrolled for the picker.
   const accountLearnerToLoad = mode === "account" ? selectedLearnerId : null;
   useEffect(() => {
     if (!accountLearnerToLoad) return;
-    void loadAccountState(accountLearnerToLoad);
-  }, [accountLearnerToLoad, loadAccountState]);
+    void ensureEnrollmentAction(accountLearnerToLoad, programSlug);
+    void loadAccountState(accountLearnerToLoad, programSlug);
+  }, [accountLearnerToLoad, programSlug, loadAccountState]);
 
   const selectLearner = useCallback((id: string) => {
     writeKey(ACCOUNT_LEARNER_KEY, id);
@@ -254,7 +265,7 @@ export function useLearnerState(guestLearnerId: string): UseLearnerState {
               skillEvidence: score.skillEvidence,
             },
           });
-          if (mountedRef.current) await loadAccountState(selectedLearnerId);
+          if (mountedRef.current) await loadAccountState(selectedLearnerId, programSlug);
         })();
         return;
       }
@@ -263,7 +274,7 @@ export function useLearnerState(guestLearnerId: string): UseLearnerState {
       guestRecord(score.skillEvidence);
       if (!generated) guestComplete(activity.id, score.stars);
     },
-    [mode, selectedLearnerId, loadAccountState, guestRecord, guestComplete],
+    [mode, selectedLearnerId, programSlug, loadAccountState, guestRecord, guestComplete],
   );
 
   // ── Project the active view based on mode ─────────────────────────────────
@@ -272,9 +283,10 @@ export function useLearnerState(guestLearnerId: string): UseLearnerState {
       skillState: accountSkill,
       completed: accountCompleted,
       getStars: (id) => accountStars[id] ?? 0,
-      // Ready only once the loaded state belongs to the active learner (so a
-      // learner switch shows a brief loading beat, not the prior kid's data).
-      ready: loadedLearnerId === selectedLearnerId,
+      // Ready only once the loaded state belongs to the active learner AND
+      // program (so a learner OR world switch shows a brief loading beat, not
+      // the prior kid's/world's data).
+      ready: loadedKey === `${selectedLearnerId}:${programSlug}`,
       mode,
       signedIn: true,
       learners,
@@ -289,7 +301,7 @@ export function useLearnerState(guestLearnerId: string): UseLearnerState {
     const completed = new Set<string>();
     if (guestProgress.ready) {
       // useProgress tracks completion via key presence; surface it as a set.
-      for (const id of completedFromProgress(guestProgress)) completed.add(id);
+      for (const id of completedFromProgress(guestProgress, programSlug)) completed.add(id);
     }
     return {
       skillState: guestSkill.skillState,
@@ -324,14 +336,16 @@ export function useLearnerState(guestLearnerId: string): UseLearnerState {
 
 /**
  * `useProgress` exposes completion via `isComplete(id)` rather than a set, so to
- * build the completed set the caller must probe per activity. We don't have the
- * program's id list here, so we expose a narrow bridge: the StudioHome /
- * ActivityHost pass the activity ids they care about. To keep this hook content
- * agnostic, guest completion is read lazily against the program registry.
+ * build the completed set the caller must probe per activity. Guest completion
+ * is read against the active program's activities (resolved from the registry by
+ * its slug), so the set only ever holds ids from the world the kid is in.
  */
-function completedFromProgress(progress: ReturnType<typeof useProgress>): string[] {
+function completedFromProgress(
+  progress: ReturnType<typeof useProgress>,
+  programSlug: string,
+): string[] {
   const out: string[] = [];
-  const program = listPrograms().find((p) => p.slug === PROGRAM_SLUG);
+  const program = getProgram(programSlug);
   if (!program) return out;
   for (const unit of program.units) {
     for (const lesson of unit.lessons) {

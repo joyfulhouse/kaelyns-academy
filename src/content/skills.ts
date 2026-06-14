@@ -382,6 +382,150 @@ export const SKILLS: Skill[] = [
     label: "Focus & persistence",
     readyIndicator: "Works independently for a focused block and keeps trying when something is hard",
   },
+
+  // ── World Languages: Zhuyin / Bopomofo ──
+  // Script-mapping: she already speaks Mandarin and reads pinyin, so this is
+  // learning the symbols for sounds she knows, not a new language.
+  {
+    slug: "zhuyin.symbols.initials",
+    domain: "zhuyin",
+    label: "Zhuyin initial consonants (ㄅ ㄆ ㄇ ㄈ …)",
+    readyIndicator: "Sees an initial Zhuyin symbol and says its sound; matches it to the right pinyin letter",
+    stretchIndicator: "Hears a syllable and picks the Zhuyin symbol it starts with",
+  },
+  {
+    slug: "zhuyin.symbols.medials-finals",
+    domain: "zhuyin",
+    label: "Zhuyin medials & finals (ㄧ ㄨ ㄩ · ㄚ ㄛ ㄜ …)",
+    readyIndicator: "Reads the medial and final symbols and says each sound",
+  },
+  {
+    slug: "zhuyin.tones",
+    domain: "zhuyin",
+    label: "Zhuyin tone marks (ˉ ˊ ˇ ˋ)",
+    readyIndicator: "Names each tone mark and the pitch it shows; hears a syllable and picks its tone",
+    stretchIndicator: "Reads a written syllable with its tone mark at the right pitch",
+  },
+  {
+    slug: "zhuyin.blend",
+    domain: "zhuyin",
+    label: "Blend Zhuyin into syllables",
+    readyIndicator: "Blends an initial and a final (with a tone) into a whole syllable she can say",
+  },
+  {
+    slug: "zhuyin.read",
+    domain: "zhuyin",
+    label: "Read words written in Zhuyin",
+    readyIndicator: "Reads common two-symbol words written in Zhuyin with tone marks",
+  },
+
+  // ── World Languages: Spanish (new language) ──
+  {
+    slug: "spanish.greetings",
+    domain: "spanish",
+    label: "Spanish greetings & courtesy",
+    readyIndicator: "Understands and says hola, adiós, gracias, por favor at the right moment",
+  },
+  {
+    slug: "spanish.numbers",
+    domain: "spanish",
+    label: "Spanish numbers 1–10",
+    readyIndicator: "Counts uno to diez and matches each number word to its quantity",
+  },
+  {
+    slug: "spanish.colors",
+    domain: "spanish",
+    label: "Spanish colors",
+    readyIndicator: "Names common colors (rojo, azul, verde, amarillo) and matches them to things",
+  },
+  {
+    slug: "spanish.family",
+    domain: "spanish",
+    label: "Spanish family & people words",
+    readyIndicator: "Knows mamá, papá, hermano, hermana and uses them about her own family",
+  },
+  {
+    slug: "spanish.listening",
+    domain: "spanish",
+    label: "Spanish listening",
+    readyIndicator: "Hears a familiar Spanish word and taps the matching picture or word",
+  },
+  {
+    slug: "spanish.phrases",
+    domain: "spanish",
+    label: "Simple Spanish phrases (introduce yourself)",
+    readyIndicator: "Says me llamo… and tengo … años to introduce herself",
+  },
+
+  // ── World Languages: Japanese (new language) ──
+  {
+    slug: "japanese.hiragana-vowels",
+    domain: "japanese",
+    label: "Hiragana vowels (あ い う え お)",
+    readyIndicator: "Reads the five hiragana vowels and says each sound",
+  },
+  {
+    slug: "japanese.hiragana-k-s-t",
+    domain: "japanese",
+    label: "Hiragana か・さ・た rows",
+    readyIndicator: "Reads the ka, sa, and ta row hiragana on sight",
+  },
+  {
+    slug: "japanese.hiragana-n-h-m",
+    domain: "japanese",
+    label: "Hiragana な・は・ま rows",
+    readyIndicator: "Reads the na, ha, and ma row hiragana on sight",
+  },
+  {
+    slug: "japanese.katakana-intro",
+    domain: "japanese",
+    label: "First katakana",
+    readyIndicator: "Knows katakana writes the same sounds and reads the first katakana",
+  },
+  {
+    slug: "japanese.greetings",
+    domain: "japanese",
+    label: "Japanese greetings",
+    readyIndicator: "Understands and says こんにちは, ありがとう, さようなら",
+  },
+  {
+    slug: "japanese.listening",
+    domain: "japanese",
+    label: "Japanese listening",
+    readyIndicator: "Hears a hiragana sound or word and taps the matching kana",
+  },
+
+  // ── World Languages: Korean (new language) ──
+  {
+    slug: "korean.vowels",
+    domain: "korean",
+    label: "Hangul vowels (ㅏ ㅓ ㅗ ㅜ ㅣ)",
+    readyIndicator: "Reads the basic Hangul vowels and says each sound",
+  },
+  {
+    slug: "korean.consonants",
+    domain: "korean",
+    label: "Hangul consonants (ㄱ ㄴ ㄷ ㄹ ㅁ …)",
+    readyIndicator: "Reads the basic Hangul consonant jamo and says each sound",
+  },
+  {
+    slug: "korean.syllables",
+    domain: "korean",
+    label: "Build Hangul syllable blocks",
+    readyIndicator: "Combines a consonant and a vowel into a syllable block and reads it",
+  },
+  {
+    slug: "korean.greetings",
+    domain: "korean",
+    label: "Korean greetings",
+    readyIndicator: "Understands and says 안녕하세요 and 감사합니다",
+  },
+  {
+    slug: "korean.listening",
+    domain: "korean",
+    label: "Korean listening",
+    readyIndicator: "Hears a jamo sound or word and taps the matching Hangul",
+  },
 ];
 
 const BY_SLUG = new Map<SkillTag, Skill>(SKILLS.map((s) => [s.slug, s]));

@@ -17,12 +17,13 @@ import { ACTIVITY_META } from "./activityMeta";
  * then its lessons' activities as big friendly buttons. Each activity leads
  * with its kind icon and shows earned stars. Themed by `data-world`.
  */
-export function UnitView({ unit }: { unit: Unit }) {
+export function UnitView({ unit, programSlug }: { unit: Unit; programSlug: string }) {
   const reduce = useReducedMotion();
   const { learner } = useActiveLearner();
   // Stars come from the active surface: DB in account mode, localStorage guest
-  // otherwise. The mock learner id only matters in guest mode.
-  const { getStars, ready } = useLearnerState(learner.id);
+  // otherwise. The mock learner id only matters in guest mode; state is scoped
+  // to the active program by its slug.
+  const { getStars, ready } = useLearnerState(learner.id, programSlug);
 
   const readAloud = `${unit.title}. ${unit.bigIdea} Pick something to do.`;
 
@@ -32,7 +33,7 @@ export function UnitView({ unit }: { unit: Unit }) {
 
   return (
     <div data-world={unit.world}>
-      <AppShellKid backHref="/learn" readAloud={readAloud}>
+      <AppShellKid backHref={`/learn/${programSlug}`} readAloud={readAloud}>
         {/* World header */}
         <header className="relative mb-7 overflow-hidden rounded-2xl border-[3px] border-ink bg-accent/12 px-5 py-6">
           <div className="flex items-start gap-4">
@@ -90,7 +91,7 @@ export function UnitView({ unit }: { unit: Unit }) {
             return (
               <motion.li key={activity.id} {...motionProps}>
                 <a
-                  href={`/learn/${unit.id}/${activity.id}`}
+                  href={`/learn/${programSlug}/${unit.id}/${activity.id}`}
                   aria-label={`${activity.title}. ${meta.label}.${stars > 0 ? ` ${stars} of 3 stars.` : ""}`}
                   className={cn(
                     "flex min-h-24 w-full items-center gap-4 rounded-2xl px-4 py-4",
