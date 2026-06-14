@@ -50,12 +50,13 @@ describe("generateProgressReport (grounded + schema-validated)", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
 
     // It POSTs JSON with a bearer token to the gateway's chat-completions path,
-    // using the rich tutor route ("chat-default").
+    // using the rich tutor route (TUTOR_RICH = "ha-assist", reasoning-off for
+    // reliable JSON; see models.ts).
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("http://litellm.test/v1/chat/completions");
     expect(init.method).toBe("POST");
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer test-key");
-    expect(JSON.parse(init.body as string).model).toBe("chat-default");
+    expect(JSON.parse(init.body as string).model).toBe("ha-assist");
   });
 
   it("grounds the prompt only in the provided skills (no fabricated data)", async () => {
