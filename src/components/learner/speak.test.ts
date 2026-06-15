@@ -1,7 +1,10 @@
 // src/components/learner/speak.test.ts
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { narrate as Narrate } from "./narrate";
 
-const { narrate } = vi.hoisted(() => ({ narrate: vi.fn(() => ({ cancel: vi.fn() })) }));
+const { narrate } = vi.hoisted(() => ({
+  narrate: vi.fn<typeof Narrate>(() => ({ cancel: vi.fn() })),
+}));
 vi.mock("./narrate", () => ({ narrate }));
 
 import { speak, stopSpeaking } from "./speak";
