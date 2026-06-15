@@ -859,6 +859,9 @@ class FakeAudio {
 }
 
 beforeEach(() => {
+  // The suite runs in vitest's `node` environment; narrate guards on `window`,
+  // so define a minimal one (the globals it actually uses are stubbed below).
+  vi.stubGlobal("window", {});
   vi.stubGlobal("Audio", FakeAudio as unknown as typeof Audio);
   vi.stubGlobal(
     "URL",
