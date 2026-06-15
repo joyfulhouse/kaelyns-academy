@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { type NarrateHandle, narrate } from "@/components/learner/narrate";
+import { routeSpeak } from "./speechRouting";
 import { pickVoice, speechParamsFor } from "./voiceUtils";
 
 /**
@@ -49,6 +51,7 @@ export function useSpeech(locale = "en-US"): SpeechController {
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
+  const narrateRef = useRef<NarrateHandle | null>(null);
   // English is assumed available; for other locales we flip true only once a
   // matching voice resolves (drives whether callers offer that language's audio).
   const [hasVoice, setHasVoice] = useState(() => isEnglish(locale));
@@ -74,16 +77,12 @@ export function useSpeech(locale = "en-US"): SpeechController {
     };
   }, [locale]);
 
-  const speak = useCallback(
+  const speakViaSynth = useCallback(
     (text: string) => {
       const synth = synthRef.current ?? getSynth();
-      if (!synth || typeof window === "undefined" || !("SpeechSynthesisUtterance" in window)) {
-        return;
-      }
-      const trimmed = text.trim();
-      if (!trimmed) return;
+      if (!synth || typeof window === "undefined" || !("SpeechSynthesisUtterance" in window)) return;
       synth.cancel();
-      const utterance = new SpeechSynthesisUtterance(trimmed);
+      const utterance = new SpeechSynthesisUtterance(text);
       const voice = voiceRef.current ?? pickVoice(synth.getVoices(), locale);
       if (voice) utterance.voice = voice;
       utterance.lang = locale;
@@ -95,7 +94,19 @@ export function useSpeech(locale = "en-US"): SpeechController {
     [locale],
   );
 
+  const speak = useCallback(
+    (text: string) => {
+      narrateRef.current?.cancel();
+      narrateRef.current = null;
+      (synthRef.current ?? getSynth())?.cancel();
+      narrateRef.current = routeSpeak(locale, text, { narrate, speakViaSynth });
+    },
+    [locale, speakViaSynth],
+  );
+
   const cancel = useCallback(() => {
+    narrateRef.current?.cancel();
+    narrateRef.current = null;
     (synthRef.current ?? getSynth())?.cancel();
   }, []);
 

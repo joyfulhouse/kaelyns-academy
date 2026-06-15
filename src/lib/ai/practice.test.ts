@@ -1,4 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+// Pre-synth-on-generation fires `ensureNarration` (fire-and-forget) for every
+// spoken English field. Mock it so that side-effect never reaches the global
+// `fetch` these tests stub for the gateway — keeping the gateway-call assertions
+// exact. The narration pipeline is covered by its own unit tests.
+const { ensureNarration } = vi.hoisted(() => ({
+  ensureNarration:
+    vi.fn<(text: string) => Promise<{ key: string; prefix: string; stored: boolean }>>(),
+}));
+vi.mock("@/lib/audio/narration", () => ({ ensureNarration }));
+
 import { generatePracticeItems } from "./practice";
 
 /** Build a fake OpenAI-compatible chat-completions response. */
@@ -16,6 +27,7 @@ describe("generatePracticeItems (bounded + schema-validated)", () => {
   beforeEach(() => {
     process.env.LITELLM_URL = "http://litellm.test/v1";
     process.env.LITELLM_API_KEY = "test-key";
+    ensureNarration.mockResolvedValue({ key: "k", prefix: "en", stored: true });
   });
 
   afterEach(() => {

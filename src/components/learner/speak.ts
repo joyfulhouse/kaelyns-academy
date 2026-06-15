@@ -1,13 +1,11 @@
 "use client";
 
 /**
- * Audio-first helper. The kid surface leads with the ear: prompts are read
- * aloud via the browser's built-in speech synthesis (no dependency, no network,
- * no child data leaves the device). Degrades silently where unavailable.
- *
- * TODO: a later phase may swap this for pre-recorded narration or a server TTS
- * route; keep `speak()` / `canSpeak()` as the stable seam.
+ * Audio-first helper. English prompts are voiced by the Kokoro neural voice via
+ * the /api/tts route (see narrate); if that is unavailable we fall back to the
+ * browser's built-in speech synthesis. Degrades silently where neither works.
  */
+import { type NarrateHandle, narrate } from "./narrate";
 
 export function canSpeak(): boolean {
   return (
@@ -17,16 +15,13 @@ export function canSpeak(): boolean {
   );
 }
 
-/** Speak a short phrase. Cancels anything already speaking so taps feel instant. */
-export function speak(text: string): void {
+/** Browser Web Speech delivery — the fallback when Kokoro is unavailable. */
+function speakViaSynth(text: string): void {
   if (!canSpeak()) return;
-  const trimmed = text.trim();
-  if (!trimmed) return;
   try {
     const synth = window.speechSynthesis;
     synth.cancel();
-    const utterance = new window.SpeechSynthesisUtterance(trimmed);
-    // Gentle, unhurried delivery to match the picture-book voice.
+    const utterance = new window.SpeechSynthesisUtterance(text);
     utterance.rate = 0.92;
     utterance.pitch = 1.05;
     utterance.lang = "en-US";
@@ -36,12 +31,30 @@ export function speak(text: string): void {
   }
 }
 
-/** Stop any in-flight narration (e.g. on unmount or navigation). */
+let active: NarrateHandle | null = null;
+
+/** Speak a short phrase via Kokoro (fallback: browser TTS). Cancels anything in flight. */
+export function speak(text: string): void {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  stopSpeaking();
+  active = narrate(trimmed, {
+    persist: "durable",
+    onUnavailable: () => speakViaSynth(trimmed),
+  });
+}
+
+/** Stop any in-flight narration (clip or utterance). */
 export function stopSpeaking(): void {
-  if (!canSpeak()) return;
-  try {
-    window.speechSynthesis.cancel();
-  } catch {
-    // no-op
+  if (active) {
+    active.cancel();
+    active = null;
+  }
+  if (canSpeak()) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch {
+      // no-op
+    }
   }
 }
