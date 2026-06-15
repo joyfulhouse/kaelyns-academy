@@ -6,6 +6,8 @@ import {
   ACTIVITY_CONFIG_SCHEMAS,
   type ActivityKind,
 } from "@/content/activity-configs";
+import { ensureNarration } from "@/lib/audio/narration";
+import { spokenEnglishStrings } from "@/lib/audio/spokenFields";
 import type { LanguageDef, ScriptEntry } from "@/content/languages";
 import type { Band, SkillTag } from "@/content/types";
 import { chatJSON, TUTOR_FAST, TUTOR_RICH, type TutorModel } from "./models";
@@ -219,5 +221,12 @@ export async function generatePracticeItems<K extends ActivityKind>(
     signal: options.signal,
   });
 
-  return result.items as z.output<(typeof ACTIVITY_CONFIG_SCHEMAS)[K]>[];
+  const items = result.items as z.output<(typeof ACTIVITY_CONFIG_SCHEMAS)[K]>[];
+  // Fire-and-forget: warm the durable narration cache for everything the child
+  // will hear, so the speaker button is an instant hit. Never blocks/breaks the
+  // response (ensureNarration swallows its own errors).
+  for (const item of items) {
+    for (const text of spokenEnglishStrings(item)) void ensureNarration(text);
+  }
+  return items;
 }
