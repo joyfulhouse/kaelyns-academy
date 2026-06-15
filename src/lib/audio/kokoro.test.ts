@@ -11,7 +11,7 @@ describe("synthesizeMp3", () => {
   it("POSTs Kokoro /audio/speech as mp3 and returns the bytes", async () => {
     vi.stubEnv("KOKORO_URL", "http://kokoro.test/v1");
     const bytes = new Uint8Array([1, 2, 3]);
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn<typeof fetch>(async () =>
       new Response(bytes, { status: 200, headers: { "content-type": "audio/mpeg" } }),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -19,9 +19,9 @@ describe("synthesizeMp3", () => {
     const out = await synthesizeMp3("hello", "af_heart", 0.9);
 
     expect(out).toEqual(bytes);
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("http://kokoro.test/v1/audio/speech");
-    expect(JSON.parse(init.body)).toEqual({
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
       model: "kokoro",
       input: "hello",
       voice: "af_heart",

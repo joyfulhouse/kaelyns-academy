@@ -19,13 +19,13 @@ afterEach(() => {
 describe("clipExists", () => {
   it("HEADs the public AUDIO_ORIGIN path and maps ok→true", async () => {
     vi.stubEnv("AUDIO_ORIGIN", "http://minio.test/bucket/");
-    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(clipExists("en", "abc")).resolves.toBe(true);
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("http://minio.test/bucket/en/abc.mp3");
-    expect(init.method).toBe("HEAD");
+    expect((init as RequestInit).method).toBe("HEAD");
   });
 
   it("is false on 404 and false when AUDIO_ORIGIN is unset", async () => {
