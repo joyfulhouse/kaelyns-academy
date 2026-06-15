@@ -198,6 +198,14 @@ async function synth(
   return "say";
 }
 
+/** Human-readable `engine:voice` tag for the per-language log line — reflects the
+ *  backend actually reachable (Kokoro/MeloTTS up, else the `say` fallback). */
+function engineLabel(backend: Backend, kokoroUp: boolean, melottsUp: boolean): string {
+  if (backend.engine === "kokoro" && kokoroUp) return `kokoro:${backend.kokoroVoice}`;
+  if (backend.engine === "melotts" && melottsUp) return "melotts:KR";
+  return `say:${backend.sayVoice}`;
+}
+
 function main(): void {
   if (process.platform !== "darwin") {
     console.log("generate-audio: macOS-only (needs `afconvert` + `say`). Skipping on this platform.");
@@ -241,15 +249,10 @@ async function run(): Promise<void> {
   try {
     for (const lang of languages) {
       const backend = BACKEND_BY_LOCALE[lang.locale] ?? BACKEND_BY_LOCALE["en-US"];
-      const engineLabel =
-        backend.engine === "kokoro" && kokoroUp
-          ? `kokoro:${backend.kokoroVoice}`
-          : backend.engine === "melotts" && melottsUp
-            ? "melotts:KR"
-            : `say:${backend.sayVoice}`;
+      const label = engineLabel(backend, kokoroUp, melottsUp);
       const outDir = join(PUBLIC_AUDIO_DIR, lang.locale);
       mkdirSync(outDir, { recursive: true });
-      console.log(`\n${lang.locale} (${lang.displayName}) — ${engineLabel}, ${lang.inventory.length} entries`);
+      console.log(`\n${lang.locale} (${lang.displayName}) — ${label}, ${lang.inventory.length} entries`);
 
       for (const entry of lang.inventory) {
         const key = `${lang.locale}/${entry.id}`;
