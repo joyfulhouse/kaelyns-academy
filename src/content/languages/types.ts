@@ -25,6 +25,13 @@ export interface ScriptEntry {
   romanization: string;
   /** Text handed to TTS when no recorded clip exists — usually a syllable or word. */
   spoken: string;
+  /**
+   * Override text for a NEURAL TTS (Kokoro) when `spoken` isn't suitable for it.
+   * Zhuyin's `spoken` is Bopomofo, which Kokoro can't read, so `tts` holds a
+   * Mandarin hanzi of the same sound. The pre-generation script prefers this; the
+   * in-browser TTS fallback still speaks `spoken`.
+   */
+  tts?: string;
   /** Tone (Mandarin/Zhuyin only): 1–4, or 5 = neutral. */
   tone?: 1 | 2 | 3 | 4 | 5;
   /** Display grouping (e.g. "initials", "vowels", "row-a", "greetings"). */

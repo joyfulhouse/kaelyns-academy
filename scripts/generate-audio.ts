@@ -5,14 +5,19 @@
  * transcode it to AAC/.m4a at `public/audio/<locale>/<id>.m4a`. The hybrid audio
  * layer (`useAudio`) plays these when present and falls back to browser TTS.
  *
- * Two TTS backends, chosen per language:
+ * Three TTS backends, chosen per language:
  *  - **Kokoro** (the homelab neural voices, kokoro-fastapi OpenAI API) for the
- *    languages it does natively + naturally: Spanish + Japanese. Reach it via a
- *    port-forward and set KOKORO_URL (default http://localhost:8880/v1):
+ *    languages it does natively + naturally: Spanish + Japanese, plus Zhuyin via
+ *    each entry's Mandarin `tts` hanzi (its `spoken` is Bopomofo, which Kokoro
+ *    can't read). Reach it via a port-forward and set KOKORO_URL (default
+ *    http://localhost:8880/v1):
  *      kubectl -n voice port-forward svc/kokoro 8880:8880
- *  - **macOS `say`** for Korean (Kokoro has no Korean voice) and Zhuyin (Kokoro
- *    Mandarin wants pinyin/hanzi, not Bopomofo) — and as the fallback for every
- *    language when Kokoro is unreachable.
+ *  - **MeloTTS** (homelab Korean TTS, OpenAI-compatible shim) for Korean — the one
+ *    language Kokoro has no voice for; a purpose-trained natural Korean voice.
+ *    Port-forward + MELOTTS_URL (default http://localhost:8000/v1):
+ *      kubectl -n voice port-forward svc/melotts 8000:8000
+ *  - **macOS `say`** as the fallback for every language when its neural backend is
+ *    unreachable (or for any Zhuyin entry still lacking a `tts` hanzi).
  *
  * CI MUST NOT run this: it needs macOS `afconvert` (+ `say`), and in production
  * the clips ship from the storage backend behind AUDIO_BASE_URL, not the repo.
@@ -28,7 +33,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageDef } from "@/content/languages/types";
 
-type Engine = "say" | "kokoro";
+type Engine = "say" | "kokoro" | "melotts";
 
 /** Per-locale TTS backend: the engine + its voice, plus the macOS `say` voice to
  *  use when the engine is Kokoro but Kokoro is unreachable. */
@@ -36,23 +41,34 @@ interface Backend {
   engine: Engine;
   /** Kokoro voice id (when engine is "kokoro"). */
   kokoroVoice?: string;
-  /** macOS `say` voice — used for engine "say" and as the Kokoro fallback. */
+  /** macOS `say` voice — used for engine "say" and as the neural-backend fallback. */
   sayVoice: string;
   /** Kokoro speaking rate (0.25–4.0); a touch slow for young ears. */
   speed?: number;
+  /**
+   * Kokoro can only voice this language from a `ScriptEntry.tts` override, not the
+   * display `spoken`. True for Zhuyin: Kokoro reads the Mandarin `tts` hanzi, but
+   * an entry's `spoken` is Bopomofo it can't read — so an entry without `tts`
+   * falls back to `say`.
+   */
+  kokoroNeedsTts?: boolean;
 }
 
 const BACKEND_BY_LOCALE: Record<string, Backend> = {
-  // Kokoro has no Korean, and its Mandarin path wants pinyin/hanzi not Bopomofo,
-  // so zh-TW + ko-KR stay on `say`. es/ja read their native text on Kokoro.
-  "zh-TW": { engine: "say", sayVoice: "Meijia" },
+  // es/ja read their native text on Kokoro directly. Zhuyin uses Kokoro Mandarin
+  // via each entry's `tts` hanzi (its `spoken` is Bopomofo, unreadable by Kokoro);
+  // entries with no `tts` fall back to `say`. Korean has no Kokoro voice, so it
+  // goes to MeloTTS (a purpose-trained natural Korean voice); if MeloTTS is
+  // unreachable it falls back to the macOS `say` Korean voice.
+  "zh-TW": { engine: "kokoro", kokoroVoice: "zf_xiaoxiao", sayVoice: "Meijia", speed: 0.9, kokoroNeedsTts: true },
   "es-MX": { engine: "kokoro", kokoroVoice: "ef_dora", sayVoice: "Paulina", speed: 0.9 },
   "ja-JP": { engine: "kokoro", kokoroVoice: "jf_alpha", sayVoice: "Kyoko", speed: 0.9 },
-  "ko-KR": { engine: "say", sayVoice: "Yuna" },
+  "ko-KR": { engine: "melotts", sayVoice: "Yuna", speed: 0.9 },
   "en-US": { engine: "say", sayVoice: "Samantha" },
 };
 
 const KOKORO_URL = (process.env.KOKORO_URL ?? "http://localhost:8880/v1").replace(/\/$/, "");
+const MELOTTS_URL = (process.env.MELOTTS_URL ?? "http://localhost:8000/v1").replace(/\/$/, "");
 const PUBLIC_AUDIO_DIR = join(process.cwd(), "public", "audio");
 const MANIFEST_PATH = join(PUBLIC_AUDIO_DIR, "manifest.json");
 
@@ -96,23 +112,67 @@ async function kokoroReachable(): Promise<boolean> {
   }
 }
 
-/** Synthesize `text` to `out` (.m4a). Returns the engine actually used. */
+/** Same reachability probe for MeloTTS (the homelab Korean voice). */
+async function melottsReachable(): Promise<boolean> {
+  try {
+    const res = await fetch(`${MELOTTS_URL}/voices`, { signal: AbortSignal.timeout(3000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Synthesize a clip to `out` (.m4a). Kokoro reads `tts ?? spoken`; `say` reads
+ *  the human-facing `spoken`. Returns the engine actually used. */
 async function synth(
   backend: Backend,
-  text: string,
+  spoken: string,
+  tts: string | undefined,
   out: string,
   tmp: string,
   id: string,
   kokoroUp: boolean,
+  melottsUp: boolean,
 ): Promise<Engine> {
-  if (backend.engine === "kokoro" && backend.kokoroVoice && kokoroUp) {
+  // MeloTTS (Korean): reads the human-facing `spoken` Hangul directly.
+  if (backend.engine === "melotts" && melottsUp) {
+    try {
+      const res = await fetch(`${MELOTTS_URL}/audio/speech`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "melotts",
+          input: spoken,
+          voice: "KR",
+          response_format: "wav",
+          speed: backend.speed ?? 1,
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!res.ok) throw new Error(`melotts ${res.status}`);
+      const wav = join(tmp, `m-${id}.wav`);
+      writeFileSync(wav, Buffer.from(await res.arrayBuffer()));
+      execFileSync("afconvert", [wav, "-d", "aac", "-f", "m4af", out]);
+      rmSync(wav, { force: true });
+      return "melotts";
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`  ~ ${id}: melotts failed (${msg}); using say`);
+    }
+  }
+  const useKokoro =
+    backend.engine === "kokoro" &&
+    !!backend.kokoroVoice &&
+    kokoroUp &&
+    (!backend.kokoroNeedsTts || !!tts);
+  if (useKokoro) {
     try {
       const res = await fetch(`${KOKORO_URL}/audio/speech`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           model: "kokoro",
-          input: text,
+          input: tts ?? spoken,
           voice: backend.kokoroVoice,
           response_format: "wav",
           speed: backend.speed ?? 1,
@@ -132,10 +192,18 @@ async function synth(
   }
   // say → AIFF, then afconvert → AAC in an MPEG-4 container (.m4a).
   const aiff = join(tmp, `s-${id}.aiff`);
-  execFileSync("say", ["-v", backend.sayVoice, "-o", aiff, text]);
+  execFileSync("say", ["-v", backend.sayVoice, "-o", aiff, spoken]);
   execFileSync("afconvert", [aiff, "-d", "aac", "-f", "m4af", out]);
   rmSync(aiff, { force: true });
   return "say";
+}
+
+/** Human-readable `engine:voice` tag for the per-language log line — reflects the
+ *  backend actually reachable (Kokoro/MeloTTS up, else the `say` fallback). */
+function engineLabel(backend: Backend, kokoroUp: boolean, melottsUp: boolean): string {
+  if (backend.engine === "kokoro" && kokoroUp) return `kokoro:${backend.kokoroVoice}`;
+  if (backend.engine === "melotts" && melottsUp) return "melotts:KR";
+  return `say:${backend.sayVoice}`;
 }
 
 function main(): void {
@@ -157,8 +225,17 @@ async function run(): Promise<void> {
   const kokoroUp = wantsKokoro ? await kokoroReachable() : false;
   if (wantsKokoro && !kokoroUp) {
     console.warn(
-      `! Kokoro not reachable at ${KOKORO_URL} — using macOS \`say\` everywhere.\n` +
+      `! Kokoro not reachable at ${KOKORO_URL} — its languages fall back to macOS \`say\`.\n` +
         "  Start it with:  kubectl -n voice port-forward svc/kokoro 8880:8880",
+    );
+  }
+
+  const wantsMelotts = Object.values(BACKEND_BY_LOCALE).some((b) => b.engine === "melotts");
+  const melottsUp = wantsMelotts ? await melottsReachable() : false;
+  if (wantsMelotts && !melottsUp) {
+    console.warn(
+      `! MeloTTS not reachable at ${MELOTTS_URL} — Korean falls back to macOS \`say\`.\n` +
+        "  Start it with:  kubectl -n voice port-forward svc/melotts 8000:8000",
     );
   }
 
@@ -166,17 +243,16 @@ async function run(): Promise<void> {
   let generated = 0;
   let skipped = 0;
   let failed = 0;
-  const byEngine: Record<Engine, number> = { say: 0, kokoro: 0 };
+  const byEngine: Record<Engine, number> = { say: 0, kokoro: 0, melotts: 0 };
 
   const tmp = mkdtempSync(join(tmpdir(), "ka-audio-"));
   try {
     for (const lang of languages) {
       const backend = BACKEND_BY_LOCALE[lang.locale] ?? BACKEND_BY_LOCALE["en-US"];
-      const engineLabel =
-        backend.engine === "kokoro" && kokoroUp ? `kokoro:${backend.kokoroVoice}` : `say:${backend.sayVoice}`;
+      const label = engineLabel(backend, kokoroUp, melottsUp);
       const outDir = join(PUBLIC_AUDIO_DIR, lang.locale);
       mkdirSync(outDir, { recursive: true });
-      console.log(`\n${lang.locale} (${lang.displayName}) — ${engineLabel}, ${lang.inventory.length} entries`);
+      console.log(`\n${lang.locale} (${lang.displayName}) — ${label}, ${lang.inventory.length} entries`);
 
       for (const entry of lang.inventory) {
         const key = `${lang.locale}/${entry.id}`;
@@ -187,7 +263,7 @@ async function run(): Promise<void> {
           continue;
         }
         try {
-          const used = await synth(backend, entry.spoken, out, tmp, entry.id, kokoroUp);
+          const used = await synth(backend, entry.spoken, entry.tts, out, tmp, entry.id, kokoroUp, melottsUp);
           byEngine[used] += 1;
           manifest[key] = true;
           generated += 1;
@@ -206,7 +282,7 @@ async function run(): Promise<void> {
   writeFileSync(MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
 
   console.log(
-    `\nDone. generated ${generated} (kokoro ${byEngine.kokoro}, say ${byEngine.say}), skipped ${skipped}` +
+    `\nDone. generated ${generated} (kokoro ${byEngine.kokoro}, melotts ${byEngine.melotts}, say ${byEngine.say}), skipped ${skipped}` +
       (failed > 0 ? `, failed ${failed}` : "") +
       `. Manifest: ${MANIFEST_PATH} (${Object.keys(manifest).length} clips).`,
   );
