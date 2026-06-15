@@ -15,7 +15,7 @@ import { captureNonCritical } from "@/lib/capture";
 export const dynamic = "force-dynamic";
 
 /** Dedupe concurrent identical synths within a process so a burst → one Kokoro call. */
-const inflight = new Map<string, Promise<Uint8Array>>();
+const inflight = new Map<string, Promise<Uint8Array<ArrayBuffer>>>();
 
 interface Body {
   text?: unknown;
@@ -50,7 +50,7 @@ export async function POST(req: Request): Promise<Response> {
       promise = synthesizeMp3(text, voice, speed);
       inflight.set(key, promise);
     }
-    let bytes: Uint8Array;
+    let bytes: Uint8Array<ArrayBuffer>;
     try {
       bytes = await promise;
     } finally {

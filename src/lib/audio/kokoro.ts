@@ -4,12 +4,14 @@ import { getEnv } from "@/lib/env";
 
 const SYNTH_TIMEOUT_MS = 30_000;
 
-/** Synthesize `text` to mp3 bytes. Throws on unreachable/timeout/non-OK. */
+/** Synthesize `text` to mp3 bytes. Throws on unreachable/timeout/non-OK.
+ *  Returns an `ArrayBuffer`-backed view (not `ArrayBufferLike`) so the bytes are a
+ *  valid `BodyInit` for `new Response(...)` under TS's strict typed-array generics. */
 export async function synthesizeMp3(
   text: string,
   voice: string,
   speed: number,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
   const base = getEnv("KOKORO_URL", "http://localhost:8880/v1").replace(/\/$/, "");
   const res = await fetch(`${base}/audio/speech`, {
     method: "POST",
