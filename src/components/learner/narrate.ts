@@ -18,9 +18,40 @@ export interface NarrateHandle {
   cancel: () => void;
 }
 
-/** Session memo: normalized text → object URL already synthesized this session. */
+/**
+ * Bounded LRU of normalized text → object URL synthesized this session. Caps
+ * memory: each entry holds a blob URL, so an unbounded cache leaks for the whole
+ * session. A `Map` preserves insertion order, so the first key is the
+ * least-recently-used; we revoke its URL on eviction. Eviction only ever targets
+ * the LRU entry, and `cacheGet` re-inserts (touches) an entry on read so the URL
+ * we're about to play is the *most*-recently-used and can't be evicted out from
+ * under playback.
+ */
+const MAX_ENTRIES = 64;
 const memo = new Map<string, string>();
 const normalize = (t: string): string => t.trim().replace(/\s+/g, " ");
+
+/** Read a cached URL, marking it most-recently-used so it survives eviction. */
+function cacheGet(key: string): string | undefined {
+  const url = memo.get(key);
+  if (url === undefined) return undefined;
+  memo.delete(key);
+  memo.set(key, url);
+  return url;
+}
+
+/** Store a URL, evicting (and revoking) the least-recently-used entry if full. */
+function cacheSet(key: string, url: string): void {
+  memo.set(key, url);
+  if (memo.size > MAX_ENTRIES) {
+    const oldest = memo.keys().next().value;
+    if (oldest !== undefined) {
+      const evicted = memo.get(oldest);
+      memo.delete(oldest);
+      if (evicted !== undefined) URL.revokeObjectURL(evicted);
+    }
+  }
+}
 
 export function narrate(text: string, options: NarrateOptions): NarrateHandle {
   const trimmed = normalize(text);
@@ -50,7 +81,7 @@ export function narrate(text: string, options: NarrateOptions): NarrateHandle {
     });
   };
 
-  const cached = memo.get(trimmed);
+  const cached = cacheGet(trimmed);
   if (cached) {
     play(cached);
     return { cancel: () => stop() };
@@ -68,7 +99,7 @@ export function narrate(text: string, options: NarrateOptions): NarrateHandle {
         return;
       }
       const url = URL.createObjectURL(await res.blob());
-      memo.set(trimmed, url);
+      cacheSet(trimmed, url);
       play(url);
     } catch {
       if (!cancelled) options.onUnavailable();

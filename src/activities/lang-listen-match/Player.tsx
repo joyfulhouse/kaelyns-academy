@@ -33,10 +33,14 @@ export function LangListenMatchPlayer({
     audio.play({ audioKey: item.audioKey, text: item.spoken });
   }, [audio, item.audioKey, item.spoken]);
 
-  // Auto-play the prompt when a new item appears.
+  // Auto-play the prompt once per item — keyed on the step so a re-render (or a
+  // choice tap that voices the choice) can't clobber it with a prompt replay.
+  const playedStepRef = useRef(-1);
   useEffect(() => {
+    if (playedStepRef.current === step) return;
+    playedStepRef.current = step;
     play();
-  }, [play]);
+  }, [step, play]);
 
   // Clear the answer-reveal timer on unmount so a mid-reveal navigation can't
   // set state (or stall) after the component is gone.

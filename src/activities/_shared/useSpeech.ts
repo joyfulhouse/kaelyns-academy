@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { type NarrateHandle, narrate } from "@/components/learner/narrate";
 import { routeSpeak } from "./speechRouting";
 import { pickVoice, speechParamsFor } from "./voiceUtils";
@@ -110,5 +110,11 @@ export function useSpeech(locale = "en-US"): SpeechController {
     (synthRef.current ?? getSynth())?.cancel();
   }, []);
 
-  return { supported, hasVoice, speak, cancel };
+  // Return a stable controller so consumers' useCallback/effects that depend on
+  // it don't churn every render. Every member is itself stable (store/state/
+  // useCallback), so the object identity only changes when one truly does.
+  return useMemo(
+    () => ({ supported, hasVoice, speak, cancel }),
+    [supported, hasVoice, speak, cancel],
+  );
 }

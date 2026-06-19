@@ -1,11 +1,19 @@
 // src/app/api/tts/route.test.ts
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/audio/kokoro", () => ({ synthesizeMp3: vi.fn() }));
 vi.mock("@/lib/audio/store", () => ({ clipExists: vi.fn(), putClip: vi.fn() }));
+// Keep the real UnauthenticatedError (the route does `instanceof`); stub only the resolver.
+vi.mock("@/lib/tenancy", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/tenancy")>()),
+  requireAccount: vi.fn(),
+}));
+vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: vi.fn() }));
 
 import { synthesizeMp3 } from "@/lib/audio/kokoro";
 import { clipExists, putClip } from "@/lib/audio/store";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { UnauthenticatedError, requireAccount } from "@/lib/tenancy";
 import { POST } from "./route";
 
 function post(body: unknown): Request {
@@ -16,12 +24,41 @@ function post(body: unknown): Request {
   });
 }
 
+beforeEach(() => {
+  // Default: a signed-in account, under the rate limit.
+  vi.mocked(requireAccount).mockResolvedValue({ accountId: "acc-1", userId: "acc-1" });
+  vi.mocked(checkRateLimit).mockReturnValue({ ok: true, retryAfterSec: 0 });
+});
 afterEach(() => vi.resetAllMocks());
 
 describe("POST /api/tts", () => {
-  it("redirects (303) to the cached clip on a hit", async () => {
+  it("401s when there is no session, before any synth", async () => {
+    vi.mocked(requireAccount).mockRejectedValue(new UnauthenticatedError());
+    const res = await POST(post({ text: "Find the word" }));
+    expect(res.status).toBe(401);
+    expect(synthesizeMp3).not.toHaveBeenCalled();
+  });
+
+  it("429s when the per-account rate limit is exceeded, before any synth", async () => {
+    vi.mocked(checkRateLimit).mockReturnValue({ ok: false, retryAfterSec: 30 });
+    const res = await POST(post({ text: "Find the word" }));
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).toBe("30");
+    expect(synthesizeMp3).not.toHaveBeenCalled();
+  });
+
+  it("redirects (303) to the cached ephemeral clip on a hit", async () => {
     vi.mocked(clipExists).mockResolvedValue(true);
     const res = await POST(post({ text: "Find the word" }));
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toMatch(/^\/audio\/en\/cache\/[0-9a-f]{64}\.mp3$/);
+    expect(synthesizeMp3).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a durable hit when the ephemeral copy is missing", async () => {
+    // First check (ephemeral prefix) misses, second check (durable "en") hits.
+    vi.mocked(clipExists).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const res = await POST(post({ text: "warmed passage" }));
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toMatch(/^\/audio\/en\/[0-9a-f]{64}\.mp3$/);
     expect(synthesizeMp3).not.toHaveBeenCalled();
@@ -38,12 +75,6 @@ describe("POST /api/tts", () => {
     expect(putClip).toHaveBeenCalled();
   });
 
-  it("uses the ephemeral prefix when asked", async () => {
-    vi.mocked(clipExists).mockResolvedValue(true);
-    const res = await POST(post({ text: "one off", persist: "ephemeral" }));
-    expect(res.headers.get("location")).toMatch(/^\/audio\/en\/cache\/[0-9a-f]{64}\.mp3$/);
-  });
-
   it("returns 503 when Kokoro is down (client falls back to Web Speech)", async () => {
     vi.mocked(clipExists).mockResolvedValue(false);
     vi.mocked(synthesizeMp3).mockRejectedValue(new Error("kokoro 503"));
@@ -54,5 +85,11 @@ describe("POST /api/tts", () => {
   it("rejects an empty/invalid body with 400", async () => {
     const res = await POST(post({ text: "   " }));
     expect(res.status).toBe(400);
+  });
+
+  it("rejects text longer than the cap with 400, before any synth", async () => {
+    const res = await POST(post({ text: "a".repeat(501) }));
+    expect(res.status).toBe(400);
+    expect(synthesizeMp3).not.toHaveBeenCalled();
   });
 });
