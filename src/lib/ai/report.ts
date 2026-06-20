@@ -106,7 +106,11 @@ function describeSkills(skills: ProgressReportSkill[]): string {
 
 function describeRecent(recent: ProgressReportRecent[]): string {
   if (recent.length === 0) return "No recent activity provided.";
-  return recent.map((r) => `- ${r.title} (${r.stars} of 3 stars)`).join("\n");
+  // `title` is usually a catalog activity title, but for an attempt whose
+  // activityId isn't in the catalog it falls back to the raw, authenticated-
+  // client-supplied `kind` (recordAttempt accepts any string ≤60). Fence it so
+  // it can't break out of the prompt — same posture as learnerName above.
+  return recent.map((r) => `- ${fenceUntrusted(r.title)} (${r.stars} of 3 stars)`).join("\n");
 }
 
 function buildUserPrompt(input: ProgressReportInput): string {
