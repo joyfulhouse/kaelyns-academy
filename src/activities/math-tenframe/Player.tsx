@@ -43,6 +43,16 @@ export function MathTenframePlayer({
     speech.speak(parsed.instruction);
   }, [parsed.instruction, speech]);
 
+  // Clear the wrong-state timer on unmount so a mid-shake navigation can't set
+  // state after the component is gone.
+  const timerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
   if (done) {
     const result = score(parsed, done);
     return (
@@ -79,7 +89,8 @@ export function MathTenframePlayer({
     } else {
       setWrong(true);
       speech.speak(total > goal ? "That's a little too many. Try again." : "A few more. Try again.");
-      window.setTimeout(() => setWrong(false), 900);
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+      timerRef.current = window.setTimeout(() => setWrong(false), 900);
     }
   }
 

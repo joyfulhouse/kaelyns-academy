@@ -5,11 +5,37 @@ export type ColumnMap = Record<string, string[]>;
 
 export const REQUIRED_COLUMNS: ColumnMap = {
   health_check: ["id", "note", "checked_at"],
-  // Tutor data model (must be migrated before the app expects it).
-  learner: ["id", "account_id", "display_name", "birth_month"],
-  enrollment: ["id", "learner_id", "program_slug"],
-  attempt: ["id", "learner_id", "activity_id", "kind", "score", "day"],
-  skill_state: ["id", "learner_id", "skill", "outcome", "evidence"],
+  // Tutor data model (must be migrated before the app expects it). Lists the
+  // NOT-NULL / actively-queried columns of each table; a real schema drift on
+  // any of these should trip the 503 canary, so undercoverage here is a bug.
+  learner: [
+    "id",
+    "account_id",
+    "display_name",
+    "avatar",
+    "birth_month",
+    "settings",
+    "created_at",
+    "updated_at",
+  ],
+  enrollment: ["id", "learner_id", "program_slug", "status", "started_at"],
+  attempt: [
+    "id",
+    "learner_id",
+    "activity_id",
+    "kind",
+    "generated",
+    "score",
+    "response",
+    "day",
+    "created_at",
+  ],
+  skill_state: ["id", "learner_id", "skill", "outcome", "evidence", "updated_at"],
+  // Better Auth tables (auth-schema.ts) — drift here breaks login silently.
+  user: ["id", "email", "email_verified"],
+  session: ["id", "user_id", "token", "expires_at"],
+  account: ["id", "user_id", "provider_id", "account_id"],
+  verification: ["id", "identifier", "value", "expires_at"],
 };
 
 export function missingColumns(required: ColumnMap, live: ColumnMap): string[] {

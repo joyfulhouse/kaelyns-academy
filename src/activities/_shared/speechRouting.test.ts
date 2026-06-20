@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isEnglishLocale, routeSpeak, type SpeakRouter } from "./speechRouting";
+import { BASE_LOCALE, isEnglishLocale, localeForRole, routeSpeak, type SpeakRouter } from "./speechRouting";
 
 describe("isEnglishLocale", () => {
   it("matches en* case-insensitively, rejects others", () => {
@@ -7,6 +7,21 @@ describe("isEnglishLocale", () => {
     expect(isEnglishLocale("EN-GB")).toBe(true);
     expect(isEnglishLocale("ko-KR")).toBe(false);
     expect(isEnglishLocale("es-MX")).toBe(false);
+  });
+});
+
+describe("localeForRole", () => {
+  it("voices instructions in the base (English) language but content in the target locale", () => {
+    // An English instruction read with the target voice (the bug) mangles it.
+    expect(localeForRole("ko-KR", "instruction")).toBe(BASE_LOCALE);
+    expect(localeForRole("ko-KR", "content")).toBe("ko-KR");
+    expect(localeForRole("zh-TW", "instruction")).toBe("en-US");
+    expect(localeForRole("ja-JP", "content")).toBe("ja-JP");
+  });
+
+  it("is a no-op for an English-target activity", () => {
+    expect(localeForRole("en-US", "instruction")).toBe("en-US");
+    expect(localeForRole("en-US", "content")).toBe("en-US");
   });
 });
 

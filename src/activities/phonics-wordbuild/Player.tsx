@@ -73,6 +73,16 @@ export function PhonicsWordbuildPlayer({
     speech.speak(parsed.instruction);
   }, [parsed.instruction, speech]);
 
+  // Clear the retry timer on unmount so a mid-shake navigation can't set state
+  // after the component is gone.
+  const timerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
   if (done) {
     const result = score(parsed, done);
     return (
@@ -120,7 +130,8 @@ export function PhonicsWordbuildPlayer({
       setWrong(true);
       setTries((t) => t + 1);
       speech.speak("So close. Let's try that one again.");
-      window.setTimeout(() => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+      timerRef.current = window.setTimeout(() => {
         setWrong(false);
         setBuilt([]);
       }, 900);

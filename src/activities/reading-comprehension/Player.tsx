@@ -39,6 +39,16 @@ export function ReadingComprehensionPlayer({
     speech.speak(parsed.instruction);
   }, [parsed.instruction, speech]);
 
+  // Clear the advance timer on unmount so leaving mid-reveal can't record an
+  // attempt or set state for a screen the child has already left.
+  const timerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
   const current = parsed.questions[questionIndex];
 
   if (done) {
@@ -79,7 +89,8 @@ export function ReadingComprehensionPlayer({
       record[questionIndex] = !missedThisQuestion;
       speech.speak("That's it.");
       // Let the green check land, then move on.
-      window.setTimeout(() => recordAndAdvance(record), 750);
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+      timerRef.current = window.setTimeout(() => recordAndAdvance(record), 750);
     } else {
       // Forgiving: no wrong-mark. Gently nudge back to the passage and let them
       // re-read and try a different card.
