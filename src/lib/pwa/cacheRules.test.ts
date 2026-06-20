@@ -13,6 +13,10 @@ describe("isAudioRequest", () => {
     expect(isAudioRequest(u("https://app/learn"), true)).toBe(false);
     expect(isAudioRequest(u("https://cdn/audio/en/x.m4a"), false)).toBe(false);
   });
+  it("requires the /audio/ prefix exactly (not /audio or /audiobooks)", () => {
+    expect(isAudioRequest(u("https://app/audio"), true)).toBe(false);
+    expect(isAudioRequest(u("https://app/audiobooks/x.m4a"), true)).toBe(false);
+  });
 });
 
 describe("isImmutableStaticAsset", () => {
