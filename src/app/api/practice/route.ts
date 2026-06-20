@@ -4,14 +4,19 @@ import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
 import { captureNonCritical } from "@/lib/capture";
 import { generatePracticeItems } from "@/lib/ai/practice";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { UnauthenticatedError, requireAccount } from "@/lib/tenancy";
+import { clientIp } from "@/lib/request-ip";
+import { getAccountOrNull } from "@/lib/tenancy";
 
 export const dynamic = "force-dynamic";
 
-// This endpoint drives the LiteLLM gateway, so it must never be reachable
-// unauthenticated/unthrottled (denial-of-wallet). The auth gate is the primary
-// defense; the per-account limiter is a best-effort, per-instance secondary one.
-const RATE_LIMIT = { limit: 30, windowMs: 60_000 };
+// This endpoint drives the LiteLLM gateway (denial-of-wallet risk). The public
+// "explore" learner flow is unauthenticated, so anonymous callers are allowed but
+// keyed + capped tighter by client IP — a best-effort, per-instance secondary
+// defense (a determined attacker rotating IPs can still spend; a cluster-wide cap
+// needs a shared store). Signed-in accounts get a more generous window. Output
+// stays bounded + schema-validated regardless of caller.
+const RATE_LIMIT_ACCOUNT = { limit: 30, windowMs: 60_000 };
+const RATE_LIMIT_ANON = { limit: 10, windowMs: 60_000 };
 
 const requestSchema = z.object({
   kind: z.enum(Object.keys(ACTIVITY_CONFIG_SCHEMAS) as [keyof typeof ACTIVITY_CONFIG_SCHEMAS]),
@@ -22,19 +27,15 @@ const requestSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  // Auth + rate limit BEFORE any model work. Only signed-in parent accounts may
-  // spend tokens here, and each is capped to a sane per-minute burst.
-  let accountId: string;
-  try {
-    ({ accountId } = await requireAccount());
-  } catch (error) {
-    if (error instanceof UnauthenticatedError) {
-      return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
-    }
-    throw error;
-  }
+  // Rate limit BEFORE any model work. Anonymous callers (public explore flow) are
+  // allowed but keyed + capped by client IP; signed-in accounts get a generous
+  // per-account window.
+  const account = await getAccountOrNull();
+  const { limitKey, policy } = account
+    ? { limitKey: `practice:acct:${account.accountId}`, policy: RATE_LIMIT_ACCOUNT }
+    : { limitKey: `practice:ip:${clientIp(request.headers) ?? "noip"}`, policy: RATE_LIMIT_ANON };
 
-  const limit = checkRateLimit(`practice:${accountId}`, RATE_LIMIT);
+  const limit = checkRateLimit(limitKey, policy);
   if (!limit.ok) {
     return NextResponse.json(
       { error: "rate_limited" },
