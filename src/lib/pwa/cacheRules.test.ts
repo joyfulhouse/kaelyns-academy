@@ -22,6 +22,7 @@ describe("isImmutableStaticAsset", () => {
   });
   it("rejects HTML, RSC, and cross-origin", () => {
     expect(isImmutableStaticAsset(u("https://app/learn"), true)).toBe(false);
+    expect(isImmutableStaticAsset(u("https://app/learn?_rsc=1"), true)).toBe(false);
     expect(isImmutableStaticAsset(u("https://app/_next/static/x.js"), false)).toBe(false);
   });
 });
