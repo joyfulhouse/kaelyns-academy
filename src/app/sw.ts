@@ -3,6 +3,7 @@ import {
   CacheableResponsePlugin,
   CacheFirst,
   ExpirationPlugin,
+  NetworkOnly,
   RangeRequestsPlugin,
   Serwist,
 } from "serwist";
@@ -48,6 +49,13 @@ const serwist = new Serwist({
           new ExpirationPlugin({ maxEntries: 128, maxAgeSeconds: 90 * 24 * 60 * 60 }),
         ],
       }),
+    },
+    {
+      // Navigations are network-only — never cache authenticated HTML/RSC. Routing them
+      // through the SW lets the `fallbacks` catch handler serve the precached /~offline
+      // page when the network is unavailable (NetworkOnly throws offline → fallback).
+      matcher: ({ request }) => request.mode === "navigate",
+      handler: new NetworkOnly(),
     },
   ],
   fallbacks: {
