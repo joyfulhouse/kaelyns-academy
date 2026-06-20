@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { Fraunces, Lexend } from "next/font/google";
 import { SerwistProvider } from "@serwist/turbopack/react";
+import { IosInstallHint } from "@/components/pwa/IosInstallHint";
 import "./globals.css";
 
 const fraunces = Fraunces({
@@ -37,7 +38,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${fraunces.variable} ${lexend.variable}`}>
       <body>
-        <SerwistProvider swUrl="/serwist/sw.js">{children}</SerwistProvider>
+        <SerwistProvider swUrl="/serwist/sw.js">
+          {children}
+          <IosInstallHint />
+        </SerwistProvider>
       </body>
     </html>
   );
