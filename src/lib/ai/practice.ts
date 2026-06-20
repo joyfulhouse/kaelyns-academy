@@ -99,7 +99,7 @@ function buildUserPrompt(
       : "Keep it solidly on grade level for end-of-kindergarten.";
   return [
     `Create ${n} "${kind}" practice item(s) focused on this topic: ${fenceUntrusted(focus)}.`,
-    skillHints.length ? `Target skills: ${skillHints.join(", ")}.` : "",
+    skillHints.length ? `Target skills: ${fenceUntrusted(skillHints.join(", "))}.` : "",
     bandNote,
     KIND_BRIEF[kind],
     `Return JSON exactly as: { "items": [ <item>, ... ] } with ${n} item(s).`,
@@ -156,7 +156,11 @@ function buildLangUserPrompt(
     band === "stretch"
       ? "Stretch a little: include a couple more symbols or a slightly harder check."
       : "Keep it gentle and focused on just-introduced symbols.";
-  const tags = skillHints.length ? skillHints.join(", ") : `${lang.id}.symbols`;
+  // Fence skillHints (authenticated request input) so they can't escape into
+  // instructions; the server-controlled fallback needs no fencing. The raw array
+  // still drives language routing / inventory slicing elsewhere — only the
+  // prompt-rendered string is fenced.
+  const tags = skillHints.length ? fenceUntrusted(skillHints.join(", ")) : `${lang.id}.symbols`;
   return [
     `Create ${n} "${kind}" practice item(s) for ${lang.displayName} focused on this topic: ${fenceUntrusted(focus)}.`,
     `Target skills: ${tags}. Set each item's "skillTags" to these.`,
