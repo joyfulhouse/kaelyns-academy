@@ -78,7 +78,7 @@ export async function POST(req: Request): Promise<Response> {
 
   // Hit (check the target tier; ephemeral also accepts a durable copy).
   if (await clipExists(prefix, key)) return redirect(prefix, key);
-  if (persist === "ephemeral" && (await clipExists("en", key))) return redirect("en", key);
+  if (await clipExists("en", key)) return redirect("en", key);
 
   // Miss: synthesize (deduped), write-through, stream.
   try {
