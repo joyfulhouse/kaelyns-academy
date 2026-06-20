@@ -9,6 +9,7 @@ const BUILD_REV = process.env.SOURCE_COMMIT || process.env.GIT_SHA || String(Dat
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  outputFileTracingRoot: import.meta.dirname,
   outputFileTracingExcludes: { "*": ["./_archive/**"] },
   env: { NEXT_PUBLIC_BUILD_SHA: BUILD_REV },
 };
