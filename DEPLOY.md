@@ -22,7 +22,7 @@ git push app → Forgejo Actions builds image → Harbor :<sha>
       → Traefik / Cloudflare Tunnel serve kaelyns.academy
 ```
 
-1. **Build:** `homelab/docker/kaelyns-academy/Dockerfile` (Next standalone) is built by Forgejo Actions and pushed to Harbor as `:<short-sha>`.
+1. **Build:** `homelab/docker/kaelyns-academy/Dockerfile` (Next standalone) is built by Forgejo Actions and pushed to Harbor as `:<short-sha>`. **CI MUST pass `SOURCE_COMMIT` (the pinned image SHA) as a build env** so `next.config.ts` derives a deterministic service-worker precache revision. Without it, the SW still works but precache revisions fall back to a per-build timestamp (non-deterministic across replicas).
 2. **Pin:** CI rewrites the image SHA in `k3s-infra/k8s/kaelyns-academy/deployment.yaml` and pushes to `k3s-infra` `main`.
 3. **Migrate before traffic:** pending Drizzle migrations apply to `kaelyns-academy-db` as a pre-sync step **before** new pods take traffic. Migrations MUST be **expand-only / backward-compatible** so the currently-live pods keep working until the roll completes.
 4. **Roll:** ArgoCD syncs the new SHA; Kubernetes does a rolling update.
