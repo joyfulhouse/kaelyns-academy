@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { audioClipUrl } from "@/content/languages/audio";
 import { useSpeech } from "./useSpeech";
 
@@ -77,5 +77,11 @@ export function useAudio(locale = "en-US"): AudioController {
 
   useEffect(() => stopClip, [stopClip]); // stop the clip on unmount
 
-  return { supported: speech.supported, hasVoice: speech.hasVoice, play, cancel };
+  // Return a stable controller so consumers' useCallback/effects that depend on
+  // it don't churn every render. Members are stable primitives (from useSpeech)
+  // or useCallbacks, so identity only changes when one truly does.
+  return useMemo(
+    () => ({ supported: speech.supported, hasVoice: speech.hasVoice, play, cancel }),
+    [speech.supported, speech.hasVoice, play, cancel],
+  );
 }

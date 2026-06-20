@@ -26,6 +26,30 @@ export const TUTOR_RICH = "ha-assist" as const;
 
 export type TutorModel = typeof TUTOR_FAST | typeof TUTOR_RICH | (string & {});
 
+/**
+ * Default server-side request budget for a gateway call. A hung LiteLLM upstream
+ * must not pin a Next.js request handler open indefinitely: server callers don't
+ * pass a `signal`, so without this every stalled call would leak a handler (a
+ * prior incident saw chat-default stall ~31s before a 502). 20s is comfortably
+ * above ha-assist's ~4s JSON path while still bounding the worst case.
+ */
+const DEFAULT_MS = 20_000;
+
+/**
+ * Fence an untrusted string so the model reads it as data, not instructions.
+ * Pair this at the call site with a SYSTEM line telling the model that text
+ * between these markers is data only (see each caller's `UNTRUSTED_DATA_RULE`).
+ * Defence-in-depth: the per-prompt zod schema remains the output boundary; this
+ * just blunts prompt-injection from parent/child-supplied free text at the source.
+ */
+export function fenceUntrusted(value: string): string {
+  // Strip any `<<<…>>>` fence token from the value first, so untrusted text
+  // (a parent/child-supplied name or focus) can't emit its own `<<<END>>>` to
+  // close the fence early and have whatever follows read as instructions.
+  const sanitized = value.replace(/<<<[^>]*>>>/g, "");
+  return `<<<UNTRUSTED>>>\n${sanitized}\n<<<END>>>`;
+}
+
 interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -92,21 +116,40 @@ export async function chatJSON<T>({
     { role: "user", content: user },
   ];
 
-  const response = await fetch(completionsUrl(base), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature,
-      max_tokens: maxTokens,
-      response_format: { type: "json_object" },
-    }),
-    signal,
-  });
+  // Always bound the request with DEFAULT_MS; if the caller passed a signal,
+  // combine the two so EITHER an external cancel OR the timeout aborts the fetch.
+  const timeoutSignal = AbortSignal.timeout(DEFAULT_MS);
+  const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+
+  let response: Response;
+  try {
+    response = await fetch(completionsUrl(base), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+        response_format: { type: "json_object" },
+      }),
+      signal: requestSignal,
+    });
+  } catch (cause) {
+    // An aborted fetch surfaces as a DOMException whose name is "TimeoutError"
+    // when our AbortSignal.timeout fires, or "AbortError" when the caller's
+    // signal cancels. Re-throw either as a clear, named error so it joins the
+    // existing thrown-error path (callers catch and fall back to authored
+    // content) instead of leaking a bare DOMException.
+    if (cause instanceof Error && (cause.name === "TimeoutError" || cause.name === "AbortError")) {
+      const reason = timeoutSignal.aborted ? `timed out after ${DEFAULT_MS}ms` : "aborted";
+      throw new Error(`LiteLLM request ${reason}`);
+    }
+    throw cause;
+  }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");

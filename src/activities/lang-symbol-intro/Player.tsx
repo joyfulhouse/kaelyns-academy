@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SpeakerHighIcon } from "@phosphor-icons/react/dist/ssr";
 import type { LangSymbolIntroConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
+import { localeForRole } from "../_shared/speechRouting";
 import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useAudio } from "../_shared/useAudio";
 import { schema, score, type LangSymbolIntroResponse } from "./logic";
@@ -20,7 +21,11 @@ export function LangSymbolIntroPlayer({
   onComplete,
 }: ActivityPlayerProps<LangSymbolIntroConfig, LangSymbolIntroResponse>) {
   const parsed = useMemo(() => schema.parse(config), [config]);
-  const audio = useAudio(parsed.locale);
+  // Two voices: the target language for content (symbols, choices) and the
+  // learner's base language for instructions — which are authored in English and
+  // would be mangled if read with the target-language TTS voice.
+  const target = useAudio(localeForRole(parsed.locale, "content"));
+  const base = useAudio(localeForRole(parsed.locale, "instruction"));
 
   const [phase, setPhase] = useState<"learn" | "quiz">("learn");
   const [step, setStep] = useState(0);
@@ -28,12 +33,29 @@ export function LangSymbolIntroPlayer({
   const [picked, setPicked] = useState<number | null>(null);
   const [done, setDone] = useState<LangSymbolIntroResponse | null>(null);
 
+  // Each helper cancels the other engine first so the two voices never overlap.
+  const sayInstruction = useCallback(() => {
+    target.cancel();
+    base.play({ text: parsed.instruction });
+  }, [target, base, parsed.instruction]);
+  const playContent = useCallback(
+    (opts: { audioKey?: string; text: string }) => {
+      base.cancel();
+      target.play(opts);
+    },
+    [base, target],
+  );
+  const stopAll = useCallback(() => {
+    base.cancel();
+    target.cancel();
+  }, [base, target]);
+
   const introRef = useRef(false);
   useEffect(() => {
     if (introRef.current) return;
     introRef.current = true;
-    audio.play({ text: parsed.instruction });
-  }, [parsed.instruction, audio]);
+    sayInstruction();
+  }, [sayInstruction]);
 
   // Clear the answer-reveal timer on unmount so a mid-reveal navigation can't
   // set state (or stall) after the component is gone.
@@ -62,7 +84,7 @@ export function LangSymbolIntroPlayer({
         <div className="flex items-center justify-center gap-3">
           <button
             type="button"
-            onClick={() => audio.play({ text: parsed.instruction })}
+            onClick={sayInstruction}
             aria-label="Hear what to do"
             className="grid size-12 shrink-0 place-items-center rounded-full border-[3px] border-ink bg-honey/30 text-ink shadow-pop transition active:translate-y-0.5 active:shadow-none"
           >
@@ -76,7 +98,7 @@ export function LangSymbolIntroPlayer({
             <button
               key={s.id}
               type="button"
-              onClick={() => audio.play({ audioKey: s.audioKey ?? s.id, text: s.spoken })}
+              onClick={() => playContent({ audioKey: s.audioKey ?? s.id, text: s.spoken })}
               aria-label={`${s.symbol}, says ${s.romanization}`}
               className="grid min-h-32 place-items-center gap-1 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-5 shadow-pop transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none"
             >
@@ -91,7 +113,7 @@ export function LangSymbolIntroPlayer({
           <button
             type="button"
             onClick={() => {
-              audio.cancel();
+              stopAll();
               setPhase("quiz");
             }}
             className="rounded-full border-[3px] border-ink bg-success/25 px-8 py-4 font-display text-xl text-ink shadow-pop transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none"
@@ -109,7 +131,7 @@ export function LangSymbolIntroPlayer({
     if (picked !== null) return;
     setPicked(i);
     const nextAnswers = [...answers, i];
-    audio.play({ text: q.choices[i] });
+    playContent({ text: q.choices[i] });
     timerRef.current = window.setTimeout(() => {
       if (step + 1 >= parsed.verify.length) {
         setDone({ verifyAnswers: nextAnswers });

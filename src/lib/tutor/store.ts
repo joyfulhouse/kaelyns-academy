@@ -129,36 +129,59 @@ export interface RecordAttemptInput {
  * Verifies the learner belongs to the account first (tenancy boundary).
  */
 export async function recordAttempt(accountId: string, input: RecordAttemptInput): Promise<void> {
-  const owned = await getLearner(accountId, input.learnerId);
-  if (!owned) throw new Error("learner not found for account");
-  const db = getDb();
-
-  await db.insert(attempt).values({
-    learnerId: input.learnerId,
-    activityId: input.activityId,
-    kind: input.kind,
-    generated: input.generated ?? false,
-    score: input.score,
-    response: input.response ?? null,
-    day: input.day,
-  });
-
-  for (const ev of input.score.skillEvidence) {
-    const prior = await db
-      .select()
-      .from(skillState)
-      .where(and(eq(skillState.learnerId, input.learnerId), eq(skillState.skill, ev.skill)))
+  // The attempt row and every per-skill fold must commit together: a partial
+  // write (attempt saved, skill_state not) loses mastery evidence, and two
+  // concurrent submits racing the read-modify-write would otherwise either
+  // throw a unique violation after the attempt row is already in, or drop one
+  // submit's evidence (last-writer-wins). One transaction + a row lock per
+  // (learner,skill) makes the whole thing atomic and serialized.
+  await getDb().transaction(async (tx) => {
+    // Tenancy boundary, re-checked inside the tx so it shares the snapshot.
+    const owned = await tx
+      .select({ id: learner.id })
+      .from(learner)
+      .where(and(eq(learner.id, input.learnerId), eq(learner.accountId, accountId)))
       .limit(1);
-    const { history, outcome } = nextSkillRecord(prior[0]?.evidence, ev.outcome, input.day);
-    if (prior[0]) {
-      await db
+    if (!owned[0]) throw new Error("learner not found for account");
+
+    await tx.insert(attempt).values({
+      learnerId: input.learnerId,
+      activityId: input.activityId,
+      kind: input.kind,
+      generated: input.generated ?? false,
+      score: input.score,
+      response: input.response ?? null,
+      day: input.day,
+    });
+
+    // Acquire the per-skill row locks in a deterministic (skill-sorted) order:
+    // two concurrent attempts for the same learner with overlapping skills would
+    // otherwise be able to lock the same rows in opposite orders and deadlock —
+    // which Postgres breaks by aborting one tx, dropping that submit's evidence.
+    const evidence = [...input.score.skillEvidence].sort((a, b) => a.skill.localeCompare(b.skill));
+    for (const ev of evidence) {
+      // Materialize the row (no-op if it already exists), then lock it FOR
+      // UPDATE so concurrent folds for the same (learner,skill) serialize on it
+      // rather than racing the read-modify-write.
+      await tx
+        .insert(skillState)
+        .values({ learnerId: input.learnerId, skill: ev.skill, evidence: [], outcome: "not_yet" })
+        .onConflictDoNothing({ target: [skillState.learnerId, skillState.skill] });
+      const locked = await tx
+        .select()
+        .from(skillState)
+        .where(and(eq(skillState.learnerId, input.learnerId), eq(skillState.skill, ev.skill)))
+        .limit(1)
+        .for("update");
+      const row = locked[0];
+      if (!row) continue;
+      const { history, outcome } = nextSkillRecord(row.evidence, ev.outcome, input.day);
+      await tx
         .update(skillState)
         .set({ evidence: history, outcome, updatedAt: new Date() })
-        .where(eq(skillState.id, prior[0].id));
-    } else {
-      await db.insert(skillState).values({ learnerId: input.learnerId, skill: ev.skill, evidence: history, outcome });
+        .where(eq(skillState.id, row.id));
     }
-  }
+  });
 }
 
 /** Read the learner's skill_state in the mastery engine's shape (for next-best,
@@ -228,7 +251,13 @@ export async function getCompletedActivityIds(
   const rows = await getDb()
     .select({ activityId: attempt.activityId, score: attempt.score })
     .from(attempt)
-    .where(and(eq(attempt.learnerId, learnerId), eq(attempt.generated, false)));
+    .where(and(eq(attempt.learnerId, learnerId), eq(attempt.generated, false)))
+    // Bound this otherwise-unbounded select (one learner's authored-attempt volume
+    // is far below this, so the best-stars fold stays complete). Order newest-first
+    // so that IF the cap is ever hit the dropped rows are deterministic (the oldest
+    // attempts) rather than an arbitrary set; index-backed by attempt_learner_created_idx.
+    .orderBy(desc(attempt.createdAt))
+    .limit(5000);
   const best = new Map<string, number>();
   for (const r of rows) {
     const stars = clampStars(r.score.stars);
