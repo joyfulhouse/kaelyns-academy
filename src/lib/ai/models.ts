@@ -35,6 +35,21 @@ export type TutorModel = typeof TUTOR_FAST | typeof TUTOR_RICH | (string & {});
  */
 const DEFAULT_MS = 20_000;
 
+/**
+ * Fence an untrusted string so the model reads it as data, not instructions.
+ * Pair this at the call site with a SYSTEM line telling the model that text
+ * between these markers is data only (see each caller's `UNTRUSTED_DATA_RULE`).
+ * Defence-in-depth: the per-prompt zod schema remains the output boundary; this
+ * just blunts prompt-injection from parent/child-supplied free text at the source.
+ */
+export function fenceUntrusted(value: string): string {
+  // Strip any `<<<…>>>` fence token from the value first, so untrusted text
+  // (a parent/child-supplied name or focus) can't emit its own `<<<END>>>` to
+  // close the fence early and have whatever follows read as instructions.
+  const sanitized = value.replace(/<<<[^>]*>>>/g, "");
+  return `<<<UNTRUSTED>>>\n${sanitized}\n<<<END>>>`;
+}
+
 interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -124,10 +139,12 @@ export async function chatJSON<T>({
       signal: requestSignal,
     });
   } catch (cause) {
-    // A timeout/cancel surfaces as an AbortError. Re-throw it as a clear, named
-    // error so it joins the existing thrown-error path (callers catch and fall
-    // back to authored content) instead of leaking a bare DOMException.
-    if (cause instanceof Error && cause.name === "AbortError") {
+    // An aborted fetch surfaces as a DOMException whose name is "TimeoutError"
+    // when our AbortSignal.timeout fires, or "AbortError" when the caller's
+    // signal cancels. Re-throw either as a clear, named error so it joins the
+    // existing thrown-error path (callers catch and fall back to authored
+    // content) instead of leaking a bare DOMException.
+    if (cause instanceof Error && (cause.name === "TimeoutError" || cause.name === "AbortError")) {
       const reason = timeoutSignal.aborted ? `timed out after ${DEFAULT_MS}ms` : "aborted";
       throw new Error(`LiteLLM request ${reason}`);
     }

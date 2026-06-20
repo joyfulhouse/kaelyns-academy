@@ -58,6 +58,9 @@ export async function POST(req: Request): Promise<Response> {
   } catch {
     return new Response(null, { status: 400 });
   }
+  // A literal `null` (or any non-object) JSON body parses without throwing, but
+  // would throw on field access below — treat it as a bad request, not a 500.
+  if (typeof body !== "object" || body === null) return new Response(null, { status: 400 });
   const text = typeof body.text === "string" ? body.text.trim() : "";
   if (!text) return new Response(null, { status: 400 });
   if (text.length > MAX_TEXT_LEN) return new Response(null, { status: 400 });

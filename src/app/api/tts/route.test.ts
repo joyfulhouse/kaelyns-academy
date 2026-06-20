@@ -92,4 +92,11 @@ describe("POST /api/tts", () => {
     expect(res.status).toBe(400);
     expect(synthesizeMp3).not.toHaveBeenCalled();
   });
+
+  it("rejects a literal null JSON body with 400, not a 500", async () => {
+    // `JSON.stringify(null)` parses back to null — field access would otherwise throw.
+    const res = await POST(post(null));
+    expect(res.status).toBe(400);
+    expect(synthesizeMp3).not.toHaveBeenCalled();
+  });
 });

@@ -42,13 +42,21 @@ function cacheGet(key: string): string | undefined {
 
 /** Store a URL, evicting (and revoking) the least-recently-used entry if full. */
 function cacheSet(key: string, url: string): void {
+  // If this key was already cached (e.g. two concurrent misses for the same text
+  // each minted a blob URL), revoke the superseded URL so it doesn't leak, and
+  // re-insert so the entry re-counts as most-recently-used.
+  const prior = memo.get(key);
+  if (prior !== undefined) {
+    if (prior !== url) URL.revokeObjectURL(prior);
+    memo.delete(key);
+  }
   memo.set(key, url);
   if (memo.size > MAX_ENTRIES) {
-    const oldest = memo.keys().next().value;
-    if (oldest !== undefined) {
-      const evicted = memo.get(oldest);
-      memo.delete(oldest);
-      if (evicted !== undefined) URL.revokeObjectURL(evicted);
+    const oldest = memo.entries().next().value;
+    if (oldest) {
+      const [oldestKey, evicted] = oldest;
+      memo.delete(oldestKey);
+      URL.revokeObjectURL(evicted);
     }
   }
 }

@@ -62,6 +62,25 @@ describe("narrate", () => {
     await vi.waitFor(() => expect(onUnavailable).toHaveBeenCalledOnce());
   });
 
+  it("revokes the superseded URL when the same text is cached twice (concurrent misses)", async () => {
+    let n = 0;
+    const revokeSpy = vi.fn();
+    vi.stubGlobal("URL", {
+      createObjectURL: () => `blob:dup-${++n}`,
+      revokeObjectURL: revokeSpy,
+    } as unknown as typeof URL);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array([1]), { status: 200 })));
+
+    // Two narrate calls for the same text before either caches → both miss and
+    // both cacheSet the key; the second supersedes the first URL, which must be
+    // revoked rather than leaked.
+    const text = "a uniquely concurrent phrase";
+    narrate(text, { onUnavailable: vi.fn() });
+    narrate(text, { onUnavailable: vi.fn() });
+
+    await vi.waitFor(() => expect(revokeSpy).toHaveBeenCalledWith("blob:dup-1"));
+  });
+
   it("cancel() stops a playing clip", async () => {
     vi.stubGlobal(
       "fetch",

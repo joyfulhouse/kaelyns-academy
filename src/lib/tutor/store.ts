@@ -154,7 +154,12 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
       day: input.day,
     });
 
-    for (const ev of input.score.skillEvidence) {
+    // Acquire the per-skill row locks in a deterministic (skill-sorted) order:
+    // two concurrent attempts for the same learner with overlapping skills would
+    // otherwise be able to lock the same rows in opposite orders and deadlock —
+    // which Postgres breaks by aborting one tx, dropping that submit's evidence.
+    const evidence = [...input.score.skillEvidence].sort((a, b) => a.skill.localeCompare(b.skill));
+    for (const ev of evidence) {
       // Materialize the row (no-op if it already exists), then lock it FOR
       // UPDATE so concurrent folds for the same (learner,skill) serialize on it
       // rather than racing the read-modify-write.
@@ -247,8 +252,11 @@ export async function getCompletedActivityIds(
     .select({ activityId: attempt.activityId, score: attempt.score })
     .from(attempt)
     .where(and(eq(attempt.learnerId, learnerId), eq(attempt.generated, false)))
-    // Bound this otherwise-unbounded select; one learner's authored-attempt
-    // volume is far below this, so the best-stars fold stays complete.
+    // Bound this otherwise-unbounded select (one learner's authored-attempt volume
+    // is far below this, so the best-stars fold stays complete). Order newest-first
+    // so that IF the cap is ever hit the dropped rows are deterministic (the oldest
+    // attempts) rather than an arbitrary set; index-backed by attempt_learner_created_idx.
+    .orderBy(desc(attempt.createdAt))
     .limit(5000);
   const best = new Map<string, number>();
   for (const r of rows) {

@@ -70,7 +70,7 @@ export function ActivityHost({
   // localStorage guest otherwise. The guest learner id only matters in guest
   // mode; in account mode the hook resolves the selected account learner. State
   // is scoped to the active program by its slug.
-  const { skillState, record } = useLearnerState(learner.id, programSlug);
+  const { skillState, record, signedIn } = useLearnerState(learner.id, programSlug);
   const [phase, setPhase] = useState<Phase>({ kind: "play" });
   const [generatedCount, setGeneratedCount] = useState(0);
 
@@ -152,7 +152,10 @@ export function ActivityHost({
   // Auto-offer more when this activity's primary skill is still emerging, and
   // only while we're under the generation cap and the kind is renderable.
   const primarySkill = activity.skillTags[0];
-  const canGenerate = Boolean(activityType) && generatedCount < MAX_GENERATED;
+  // AI practice spends on the LiteLLM gateway via /api/practice, which now
+  // requires an account — so only offer "more, made just for me" to a signed-in
+  // household. Guests play authored content only (no false, always-failing tap).
+  const canGenerate = Boolean(activityType) && generatedCount < MAX_GENERATED && signedIn;
   const autoOffer =
     canGenerate && primarySkill !== undefined && outcomeOf(skillState, primarySkill) === "emerging";
 

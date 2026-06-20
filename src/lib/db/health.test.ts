@@ -18,6 +18,16 @@ describe("missingColumns", () => {
       "learner.settings",
     );
   });
+
+  it("reports every column when a whole required table is absent (unmigrated table)", () => {
+    // The real canary failure mode: a required table missing from prod entirely
+    // (the `live[table] ?? []` branch). All its columns must be reported missing.
+    expect(missingColumns({ session: ["id", "user_id", "token"] }, {})).toEqual([
+      "session.id",
+      "session.user_id",
+      "session.token",
+    ]);
+  });
 });
 
 describe("REQUIRED_COLUMNS coverage (schema-drift canary)", () => {

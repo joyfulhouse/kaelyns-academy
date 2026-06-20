@@ -6,6 +6,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // and the skill fold both run inside it, the tenancy check runs first, and the
 // skill write takes the lock-then-update path on an existing row.
 const ops: { op: string; table: string }[] = [];
+// The skill of each skill_state insert, in call order — lets a test assert the
+// per-skill FOR UPDATE locks are acquired in a deterministic (sorted) order.
+const lockedSkills: string[] = [];
 // Mutable canned rows the fake `tx` returns for each select target.
 const learnerRows = { value: [{ id: "L1" }] as Record<string, unknown>[] };
 const skillRows = { value: [] as Record<string, unknown>[] };
@@ -30,7 +33,10 @@ function builder(op: string, table: string) {
     set() {
       return chain;
     },
-    values() {
+    values(v?: { skill?: unknown }) {
+      if (chain.table === "skill_state" && v && typeof v.skill === "string") {
+        lockedSkills.push(v.skill);
+      }
       return chain;
     },
     onConflictDoNothing() {
@@ -105,6 +111,7 @@ const input = {
 describe("recordAttempt (atomic persistence)", () => {
   beforeEach(() => {
     ops.length = 0;
+    lockedSkills.length = 0;
     transaction.mockClear();
     learnerRows.value = [{ id: "L1" }];
     skillRows.value = [];
@@ -158,6 +165,25 @@ describe("recordAttempt (atomic persistence)", () => {
     learnerRows.value = [];
     await expect(recordAttempt("acct-1", input)).rejects.toThrow("learner not found");
     expect(ops.some((o) => o.op === "insert" && o.table === "attempt")).toBe(false);
+  });
+
+  it("acquires the per-skill row locks in a deterministic sorted order", async () => {
+    // Evidence supplied out of order: the fold must lock skills sorted, so two
+    // concurrent attempts for the same learner with overlapping skills can't lock
+    // the same rows in opposite orders and deadlock (which would drop a submit).
+    skillRows.value = [{ id: "S1", evidence: [] }];
+    await recordAttempt("acct-1", {
+      ...input,
+      score: {
+        ...input.score,
+        skillEvidence: [
+          { skill: "math.sub", outcome: "solid" as const },
+          { skill: "math.add", outcome: "solid" as const },
+          { skill: "math.count", outcome: "solid" as const },
+        ],
+      },
+    });
+    expect(lockedSkills).toEqual(["math.add", "math.count", "math.sub"]);
   });
 });
 
