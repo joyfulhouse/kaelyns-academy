@@ -30,15 +30,18 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@serwist/turbopack": "^9.5.11",
     "@tailwindcss/postcss": "^4.3.1",
     "@types/node": "^25.9.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "drizzle-kit": "^0.31.10",
+    "esbuild": "^0.28.1",
     "eslint": "9",
     "eslint-config-next": "^16.2.9",
     "postcss": "^8.5.15",
+    "serwist": "^9.5.11",
     "sharp": "^0.35.2",
     "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3",
