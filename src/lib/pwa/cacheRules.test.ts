@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAudioRequest } from "./cacheRules";
+import { isAudioRequest, isImmutableStaticAsset } from "./cacheRules";
 
 const u = (s: string) => new URL(s);
 
@@ -12,5 +12,16 @@ describe("isAudioRequest", () => {
     expect(isAudioRequest(u("https://app/api/tts"), true)).toBe(false);
     expect(isAudioRequest(u("https://app/learn"), true)).toBe(false);
     expect(isAudioRequest(u("https://cdn/audio/en/x.m4a"), false)).toBe(false);
+  });
+});
+
+describe("isImmutableStaticAsset", () => {
+  it("matches same-origin /_next/static (hashed JS/CSS/fonts)", () => {
+    expect(isImmutableStaticAsset(u("https://app/_next/static/chunks/x.js"), true)).toBe(true);
+    expect(isImmutableStaticAsset(u("https://app/_next/static/media/font.woff2"), true)).toBe(true);
+  });
+  it("rejects HTML, RSC, and cross-origin", () => {
+    expect(isImmutableStaticAsset(u("https://app/learn"), true)).toBe(false);
+    expect(isImmutableStaticAsset(u("https://app/_next/static/x.js"), false)).toBe(false);
   });
 });

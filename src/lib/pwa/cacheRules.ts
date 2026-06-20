@@ -6,3 +6,8 @@
 export function isAudioRequest(url: URL, sameOrigin: boolean): boolean {
   return sameOrigin && url.pathname.startsWith("/audio/");
 }
+
+/** Next's content-hashed build assets (JS/CSS + self-hosted next/font media). Immutable. */
+export function isImmutableStaticAsset(url: URL, sameOrigin: boolean): boolean {
+  return sameOrigin && url.pathname.startsWith("/_next/static/");
+}

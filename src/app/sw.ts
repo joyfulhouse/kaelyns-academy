@@ -6,7 +6,7 @@ import {
   RangeRequestsPlugin,
   Serwist,
 } from "serwist";
-import { isAudioRequest } from "../lib/pwa/cacheRules";
+import { isAudioRequest, isImmutableStaticAsset } from "../lib/pwa/cacheRules";
 import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
 
 declare global {
@@ -35,6 +35,17 @@ const serwist = new Serwist({
           new CacheableResponsePlugin({ statuses: [200] }),
           new RangeRequestsPlugin(),
           new ExpirationPlugin({ maxEntries: 60, maxAgeSeconds: 30 * 24 * 60 * 60 }),
+        ],
+      }),
+    },
+    // Content-hashed → safe to cache long-term; old entries fall out of the manifest on deploy.
+    {
+      matcher: ({ url, sameOrigin }) => isImmutableStaticAsset(url, sameOrigin),
+      handler: new CacheFirst({
+        cacheName: "next-static",
+        plugins: [
+          new CacheableResponsePlugin({ statuses: [200] }),
+          new ExpirationPlugin({ maxEntries: 128, maxAgeSeconds: 90 * 24 * 60 * 60 }),
         ],
       }),
     },
