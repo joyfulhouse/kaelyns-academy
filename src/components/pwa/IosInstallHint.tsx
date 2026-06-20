@@ -1,43 +1,49 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { ShareIcon, XIcon } from "@phosphor-icons/react";
 import { shouldShowIosHint } from "@/lib/pwa/iosHint";
 
 const DISMISS_KEY = "ka-ios-a2hs-dismissed";
+const HINT_CHANGE = "ka-ios-hint-change";
+
+function subscribe(onChange: () => void): () => void {
+  window.addEventListener(HINT_CHANGE, onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    window.removeEventListener(HINT_CHANGE, onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
+function getSnapshot(): boolean {
+  return shouldShowIosHint({
+    userAgent: navigator.userAgent,
+    maxTouchPoints: navigator.maxTouchPoints,
+    isStandalone:
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (window.navigator as Navigator & { standalone?: boolean }).standalone === true,
+    dismissed: localStorage.getItem(DISMISS_KEY) === "1",
+  });
+}
+
+function getServerSnapshot(): boolean {
+  return false;
+}
 
 export function IosInstallHint() {
-  const [show, setShow] = useState(false);
-
-  useEffect(() => {
-    const isStandalone =
-      window.matchMedia("(display-mode: standalone)").matches ||
-      (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
-    const shouldShow = shouldShowIosHint({
-      userAgent: navigator.userAgent,
-      maxTouchPoints: navigator.maxTouchPoints,
-      isStandalone,
-      dismissed: localStorage.getItem(DISMISS_KEY) === "1",
-    });
-    // Schedule state update after the effect body to satisfy react-hooks/set-state-in-effect.
-    const id = setTimeout(() => {
-      setShow(shouldShow);
-    }, 0);
-    return () => {
-      clearTimeout(id);
-    };
-  }, []);
-
+  const show = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   if (!show) return null;
 
   const dismiss = () => {
     localStorage.setItem(DISMISS_KEY, "1");
-    setShow(false);
+    window.dispatchEvent(new Event(HINT_CHANGE));
   };
 
   return (
     <div
-      role="dialog"
+      role="status"
+      aria-live="polite"
       aria-label="Install Kaelyn's Academy"
       className="fixed inset-x-4 bottom-4 z-50 mx-auto flex max-w-md items-center gap-3 rounded-2xl border border-line bg-paper-raised px-4 py-3 shadow-lg"
     >
