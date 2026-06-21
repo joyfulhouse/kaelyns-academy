@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
 import { findActivity } from "@/content";
-import type { Program } from "@/content";
+import type { Activity, Unit, World } from "@/content";
 import { getProgramAsync } from "@/lib/content/repository";
 import { ActivityHost } from "@/components/learner/ActivityHost";
 
@@ -19,42 +18,43 @@ export async function generateMetadata({ params }: ActivityPageProps): Promise<M
 }
 
 /**
- * The next activity within the same unit (kept inside the world so a child
- * advances through one theme before the map decides the next). Returns null at
- * the unit's end, where the reward screen offers only "back to the map".
+ * The activity route. A thin server shell (mirrors the unit route): it resolves
+ * the CURRENT PUBLISHED activity best-effort for SSR + guest fallback, but does
+ * NOT hard-404 on a miss. ActivityHost (client) resolves the learner's PINNED
+ * activity + its owning unit from useLearnerState and renders/links from THAT,
+ * using `ssrActivity` (+ `world`) only as the pre-hydration / guest fallback;
+ * when the key is in neither tree it shows a calm "this activity moved" state
+ * rather than crashing. next/back hrefs are computed inside ActivityHost from
+ * the RESOLVED (pinned) unit, so they point within the learner's own version.
+ * unitId/activityId params are the stable authored keys (Fix-E Layer 1).
+ *
+ * Tradeoff (accepted): a bogus URL now renders the client "moved" state (HTTP
+ * 200) for signed-in users instead of a server 404, because the server cannot
+ * know the learner's pin. Guests still effectively get the published-miss path.
  */
-function nextActivityHref(
-  program: Program,
-  unitId: string,
-  activityId: string,
-): string | null {
-  const unit = program.units.find((u) => u.id === unitId);
-  if (!unit) return null;
-  const ids = unit.lessons.flatMap((l) => l.activities.map((a) => a.id));
-  const idx = ids.indexOf(activityId);
-  if (idx < 0 || idx + 1 >= ids.length) return null;
-  return `/learn/${program.slug}/${unit.id}/${ids[idx + 1]}`;
-}
-
 export default async function ActivityPage({ params }: ActivityPageProps) {
   const { programSlug, unitId, activityId } = await params;
   const program = await getProgramAsync(programSlug);
   const found = program ? findActivity(program, activityId) : undefined;
 
-  // Guard against an unknown program or a mismatched route (activity not in the
-  // named unit) → 404, never a crash on an untrusted URL.
-  if (!program || !found || found.unit.id !== unitId) notFound();
-
-  const backHref = `/learn/${program.slug}/${found.unit.id}`;
-  const nextHref = nextActivityHref(program, unitId, activityId);
+  // Pass the published activity + its owning unit ONLY when the activity sits in
+  // the named unit — a mismatched route keeps the SSR fallback null so the client
+  // resolves from the pinned tree (or shows "moved"), never serving the wrong
+  // activity. The owning unit gives guests/pre-hydration the in-unit "Next" link
+  // and world theme without a pinned tree.
+  const inUnit = found && found.unit.id === unitId ? found : undefined;
+  const ssrActivity: Activity | null = inUnit ? inUnit.activity : null;
+  const ssrUnit: Unit | null = inUnit ? inUnit.unit : null;
+  const world: World = inUnit ? inUnit.unit.world : "sunshine";
 
   return (
     <ActivityHost
-      activity={found.activity}
-      programSlug={program.slug}
-      world={found.unit.world}
-      backHref={backHref}
-      nextHref={nextHref}
+      programSlug={programSlug}
+      unitKey={unitId}
+      activityKey={activityId}
+      ssrActivity={ssrActivity}
+      ssrUnit={ssrUnit}
+      world={world}
     />
   );
 }
