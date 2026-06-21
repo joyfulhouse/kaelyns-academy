@@ -16,12 +16,18 @@ import { Select } from "@/components/ui/Select";
 import { Switch } from "@/components/ui/Switch";
 import { SampleBadge } from "@/components/parent/SampleBadge";
 import { saveLearnerSettingsAction } from "@/app/(parent)/actions";
+import type { LearnerSettings } from "@/lib/content/config";
 
 /**
  * Parent settings form. Controls map directly to `LearnerSettings`
  * (dailyGoal, aiPractice, readAloud) and persist via `saveLearnerSettingsAction`
  * when a `primaryLearnerId` is available. Settings are scoped to the primary
  * (first) learner for now; per-learner settings UI lands in a later phase.
+ *
+ * The form is initialized from the learner's *persisted* settings (passed as
+ * `initialSettings` by the server page), not hardcoded defaults — so a stored
+ * `aiPractice:false` (the §8 AI kill-switch) renders OFF and stays OFF across
+ * reloads instead of silently re-enabling on the next save.
  */
 
 const DAILY_GOAL_OPTIONS = [
@@ -45,13 +51,37 @@ const DEFAULTS: SettingsState = {
   readAloudDefault: true,
 };
 
+/**
+ * PURE. Map a learner's persisted `LearnerSettings` onto the form's field names,
+ * falling back to `DEFAULTS` *per absent field*. This per-field fallback is what
+ * makes a stored `aiPractice:false` sticky: a missing field takes the default,
+ * but a present `false` is preserved (never coerced back to the AI-on default).
+ * `null` settings (no learner / no stored row) yields the full defaults.
+ */
+export function settingsToFormState(settings: LearnerSettings | null): SettingsState {
+  if (!settings) return DEFAULTS;
+  return {
+    dailyGoal: settings.dailyGoal !== undefined ? String(settings.dailyGoal) : DEFAULTS.dailyGoal,
+    aiFeatures: settings.aiPractice ?? DEFAULTS.aiFeatures,
+    readAloudDefault: settings.readAloud ?? DEFAULTS.readAloudDefault,
+  };
+}
+
 type SaveState =
   | { status: "idle" }
   | { status: "saved" }
   | { status: "error"; message: string };
 
-export function SettingsForm({ primaryLearnerId }: { primaryLearnerId: string | null }) {
-  const [settings, setSettings] = useState<SettingsState>(DEFAULTS);
+export function SettingsForm({
+  primaryLearnerId,
+  initialSettings,
+}: {
+  primaryLearnerId: string | null;
+  initialSettings: LearnerSettings | null;
+}) {
+  const [settings, setSettings] = useState<SettingsState>(() =>
+    settingsToFormState(initialSettings),
+  );
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
   const [isPending, startTransition] = useTransition();
 

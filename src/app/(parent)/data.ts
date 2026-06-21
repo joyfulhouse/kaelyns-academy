@@ -5,6 +5,7 @@
 import { withAccount } from "@/lib/tenancy";
 import {
   getLearner,
+  getLearnerSettings,
   getRecentAttempts,
   getSkillState,
   listLearners,
@@ -13,6 +14,7 @@ import {
   type LearnerRow,
   type RecentAttempt,
 } from "@/lib/tutor/store";
+import type { LearnerSettings } from "@/lib/content/config";
 import { deriveOutcome, type SkillState } from "@/lib/tutor/mastery";
 import {
   SKILLS,
@@ -166,6 +168,29 @@ export async function listLearnerCards(): Promise<LearnerCard[]> {
         return { learner, program, summary: summarize(counts, adaptiveTags.length) };
       }),
     );
+  });
+}
+
+/**
+ * The Settings page read: the primary (first) learner's id plus their persisted
+ * `LearnerSettings`. Account-scoped (withAccount) and resolved in a single pass
+ * so the form can initialize its toggles from what's actually stored — a parent
+ * who turned the §8 AI kill-switch OFF must see it stay OFF across reloads, not
+ * silently re-enabled from hardcoded defaults. Returns null settings when there
+ * is no learner (nothing to persist) or the row has no stored settings yet.
+ */
+export interface PrimaryLearnerSettings {
+  primaryLearnerId: string | null;
+  settings: LearnerSettings | null;
+}
+
+export async function getPrimaryLearnerSettings(): Promise<PrimaryLearnerSettings> {
+  return withAccount(async ({ accountId }) => {
+    const learners = await listLearners(accountId);
+    const primary = learners[0];
+    if (!primary) return { primaryLearnerId: null, settings: null };
+    const settings = await getLearnerSettings(accountId, primary.id);
+    return { primaryLearnerId: primary.id, settings };
   });
 }
 
