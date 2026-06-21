@@ -5,13 +5,18 @@ import { z } from "zod";
 import { captureNonCritical } from "@/lib/capture";
 import { UnauthenticatedError, withAccount } from "@/lib/tenancy";
 import { findActivity, getSkill, type SkillTag } from "@/content";
-import { getProgramAsync } from "@/lib/content/repository";
+import { getProgramAsync, listProgramsAsync } from "@/lib/content/repository";
+import { getPublishedVersionId } from "@/lib/content/store";
 import {
+  assignProgram,
   createLearner,
   ensureEnrollment,
   getRecentAttempts,
   getSkillState,
   listLearners,
+  saveLearnerSettings,
+  setEnrollmentConfig,
+  setEnrollmentStatus,
   type LearnerRow,
 } from "@/lib/tutor/store";
 import { deriveOutcome, type SkillState } from "@/lib/tutor/mastery";
@@ -20,6 +25,8 @@ import {
   type ProgressReport,
   type ProgressReportSkill,
 } from "@/lib/ai/report";
+import { enrollmentConfigSchema, learnerSettingsSchema } from "@/lib/content/config";
+import type { EnrollmentConfig, LearnerSettings } from "@/lib/content/config";
 import { ADAPTIVE_PROGRAM_SLUG, kindLabel } from "./data";
 
 /**
@@ -198,5 +205,187 @@ export async function requestProgressReport(learnerId?: string): Promise<Progres
     // it is unavailable; we never leak raw model output or a stack to the UI.
     captureNonCritical("parent progress report generation failed", error);
     return { ok: false, reason: "unavailable" };
+  }
+}
+
+/* ── Enrollment lifecycle + config + settings ────────────────────────────── */
+
+/** Shared revalidation targets for all enrollment mutations. */
+function revalidateEnrollmentPaths(learnerId: string): void {
+  revalidatePath("/parent");
+  revalidatePath("/parent/learners");
+  revalidatePath(`/parent/learners/${learnerId}`);
+}
+
+/** Shared discriminated result for enrollment actions. */
+type EnrollmentActionResult =
+  | { ok: true }
+  | { ok: false; reason: "unauthenticated" | "invalid" | "unavailable"; message: string };
+
+/**
+ * Assign (or restore) a published program to a learner. Validates the slug
+ * against the live program catalog and pins the current published version id.
+ */
+export async function assignProgramAction(
+  learnerId: string,
+  slug: string,
+): Promise<EnrollmentActionResult> {
+  const slugParsed = z.string().min(1).safeParse(slug);
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  if (!slugParsed.success || !learnerIdParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner or program." };
+  }
+
+  try {
+    const programs = await listProgramsAsync();
+    const exists = programs.some((p) => p.slug === slug);
+    if (!exists) {
+      return { ok: false, reason: "unavailable", message: "Program not found." };
+    }
+
+    const programVersionId = await getPublishedVersionId(slug);
+
+    await withAccount(async ({ accountId }) => {
+      await assignProgram(accountId, learnerId, slug, programVersionId);
+    });
+
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("assignProgramAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not assign the program. Please try again." };
+  }
+}
+
+/**
+ * Soft-remove a program from a learner's enrollment (sets status="removed").
+ */
+export async function removeProgramAction(
+  learnerId: string,
+  slug: string,
+): Promise<EnrollmentActionResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  const slugParsed = z.string().min(1).safeParse(slug);
+  if (!learnerIdParsed.success || !slugParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner or program." };
+  }
+
+  try {
+    await withAccount(async ({ accountId }) => {
+      await setEnrollmentStatus(accountId, learnerId, slug, "removed");
+    });
+
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("removeProgramAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not remove the program. Please try again." };
+  }
+}
+
+/**
+ * Restore a previously removed program enrollment (sets status="active").
+ */
+export async function restoreProgramAction(
+  learnerId: string,
+  slug: string,
+): Promise<EnrollmentActionResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  const slugParsed = z.string().min(1).safeParse(slug);
+  if (!learnerIdParsed.success || !slugParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner or program." };
+  }
+
+  try {
+    await withAccount(async ({ accountId }) => {
+      await setEnrollmentStatus(accountId, learnerId, slug, "active");
+    });
+
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("restoreProgramAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not restore the program. Please try again." };
+  }
+}
+
+/**
+ * Update per-enrollment config (band, activeUnitKeys, aiPractice, dailyGoal).
+ * Parses the incoming `config` with enrollmentConfigSchema before persisting.
+ */
+export async function updateEnrollmentConfigAction(
+  learnerId: string,
+  slug: string,
+  config: unknown,
+): Promise<EnrollmentActionResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  const slugParsed = z.string().min(1).safeParse(slug);
+  if (!learnerIdParsed.success || !slugParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner or program." };
+  }
+
+  const configParsed = enrollmentConfigSchema.safeParse(config);
+  if (!configParsed.success) {
+    const message = configParsed.error.issues[0]?.message ?? "Invalid enrollment config.";
+    return { ok: false, reason: "invalid", message };
+  }
+
+  try {
+    await withAccount(async ({ accountId }) => {
+      await setEnrollmentConfig(accountId, learnerId, slug, configParsed.data as EnrollmentConfig);
+    });
+
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("updateEnrollmentConfigAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not update the config. Please try again." };
+  }
+}
+
+/**
+ * Persist learner-level settings (dailyGoal, aiPractice, readAloud).
+ * Parses the incoming `settings` with learnerSettingsSchema before persisting.
+ */
+export async function saveLearnerSettingsAction(
+  learnerId: string,
+  settings: unknown,
+): Promise<EnrollmentActionResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  if (!learnerIdParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner." };
+  }
+
+  const settingsParsed = learnerSettingsSchema.safeParse(settings);
+  if (!settingsParsed.success) {
+    const message = settingsParsed.error.issues[0]?.message ?? "Invalid learner settings.";
+    return { ok: false, reason: "invalid", message };
+  }
+
+  try {
+    await withAccount(async ({ accountId }) => {
+      await saveLearnerSettings(accountId, learnerId, settingsParsed.data as LearnerSettings);
+    });
+
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("saveLearnerSettingsAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not save settings. Please try again." };
   }
 }
