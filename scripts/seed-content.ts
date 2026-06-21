@@ -243,136 +243,234 @@ export function buildSeedPlan(programs: Program[], skills: Skill[]): SeedPlan {
 // ── seedContent ───────────────────────────────────────────────────────────────
 // DB glue: inserts the plan into the database. CLI-guarded so this function is
 // never called at module load (build-safety).
+//
+// Idempotent + transactional: the whole seed runs in ONE transaction (a partial
+// failure rolls back, never leaving dangling refs), and every insert is an
+// upsert-with-RETURNING keyed on the row's natural-key unique constraint — so a
+// conflicting (already-seeded) row is still returned, yielding its REAL id. This
+// matters because the prior version generated fresh UUIDs + onConflictDoNothing
+// without read-back: on a re-run the in-memory id map pointed at phantom UUIDs
+// that were never persisted, so dependent inserts (and publishedVersionId)
+// referenced non-existent parents. Returning the actual row id — and refreshing
+// content fields in the conflict's SET — makes a second run converge to the same
+// published state with no dangling refs.
 
 async function seedContent(): Promise<void> {
   // Lazy import keeps getDb() off the module top-level.
   const { getDb } = await import("@/lib/db");
   const schema = await import("@/lib/db/schema");
   const { listPrograms, SKILLS } = await import("@/content");
+  const { eq } = await import("drizzle-orm");
 
   const db = getDb();
   const plan = buildSeedPlan(listPrograms(), SKILLS);
 
-  // UUID map: intra-plan key → inserted DB id
+  // Intra-plan key → REAL persisted DB id (read back via RETURNING, never a
+  // phantom UUID). Each insert uses onConflictDoUpdate so a conflicting (already
+  // seeded) row is still RETURNED — giving us its real id in one statement and
+  // converging its content fields to the current static source on a re-run.
   const ids = new Map<string, string>();
   const newId = () => globalThis.crypto.randomUUID();
 
-  // Publishers
-  for (const p of plan.publishers) {
-    const id = newId();
-    ids.set(p.key, id);
-    await db.insert(schema.publisher).values({ id, name: p.name, kind: p.kind })
-      .onConflictDoNothing();
+  /** First returned id, or a clear error (an upsert+returning must yield a row). */
+  function firstId(rows: { id: string }[], what: string): string {
+    if (!rows[0]?.id) throw new Error(`seed: ${what} upsert returned no row`);
+    return rows[0].id;
   }
 
-  // Programs
-  for (const p of plan.programs) {
-    const id = newId();
-    ids.set(p.key, id);
-    await db.insert(schema.program).values({
-      id,
-      slug: p.slug,
-      status: p.status,
-      publisherId: ids.get(p.publisherKey),
-    }).onConflictDoNothing();
-  }
-
-  // Program versions
-  for (const v of plan.versions) {
-    const id = newId();
-    ids.set(v.key, id);
-    await db.insert(schema.programVersion).values({
-      id,
-      programId: ids.get(v.programKey)!,
-      version: v.version,
-      status: v.status,
-      title: v.title,
-      subtitle: v.subtitle,
-      ageBand: v.ageBand,
-      summary: v.summary,
-      world: v.world,
-      locale: v.locale,
-      languages: v.languages,
-      publishedAt: new Date(),
-    }).onConflictDoNothing();
-  }
-
-  // Update publishedVersionId on each program
-  for (const v of plan.versions) {
-    const programId = ids.get(v.programKey);
-    const versionId = ids.get(v.key);
-    if (programId && versionId) {
-      const { eq } = await import("drizzle-orm");
-      await db.update(schema.program)
-        .set({ publishedVersionId: versionId })
-        .where(eq(schema.program.id, programId));
+  await db.transaction(async (tx) => {
+    // Publishers — no DB unique key on name, so dedup by select-first (avoids
+    // inserting a duplicate publisher row on a re-run).
+    for (const p of plan.publishers) {
+      const existing = await tx
+        .select({ id: schema.publisher.id })
+        .from(schema.publisher)
+        .where(eq(schema.publisher.name, p.name))
+        .limit(1);
+      if (existing[0]?.id) {
+        ids.set(p.key, existing[0].id);
+      } else {
+        const inserted = await tx
+          .insert(schema.publisher)
+          .values({ id: newId(), name: p.name, kind: p.kind })
+          .returning({ id: schema.publisher.id });
+        ids.set(p.key, firstId(inserted, "publisher"));
+      }
     }
-  }
 
-  // Units
-  for (const u of plan.units) {
-    const id = newId();
-    ids.set(u.key, id);
-    await db.insert(schema.unit).values({
-      id,
-      programVersionId: ids.get(u.programVersionKey)!,
-      unitKey: u.unitKey,
-      orderKey: u.orderKey,
-      title: u.title,
-      emoji: u.emoji,
-      world: u.world,
-      bigIdea: u.bigIdea,
-      phonicsFocus: u.phonicsFocus,
-      mathFocus: u.mathFocus,
-      project: u.project,
-      checkpoint: u.checkpoint,
-    }).onConflictDoNothing();
-  }
+    // Programs — natural key: slug (unique). publishedVersionId is set in a
+    // second pass once versions exist.
+    for (const p of plan.programs) {
+      const rows = await tx
+        .insert(schema.program)
+        .values({ id: newId(), slug: p.slug, status: p.status, publisherId: ids.get(p.publisherKey) })
+        .onConflictDoUpdate({
+          target: schema.program.slug,
+          set: { status: p.status, publisherId: ids.get(p.publisherKey), updatedAt: new Date() },
+        })
+        .returning({ id: schema.program.id });
+      ids.set(p.key, firstId(rows, `program ${p.slug}`));
+    }
 
-  // Lessons
-  for (const l of plan.lessons) {
-    const id = newId();
-    ids.set(l.key, id);
-    await db.insert(schema.lesson).values({
-      id,
-      unitId: ids.get(l.unitKey)!,
-      lessonKey: l.lessonKey,
-      orderKey: l.orderKey,
-      title: l.title,
-    }).onConflictDoNothing();
-  }
+    // Program versions — natural key: (programId, version) (unique).
+    for (const v of plan.versions) {
+      const programId = ids.get(v.programKey)!;
+      const rows = await tx
+        .insert(schema.programVersion)
+        .values({
+          id: newId(),
+          programId,
+          version: v.version,
+          status: v.status,
+          title: v.title,
+          subtitle: v.subtitle,
+          ageBand: v.ageBand,
+          summary: v.summary,
+          world: v.world,
+          locale: v.locale,
+          languages: v.languages,
+          publishedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [schema.programVersion.programId, schema.programVersion.version],
+          set: {
+            status: v.status,
+            title: v.title,
+            subtitle: v.subtitle,
+            ageBand: v.ageBand,
+            summary: v.summary,
+            world: v.world,
+            locale: v.locale,
+            languages: v.languages,
+          },
+        })
+        .returning({ id: schema.programVersion.id });
+      ids.set(v.key, firstId(rows, `version ${v.key}`));
+    }
 
-  // Activities
-  for (const a of plan.activities) {
-    const id = newId();
-    ids.set(a.key, id);
-    await db.insert(schema.activity).values({
-      id,
-      lessonId: ids.get(a.lessonKey)!,
-      activityKey: a.activityKey,
-      orderKey: a.orderKey,
-      kind: a.kind,
-      title: a.title,
-      blurb: a.blurb,
-      estMinutes: a.estMinutes,
-      band: a.band,
-      skillTags: a.skillTags,
-      standardTags: a.standardTags,
-      config: a.config,
-    }).onConflictDoNothing();
-  }
+    // Point each program at its (now-real) published version id.
+    for (const v of plan.versions) {
+      const programId = ids.get(v.programKey);
+      const versionId = ids.get(v.key);
+      if (programId && versionId) {
+        await tx
+          .update(schema.program)
+          .set({ publishedVersionId: versionId })
+          .where(eq(schema.program.id, programId));
+      }
+    }
 
-  // Skills (global, not program-scoped)
-  for (const s of plan.skills) {
-    await db.insert(schema.skill).values({
-      id: newId(),
-      slug: s.slug,
-      domain: s.domain,
-      label: s.label,
-      readyIndicator: s.readyIndicator,
-      stretchIndicator: s.stretchIndicator,
-    }).onConflictDoNothing();
-  }
+    // Units — natural key: (programVersionId, unitKey) (unique).
+    for (const u of plan.units) {
+      const programVersionId = ids.get(u.programVersionKey)!;
+      const rows = await tx
+        .insert(schema.unit)
+        .values({
+          id: newId(),
+          programVersionId,
+          unitKey: u.unitKey,
+          orderKey: u.orderKey,
+          title: u.title,
+          emoji: u.emoji,
+          world: u.world,
+          bigIdea: u.bigIdea,
+          phonicsFocus: u.phonicsFocus,
+          mathFocus: u.mathFocus,
+          project: u.project,
+          checkpoint: u.checkpoint,
+        })
+        .onConflictDoUpdate({
+          target: [schema.unit.programVersionId, schema.unit.unitKey],
+          set: {
+            orderKey: u.orderKey,
+            title: u.title,
+            emoji: u.emoji,
+            world: u.world,
+            bigIdea: u.bigIdea,
+            phonicsFocus: u.phonicsFocus,
+            mathFocus: u.mathFocus,
+            project: u.project,
+            checkpoint: u.checkpoint,
+          },
+        })
+        .returning({ id: schema.unit.id });
+      ids.set(u.key, firstId(rows, `unit ${u.unitKey}`));
+    }
+
+    // Lessons — natural key: (unitId, lessonKey) (unique).
+    for (const l of plan.lessons) {
+      const unitId = ids.get(l.unitKey)!;
+      const rows = await tx
+        .insert(schema.lesson)
+        .values({ id: newId(), unitId, lessonKey: l.lessonKey, orderKey: l.orderKey, title: l.title })
+        .onConflictDoUpdate({
+          target: [schema.lesson.unitId, schema.lesson.lessonKey],
+          set: { orderKey: l.orderKey, title: l.title },
+        })
+        .returning({ id: schema.lesson.id });
+      ids.set(l.key, firstId(rows, `lesson ${l.lessonKey}`));
+    }
+
+    // Activities — natural key: (lessonId, activityKey) (unique).
+    for (const a of plan.activities) {
+      const lessonId = ids.get(a.lessonKey)!;
+      const rows = await tx
+        .insert(schema.activity)
+        .values({
+          id: newId(),
+          lessonId,
+          activityKey: a.activityKey,
+          orderKey: a.orderKey,
+          kind: a.kind,
+          title: a.title,
+          blurb: a.blurb,
+          estMinutes: a.estMinutes,
+          band: a.band,
+          skillTags: a.skillTags,
+          standardTags: a.standardTags,
+          config: a.config,
+        })
+        .onConflictDoUpdate({
+          target: [schema.activity.lessonId, schema.activity.activityKey],
+          set: {
+            orderKey: a.orderKey,
+            kind: a.kind,
+            title: a.title,
+            blurb: a.blurb,
+            estMinutes: a.estMinutes,
+            band: a.band,
+            skillTags: a.skillTags,
+            standardTags: a.standardTags,
+            config: a.config,
+          },
+        })
+        .returning({ id: schema.activity.id });
+      ids.set(a.key, firstId(rows, `activity ${a.activityKey}`));
+    }
+
+    // Skills (global, not program-scoped) — natural key: slug (unique).
+    for (const s of plan.skills) {
+      await tx
+        .insert(schema.skill)
+        .values({
+          id: newId(),
+          slug: s.slug,
+          domain: s.domain,
+          label: s.label,
+          readyIndicator: s.readyIndicator,
+          stretchIndicator: s.stretchIndicator,
+        })
+        .onConflictDoUpdate({
+          target: schema.skill.slug,
+          set: {
+            domain: s.domain,
+            label: s.label,
+            readyIndicator: s.readyIndicator,
+            stretchIndicator: s.stretchIndicator,
+          },
+        });
+    }
+  });
 
   console.log(
     `Seed complete: ${plan.publishers.length} publishers, ${plan.programs.length} programs, ` +
