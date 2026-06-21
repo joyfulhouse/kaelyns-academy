@@ -8,6 +8,7 @@ import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
 import type { EnrollmentConfig, LearnerSettings } from "@/lib/content/config";
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
+import { shapeLearnerExport, type LearnerExport } from "./export";
 
 /**
  * The DB-backed tutor store: the server equivalent of the client's
@@ -425,4 +426,86 @@ export async function saveLearnerSettings(
     .update(learner)
     .set({ settings, updatedAt: new Date() })
     .where(eq(learner.id, learnerId));
+}
+
+// ── Per-child data export + profile delete (spec §8) ─────────────────────────
+
+/**
+ * Gather the owned learner's full data and shape it into the minimized export
+ * format (spec §8). Returns null when the learner does not exist or is not
+ * owned by the account (tenancy boundary).
+ *
+ * The caller (action) stamps `exportedAt` so the pure shaper stays free of
+ * `new Date()` and remains unit-testable without mocks.
+ */
+export async function buildLearnerExport(
+  accountId: string,
+  learnerId: string,
+  exportedAt: string,
+): Promise<LearnerExport | null> {
+  // Ownership check: must belong to this account.
+  const rows = await getDb()
+    .select()
+    .from(learner)
+    .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
+    .limit(1);
+  if (!rows[0]) return null;
+  const learnerRow = rows[0];
+
+  // Gather all related data in parallel (no write, just reads).
+  const [enrollmentRows, skillStateRows, attemptRows] = await Promise.all([
+    getDb().select().from(enrollment).where(eq(enrollment.learnerId, learnerId)),
+    getDb().select().from(skillState).where(eq(skillState.learnerId, learnerId)),
+    getDb()
+      .select()
+      .from(attempt)
+      .where(eq(attempt.learnerId, learnerId))
+      .orderBy(desc(attempt.createdAt)),
+  ]);
+
+  return shapeLearnerExport({
+    exportedAt,
+    learner: {
+      id: learnerRow.id,
+      displayName: learnerRow.displayName,
+      birthMonth: learnerRow.birthMonth,
+      settings: (learnerRow.settings as LearnerSettings) ?? {},
+    },
+    enrollments: enrollmentRows.map((e) => ({
+      programSlug: e.programSlug,
+      status: e.status,
+      config: (e.config as EnrollmentConfig) ?? {},
+    })),
+    skillState: skillStateRows.map((s) => ({
+      skill: s.skill,
+      outcome: s.outcome,
+      evidence: (s.evidence as { day: string; outcome: string }[]) ?? [],
+    })),
+    attempts: attemptRows.map((a) => ({
+      activityId: a.activityId,
+      kind: a.kind,
+      score: a.score as { stars: number; correct: number; total: number; skillEvidence: unknown[] },
+      day: a.day,
+      createdAt: a.createdAt,
+    })),
+  });
+}
+
+/**
+ * Delete a child profile (and all its data via cascade). Returns true if the
+ * learner was found and deleted, false if not owned or not found (tenancy boundary).
+ *
+ * FK cascade: `enrollment`, `attempt`, and `skill_state` all have
+ * `onDelete: "cascade"` on `learner.id`, so deleting the learner row removes
+ * everything. No orphan cleanup needed.
+ */
+export async function deleteLearner(
+  accountId: string,
+  learnerId: string,
+): Promise<boolean> {
+  const deleted = await getDb()
+    .delete(learner)
+    .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
+    .returning({ id: learner.id });
+  return deleted.length > 0;
 }

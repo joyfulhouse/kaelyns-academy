@@ -19,6 +19,7 @@ import {
   type SkillStatus,
 } from "@/app/(parent)/data";
 import { CurriculumPanel } from "@/components/parent/CurriculumPanel";
+import { LearnerDataControls } from "@/components/parent/LearnerDataControls";
 import { programStats } from "@/content";
 import type { SkillDomain } from "@/content";
 
@@ -116,6 +117,8 @@ export default async function LearnerDetailPage({
       )}
 
       <CurriculumPanel learnerId={id} curriculum={curriculum} />
+
+      <LearnerDataControls learnerId={id} learnerName={learner.displayName} />
     </div>
   );
 }

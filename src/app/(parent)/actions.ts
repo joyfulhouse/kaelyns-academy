@@ -9,7 +9,9 @@ import { getProgramAsync, listProgramsAsync } from "@/lib/content/repository";
 import { getPublishedVersionId } from "@/lib/content/store";
 import {
   assignProgram,
+  buildLearnerExport,
   createLearner,
+  deleteLearner,
   ensureEnrollment,
   getRecentAttempts,
   getSkillState,
@@ -19,6 +21,7 @@ import {
   setEnrollmentStatus,
   type LearnerRow,
 } from "@/lib/tutor/store";
+import type { LearnerExport } from "@/lib/tutor/export";
 import { deriveOutcome, type SkillState } from "@/lib/tutor/mastery";
 import {
   generateProgressReport,
@@ -387,5 +390,75 @@ export async function saveLearnerSettingsAction(
     }
     captureNonCritical("saveLearnerSettingsAction failed", error);
     return { ok: false, reason: "unavailable", message: "Could not save settings. Please try again." };
+  }
+}
+
+/* ── Per-child data export + profile delete (spec §8 COPPA controls) ─────── */
+
+/** Discriminated result for exportLearnerAction. */
+export type ExportLearnerResult =
+  | { ok: true; data: LearnerExport }
+  | { ok: false; reason: "unauthenticated" | "not-found" | "unavailable"; message?: string };
+
+/**
+ * Build and return the minimized per-child data export (spec §8). The
+ * resulting JSON is sent back to the client; the client is responsible for
+ * triggering the browser download (no temp files server-side).
+ */
+export async function exportLearnerAction(learnerId: string): Promise<ExportLearnerResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  if (!learnerIdParsed.success) {
+    return { ok: false, reason: "not-found", message: "Learner not found." };
+  }
+
+  try {
+    const data = await withAccount(async ({ accountId }) => {
+      // Stamp exportedAt here so the pure shaper stays free of new Date().
+      return buildLearnerExport(accountId, learnerId, new Date().toISOString());
+    });
+
+    if (!data) return { ok: false, reason: "not-found", message: "Learner not found." };
+    return { ok: true, data };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("exportLearnerAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not export data. Please try again." };
+  }
+}
+
+/** Discriminated result for deleteLearnerAction. */
+export type DeleteLearnerResult =
+  | { ok: true }
+  | { ok: false; reason: "unauthenticated" | "not-found" | "unavailable"; message?: string };
+
+/**
+ * Delete a child profile and all its data (enrollment/attempt/skill_state via
+ * FK cascade). Revalidates the parent surfaces on success so the deleted learner
+ * disappears immediately.
+ */
+export async function deleteLearnerAction(learnerId: string): Promise<DeleteLearnerResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  if (!learnerIdParsed.success) {
+    return { ok: false, reason: "not-found", message: "Learner not found." };
+  }
+
+  try {
+    const deleted = await withAccount(async ({ accountId }) => {
+      return deleteLearner(accountId, learnerId);
+    });
+
+    if (!deleted) return { ok: false, reason: "not-found", message: "Learner not found." };
+
+    revalidatePath("/parent");
+    revalidatePath("/parent/learners");
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("deleteLearnerAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not delete the profile. Please try again." };
   }
 }
