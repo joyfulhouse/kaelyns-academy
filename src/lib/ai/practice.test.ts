@@ -17,7 +17,13 @@ const { phonemize } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/audio/phonemize", () => ({ phonemize }));
 
-import { generatePracticeItems, KIND_BRIEF, repairPhonicsBatch, repairPhonicsSay } from "./practice";
+import {
+  generatePracticeItems,
+  KIND_BRIEF,
+  repairPhonicsBatch,
+  repairPhonicsSay,
+  sanitizeGeneratedPhonics,
+} from "./practice";
 
 /** Build a fake OpenAI-compatible chat-completions response. */
 function completion(content: string, ok = true, status = 200): Response {
@@ -198,10 +204,9 @@ describe("generatePracticeItems (bounded + schema-validated)", () => {
 });
 
 describe("KIND_BRIEF", () => {
-  it("instructs the model to emit per-tile `say` IPA and `silent` for phonics", () => {
+  it("instructs the model to emit per-tile `say` IPA for phonics", () => {
     const brief = KIND_BRIEF["phonics-wordbuild"];
     expect(brief).toContain("say");
-    expect(brief).toContain("silent");
     expect(brief).toMatch(/IPA/);
     expect(brief).toMatch(/NOT the letter name/);
     // Concrete examples anchor the contract for the model.
@@ -336,5 +341,28 @@ describe("repairPhonicsBatch (dedupe + circuit-break across items)", () => {
     expect(phonemize.mock.calls.length).toBeLessThanOrEqual(4); // not all 10
     // fail-open: every override kept despite Kokoro being down.
     for (const c of configs) expect(Object.keys(c.say)).toHaveLength(1);
+  });
+});
+
+describe("sanitizeGeneratedPhonics (generated audio can't drop below bare)", () => {
+  it("strips unvalidatable `silent` and per-word `ipa`, keeps validated `say`", async () => {
+    const config: {
+      tiles: string[];
+      say: Record<string, string>;
+      silent?: string[];
+      words: { word: string; ipa?: string }[];
+    } = {
+      tiles: ["c", "a", "t"],
+      say: { c: "k", a: "z" }, // c→/k/ valid; a→/z/ hallucinated
+      silent: ["t"], // bad: would mute a sounded tile (worse than bare)
+      words: [{ word: "cat", ipa: "zoo" }], // bad whole-word override
+    };
+    const phonemize = vi.fn(async () => "kˈæt");
+
+    await sanitizeGeneratedPhonics([config], phonemize);
+
+    expect(config.say).toEqual({ c: "k" }); // hallucinated say dropped
+    expect(config.silent).toBeUndefined(); // unvalidatable control stripped
+    expect(config.words[0]!.ipa).toBeUndefined(); // bad whole-word override stripped
   });
 });

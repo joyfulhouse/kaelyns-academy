@@ -39,14 +39,13 @@ const MAX_ITEMS = 8;
 /** Plain-language guidance per kind so the model emits the right config shape. */
 export const KIND_BRIEF: Record<ActivityKind, string> = {
   "phonics-wordbuild":
-    'Build-a-word items. Each: {focus, instruction, tiles:[letters/digraphs], say:{tile:IPA}, silent:[tiles], words:[{word, picture?}]}. ' +
+    'Build-a-word items. Each: {focus, instruction, tiles:[letters/digraphs], say:{tile:IPA}, words:[{word, picture?}]}. ' +
     "Every target word MUST be spellable from the provided tiles. `picture` is a single emoji. " +
     "Keep words decodable for the focus; 2 to 4 words per item. " +
     "Each tile is tapped and spoken ALONE, so a bare letter mis-reads (lone \"c\" says its name \"see\", \"ble\" says \"blee\"). " +
     "In `say`, map EVERY tile to its IPA SOUND as pronounced INSIDE the word, NOT the letter name (stress mark ˈ optional). " +
     'For "table"=ta+ble use {"ta":"teɪ","ble":"bəl"}; for "cat"=c+a+t use {"c":"k","a":"æ","t":"t"}. ' +
-    'The same letter can differ by word: "a" is /æ/ in cat but /eɪ/ in cake; "c" is /k/ in cat but /s/ in city. ' +
-    'List any SILENT letter (e.g. the magic e in "cake") in `silent` instead of `say`.',
+    'The same letter can differ by word: "a" is /æ/ in cat but /eɪ/ in cake; "c" is /k/ in cat but /s/ in city.',
   "sightword-game":
     "Sight-word hunt items. Each: {instruction, words:[real sight words], decoys:[similar-looking non-targets]}. " +
     "Decoys must be plausible but clearly not the target words. 3 to 6 words, 2 to 5 decoys.",
@@ -194,7 +193,8 @@ export type PhonemizeFn = (text: string) => Promise<string | null>;
 interface RepairablePhonics {
   tiles: string[];
   say?: Record<string, string>;
-  words: { word: string }[];
+  silent?: string[];
+  words: { word: string; ipa?: string }[];
 }
 
 /** tile → every word in the config that uses it (greedy-segmented the SAME way the
@@ -298,6 +298,39 @@ export async function repairPhonicsSay<T extends RepairablePhonics>(
   return config;
 }
 
+/**
+ * Remove the AI-generated pronunciation controls we CANNOT soundly validate, so
+ * generated audio can never drop below bare TTS:
+ *  - `silent`: marking a tile silent needs to know a letter is truly unvoiced —
+ *    that's the same grapheme→phoneme alignment Kokoro can't give. A bad `silent`
+ *    would mute a tile that should sound (worse than bare). Drop it → the tile
+ *    falls back to its letter sound.
+ *  - per-word `ipa`: a wrong whole-word override would mis-voice the target. Drop
+ *    it → the word speaker falls back to bare G2P, which voices WHOLE words
+ *    correctly (only isolated fragments mis-read, and those are the `say` tiles).
+ * Authored configs keep both (they're hand-verified); this runs on model output only.
+ */
+function stripUnvalidatedControls(config: RepairablePhonics): void {
+  delete config.silent;
+  for (const w of config.words) delete w.ipa;
+}
+
+/**
+ * Make a batch of AI-generated phonics-wordbuild configs safe to voice: validate
+ * the per-tile `say` overrides against Kokoro ground truth (drop hallucinations,
+ * {@link repairPhonicsBatch}) AND strip the controls we can't validate
+ * ({@link stripUnvalidatedControls}). After this, generated phonics audio is never
+ * worse than bare TTS — every surviving control is either validated or a correct
+ * whole-word fallback. Mutates each config in place.
+ */
+export async function sanitizeGeneratedPhonics(
+  configs: readonly RepairablePhonics[],
+  phonemizeFn: PhonemizeFn,
+): Promise<void> {
+  await repairPhonicsBatch(configs, phonemizeFn);
+  for (const config of configs) stripUnvalidatedControls(config);
+}
+
 export interface GeneratePracticeOptions {
   /** Optional canonical skill tags to steer generation (e.g. ["phonics.digraphs"]). */
   skillHints?: SkillTag[];
@@ -366,10 +399,11 @@ export async function generatePracticeItems<K extends ActivityKind>(
   // strings; phonemize is fail-open (Kokoro down ⇒ keep, still sanitized/bounded).
   if (kind === "phonics-wordbuild") {
     // K is generic so the runtime `kind` check can't narrow `items`' type; the
-    // runtime shape is a phonics config, structurally a RepairablePhonics. The batch
-    // form dedupes phonemize calls and circuit-breaks across all items at once.
+    // runtime shape is a phonics config, structurally a RepairablePhonics. Validate
+    // `say` and strip the controls we can't validate so generated audio is never
+    // worse than bare TTS (dedupes + circuit-breaks phonemize across all items).
     const phonics = items as unknown as RepairablePhonics[];
-    await repairPhonicsBatch(phonics, phonemize);
+    await sanitizeGeneratedPhonics(phonics, phonemize);
   }
 
   // Fire-and-forget: warm the durable narration cache for everything the child will
