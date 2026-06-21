@@ -92,8 +92,13 @@ export function EnrollmentConfigForm({
         ? parsedGoal
         : undefined;
 
+    // Narrow `band` (a plain string from the <select>) against the allowed
+    // literals instead of casting — an out-of-range value becomes undefined and
+    // is rejected/normalized server-side rather than silently typed as valid.
+    const bandValue = band === "ready" || band === "stretch" ? band : undefined;
+
     const nextConfig: EnrollmentConfig = {
-      band: (band as "ready" | "stretch") ?? undefined,
+      band: bandValue,
       activeUnitKeys: allOn ? undefined : [...activeKeys],
       aiPractice,
       dailyGoal: goalValue,

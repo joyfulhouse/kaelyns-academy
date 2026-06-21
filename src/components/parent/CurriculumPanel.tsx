@@ -50,6 +50,9 @@ export function CurriculumPanel({
   const [isPending, startTransition] = useTransition();
   const [actionState, setActionState] = useState<ActionState>({ status: "idle" });
   const [selectedSlug, setSelectedSlug] = useState("");
+  // Only announce to screen readers after a real successful action — not on the
+  // initial idle mount (which would otherwise read a spurious "updated").
+  const [announce, setAnnounce] = useState(false);
 
   const { enrolled, available } = curriculum;
 
@@ -59,11 +62,13 @@ export function CurriculumPanel({
   ) {
     if (isPending) return;
     setActionState({ status: "idle" });
+    setAnnounce(false);
 
     startTransition(async () => {
       try {
         const result = await action(learnerId, slug);
         if (result.ok) {
+          setAnnounce(true);
           router.refresh();
         } else {
           setActionState({
@@ -93,12 +98,14 @@ export function CurriculumPanel({
   function handleAdd() {
     if (!selectedSlug || isPending) return;
     setActionState({ status: "idle" });
+    setAnnounce(false);
 
     startTransition(async () => {
       try {
         const result = await assignProgramAction(learnerId, selectedSlug);
         if (result.ok) {
           setSelectedSlug("");
+          setAnnounce(true);
           router.refresh();
         } else {
           setActionState({
@@ -282,8 +289,8 @@ export function CurriculumPanel({
         )}
       </div>
 
-      {/* Global success feedback */}
-      {actionState.status === "idle" && isPending === false && (
+      {/* Global success feedback — only after a real successful action. */}
+      {announce && actionState.status === "idle" && isPending === false && (
         <p className="sr-only" role="status">
           Programs updated.
         </p>

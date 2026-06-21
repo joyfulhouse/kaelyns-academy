@@ -63,13 +63,11 @@ export function SettingsForm({ primaryLearnerId }: { primaryLearnerId: string | 
   function handleSave() {
     if (isPending) return;
 
-    const dailyGoal = parseInt(settings.dailyGoal, 10);
+    // With no learner there is nothing to persist — Save is disabled in that
+    // state, so we never reach here and never claim a save that didn't happen.
+    if (!primaryLearnerId) return;
 
-    if (!primaryLearnerId) {
-      // No learner yet: nothing to persist; acknowledge locally.
-      setSaveState({ status: "saved" });
-      return;
-    }
+    const dailyGoal = parseInt(settings.dailyGoal, 10);
 
     startTransition(async () => {
       try {
@@ -155,7 +153,13 @@ export function SettingsForm({ primaryLearnerId }: { primaryLearnerId: string | 
         </div>
 
         <div className="mt-5 flex flex-wrap items-center gap-3">
-          <Button variant="primary" size="md" onClick={handleSave} disabled={isPending}>
+          <Button
+            variant="primary"
+            size="md"
+            onClick={handleSave}
+            disabled={isPending || !primaryLearnerId}
+            title={primaryLearnerId ? undefined : "Add a child to save settings"}
+          >
             {isPending ? "Saving…" : "Save changes"}
           </Button>
 
@@ -165,7 +169,7 @@ export function SettingsForm({ primaryLearnerId }: { primaryLearnerId: string | 
               className="inline-flex items-center gap-1.5 text-sm font-medium text-success"
             >
               <CheckCircleIcon weight="fill" className="size-4" />
-              {primaryLearnerId ? "Settings saved." : "Saved on this device."}
+              Settings saved.
             </span>
           )}
 

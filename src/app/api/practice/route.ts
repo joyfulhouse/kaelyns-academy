@@ -18,7 +18,9 @@ const requestSchema = z.object({
   kind: z.enum(Object.keys(ACTIVITY_CONFIG_SCHEMAS) as [keyof typeof ACTIVITY_CONFIG_SCHEMAS]),
   band: z.enum(["ready", "stretch"]),
   focus: z.string().min(1).max(200),
-  n: z.number().int().min(1).max(8).default(3),
+  // Cap at 2 (the sole caller sends 1; 2 leaves minimal headroom). A higher cap
+  // would let one request amplify token spend N× inside the per-minute limit.
+  n: z.number().int().min(1).max(2).default(1),
   skillHints: z.array(z.string().min(1).max(60)).max(8).optional(),
   // Per-child AI gate (spec §8). Required so the server always enforces the
   // parental control — no client may bypass by omitting these fields.

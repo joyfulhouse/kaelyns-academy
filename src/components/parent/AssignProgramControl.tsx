@@ -37,15 +37,20 @@ export function AssignProgramControl({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [actionState, setActionState] = useState<ActionState>({ status: "idle" });
+  // Only announce to screen readers after a real successful assignment — not on
+  // initial idle mount (which would otherwise read a spurious "updated").
+  const [announce, setAnnounce] = useState(false);
 
   function handleAssign(learnerId: string) {
     if (isPending) return;
     setActionState({ status: "idle" });
+    setAnnounce(false);
 
     startTransition(async () => {
       try {
         const result = await assignProgramAction(learnerId, slug);
         if (result.ok) {
+          setAnnounce(true);
           router.refresh();
         } else {
           setActionState({
@@ -130,8 +135,8 @@ export function AssignProgramControl({
         );
       })}
 
-      {/* Screen-reader success feedback */}
-      {actionState.status === "idle" && !isPending && (
+      {/* Screen-reader success feedback — only after a real successful action. */}
+      {announce && actionState.status === "idle" && !isPending && (
         <p className="sr-only" role="status">
           Assignments updated.
         </p>

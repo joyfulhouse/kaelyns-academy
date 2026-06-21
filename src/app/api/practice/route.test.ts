@@ -141,4 +141,18 @@ describe("POST /api/practice", () => {
     expect(res.status).toBe(400);
     expect(generatePracticeItems).not.toHaveBeenCalled();
   });
+
+  it("400s when n exceeds the tightened cap (wallet-amplification guard)", async () => {
+    // The only caller sends n:1; the schema caps at 2 to limit token spend.
+    const res = await POST(post({ ...VALID_BASE, n: 3 }));
+    expect(res.status).toBe(400);
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("accepts n at the cap (2) for a signed-in account", async () => {
+    vi.mocked(generatePracticeItems).mockResolvedValue([]);
+    const res = await POST(post({ ...VALID_BASE, n: 2 }));
+    expect(res.status).toBe(200);
+    expect(generatePracticeItems).toHaveBeenCalledOnce();
+  });
 });
