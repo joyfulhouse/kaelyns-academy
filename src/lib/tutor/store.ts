@@ -7,7 +7,7 @@ import { attempt, enrollment, learner, skillState } from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
 import type { EnrollmentConfig, LearnerSettings } from "@/lib/content/config";
-import type { EnrollmentDetail, EnrollmentStatus } from "./enrollment";
+import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
 
 /**
  * The DB-backed tutor store: the server equivalent of the client's
@@ -320,7 +320,9 @@ export async function assignProgram(
 
 /**
  * Update the enrollment status for a learner's program (owned-by-account).
- * No-ops silently when the learner is not owned by the account.
+ * Enforces the transition guard: reads the current status first and no-ops if
+ * the transition is not allowed (defense-in-depth against invalid state moves).
+ * Also no-ops when the learner is not owned by the account or no enrollment exists.
  */
 export async function setEnrollmentStatus(
   accountId: string,
@@ -330,6 +332,18 @@ export async function setEnrollmentStatus(
 ): Promise<void> {
   const owned = await getLearner(accountId, learnerId);
   if (!owned) return;
+
+  // Read the current row to enforce the transition matrix.
+  const rows = await getDb()
+    .select({ status: enrollment.status })
+    .from(enrollment)
+    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
+    .limit(1);
+  if (!rows[0]) return; // No enrollment row — no-op.
+
+  const current = rows[0].status as EnrollmentStatus;
+  if (!canTransitionStatus(current, status)) return;
+
   await getDb()
     .update(enrollment)
     .set({ status, updatedAt: new Date() })
