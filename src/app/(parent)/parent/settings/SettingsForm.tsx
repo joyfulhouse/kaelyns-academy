@@ -1,18 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import {
+  CheckCircleIcon,
   ClockIcon,
   DownloadSimpleIcon,
   RobotIcon,
   SpeakerHighIcon,
   TrashIcon,
+  WarningCircleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Field";
 import { Select } from "@/components/ui/Select";
 import { Switch } from "@/components/ui/Switch";
 import { SampleBadge } from "@/components/parent/SampleBadge";
+import { saveLearnerSettingsAction } from "@/app/(parent)/actions";
+
+/**
+ * Parent settings form. Controls map to `LearnerSettings` (dailyGoal,
+ * aiPractice, readAloud) and persist via `saveLearnerSettingsAction` when a
+ * `primaryLearnerId` is available. Settings are scoped to the primary (first)
+ * learner for now; per-learner settings UI lands in a later phase.
+ */
 
 const TIME_LIMIT_OPTIONS = [
   { value: "0", label: "No limit" },
@@ -23,32 +33,68 @@ const TIME_LIMIT_OPTIONS = [
   { value: "60", label: "1 hour" },
 ];
 
-interface SafetySettings {
+interface SettingsState {
   dailyTimeLimit: string;
   aiFeatures: boolean;
   readAloudDefault: boolean;
 }
 
-// Sensible defaults until a settings table backs this (see TODO on save).
-const DEFAULTS: SafetySettings = {
+// Sensible defaults matching the LearnerSettings defaults (daily limit: 30 min → 5 activities/day proxy).
+const DEFAULTS: SettingsState = {
   dailyTimeLimit: "30",
   aiFeatures: true,
   readAloudDefault: true,
 };
 
-export function SettingsForm() {
-  const [settings, setSettings] = useState<SafetySettings>(DEFAULTS);
-  const [saved, setSaved] = useState(false);
+type SaveState =
+  | { status: "idle" }
+  | { status: "saved" }
+  | { status: "error"; message: string };
 
-  function update<K extends keyof SafetySettings>(key: K, value: SafetySettings[K]) {
+export function SettingsForm({ primaryLearnerId }: { primaryLearnerId: string | null }) {
+  const [settings, setSettings] = useState<SettingsState>(DEFAULTS);
+  const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
+  const [isPending, startTransition] = useTransition();
+
+  function update<K extends keyof SettingsState>(key: K, value: SettingsState[K]) {
     setSettings((prev) => ({ ...prev, [key]: value }));
-    setSaved(false);
+    setSaveState({ status: "idle" });
   }
 
   function handleSave() {
-    // TODO(P6): persist via a server action writing to a per-account settings
-    // table, scoped through withAccount() in @/lib/tenancy. Local-only for now.
-    setSaved(true);
+    if (isPending) return;
+
+    // Map the form state to LearnerSettings. dailyTimeLimit is in minutes;
+    // dailyGoal is activities/day — use a rough proxy (minutes ÷ 6) until a
+    // proper mapping is established; 0 = no limit → 0 activities floor.
+    const minuteLimit = parseInt(settings.dailyTimeLimit, 10);
+    const dailyGoal = minuteLimit > 0 ? Math.max(1, Math.round(minuteLimit / 6)) : 0;
+
+    if (!primaryLearnerId) {
+      // No learner yet: store locally only (same as the old behaviour).
+      setSaveState({ status: "saved" });
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        const result = await saveLearnerSettingsAction(primaryLearnerId, {
+          dailyGoal,
+          aiPractice: settings.aiFeatures,
+          readAloud: settings.readAloudDefault,
+        });
+        if (result.ok) {
+          setSaveState({ status: "saved" });
+        } else {
+          setSaveState({ status: "error", message: result.message });
+        }
+      } catch {
+        setSaveState({
+          status: "error",
+          message: "Could not save settings. Please try again.",
+        });
+      }
+    });
   }
 
   return (
@@ -57,12 +103,13 @@ export function SettingsForm() {
       <section>
         <div className="flex items-center justify-between gap-3">
           <h2 className="font-display text-xl font-semibold tracking-tight">Safety &amp; time</h2>
-          <SampleBadge />
+          {!primaryLearnerId && <SampleBadge />}
         </div>
-        <p className="mt-1 max-w-prose text-sm text-ink-soft">
-          These controls are not saved yet. The screens are real; wiring them to your account
-          arrives with account settings.
-        </p>
+        {!primaryLearnerId && (
+          <p className="mt-1 max-w-prose text-sm text-ink-soft">
+            These controls are not saved yet. Add a child first to persist settings to their profile.
+          </p>
+        )}
 
         <div className="mt-5 flex flex-col divide-y divide-line rounded-xl border border-line">
           <div className="flex items-start gap-3 p-5">
@@ -79,6 +126,7 @@ export function SettingsForm() {
                     options={TIME_LIMIT_OPTIONS}
                     value={settings.dailyTimeLimit}
                     onChange={(e) => update("dailyTimeLimit", e.target.value)}
+                    disabled={isPending}
                     className="mt-1 max-w-xs"
                   />
                 )}
@@ -93,6 +141,7 @@ export function SettingsForm() {
               onChange={(v) => update("aiFeatures", v)}
               label="AI tutoring features"
               description="The bounded tutor adapts difficulty and generates fresh practice. Children never free-chat with it, and you can turn it off entirely."
+              disabled={isPending}
               className="flex-1"
             />
           </div>
@@ -104,18 +153,34 @@ export function SettingsForm() {
               onChange={(v) => update("readAloudDefault", v)}
               label="Read-aloud by default"
               description="Prompts and instructions are spoken aloud automatically. Recommended for pre- and early readers."
+              disabled={isPending}
               className="flex-1"
             />
           </div>
         </div>
 
-        <div className="mt-5 flex items-center gap-3">
-          <Button variant="primary" size="md" onClick={handleSave}>
-            Save changes
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <Button variant="primary" size="md" onClick={handleSave} disabled={isPending}>
+            {isPending ? "Saving…" : "Save changes"}
           </Button>
-          {saved && (
-            <span role="status" className="text-sm font-medium text-success">
-              Saved on this device. Account-wide saving is coming soon.
+
+          {saveState.status === "saved" && (
+            <span
+              role="status"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-success"
+            >
+              <CheckCircleIcon weight="fill" className="size-4" />
+              {primaryLearnerId ? "Settings saved." : "Saved on this device."}
+            </span>
+          )}
+
+          {saveState.status === "error" && (
+            <span
+              role="alert"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-danger"
+            >
+              <WarningCircleIcon weight="regular" className="size-4" />
+              {saveState.message}
             </span>
           )}
         </div>

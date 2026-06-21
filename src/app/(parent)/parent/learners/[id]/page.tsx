@@ -14,9 +14,11 @@ import { outcomeDisplay, outcomeWeight } from "@/components/parent/skill-display
 import {
   avatarInitial,
   getLearnerDetail,
+  getLearnerCurriculum,
   type ActivityRow,
   type SkillStatus,
 } from "@/app/(parent)/data";
+import { CurriculumPanel } from "@/components/parent/CurriculumPanel";
 import { programStats } from "@/content";
 import type { SkillDomain } from "@/content";
 
@@ -48,7 +50,11 @@ export default async function LearnerDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const detail = await getLearnerDetail(id);
+  // Fetch detail and curriculum in parallel — both are account-scoped.
+  const [detail, curriculum] = await Promise.all([
+    getLearnerDetail(id),
+    getLearnerCurriculum(id),
+  ]);
   // 404 when the learner does not exist or is not this account's (tenancy).
   if (!detail) notFound();
 
@@ -108,6 +114,8 @@ export default async function LearnerDetailPage({
           <RecentAttempts name={name} recent={recent} />
         </>
       )}
+
+      <CurriculumPanel learnerId={id} curriculum={curriculum} />
     </div>
   );
 }

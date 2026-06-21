@@ -1,9 +1,16 @@
 import type { Metadata } from "next";
+import { listLearnerCards } from "@/app/(parent)/data";
 import { SettingsForm } from "./SettingsForm";
 
 export const metadata: Metadata = { title: "Settings" };
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  // Resolve the primary (first) learner so the settings form can persist via
+  // saveLearnerSettingsAction. Settings are scoped to the primary learner for
+  // now; per-learner settings UI lands in a later phase.
+  const learnerCards = await listLearnerCards();
+  const primaryLearnerId = learnerCards[0]?.learner.id ?? null;
+
   return (
     <div className="mx-auto max-w-3xl">
       <header>
@@ -15,7 +22,7 @@ export default function SettingsPage() {
       </header>
 
       <div className="mt-8">
-        <SettingsForm />
+        <SettingsForm primaryLearnerId={primaryLearnerId} />
       </div>
     </div>
   );

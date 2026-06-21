@@ -8,6 +8,7 @@ import {
   getRecentAttempts,
   getSkillState,
   listLearners,
+  listEnrollmentsDetailed,
   skillOutcomeCounts,
   type LearnerRow,
   type RecentAttempt,
@@ -22,7 +23,14 @@ import {
   type SkillOutcome,
   type SkillTag,
 } from "@/content";
-import { getProgramAsync, findProgramByActivityIdAsync } from "@/lib/content/repository";
+import {
+  getProgramAsync,
+  findProgramByActivityIdAsync,
+  listProgramSummariesAsync,
+  type ProgramSummary,
+} from "@/lib/content/repository";
+import type { EnrollmentConfig } from "@/lib/content/config";
+import type { EnrollmentStatus } from "@/lib/tutor/enrollment";
 
 /**
  * Read helpers for the parent surface, every one scoped through `withAccount`
@@ -265,4 +273,62 @@ export async function getOverview(): Promise<OverviewData> {
 /** Map a learner's display name into the initial used for the avatar tile. */
 export function avatarInitial(displayName: string): string {
   return displayName.trim().charAt(0).toUpperCase() || "?";
+}
+
+/* ── Curriculum read helper ────────────────────────────────────────────────── */
+
+/** A single enrolled program as the parent curriculum panel needs it. */
+export interface EnrolledProgramView {
+  slug: string;
+  title: string;
+  status: EnrollmentStatus;
+  config: EnrollmentConfig;
+  /** Ordered units from the resolved program tree. */
+  units: { key: string; title: string }[];
+}
+
+/** The two lists the CurriculumPanel renders. */
+export interface LearnerCurriculum {
+  enrolled: EnrolledProgramView[];
+  /**
+   * Published programs not currently active or paused for this learner —
+   * the "add a program" catalog. Removed programs are excluded so restoring
+   * goes through the enrolled list, not the add control.
+   */
+  available: ProgramSummary[];
+}
+
+/**
+ * Resolve the curriculum view for one learner. Account-scoped (withAccount).
+ * Returns empty lists when the learner does not exist or is not this account's.
+ */
+export async function getLearnerCurriculum(learnerId: string): Promise<LearnerCurriculum> {
+  return withAccount(async ({ accountId }) => {
+    const enrollments = await listEnrollmentsDetailed(accountId, learnerId);
+
+    // Resolve each enrollment's program tree for its title + units.
+    const enrolled: EnrolledProgramView[] = await Promise.all(
+      enrollments.map(async (e) => {
+        const program = await getProgramAsync(e.slug);
+        const title = program?.title ?? e.slug;
+        const units: { key: string; title: string }[] = program
+          ? program.units.map((u) => ({ key: u.id, title: u.title }))
+          : [];
+        return { slug: e.slug, status: e.status, config: e.config, title, units };
+      }),
+    );
+
+    // "Available" = published programs the learner is NOT actively/paused enrolled in.
+    // Removed-status enrollments are already in the enrolled list; exclude active/paused slugs
+    // from the catalog so the parent can't double-assign.
+    const activeSlugs = new Set(
+      enrolled
+        .filter((e) => e.status === "active" || e.status === "paused")
+        .map((e) => e.slug),
+    );
+    const allSummaries = await listProgramSummariesAsync();
+    const available = allSummaries.filter((s) => !activeSlugs.has(s.slug));
+
+    return { enrolled, available };
+  });
 }
