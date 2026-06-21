@@ -8,7 +8,7 @@ vi.mock("@sentry/nextjs", () => ({
 }));
 
 // Lazy import so the mock is in place before the module loads.
-const { assembleProgram } = await import("./store");
+const { assembleProgram, buildVersionTreeRows } = await import("./store");
 
 describe("assembleProgram", () => {
   const baseVersion = {
@@ -315,5 +315,159 @@ describe("assembleProgram", () => {
     }).not.toThrow();
 
     expect(program!.units[0].lessons[0].activities).toHaveLength(0);
+  });
+});
+
+// ── buildVersionTreeRows ──────────────────────────────────────────────────────
+
+describe("buildVersionTreeRows", () => {
+  const VERSION_ID = "ver-123";
+
+  it("generates zero-padded orderKeys per sibling level", () => {
+    const units = [
+      {
+        unitKey: "unit-a",
+        title: "Unit A",
+        world: "sunshine",
+        lessons: [
+          {
+            lessonKey: "lesson-1",
+            title: "Lesson 1",
+            activities: [
+              {
+                activityKey: "act-1",
+                kind: "math-tenframe",
+                title: "Activity 1",
+                band: "ready",
+                skillTags: [],
+                standardTags: [],
+                config: { instruction: "Do it", mode: "represent", target: 3 },
+              },
+              {
+                activityKey: "act-2",
+                kind: "math-tenframe",
+                title: "Activity 2",
+                band: "ready",
+                skillTags: [],
+                standardTags: [],
+                config: { instruction: "Do it", mode: "represent", target: 5 },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        unitKey: "unit-b",
+        title: "Unit B",
+        world: "garden",
+        lessons: [],
+      },
+    ];
+
+    const result = buildVersionTreeRows(VERSION_ID, units);
+
+    // Two unit rows, orderKeys 000000 and 000001
+    expect(result.units).toHaveLength(2);
+    expect(result.units[0].orderKey).toBe("000000");
+    expect(result.units[1].orderKey).toBe("000001");
+
+    // One lesson row, orderKey 000000
+    expect(result.lessons).toHaveLength(1);
+    expect(result.lessons[0].orderKey).toBe("000000");
+
+    // Two activity rows, orderKeys 000000 and 000001
+    expect(result.activities).toHaveLength(2);
+    expect(result.activities[0].orderKey).toBe("000000");
+    expect(result.activities[1].orderKey).toBe("000001");
+  });
+
+  it("preserves authored keys (unitKey, lessonKey, activityKey)", () => {
+    const units = [
+      {
+        unitKey: "my-unit-key",
+        title: "Unit",
+        world: "sunshine",
+        lessons: [
+          {
+            lessonKey: "my-lesson-key",
+            title: "Lesson",
+            activities: [
+              {
+                activityKey: "my-act-key",
+                kind: "sightword-game",
+                title: "Activity",
+                band: "ready",
+                skillTags: ["reading.sight"],
+                standardTags: [],
+                config: { instruction: "Tap the word", words: ["the", "and"], decoys: [] },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const result = buildVersionTreeRows(VERSION_ID, units);
+
+    expect(result.units[0].unitKey).toBe("my-unit-key");
+    expect(result.lessons[0].lessonKey).toBe("my-lesson-key");
+    expect(result.activities[0].activityKey).toBe("my-act-key");
+  });
+
+  it("links units to the supplied versionId", () => {
+    const units = [
+      { unitKey: "u1", title: "U1", world: "sunshine", lessons: [] },
+    ];
+    const result = buildVersionTreeRows(VERSION_ID, units);
+    expect(result.units[0].programVersionId).toBe(VERSION_ID);
+  });
+
+  it("links lessons to the correct unit id", () => {
+    const units = [
+      {
+        unitKey: "u1",
+        title: "U1",
+        world: "sunshine",
+        lessons: [{ lessonKey: "l1", title: "L1", activities: [] }],
+      },
+    ];
+    const result = buildVersionTreeRows(VERSION_ID, units);
+    expect(result.lessons[0].unitId).toBe(result.units[0].id);
+  });
+
+  it("links activities to the correct lesson id", () => {
+    const units = [
+      {
+        unitKey: "u1",
+        title: "U1",
+        world: "sunshine",
+        lessons: [
+          {
+            lessonKey: "l1",
+            title: "L1",
+            activities: [
+              {
+                activityKey: "a1",
+                kind: "math-tenframe",
+                title: "A1",
+                band: "ready",
+                skillTags: [],
+                standardTags: [],
+                config: { instruction: "Do", mode: "represent", target: 2 },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    const result = buildVersionTreeRows(VERSION_ID, units);
+    expect(result.activities[0].lessonId).toBe(result.lessons[0].id);
+  });
+
+  it("returns empty arrays for an empty unit list", () => {
+    const result = buildVersionTreeRows(VERSION_ID, []);
+    expect(result.units).toHaveLength(0);
+    expect(result.lessons).toHaveLength(0);
+    expect(result.activities).toHaveLength(0);
   });
 });
