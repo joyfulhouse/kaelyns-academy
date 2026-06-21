@@ -100,16 +100,19 @@ type SaveState =
 /**
  * Root RHF form for the nested curriculum tree editor.
  * One `useForm` over `{ metadata, units }`. Save → `saveVersionTreeAction`.
- * All activity config validity is tracked in a ref-set; Save is blocked while
- * any config is invalid.
+ * Config validity is enforced by the explicit per-activity validateConfigJson
+ * loop in onSubmit — that loop reads live form state and is reorder-safe.
  */
 export function ProgramEditor({ version }: ProgramEditorProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
 
-  // Track which activity config fields are invalid (by field path string).
-  // A ref (not state) to avoid re-renders on every keypress in ConfigEditor.
+  // Advisory-only ref: tracks which configs have reported errors via
+  // onValidChange, used only to surface a live "some configs have errors" hint.
+  // TODO(5.3b): replace with per-kind form renderer that makes this redundant.
+  // IMPORTANT: do NOT use this to short-circuit onSubmit — the positional
+  // unit-${i} keys go stale after reorder. Gate Save on the explicit loop below.
   const invalidConfigsRef = useRef(new Set<string>());
 
   const { control, handleSubmit, formState: { errors } } = useForm<EditorFormValues>({
@@ -149,13 +152,9 @@ export function ProgramEditor({ version }: ProgramEditorProps) {
   }
 
   function onSubmit(data: EditorFormValues) {
-    // Block save if any config editor reports invalid JSON.
-    if (invalidConfigsRef.current.size > 0) {
-      setSaveState({ status: "error", message: "Fix invalid activity config JSON before saving." });
-      return;
-    }
-
-    // Validate all configJson values manually to catch any that weren't touched.
+    // Validate all configJson values from current form state. This is the only
+    // config gate — it's reorder-safe because it reads the live field array, not
+    // the positional invalidConfigsRef keys.
     for (const unit of data.units) {
       for (const lesson of unit.lessons) {
         for (const activity of lesson.activities) {
