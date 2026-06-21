@@ -70,7 +70,14 @@ export function assembleProgram(rows: ProgramTreeRows): Program {
         .sort((a, b) => a.orderKey.localeCompare(b.orderKey));
 
       return {
-        id: unitRow.id,
+        // The assembled node id is the STABLE authored key (unitKey), NOT the
+        // per-version DB row UUID. Static programs use hierarchical authored ids
+        // ("reading"), and the seed maps those onto unitKey/lessonKey/activityKey
+        // (seed-content.ts). Emitting the key here makes DB-program node ids
+        // identical in shape to static ones, so links, getUnit/findActivity,
+        // completion scoping, and recorded attempts stay version-portable: a
+        // learner pinned to an older version keeps the same ids after a republish.
+        id: unitRow.unitKey,
         order: unitIndex + 1,
         title: unitRow.title,
         emoji: unitRow.emoji ?? "",
@@ -94,7 +101,7 @@ export function assembleProgram(rows: ProgramTreeRows): Program {
           }
 
           return {
-            id: lessonRow.id,
+            id: lessonRow.lessonKey,
             order: lessonIndex + 1,
             title: lessonRow.title,
             activities: assembledActivities,
@@ -124,7 +131,10 @@ function assembleActivity(row: ActivityRow): Activity | null {
   }
 
   return {
-    id: row.id,
+    // Stable authored key, not the per-version row UUID (see assembleProgram's
+    // unit-id note): keeps attempt keying + the §8 gate's findActivity lookup
+    // version-portable.
+    id: row.activityKey,
     kind: row.kind,
     title: row.title,
     ...(row.blurb != null ? { blurb: row.blurb } : {}),

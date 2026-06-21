@@ -116,15 +116,17 @@ describe("assembleProgram", () => {
     expect(program.slug).toBe("test-slug");
     expect(program.title).toBe("Test Program");
     expect(program.subtitle).toBe("A subtitle");
-    // Units ordered by orderKey ascending
-    expect(program.units[0].id).toBe("u1");
-    expect(program.units[1].id).toBe("u2");
-    // Lessons ordered by orderKey ascending
-    expect(program.units[0].lessons[0].id).toBe("l1");
-    expect(program.units[0].lessons[1].id).toBe("l2");
-    // Activities ordered by orderKey ascending
-    expect(program.units[0].lessons[0].activities[0].id).toBe("a1");
-    expect(program.units[0].lessons[0].activities[1].id).toBe("a2");
+    // Node ids are the STABLE AUTHORED KEYS (unitKey/lessonKey/activityKey), not
+    // the per-version row UUIDs — so they match static-program ids and stay
+    // version-portable. Ordering is still by orderKey ascending (u1 before u2).
+    expect(program.units[0].id).toBe("reading"); // u1.unitKey, orderKey "01"
+    expect(program.units[1].id).toBe("math"); // u2.unitKey, orderKey "02"
+    // Lessons ordered by orderKey ascending; id === lessonKey
+    expect(program.units[0].lessons[0].id).toBe("lesson-1"); // l1.lessonKey
+    expect(program.units[0].lessons[1].id).toBe("lesson-2"); // l2.lessonKey
+    // Activities ordered by orderKey ascending; id === activityKey
+    expect(program.units[0].lessons[0].activities[0].id).toBe("act-1"); // a1.activityKey
+    expect(program.units[0].lessons[0].activities[1].id).toBe("act-2"); // a2.activityKey
     // Units carry 1-based order indices (matching the authored static contract)
     expect(program.units[0].order).toBe(1);
     expect(program.units[1].order).toBe(2);
@@ -133,6 +135,70 @@ describe("assembleProgram", () => {
     expect(program.units[0].lessons[1].order).toBe(2);
     // Unit with no lessons (u2) has empty lessons array
     expect(program.units[1].lessons).toHaveLength(0);
+  });
+
+  it("uses authored keys (unitKey/lessonKey/activityKey) as node ids, never row UUIDs", () => {
+    // The version pinning contract (Fix-E): assembled node ids MUST be the stable
+    // authored keys, so a DB program's ids are shaped exactly like a static one
+    // and survive a republish to a new version (whose rows get fresh UUIDs).
+    const rows: ProgramTreeRows = {
+      version: baseVersion,
+      units: [
+        {
+          id: "11111111-1111-1111-1111-111111111111", // per-version row UUID
+          programVersionId: "v1",
+          unitKey: "reading",
+          orderKey: "00",
+          title: "Reading",
+          emoji: "📖",
+          world: "sunshine",
+          bigIdea: "Words",
+          phonicsFocus: null,
+          mathFocus: null,
+          project: "Read",
+          checkpoint: null,
+        },
+      ],
+      lessons: [
+        {
+          id: "22222222-2222-2222-2222-222222222222",
+          unitId: "11111111-1111-1111-1111-111111111111",
+          lessonKey: "reading-r1",
+          orderKey: "00",
+          title: "Lesson 1",
+        },
+      ],
+      activities: [
+        {
+          id: "33333333-3333-3333-3333-333333333333",
+          lessonId: "22222222-2222-2222-2222-222222222222",
+          activityKey: "reading-r1-a1",
+          orderKey: "00",
+          kind: "sightword-game",
+          title: "Sight Words",
+          blurb: null,
+          estMinutes: 5,
+          band: "ready",
+          skillTags: ["reading.sight"],
+          standardTags: [],
+          config: { instruction: "Tap the word", words: ["the", "and"], decoys: [] },
+        },
+      ],
+    };
+
+    const program = assembleProgram(rows);
+    const unit = program.units[0];
+    const lesson = unit.lessons[0];
+    const activity = lesson.activities[0];
+
+    // Ids are the authored keys…
+    expect(unit.id).toBe("reading");
+    expect(lesson.id).toBe("reading-r1");
+    expect(activity.id).toBe("reading-r1-a1");
+    // …and explicitly NOT the per-version row UUIDs.
+    expect(unit.id).not.toBe("11111111-1111-1111-1111-111111111111");
+    expect(lesson.id).not.toBe("22222222-2222-2222-2222-222222222222");
+    expect(activity.id).not.toBe("33333333-3333-3333-3333-333333333333");
   });
 
   it("maps a valid math-tenframe activity row into the Activity union", () => {
@@ -184,7 +250,7 @@ describe("assembleProgram", () => {
     const program = assembleProgram(rows);
     const activity = program.units[0].lessons[0].activities[0];
 
-    expect(activity.id).toBe("a1");
+    expect(activity.id).toBe("tenframe-1"); // activityKey, not the row UUID "a1"
     expect(activity.kind).toBe("math-tenframe");
     expect(activity.title).toBe("Ten Frame Activity");
     expect(activity.blurb).toBe("Use ten frames");
@@ -265,9 +331,9 @@ describe("assembleProgram", () => {
 
     const activities = program!.units[0].lessons[0].activities;
     expect(activities).toHaveLength(1);
-    expect(activities[0].id).toBe("good-act");
-    // bad-act was silently dropped
-    expect(activities.find((a) => a.id === "bad-act")).toBeUndefined();
+    expect(activities[0].id).toBe("good"); // activityKey of the valid row
+    // the bad-config row (activityKey "bad") was silently dropped
+    expect(activities.find((a) => a.id === "bad")).toBeUndefined();
   });
 
   it("handles unknown activity kind by dropping the activity", () => {
