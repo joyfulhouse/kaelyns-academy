@@ -5,7 +5,7 @@ import { captureNonCritical } from "@/lib/capture";
 import { generatePracticeItems } from "@/lib/ai/practice";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { UnauthenticatedError, requireAccount } from "@/lib/tenancy";
-import { getLearner, getEnrollmentConfig } from "@/lib/tutor/store";
+import { getLearner, getEnrollmentForGate, getLearnerSettings } from "@/lib/tutor/store";
 
 export const dynamic = "force-dynamic";
 
@@ -72,13 +72,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
 
-  // Server-side AI gate (spec §8, defense-in-depth): always re-check the
-  // enrollment config before any model call. Returns 403 when aiPractice is
-  // explicitly disabled for that child+program, regardless of what the client
-  // sent. learnerId/programSlug are required in the schema so this gate cannot
-  // be skipped by omitting fields.
-  const enrollConfig = await getEnrollmentConfig(accountId, learnerId, programSlug);
-  if (enrollConfig.aiPractice === false) {
+  // Server-side AI gate (spec §8) — FAIL-CLOSED. AI generation is allowed ONLY
+  // when ALL of these hold; any missing/disabled signal blocks before any model
+  // call (regardless of what the client sent — learnerId/programSlug are required
+  // in the schema so this gate cannot be skipped by omitting fields):
+  //   (a) the learner is owned by this account (the 404 above),
+  //   (b) an ACTIVE enrollment exists for this exact (learner, program) — a
+  //       missing, paused, or soft-removed enrollment blocks,
+  //   (c) the per-learner Settings kill-switch isn't off (all-programs), and
+  //   (d) this enrollment's config.aiPractice isn't off (per-program).
+  // Both jsonb reads are safeParsed in the store, so a malformed row can't
+  // fail-open the `=== false` checks.
+  const [settings, enrollment] = await Promise.all([
+    getLearnerSettings(accountId, learnerId),
+    getEnrollmentForGate(accountId, learnerId, programSlug),
+  ]);
+  const aiOff =
+    settings?.aiPractice === false ||
+    !enrollment ||
+    enrollment.status !== "active" ||
+    enrollment.config.aiPractice === false;
+  if (aiOff) {
     return NextResponse.json({ error: "ai_disabled" }, { status: 403 });
   }
 

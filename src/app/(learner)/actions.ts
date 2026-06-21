@@ -9,6 +9,7 @@ import {
   getCompletedActivityIds,
   getEnrollmentConfig,
   getLearner,
+  getLearnerSettings,
   getSkillState,
   listEnrollmentsDetailed,
   recordAttempt,
@@ -265,10 +266,21 @@ export async function getLearnerStateAction(
 
   try {
     return await withAccount(async ({ accountId }) => {
-      const [fullSkillState, completed, config] = await Promise.all([
+      // Reliably commit an ACTIVE enrollment before the AI gate can be reached,
+      // so a freshly-opened program isn't fail-closed-blocked by the §8 gate's
+      // "active enrollment required" rule (the lazy ensureEnrollmentAction is
+      // fire-and-forget and may not have committed yet). ensureEnrollment is an
+      // owned-by-account, onConflictDoNothing upsert — it will NOT resurrect a
+      // soft-removed/paused enrollment (soft-remove is respected), so a removed
+      // program stays removed and the gate keeps blocking it.
+      const owned = await getLearner(accountId, learnerId);
+      if (owned) await ensureEnrollment(learnerId, programSlug);
+
+      const [fullSkillState, completed, config, settings] = await Promise.all([
         getSkillState(accountId, learnerId),
         getCompletedActivityIds(accountId, learnerId),
         getEnrollmentConfig(accountId, learnerId, programSlug),
+        getLearnerSettings(accountId, learnerId),
       ]);
 
       // Scope skill_state to this program's skills.
@@ -286,7 +298,14 @@ export async function getLearnerStateAction(
         starsByActivity[c.activityId] = c.stars;
       }
 
-      return { skillState, completedActivityIds, starsByActivity, config };
+      // Effective config: the per-learner Settings kill-switch (all-programs)
+      // overrides the per-program flag, so the client hides "More, made just for
+      // me" whenever EITHER level disables AI — matching the server gate, which
+      // remains the authoritative enforcement.
+      const effectiveConfig: EnrollmentConfig =
+        settings?.aiPractice === false ? { ...config, aiPractice: false } : config;
+
+      return { skillState, completedActivityIds, starsByActivity, config: effectiveConfig };
     });
   } catch (error) {
     if (!(error instanceof UnauthenticatedError)) {

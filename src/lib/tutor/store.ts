@@ -5,8 +5,14 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { attempt, enrollment, learner, skillState } from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
+import { captureNonCritical } from "@/lib/capture";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
-import type { EnrollmentConfig, LearnerSettings } from "@/lib/content/config";
+import {
+  enrollmentConfigSchema,
+  learnerSettingsSchema,
+  type EnrollmentConfig,
+  type LearnerSettings,
+} from "@/lib/content/config";
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
 import { shapeLearnerExport, type LearnerExport } from "./export";
 
@@ -393,8 +399,30 @@ export async function listEnrollmentsDetailed(
 }
 
 /**
+ * Parse a stored enrollment config jsonb defensively. A malformed value (e.g. a
+ * hand-edited row with `aiPractice: "false"`) must NOT fail-open the §8 gate's
+ * `aiPractice === false` check — so on parse failure we log and treat it as `{}`
+ * (which leaves all parental flags at their safe defaults).
+ */
+function parseEnrollmentConfig(raw: unknown, context: string): EnrollmentConfig {
+  const parsed = enrollmentConfigSchema.safeParse(raw ?? {});
+  if (parsed.success) return parsed.data;
+  captureNonCritical(`malformed enrollment config (${context})`, parsed.error);
+  return {};
+}
+
+/** Same defensive parse for the per-learner settings jsonb. */
+function parseLearnerSettings(raw: unknown, context: string): LearnerSettings {
+  const parsed = learnerSettingsSchema.safeParse(raw ?? {});
+  if (parsed.success) return parsed.data;
+  captureNonCritical(`malformed learner settings (${context})`, parsed.error);
+  return {};
+}
+
+/**
  * Read the enrollment config for a specific (learner, program) pair (owned-by-account).
  * Returns {} when the learner is not owned by the account or no enrollment exists.
+ * safeParses the stored jsonb so a malformed value can't fail-open the §8 gate.
  */
 export async function getEnrollmentConfig(
   accountId: string,
@@ -408,7 +436,53 @@ export async function getEnrollmentConfig(
     .from(enrollment)
     .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
     .limit(1);
-  return (rows[0]?.config as EnrollmentConfig) ?? {};
+  if (!rows[0]) return {};
+  return parseEnrollmentConfig(rows[0].config, `learner=${learnerId} slug=${slug}`);
+}
+
+/**
+ * §8 AI-gate read: the enrollment row's status + safeParsed config for a
+ * (learner, program) pair (owned-by-account). Returns null when the learner is
+ * not owned OR no enrollment row exists — both of which the gate treats as
+ * fail-closed (no AI). A soft-removed enrollment returns status "removed" (not
+ * resurrected), so the gate keeps blocking it.
+ */
+export async function getEnrollmentForGate(
+  accountId: string,
+  learnerId: string,
+  slug: string,
+): Promise<{ status: EnrollmentStatus; config: EnrollmentConfig } | null> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return null;
+  const rows = await getDb()
+    .select({ status: enrollment.status, config: enrollment.config })
+    .from(enrollment)
+    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
+    .limit(1);
+  if (!rows[0]) return null;
+  return {
+    status: rows[0].status as EnrollmentStatus,
+    config: parseEnrollmentConfig(rows[0].config, `gate learner=${learnerId} slug=${slug}`),
+  };
+}
+
+/**
+ * §8 AI-gate read: the per-learner settings (owned-by-account), safeParsed.
+ * Returns null when the learner is not owned by the account; {} when the row
+ * has no/empty settings. The gate reads `settings?.aiPractice === false` as the
+ * top-level (all-programs) parental kill-switch.
+ */
+export async function getLearnerSettings(
+  accountId: string,
+  learnerId: string,
+): Promise<LearnerSettings | null> {
+  const rows = await getDb()
+    .select({ settings: learner.settings })
+    .from(learner)
+    .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
+    .limit(1);
+  if (!rows[0]) return null;
+  return parseLearnerSettings(rows[0].settings, `gate learner=${learnerId}`);
 }
 
 /**

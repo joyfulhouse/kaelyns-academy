@@ -8,18 +8,20 @@ vi.mock("@/lib/tenancy", async (importActual) => ({
   requireAccount: vi.fn(),
 }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: vi.fn() }));
-// Stub the store so tests don't need a real DB. Default: no config (AI enabled),
-// learner is owned by the account.
+// Stub the store so tests don't need a real DB. Default (set in beforeEach):
+// learner is owned, an ACTIVE enrollment exists with AI allowed, and the
+// per-learner settings don't disable AI — i.e. the gate opens.
 vi.mock("@/lib/tutor/store", () => ({
   getLearner: vi.fn(),
-  getEnrollmentConfig: vi.fn(),
+  getEnrollmentForGate: vi.fn(),
+  getLearnerSettings: vi.fn(),
 }));
 
 import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
 import { generatePracticeItems } from "@/lib/ai/practice";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { UnauthenticatedError, requireAccount } from "@/lib/tenancy";
-import { getLearner, getEnrollmentConfig } from "@/lib/tutor/store";
+import { getLearner, getEnrollmentForGate, getLearnerSettings } from "@/lib/tutor/store";
 import { POST } from "./route";
 
 const KIND = Object.keys(ACTIVITY_CONFIG_SCHEMAS)[0];
@@ -38,7 +40,7 @@ const VALID_BASE = { kind: KIND, band: "ready", focus: "counting", learnerId: "l
 beforeEach(() => {
   vi.mocked(requireAccount).mockResolvedValue({ accountId: "acc-1", userId: "acc-1" });
   vi.mocked(checkRateLimit).mockReturnValue({ ok: true, retryAfterSec: 0 });
-  // Default: learner is owned by the account; AI practice not disabled (empty config).
+  // Default: learner owned; active enrollment with AI allowed; no settings kill-switch.
   vi.mocked(getLearner).mockResolvedValue({
     id: "l-1",
     accountId: "acc-1",
@@ -46,7 +48,8 @@ beforeEach(() => {
     avatar: null,
     birthMonth: null,
   });
-  vi.mocked(getEnrollmentConfig).mockResolvedValue({});
+  vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
+  vi.mocked(getLearnerSettings).mockResolvedValue({});
 });
 afterEach(() => vi.resetAllMocks());
 
@@ -74,12 +77,54 @@ describe("POST /api/practice", () => {
     expect(await res.json()).toMatchObject({ kind: KIND, band: "ready", items: [] });
   });
 
-  it("403s before any model call when aiPractice is disabled for the learner+program", async () => {
-    vi.mocked(getEnrollmentConfig).mockResolvedValue({ aiPractice: false });
+  // ── §8 AI gate: fail-closed unless owned + active enrollment + BOTH flags allow ──
+
+  it("403s (no model call) when there is NO enrollment for the program", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValue(null);
     const res = await POST(post({ ...VALID_BASE }));
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: "ai_disabled" });
     expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("403s (no model call) when the enrollment is removed (soft-removed stays blocked)", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "removed", config: {} });
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(403);
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("403s (no model call) when the enrollment is paused", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "paused", config: {} });
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(403);
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("403s (no model call) when the per-enrollment aiPractice flag is disabled", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: { aiPractice: false } });
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: "ai_disabled" });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("403s (no model call) when the per-learner Settings kill-switch is off, even if the enrollment allows", async () => {
+    vi.mocked(getLearnerSettings).mockResolvedValue({ aiPractice: false });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: { aiPractice: true } });
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: "ai_disabled" });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("proceeds (200) only when owned + active enrollment + BOTH aiPractice flags allow", async () => {
+    vi.mocked(generatePracticeItems).mockResolvedValue([]);
+    vi.mocked(getLearnerSettings).mockResolvedValue({ aiPractice: true });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: { aiPractice: true } });
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(200);
+    expect(generatePracticeItems).toHaveBeenCalledOnce();
   });
 
   it("404s when the learnerId is not owned by the authenticated account", async () => {
