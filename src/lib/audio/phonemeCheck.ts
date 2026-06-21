@@ -16,9 +16,10 @@
 
 /**
  * IPA / misaki consonant phonemes. Affricates are the SINGLE chars misaki emits
- * (ʧ, ʤ); we fold the two-char IPA digraphs tʃ/dʒ to them before scanning. Both
- * `g` and `ɡ` (ASCII g and IPA script-g U+0261) and both `r` and `ɹ` are included
- * so either notation classifies. Vowels are intentionally absent.
+ * (ʧ, ʤ); the two-char IPA digraphs tʃ/dʒ — and ASCII r/g — are folded to the
+ * misaki forms in {@link consonants} BEFORE this set is consulted, so only the
+ * canonical chars (ɹ, ɡ, ʧ, ʤ) actually classify here. The ASCII `r`/`g` entries
+ * are kept as harmless belt-and-suspenders. Vowels are intentionally absent.
  */
 const CONSONANTS = new Set<string>([
   "p",
