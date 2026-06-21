@@ -25,6 +25,7 @@ import {
   getPublishedProgramTreeRows,
   getProgramVersionTreeRows,
   listPublishedProgramSummaries,
+  programExistsBySlug,
 } from "./store";
 import type { ProgramSummary } from "./store";
 
@@ -52,23 +53,34 @@ function staticSummaries(): ProgramSummary[] {
 /**
  * Resolve a program by slug.
  * DB-preferred: assembles from the published version in the DB.
- * Falls back to the static @/content `getProgram` on null or any error.
- * Returns undefined only when neither DB nor static has it.
+ *
+ * Fallback contract (matters for archived/draft builtins): the static program is
+ * a fallback ONLY when there is no DB row for this slug. If the published-tree
+ * read is null because a DB `program` row exists but isn't published
+ * (archived/draft), we return `undefined` — a deliberately-unpublished program
+ * must NOT silently resurrect via `/learn/{slug}`. A genuine DB error (or a slug
+ * with no DB row at all) still falls back to the static program.
+ * Returns undefined only when there is nothing to serve.
  */
 export const getProgramAsync: (slug: string) => Promise<Program | undefined> = cache(
   async (slug: string): Promise<Program | undefined> => {
-    let dbResult: Program | undefined;
     try {
       const rows = await getPublishedProgramTreeRows(slug);
-      if (rows !== null) {
-        dbResult = assembleProgram(rows);
+      if (rows !== null) return assembleProgram(rows);
+
+      // No published tree. Distinguish "no DB row at all" (static fallback OK)
+      // from "DB row exists but is archived/draft" (deliberately unpublished →
+      // no fallback). If the existence check itself errors, fall back to static.
+      try {
+        if (await programExistsBySlug(slug)) return undefined;
+      } catch (existsErr) {
+        captureNonCritical("content repository existence check failed (getProgramAsync)", existsErr);
       }
     } catch (err) {
       // Real error (e.g. missing DATABASE_URL, connection refused) — report and fall through.
       captureNonCritical("content repository DB error (getProgramAsync)", err);
     }
 
-    if (dbResult !== undefined) return dbResult;
     return getProgram(slug);
   },
 );
