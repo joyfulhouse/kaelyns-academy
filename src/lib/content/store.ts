@@ -5,7 +5,7 @@
  * layer (repository.ts) is the public API for reads; the admin actions layer
  * calls the write mutations directly.
  */
-import { eq, max, and, ne } from "drizzle-orm";
+import { eq, max, and, ne, desc } from "drizzle-orm";
 import type { ActivityKind } from "@/content/activity-configs";
 import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
 import type { Activity, Band, Program, SkillTag, Unit, Lesson, World } from "@/content/types";
@@ -850,13 +850,19 @@ export async function cloneVersionToDraft(
   const existingDraft = await findOpenDraft(db, programId);
   if (existingDraft) return { versionId: existingDraft.id };
 
-  // Prefer the published version; fall back to the highest version number.
+  // Prefer the published version; fall back to the highest-numbered version (for
+  // an archived program with no published pointer). The fallback is an ordered
+  // single-row read — `orderBy(version desc).limit(1)` — NOT `max(version)` with
+  // a bare `id`, which is invalid SQL (Postgres rejects a non-aggregated column
+  // without GROUP BY).
   let sourceVersionId = programRow.publishedVersionId;
   if (!sourceVersionId) {
     const result = await db
-      .select({ maxVersion: max(schema.programVersion.version), id: schema.programVersion.id })
+      .select({ id: schema.programVersion.id })
       .from(schema.programVersion)
-      .where(eq(schema.programVersion.programId, programId));
+      .where(eq(schema.programVersion.programId, programId))
+      .orderBy(desc(schema.programVersion.version))
+      .limit(1);
     const best = result[0];
     if (!best?.id) throw new Error(`No versions found for program: ${programId}`);
     sourceVersionId = best.id;

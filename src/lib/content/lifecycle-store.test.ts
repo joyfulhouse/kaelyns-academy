@@ -17,6 +17,7 @@ vi.mock("drizzle-orm", () => ({
   eq: (...a: unknown[]) => a,
   ne: (...a: unknown[]) => a,
   max: (a: unknown) => a,
+  desc: (a: unknown) => a,
 }));
 
 // Canned rows the fake relational layer returns.
@@ -40,10 +41,12 @@ function nextVersionFindFirst(): Record<string, unknown> | null {
     : versionFindFirst.value;
 }
 
-/** Awaitable select chain resolving to the canned max(version) rows. */
+/** Awaitable select chain resolving to the canned rows. Supports the max(version)
+ *  read AND the archived-source `orderBy(version desc).limit(1)` read — both route
+ *  through this stub; the canned row carries both `id` and `maxVersion`. */
 function selectChain() {
   const chain: Record<string, unknown> = {};
-  for (const m of ["from", "where"]) chain[m] = () => chain;
+  for (const m of ["from", "where", "orderBy", "limit"]) chain[m] = () => chain;
   (chain as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
     Promise.resolve(selectMaxRows.value).then(resolve);
   return chain;
@@ -74,11 +77,12 @@ vi.mock("@/lib/db", () => ({
 
 const { publishVersion, cloneVersionToDraft, VersionNotDraftError } = await import("./store");
 
-/** A minimal chainable fake `tx`: update/set/where return `this` and the chain
- *  is awaitable, so the publish transaction body runs without a real DB. */
+/** A minimal chainable fake `tx`: update/set/where AND insert/values return
+ *  `this` and the chain is awaitable, so both the publish and the clone-insert
+ *  transaction bodies run without a real DB. */
 function fakeTx() {
   const chain: Record<string, unknown> = {};
-  for (const m of ["update", "set", "where"]) chain[m] = () => chain;
+  for (const m of ["update", "set", "where", "insert", "values"]) chain[m] = () => chain;
   (chain as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
     Promise.resolve([]).then(resolve);
   return chain;
@@ -196,5 +200,38 @@ describe("cloneVersionToDraft (idempotent clone)", () => {
     transaction.mockRejectedValueOnce(new Error("connection reset"));
 
     await expect(cloneVersionToDraft("p1")).rejects.toThrow("connection reset");
+  });
+
+  it("clones an ARCHIVED program (null publishedVersionId) from its highest version", async () => {
+    // Archived program: no published pointer → the clone must resolve the source
+    // via the ordered single-row read (orderBy(version desc).limit(1)), NOT the
+    // invalid max(version)+bare-id select. The canned select row supplies id "vSrc"
+    // as the highest version.
+    programRow.value = { id: "p1", publishedVersionId: null };
+    selectMaxRows.value = [{ maxVersion: 3, id: "vSrc" }];
+    const sourceVersion = {
+      id: "vSrc",
+      programId: "p1",
+      status: "archived",
+      title: "Archived Source",
+      subtitle: null,
+      ageBand: null,
+      summary: null,
+      world: null,
+      locale: null,
+      languages: [],
+    };
+    // findFirst order: (1) existing-draft check → null, (2) source-tree load → vSrc.
+    versionFindFirstQueue.push(null, sourceVersion);
+
+    const result = await cloneVersionToDraft("p1");
+
+    // A fresh draft was inserted (id is a new UUID, not the archived source id and
+    // not an existing draft), and the insert transaction was opened — proving the
+    // archived source resolved without throwing on invalid SQL.
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(result.versionId).not.toBe("vSrc");
+    expect(typeof result.versionId).toBe("string");
+    expect(result.versionId.length).toBeGreaterThan(0);
   });
 });
