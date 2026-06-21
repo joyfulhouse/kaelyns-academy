@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { Activity, ActivityScore } from "@/content";
+import type { Activity, ActivityScore, Program } from "@/content";
 import { getProgram } from "@/content";
 import { applyEvidence, type SkillState } from "@/lib/tutor";
 import type { EnrollmentConfig } from "@/lib/content/config";
@@ -91,6 +91,14 @@ export interface UseLearnerState {
    * activeUnitKeys curation, AI-practice gating, band defaults, and dailyGoal.
    */
   config: EnrollmentConfig;
+  /**
+   * The active learner's RESOLVED (version-pinned) program tree (C#5), as scoped
+   * by {@link getLearnerStateAction}. Non-null only in account mode once the
+   * matching state has loaded; null in guest/loading mode and until the pinned
+   * tree resolves — the caller falls back to the server-passed published prop in
+   * that window so the map never blanks/flickers.
+   */
+  program: Program | null;
 }
 
 /** Remembered account-learner choice (distinct from the guest active-learner key). */
@@ -146,6 +154,10 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const [accountCompleted, setAccountCompleted] = useState<Set<string>>(new Set());
   const [accountStars, setAccountStars] = useState<Record<string, 0 | 1 | 2 | 3>>({});
   const [accountConfig, setAccountConfig] = useState<EnrollmentConfig>({});
+  // The resolved (version-pinned) program tree for the loaded (learner, program).
+  // Set from the same action result as the state above, so the rendered map and
+  // the scoped progress are guaranteed the same version (C#5).
+  const [accountProgram, setAccountProgram] = useState<Program | null>(null);
   // Which (learner, program) the loaded DB state belongs to (null = nothing
   // loaded yet). `ready` is derived from this matching the active learner +
   // program, so switching either shows a brief loading beat (not stale data)
@@ -201,7 +213,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const loadAccountState = useCallback(
     async (learnerId: string, slug: string) => {
       const token = ++reloadToken.current;
-      const { skillState, completedActivityIds, starsByActivity, config } =
+      const { skillState, completedActivityIds, starsByActivity, config, program } =
         await getLearnerStateAction(learnerId, slug);
       // Stale-response guard: ignore all but the latest in-flight load.
       if (!mountedRef.current || token !== reloadToken.current) return;
@@ -211,6 +223,9 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       // any optimistic stars from a prior learner/program so glyphs match.
       setAccountStars(starsByActivity as Record<string, 0 | 1 | 2 | 3>);
       setAccountConfig(config);
+      // The resolved (pinned) tree for this load. Null on unauth/failure/unknown
+      // slug → the caller keeps showing the server-passed published prop.
+      setAccountProgram(program);
       setLoadedKey(`${learnerId}:${slug}`);
     },
     [],
@@ -286,6 +301,11 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
 
   // ── Project the active view based on mode ─────────────────────────────────
   if (mode === "account") {
+    // The loaded state is for the active (learner, program) only when the keys
+    // match — same gate as `ready`. While they don't (initial load or a switch),
+    // expose program: null so the caller keeps the published prop on screen
+    // rather than the prior world's pinned tree (no flicker, no stale map).
+    const loadedForActive = loadedKey === `${selectedLearnerId}:${programSlug}`;
     return {
       skillState: accountSkill,
       completed: accountCompleted,
@@ -293,7 +313,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       // Ready only once the loaded state belongs to the active learner AND
       // program (so a learner OR world switch shows a brief loading beat, not
       // the prior kid's/world's data).
-      ready: loadedKey === `${selectedLearnerId}:${programSlug}`,
+      ready: loadedForActive,
       mode,
       signedIn: true,
       learners,
@@ -302,6 +322,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       setupProfile,
       record,
       config: accountConfig,
+      program: loadedForActive ? accountProgram : null,
     };
   }
 
@@ -324,6 +345,8 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       setupProfile,
       record,
       config: {},
+      // Guest mode renders entirely from the server-passed published prop.
+      program: null,
     };
   }
 
@@ -341,6 +364,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
     setupProfile,
     record,
     config: {},
+    program: null,
   };
 }
 

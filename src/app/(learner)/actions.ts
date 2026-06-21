@@ -19,7 +19,8 @@ import {
   activityIdsForProgram,
   skillTagsForProgram,
 } from "@/content";
-import { getProgramAsync, listProgramsAsync } from "@/lib/content/repository";
+import type { Program } from "@/content";
+import { listProgramsAsync, resolveLearnerProgram } from "@/lib/content/repository";
 import type { SkillState } from "@/lib/tutor";
 
 /**
@@ -242,6 +243,14 @@ export interface LearnerStateResult {
   starsByActivity: Record<string, number>;
   /** Per-child, per-program enrollment config set by the parent (empty object if none). */
   config: EnrollmentConfig;
+  /**
+   * The learner's resolved (version-pinned) program tree — the SAME tree this
+   * state is scoped to. Null when unauthenticated, on failure, or for an unknown
+   * slug; the client then renders the server-passed published prop. Returning it
+   * here guarantees the rendered map and the scoped progress are the same version
+   * in one round-trip (C#5 consistency).
+   */
+  program: Program | null;
 }
 
 const EMPTY_STATE: LearnerStateResult = {
@@ -249,6 +258,7 @@ const EMPTY_STATE: LearnerStateResult = {
   completedActivityIds: [],
   starsByActivity: {},
   config: {},
+  program: null,
 };
 
 /**
@@ -267,11 +277,6 @@ export async function getLearnerStateAction(
   programSlug: string,
 ): Promise<LearnerStateResult> {
   if (!learnerId) return EMPTY_STATE;
-  const program = await getProgramAsync(programSlug);
-  if (!program) return EMPTY_STATE;
-
-  const activityIds = new Set(activityIdsForProgram(program));
-  const skillTags = new Set(skillTagsForProgram(program));
 
   try {
     return await withAccount(async ({ accountId }) => {
@@ -285,6 +290,16 @@ export async function getLearnerStateAction(
       // removed program stays removed and the gate keeps blocking it.
       const owned = await getLearner(accountId, learnerId);
       if (owned) await ensureEnrollment(learnerId, programSlug);
+
+      // Resolve the learner's PINNED program version (C#5). State scoping AND the
+      // rendered tree both derive from this same resolved tree, so they always
+      // agree on the version — and they match the /api/practice gate, which also
+      // resolves via resolveLearnerProgram. (Resolved AFTER the ensureEnrollment
+      // above so a freshly-pinned enrollment is visible to the version read.)
+      const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
+      if (!program) return EMPTY_STATE;
+      const activityIds = new Set(activityIdsForProgram(program));
+      const skillTags = new Set(skillTagsForProgram(program));
 
       const [fullSkillState, completed, config, settings] = await Promise.all([
         getSkillState(accountId, learnerId),
@@ -315,7 +330,7 @@ export async function getLearnerStateAction(
       const effectiveConfig: EnrollmentConfig =
         settings?.aiPractice === false ? { ...config, aiPractice: false } : config;
 
-      return { skillState, completedActivityIds, starsByActivity, config: effectiveConfig };
+      return { skillState, completedActivityIds, starsByActivity, config: effectiveConfig, program };
     });
   } catch (error) {
     if (!(error instanceof UnauthenticatedError)) {

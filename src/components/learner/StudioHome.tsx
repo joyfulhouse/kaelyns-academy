@@ -40,9 +40,17 @@ export function StudioHome({ program }: { program: Program }) {
   // mode the hook ignores this id and uses the selected real learner instead.
   const { learner: guestLearner, setLearnerId } = useActiveLearner();
   // The active program comes from the route (this component is rendered per
-  // program slug), so all state is scoped to the world the kid is in.
+  // program slug), so all state is scoped to the world the kid is in. The slug
+  // is the stable hook key; the learner's PINNED version (a different tree for
+  // the SAME slug, C#5) arrives on `state.program` once account state loads.
   const state = useLearnerState(guestLearner.id, program.slug);
   const [picked, setPicked] = useState(false);
+
+  // Render the learner's resolved (version-pinned) tree once it has loaded;
+  // until then (guest mode, loading, or the brief account-load window) fall back
+  // to the server-passed published prop so the map never blanks or flickers. The
+  // pinned tree then swaps in seamlessly.
+  const effectiveProgram = state.program ?? program;
 
   // While the session resolves we show a calm loading beat rather than flashing
   // the mock picker at a signed-in household.
@@ -52,7 +60,11 @@ export function StudioHome({ program }: { program: Program }) {
 
   if (picked) {
     return (
-      <WorldMap program={program} state={state} onSwitchLearner={() => setPicked(false)} />
+      <WorldMap
+        program={effectiveProgram}
+        state={state}
+        onSwitchLearner={() => setPicked(false)}
+      />
     );
   }
 
