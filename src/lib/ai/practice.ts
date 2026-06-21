@@ -8,7 +8,7 @@ import {
 } from "@/content/activity-configs";
 import { segmentWord } from "@/content/phonics";
 import { ensureNarration } from "@/lib/audio/narration";
-import { plausibleOverride } from "@/lib/audio/phonemeCheck";
+import { hasConsonant, plausibleOverride } from "@/lib/audio/phonemeCheck";
 import { phonemize } from "@/lib/audio/phonemize";
 import { prewarmTexts } from "@/lib/audio/spokenFields";
 import { mapWithConcurrency } from "@/lib/concurrency";
@@ -212,35 +212,43 @@ function wordsByTile(config: RepairablePhonics): Map<string, string[]> {
 }
 
 /**
- * Validate `config.say` against already-resolved word phonemes and DROP only the
- * overrides that are implausible for EVERY word that uses the tile. Pure + sync.
+ * Validate a GENERATED `config.say` against resolved word phonemes, keeping ONLY
+ * the overrides we can positively confirm and dropping all the rest (→ bare).
+ * Pure + sync. Fail-CLOSED: this is untrusted model output, so anything we can't
+ * check is removed rather than shipped on faith.
  *
- * Why "every word, keep-if-any" (not first-word): the same tile can voice
- * differently across words ("c" = /k/ in cat, /s/ in city). A flat `say` map holds
- * one sound per tile, so the soundest rule is to keep an override that's right for
- * at least one of its words — never silently drop a genuinely-correct sound just
- * because another word in the batch uses the tile differently. (Order-independent.)
+ * An override for `tile` is KEPT iff ALL of:
+ *  1. some word in the config uses the tile (not an inert/decoy key), AND
+ *  2. at least one of those words was successfully phonemized (we have ground
+ *     truth — Kokoro wasn't down for it), AND
+ *  3. the override has ≥1 consonant ({@link hasConsonant}) so it's checkable —
+ *     a pure-vowel override can't be validated (vowels vary by word) and is
+ *     dropped, leaving the vowel tile to fall back to bare, AND
+ *  4. it's {@link plausibleOverride plausible} for ≥1 of its words (its
+ *     consonants are an in-order subsequence of that word's real consonants).
  *
- * Fail-open: a tile whose words are all absent from `phonemesByWord` (Kokoro was
- * down for them) is left as-is. A `say` key no word uses is inert and untouched.
+ * Keep-if-plausible-for-ANY-word (not first-word) is order-independent: the same
+ * tile can voice differently across words ("c" = /k/ in cat, /s/ in city) and the
+ * flat map holds one sound, so an override correct for some word it's used in
+ * survives. Everything dropped here degrades to a bare tile, never worse.
  *
- * NOTE (known ceiling): the check is whole-word + consonants-only (see
- * {@link plausibleOverride}) because grapheme→phoneme alignment isn't tractable
- * via Kokoro (phonemizing a substring is the very out-of-context bug we fix). So a
- * wrong-but-present consonant, or any wrong VOWEL, can pass. This is a best-effort
- * sanity net over an LLM that's already good at the task — never a guarantee — and
- * it only ever REMOVES overrides, so it can't make audio worse than bare.
+ * Ceiling (by design): consonants-only, so a wrong-but-present consonant can still
+ * pass — full per-segment/vowel validation needs grapheme→phoneme alignment Kokoro
+ * doesn't expose. This is a best-effort net that ONLY removes overrides, so
+ * generated audio is never worse than bare. Authored content is hand-verified and
+ * never passes through here.
  */
 function applyRepair(config: RepairablePhonics, phonemesByWord: Map<string, string>): void {
   const say = config.say;
   if (!say) return;
   const tileWords = wordsByTile(config);
   for (const tile of Object.keys(say)) {
-    const words = tileWords.get(tile);
-    if (!words) continue; // inert: no tile in any word
-    const known = words.map((w) => phonemesByWord.get(w)).filter((p): p is string => p != null);
-    if (known.length === 0) continue; // fail-open: no ground truth for any of its words
-    if (!known.some((p) => plausibleOverride(say[tile]!, p))) delete say[tile];
+    const ipa = say[tile]!;
+    const known = (tileWords.get(tile) ?? [])
+      .map((w) => phonemesByWord.get(w))
+      .filter((p): p is string => p != null);
+    const validated = hasConsonant(ipa) && known.some((p) => plausibleOverride(ipa, p));
+    if (!validated) delete say[tile]; // fail-closed: keep only positively-confirmed overrides
   }
 }
 
@@ -266,8 +274,9 @@ function wordsToPhonemize(configs: readonly RepairablePhonics[]): string[] {
  * Resilience: phonemizes each unique word at most once (deduped across the whole
  * batch) with bounded concurrency, and CIRCUIT-BREAKS — once one call fails/times
  * out it stops calling Kokoro, so a black-holed endpoint costs ~one timeout total,
- * not one per word (Codex finding). Every unresolved word is treated fail-open in
- * {@link applyRepair} (override kept), so degraded Kokoro never breaks generation.
+ * not one per word. Fail-CLOSED: {@link applyRepair} drops any override it can't
+ * positively confirm (incl. every override when Kokoro was down for its words), so
+ * an unvalidated model guess never reaches the child — it degrades to bare instead.
  */
 export async function repairPhonicsBatch(
   configs: readonly RepairablePhonics[],

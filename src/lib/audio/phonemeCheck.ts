@@ -100,3 +100,15 @@ export function plausibleOverride(ipa: string, wordPhonemes: string): boolean {
   if (want.length === 0) return true; // pure-vowel override: nothing to disprove
   return isSubsequence(want, consonants(wordPhonemes));
 }
+
+/**
+ * Does `ipa` contain at least one consonant? Used by the GENERATED-content repair
+ * to decide whether an override is even checkable: {@link plausibleOverride} can
+ * only validate consonants (vowels vary by word and would false-reject), so a
+ * pure-vowel override carries no evidence either way. The generated path treats
+ * "uncheckable" as "drop" (fail-closed) — vowel tiles fall back to bare rather
+ * than ship an unvalidated guess. Authored content keeps its verified vowels.
+ */
+export function hasConsonant(ipa: string): boolean {
+  return consonants(ipa).length > 0;
+}

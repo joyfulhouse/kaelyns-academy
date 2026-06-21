@@ -244,31 +244,44 @@ describe("repairPhonicsSay (drop hallucinated tile overrides; fail-open)", () =>
     expect(phonemize).toHaveBeenCalledTimes(1); // one word ⇒ one phonemize call
   });
 
-  it("fails open: keeps ALL overrides when phonemize returns null (Kokoro down)", async () => {
+  it("fails CLOSED: drops every override when phonemize returns null (no ground truth)", async () => {
     const config = {
       tiles: ["c", "a", "t"],
-      say: { c: "k", a: "z" }, // would normally drop a→z
+      say: { c: "k", a: "z" },
       words: [{ word: "cat" }],
     };
-    const phonemize = vi.fn(async () => null);
+    const phonemize = vi.fn(async () => null); // Kokoro down → nothing can be confirmed
 
     const out = await repairPhonicsSay(config, phonemize);
 
-    expect(out.say).toEqual({ c: "k", a: "z" }); // nothing dropped on failure
+    expect(out.say).toEqual({}); // untrusted model output is never shipped unvalidated
   });
 
-  it("leaves a `say` key untouched when no word uses that tile (inert)", async () => {
+  it("drops a `say` key for a tile no word uses (tappable decoy, unvalidatable)", async () => {
     const config = {
       tiles: ["c", "a", "t", "zz"],
-      say: { zz: "garbage" }, // "zz" never appears in any word
+      say: { zz: "garbage" }, // "zz" is a decoy tile — tappable but in no word
       words: [{ word: "cat" }],
     };
     const phonemize = vi.fn(async () => "kˈæt");
 
     const out = await repairPhonicsSay(config, phonemize);
 
-    expect(out.say).toEqual({ zz: "garbage" }); // unused ⇒ never spoken ⇒ left as-is
-    expect(phonemize).not.toHaveBeenCalled(); // no word needed phonemizing
+    expect(out.say).toEqual({}); // can't validate ⇒ dropped (else it'd reach Kokoro on tap)
+    expect(phonemize).not.toHaveBeenCalled(); // no word used by a say tile to phonemize
+  });
+
+  it("drops a pure-vowel override (vowels can't be validated in-context)", async () => {
+    const config = {
+      tiles: ["c", "a", "t"],
+      say: { c: "k", a: "æ" }, // c→/k/ checkable; a→/æ/ is vowel-only, unverifiable
+      words: [{ word: "cat" }],
+    };
+    const phonemize = vi.fn(async () => "kˈæt");
+
+    const out = await repairPhonicsSay(config, phonemize);
+
+    expect(out.say).toEqual({ c: "k" }); // vowel tile falls back to bare, consonant kept
   });
 
   it("returns the config unchanged when there is no `say` map", async () => {
@@ -339,8 +352,8 @@ describe("repairPhonicsBatch (dedupe + circuit-break across items)", () => {
     await repairPhonicsBatch(configs, phonemize);
 
     expect(phonemize.mock.calls.length).toBeLessThanOrEqual(4); // not all 10
-    // fail-open: every override kept despite Kokoro being down.
-    for (const c of configs) expect(Object.keys(c.say)).toHaveLength(1);
+    // fail-closed: with no ground truth, every override is dropped (not shipped unvalidated).
+    for (const c of configs) expect(Object.keys(c.say)).toHaveLength(0);
   });
 });
 
