@@ -13,7 +13,8 @@ import { Mascot } from "@/components/art/Mascot";
 import { Hills, Sparkle, Sun } from "@/components/art/Decorations";
 import { SiteHeader } from "@/components/shell/SiteHeader";
 import { SiteFooter } from "@/components/shell/SiteFooter";
-import { getProgram, programStats } from "@/content";
+import { programStats } from "@/content";
+import { getProgramAsync } from "@/lib/content/repository";
 
 const PILLARS = [
   {
@@ -40,8 +41,8 @@ const FAMILY_POINTS = [
   { icon: SparkleIcon, label: "Progress you can hold", text: "Stars, a filling path, a finished portfolio. Concrete wins, never a manipulative streak." },
 ];
 
-export default function Home() {
-  const program = getProgram("kaelyn-adaptive");
+export default async function Home() {
+  const program = await getProgramAsync("kaelyn-adaptive");
   const stats = program ? programStats(program) : { units: 0, lessons: 0, activities: 0 };
 
   return (
