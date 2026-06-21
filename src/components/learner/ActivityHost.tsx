@@ -128,6 +128,9 @@ export function ActivityHost({
           skillHints: activity.skillTags.slice(0, 8),
           learnerId,
           programSlug,
+          // Bind generation to this authored activity so the server can verify it
+          // belongs to the learner's resolved program (§8 content gate, C#3).
+          activityId: activity.id,
         }),
         signal: controller.signal,
       });

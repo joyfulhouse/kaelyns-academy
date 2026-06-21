@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
+import { findActivity } from "@/content";
 import { captureNonCritical } from "@/lib/capture";
 import { generatePracticeItems } from "@/lib/ai/practice";
+import { resolveLearnerProgram } from "@/lib/content/repository";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { UnauthenticatedError, requireAccount } from "@/lib/tenancy";
 import { getLearner, getEnrollmentForGate, getLearnerSettings } from "@/lib/tutor/store";
@@ -26,6 +28,12 @@ const requestSchema = z.object({
   // parental control — no client may bypass by omitting these fields.
   learnerId: z.string().min(1).max(100),
   programSlug: z.string().min(1).max(100),
+  // The authored activity this practice is "more like". Required so the gate can
+  // bind generation to a real activity in the learner's RESOLVED program (C#3):
+  // it closes the slug-swap where a client borrows program A's AI-enabled
+  // enrollment to generate program B's content (B's activityId won't be in A's
+  // resolved tree).
+  activityId: z.string().min(1).max(100),
 });
 
 export async function POST(request: Request) {
@@ -64,7 +72,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { kind, band, focus, n, skillHints, learnerId, programSlug } = parsed.data;
+  const { kind, band, focus, n, skillHints, learnerId, programSlug, activityId } = parsed.data;
 
   // Ownership check: a foreign or stale learnerId returns 404 rather than
   // silently generating generic practice. (The §8 aiPractice 403 below is a
@@ -72,6 +80,19 @@ export async function POST(request: Request) {
   const ownedLearner = await getLearner(accountId, learnerId);
   if (!ownedLearner) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
+
+  // Content-binding precondition (C#3) — BEFORE the enrollment/settings gate.
+  // Resolve the learner's version-pinned program for the CLAIMED slug (the same
+  // seam getLearnerStateAction renders + scopes), and verify the requested
+  // activityId is actually in THAT tree. A missing program or an activityId that
+  // doesn't belong to it → 403 with no model call: this closes the slug-swap
+  // (you can't borrow program A's AI-enabled enrollment to generate program B's
+  // content, because B's activityId isn't in A's resolved tree). This is an
+  // ADDITIONAL gate; the fail-closed enrollment/settings checks below still run.
+  const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
+  if (!program || findActivity(program, activityId) === undefined) {
+    return NextResponse.json({ error: "ai_disabled" }, { status: 403 });
   }
 
   // Server-side AI gate (spec §8) — FAIL-CLOSED. AI generation is allowed ONLY

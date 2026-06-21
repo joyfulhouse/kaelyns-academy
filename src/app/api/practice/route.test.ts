@@ -16,9 +16,16 @@ vi.mock("@/lib/tutor/store", () => ({
   getEnrollmentForGate: vi.fn(),
   getLearnerSettings: vi.fn(),
 }));
+// Stub the content resolver so the activity-binding gate (C#3) is exercised
+// without a DB. Default (set in beforeEach): resolves a program that CONTAINS
+// the requested activityId; tests override to resolve a different program (the
+// slug-swap), or undefined (no program), to drive the 403 paths.
+vi.mock("@/lib/content/repository", () => ({ resolveLearnerProgram: vi.fn() }));
 
+import type { Program } from "@/content";
 import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
 import { generatePracticeItems } from "@/lib/ai/practice";
+import { resolveLearnerProgram } from "@/lib/content/repository";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { UnauthenticatedError, requireAccount } from "@/lib/tenancy";
 import { getLearner, getEnrollmentForGate, getLearnerSettings } from "@/lib/tutor/store";
@@ -26,7 +33,40 @@ import { POST } from "./route";
 
 const KIND = Object.keys(ACTIVITY_CONFIG_SCHEMAS)[0];
 
-/** Minimal valid body — learnerId + programSlug are now required by the schema. */
+/** A minimal program tree the real `findActivity` walker can search. */
+function programWithActivity(slug: string, activityId: string): Program {
+  return {
+    slug,
+    title: `Program ${slug}`,
+    subtitle: "",
+    ageBand: "6-7",
+    summary: "",
+    units: [
+      {
+        id: "u-1",
+        order: 1,
+        title: "Unit",
+        emoji: "",
+        world: "sunshine",
+        bigIdea: "",
+        phonicsFocus: "",
+        mathFocus: "",
+        project: "",
+        lessons: [
+          {
+            id: "ls-1",
+            title: "Lesson",
+            activities: [
+              { id: activityId, kind: KIND, title: "Activity", band: "ready", skillTags: [], config: {} },
+            ],
+          },
+        ],
+      },
+    ],
+  } as unknown as Program;
+}
+
+/** Minimal valid body — learnerId + programSlug + activityId are required. */
 function post(body: unknown): Request {
   return new Request("http://test/api/practice", {
     method: "POST",
@@ -35,7 +75,14 @@ function post(body: unknown): Request {
   });
 }
 
-const VALID_BASE = { kind: KIND, band: "ready", focus: "counting", learnerId: "l-1", programSlug: "prog-1" } as const;
+const VALID_BASE = {
+  kind: KIND,
+  band: "ready",
+  focus: "counting",
+  learnerId: "l-1",
+  programSlug: "prog-1",
+  activityId: "act-1",
+} as const;
 
 beforeEach(() => {
   vi.mocked(requireAccount).mockResolvedValue({ accountId: "acc-1", userId: "acc-1" });
@@ -50,6 +97,8 @@ beforeEach(() => {
   });
   vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
   vi.mocked(getLearnerSettings).mockResolvedValue({});
+  // Default: the resolved program for prog-1 contains act-1 (binding passes).
+  vi.mocked(resolveLearnerProgram).mockResolvedValue(programWithActivity("prog-1", "act-1"));
 });
 afterEach(() => vi.resetAllMocks());
 
@@ -75,6 +124,53 @@ describe("POST /api/practice", () => {
     expect(res.status).toBe(200);
     expect(generatePracticeItems).toHaveBeenCalledOnce();
     expect(await res.json()).toMatchObject({ kind: KIND, band: "ready", items: [] });
+  });
+
+  // ── C#3 content-binding: the activityId must be in the learner's resolved program ──
+
+  it("403s (no model call) when the activityId is NOT in the learner's resolved program", async () => {
+    // The resolved program for prog-1 exists but does not contain "act-1".
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(programWithActivity("prog-1", "other-activity"));
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: "ai_disabled" });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("403s (slug-swap) when the activityId belongs to a DIFFERENT program than the claimed slug", async () => {
+    // Client claims prog-1 (its AI-enabled enrollment) but sends an activityId
+    // that only exists in prog-2. The resolver returns prog-1's tree, which does
+    // NOT contain prog-2's activity → blocked, no borrowing across programs.
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(programWithActivity("prog-1", "prog1-act"));
+    const res = await POST(post({ ...VALID_BASE, activityId: "prog2-act" }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: "ai_disabled" });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("403s (no model call) when no program resolves for the learner (program missing)", async () => {
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(undefined);
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: "ai_disabled" });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("proceeds (200) when the activityId IS in the resolved program + active AI-enabled enrollment", async () => {
+    vi.mocked(generatePracticeItems).mockResolvedValue([]);
+    vi.mocked(getLearnerSettings).mockResolvedValue({ aiPractice: true });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: { aiPractice: true } });
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(programWithActivity("prog-1", "act-1"));
+    const res = await POST(post({ ...VALID_BASE, activityId: "act-1" }));
+    expect(res.status).toBe(200);
+    expect(generatePracticeItems).toHaveBeenCalledOnce();
+  });
+
+  it("400s when activityId is missing (schema enforcement)", async () => {
+    const { activityId: _omit, ...body } = VALID_BASE;
+    const res = await POST(post(body));
+    expect(res.status).toBe(400);
+    expect(generatePracticeItems).not.toHaveBeenCalled();
   });
 
   // ── §8 AI gate: fail-closed unless owned + active enrollment + BOTH flags allow ──
