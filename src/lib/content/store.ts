@@ -229,6 +229,21 @@ export async function getPublishedVersionId(slug: string): Promise<string | null
 }
 
 /**
+ * Whether a `program` row exists for this slug in ANY status (draft, published,
+ * or archived). Used by the repository to distinguish "no DB row → static
+ * fallback is fine" from "a DB row exists but isn't published → deliberately
+ * unpublished, do NOT fall back to the static program".
+ */
+export async function programExistsBySlug(slug: string): Promise<boolean> {
+  const db = getDb();
+  const row = await db.query.program.findFirst({
+    where: (p) => eq(p.slug, slug),
+    columns: { id: true },
+  });
+  return row != null;
+}
+
+/**
  * Light catalog metadata — slug, title, subtitle, ageBand, summary, world,
  * languages — without loading the full tree.
  */
@@ -323,6 +338,10 @@ export interface AdminProgramRow {
   latestVersionId: string | null;
   latestVersion: number | null;
   publishedVersionId: string | null;
+  /** The program's open draft version id (highest-version row with status='draft'),
+   *  or null if none. The lifecycle gates edit/publish on THIS, not program.status,
+   *  so a clone of a published/archived program is editable + publishable. */
+  draftVersionId: string | null;
   title: string;
 }
 
@@ -658,6 +677,12 @@ export async function publishVersion(versionId: string): Promise<void> {
     where: (v) => eq(v.id, versionId),
   });
   if (!versionRow) throw new Error(`Version not found: ${versionId}`);
+  // Only a draft may be published (mirrors saveVersionTree's guard; actions.ts
+  // maps VersionNotDraftError to reason:"invalid"). Prevents re-publishing an
+  // already-published/archived version id.
+  if (versionRow.status !== "draft") {
+    throw new VersionNotDraftError(versionId, versionRow.status);
+  }
 
   const now = new Date();
 
@@ -691,7 +716,11 @@ export async function publishVersion(versionId: string): Promise<void> {
 /**
  * Clone the program's current published (or highest-numbered) version's metadata
  * and tree into a new `program_version` (version = max+1, status `draft`).
- * Returns the new version's id.
+ * Returns the new (or existing) draft version's id.
+ *
+ * Idempotent: if the program already has an open draft version, that draft's id
+ * is returned instead of inserting a second draft — re-cloning (e.g. a double
+ * click, or cloning an already-cloned program) never spawns orphan drafts.
  */
 export async function cloneVersionToDraft(
   programId: string,
@@ -702,6 +731,12 @@ export async function cloneVersionToDraft(
     where: (p) => eq(p.id, programId),
   });
   if (!programRow) throw new Error(`Program not found: ${programId}`);
+
+  // If an open draft already exists, return it (idempotent clone — no second draft).
+  const existingDraft = await db.query.programVersion.findFirst({
+    where: (v, { and: andOp }) => andOp(eq(v.programId, programId), eq(v.status, "draft")),
+  });
+  if (existingDraft) return { versionId: existingDraft.id };
 
   // Prefer the published version; fall back to the highest version number.
   let sourceVersionId = programRow.publishedVersionId;
@@ -799,6 +834,9 @@ export async function listAdminPrograms(): Promise<AdminProgramRow[]> {
     versions.sort((a, b) => b.version - a.version);
     const latest = versions[0];
 
+    // The open draft (highest-version draft row), if any — drives edit/publish.
+    const draft = versions.find((v) => v.status === "draft");
+
     // Resolve the display title: prefer the published version's title, then latest.
     let title = latest?.title ?? "";
     if (prog.publishedVersionId) {
@@ -813,6 +851,7 @@ export async function listAdminPrograms(): Promise<AdminProgramRow[]> {
       latestVersionId: latest?.id ?? null,
       latestVersion: latest?.version ?? null,
       publishedVersionId: prog.publishedVersionId ?? null,
+      draftVersionId: draft?.id ?? null,
       title,
     });
   }

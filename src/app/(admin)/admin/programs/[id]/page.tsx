@@ -97,7 +97,7 @@ export default async function ProgramDetailPage({
         <ProgramLifecycleControls
           programId={program.programId}
           status={program.status}
-          latestVersionId={program.latestVersionId}
+          draftVersionId={program.draftVersionId}
         />
       </Surface>
 

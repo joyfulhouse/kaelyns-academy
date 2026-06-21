@@ -18,12 +18,14 @@ import {
 } from "@/app/(admin)/admin/actions";
 
 /**
- * Lifecycle action buttons for a single program. Buttons are status-gated:
+ * Lifecycle action buttons for a single program. Buttons gate on the open DRAFT
+ * version (draftVersionId), not program.status — so a clone of a published or
+ * archived program (which leaves program.status as-is) is still publishable:
  *
- *   draft      — Publish (using latestVersionId); Clone to draft (disabled,
- *                the program is already a draft); Archive.
- *   published  — Clone to draft (makes a new editable draft); Archive.
- *   archived   — Clone to draft (restore path); no Publish.
+ *   has open draft         — Publish (publishes draftVersionId); no Clone (a
+ *                            draft already exists); Archive (unless archived).
+ *   published, no draft     — Clone to draft (makes an editable draft); Archive.
+ *   archived, no draft      — Clone to draft (restore path); no Publish.
  *
  * Archive uses a two-click inline confirm — NO window.confirm.
  * All calls use useTransition + discriminated result + router.refresh().
@@ -37,11 +39,11 @@ type ActionState =
 export function ProgramLifecycleControls({
   programId,
   status,
-  latestVersionId,
+  draftVersionId,
 }: {
   programId: string;
   status: string;
-  latestVersionId: string | null;
+  draftVersionId: string | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -49,12 +51,12 @@ export function ProgramLifecycleControls({
   const [archiveConfirming, setArchiveConfirming] = useState(false);
 
   function handlePublish() {
-    if (isPending || !latestVersionId) return;
+    if (isPending || !draftVersionId) return;
     setArchiveConfirming(false);
 
     startTransition(async () => {
       try {
-        const result = await publishProgramAction(latestVersionId);
+        const result = await publishProgramAction(draftVersionId);
         if (result.ok) {
           setActionState({ status: "success", message: "Program published." });
           router.refresh();
@@ -123,8 +125,12 @@ export function ProgramLifecycleControls({
     });
   }
 
-  const canPublish = status === "draft" && latestVersionId !== null;
-  const canClone = status === "published" || status === "archived";
+  // Publish whenever there's an open draft (regardless of program.status — a
+  // clone of a published/archived program is a publishable draft). Offer Clone
+  // only when published/archived AND there is no open draft yet (else editing
+  // the existing draft is the path). Archive is unchanged.
+  const canPublish = draftVersionId !== null;
+  const canClone = (status === "published" || status === "archived") && draftVersionId === null;
   const canArchive = status !== "archived";
 
   return (

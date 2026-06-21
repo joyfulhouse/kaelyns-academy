@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeftIcon, CopyIcon } from "@phosphor-icons/react/dist/ssr";
+import { ArrowLeftIcon } from "@phosphor-icons/react/dist/ssr";
 import { Surface } from "@/components/ui/Surface";
 import { ProgramEditor } from "@/components/admin/editor/ProgramEditor";
 import { listAdminPrograms, loadVersionForEdit } from "@/lib/content/store";
@@ -8,9 +8,11 @@ import { CloneToDraftButton } from "./CloneToDraftButton";
 
 /**
  * Curriculum tree editor — RSC, gated by the admin layout.
- * Resolves the program's latest draft version. If the program's latest version
- * is published (no draft), shows a "Clone to draft to edit" prompt.
- * If the program has no versions at all, redirects back to the detail page.
+ * Resolves the program's open DRAFT version (independent of program.status — a
+ * clone of a published/archived program leaves the program record published but
+ * creates a draft version). If a draft exists, it is edited; if none exists but
+ * the program has versions, a "Clone to draft to edit" prompt is shown; if the
+ * program has no versions at all, redirects back to the detail page.
  */
 export const dynamic = "force-dynamic";
 
@@ -26,17 +28,17 @@ export default async function EditProgramPage({
 
   if (!program) notFound();
 
-  // Determine which version to load. We want a draft; if none exists, show
-  // the clone prompt.
-  const isDraft = program.status === "draft";
-  const versionToLoad = isDraft ? program.latestVersionId : null;
+  // Edit the open draft version, whatever the program's overall status is. If
+  // there's no draft, show the clone prompt (a published/archived program must
+  // be cloned to a draft before it can be edited).
+  const versionToLoad = program.draftVersionId;
 
   if (!versionToLoad) {
     if (!program.latestVersionId) {
       // No versions at all — redirect to detail.
       redirect(`/admin/programs/${id}`);
     }
-    // Has versions but no draft (published or archived) — show clone prompt.
+    // Has versions but no open draft (published or archived) — show clone prompt.
     return (
       <div className="flex flex-col gap-8">
         <BackNav id={id} />
