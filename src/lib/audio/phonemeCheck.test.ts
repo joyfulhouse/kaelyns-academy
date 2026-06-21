@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { plausibleOverride } from "./phonemeCheck";
+import { hasConsonant, plausibleOverride, tileAllowsConsonants } from "./phonemeCheck";
 
 // Real misaki phoneme strings from Kokoro's /dev/phonemize (language "a"):
 //   table → tˈAbᵊl   cat → kˈæt   city → sˈɪTi   cake → kˈAk   ship → ʃˈɪp
@@ -65,5 +65,39 @@ describe("plausibleOverride", () => {
     expect(plausibleOverride("br", "bɹˈIn")).toBe(true); // "br" blend (brine)
     // a genuine mismatch still fails (fold doesn't make everything pass).
     expect(plausibleOverride("z", "ɹˈʌn")).toBe(false);
+  });
+});
+
+describe("hasConsonant", () => {
+  it("is true for consonant-bearing IPA, false for pure vowels", () => {
+    expect(hasConsonant("tˈeɪ")).toBe(true);
+    expect(hasConsonant("k")).toBe(true);
+    expect(hasConsonant("æ")).toBe(false); // pure vowel
+    expect(hasConsonant("ˈeɪ")).toBe(false);
+    expect(hasConsonant("")).toBe(false);
+  });
+});
+
+describe("tileAllowsConsonants (override must be spellable by the tile's letters)", () => {
+  it("rejects a consonant the tile cannot spell", () => {
+    // Codex case: /t/ override on the vowel tile "a" — /t/ is in "cat" but "a" can't spell it.
+    expect(tileAllowsConsonants("a", "t")).toBe(false);
+    // /t/ on the "c" tile: "c" spells /k/ or /s/, never /t/.
+    expect(tileAllowsConsonants("c", "t")).toBe(false);
+  });
+
+  it("accepts a consonant the tile can spell (incl. soft c, digraphs, clusters)", () => {
+    expect(tileAllowsConsonants("c", "k")).toBe(true); // hard c
+    expect(tileAllowsConsonants("c", "s")).toBe(true); // soft c
+    expect(tileAllowsConsonants("t", "t")).toBe(true);
+    expect(tileAllowsConsonants("sh", "ʃ")).toBe(true); // digraph
+    expect(tileAllowsConsonants("th", "θ")).toBe(true);
+    expect(tileAllowsConsonants("ble", "bəl")).toBe(true); // b,l spellable; ə vowel ignored
+    expect(tileAllowsConsonants("ta", "teɪ")).toBe(true); // t spellable; eɪ vowel ignored
+    expect(tileAllowsConsonants("gr", "ɡɹ")).toBe(true); // cluster, ASCII-fold safe
+  });
+
+  it("treats a pure-vowel override as allowed here (consonants gate it elsewhere)", () => {
+    expect(tileAllowsConsonants("a", "æ")).toBe(true); // no consonants to disallow
   });
 });

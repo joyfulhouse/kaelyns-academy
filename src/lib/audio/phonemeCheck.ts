@@ -112,3 +112,52 @@ export function plausibleOverride(ipa: string, wordPhonemes: string): boolean {
 export function hasConsonant(ipa: string): boolean {
   return consonants(ipa).length > 0;
 }
+
+/**
+ * Which consonant phonemes each English grapheme can spell (American, in the same
+ * folded notation {@link consonants} emits: ɹ ɡ ʤ ʧ etc.). Digraphs are listed so
+ * they're matched before their letters. Only consonant outputs matter here; vowel
+ * graphemes contribute none. Deliberately permissive per grapheme (e.g. c → k or s)
+ * — the goal is to reject a phoneme the tile CAN'T spell, not to pin the one reading.
+ */
+const GRAPHEME_CONSONANTS: Record<string, readonly string[]> = {
+  // digraphs (longest-match first)
+  ch: ["ʧ", "k", "ʃ"], ck: ["k"], gh: ["ɡ", "f"], kn: ["n"], ng: ["ŋ", "ɡ"],
+  ph: ["f"], qu: ["k", "w"], sh: ["ʃ"], th: ["θ", "ð"], wh: ["w", "h"], wr: ["ɹ"],
+  // single letters
+  b: ["b"], c: ["k", "s"], d: ["d"], f: ["f"], g: ["ɡ", "ʤ"], h: ["h"], j: ["ʤ"],
+  k: ["k"], l: ["l"], m: ["m"], n: ["n", "ŋ"], p: ["p"], q: ["k"], r: ["ɹ"],
+  s: ["s", "z", "ʃ", "ʒ"], t: ["t"], v: ["v"], w: ["w"], x: ["k", "s", "z", "ɡ"],
+  y: ["j"], z: ["z"],
+};
+
+/** Every consonant phoneme the letters of `tile` can plausibly spell. */
+function spellableConsonants(tile: string): Set<string> {
+  const lower = tile.toLowerCase();
+  const out = new Set<string>();
+  for (let i = 0; i < lower.length; ) {
+    const digraph = GRAPHEME_CONSONANTS[lower.slice(i, i + 2)];
+    if (digraph) {
+      for (const p of digraph) out.add(p);
+      i += 2;
+      continue;
+    }
+    for (const p of GRAPHEME_CONSONANTS[lower[i]!] ?? []) out.add(p);
+    i += 1; // vowels / unknown chars spell no consonant
+  }
+  return out;
+}
+
+/**
+ * Is `ipa` compatible with `tile`'s OWN letters? Every consonant phoneme in the
+ * override must be one the tile could spell ({@link spellableConsonants}). This is
+ * the tile-aware guard {@link plausibleOverride} lacks: the latter only checks the
+ * consonant is somewhere in the whole WORD, so it would wrongly accept a /t/
+ * override on the vowel tile "a" of "cat" (/t/ is in "cat") or a /t/ on the "c"
+ * tile (/t/ is in "cat", but "c" can't spell /t/). Both are rejected here. Vowels
+ * are not constrained (a tile vowel legitimately ranges over many sounds).
+ */
+export function tileAllowsConsonants(tile: string, ipa: string): boolean {
+  const spellable = spellableConsonants(tile);
+  return consonants(ipa).every((c) => spellable.has(c));
+}

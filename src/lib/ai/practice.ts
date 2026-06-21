@@ -8,7 +8,7 @@ import {
 } from "@/content/activity-configs";
 import { segmentWord } from "@/content/phonics";
 import { ensureNarration } from "@/lib/audio/narration";
-import { hasConsonant, plausibleOverride } from "@/lib/audio/phonemeCheck";
+import { hasConsonant, plausibleOverride, tileAllowsConsonants } from "@/lib/audio/phonemeCheck";
 import { phonemize } from "@/lib/audio/phonemize";
 import { prewarmTexts } from "@/lib/audio/spokenFields";
 import { mapWithConcurrency } from "@/lib/concurrency";
@@ -224,7 +224,10 @@ function wordsByTile(config: RepairablePhonics): Map<string, string[]> {
  *  3. the override has ≥1 consonant ({@link hasConsonant}) so it's checkable —
  *     a pure-vowel override can't be validated (vowels vary by word) and is
  *     dropped, leaving the vowel tile to fall back to bare, AND
- *  4. it's {@link plausibleOverride plausible} for ≥1 of its words (its
+ *  4. every override consonant is one the TILE's own letters can spell
+ *     ({@link tileAllowsConsonants}) — rejects a cross-tile consonant like /t/ on
+ *     an "a" tile, or /t/ on a "c" tile, that step 5 alone would miss, AND
+ *  5. it's {@link plausibleOverride plausible} for ≥1 of its words (its
  *     consonants are an in-order subsequence of that word's real consonants).
  *
  * Keep-if-plausible-for-ANY-word (not first-word) is order-independent: the same
@@ -232,11 +235,11 @@ function wordsByTile(config: RepairablePhonics): Map<string, string[]> {
  * flat map holds one sound, so an override correct for some word it's used in
  * survives. Everything dropped here degrades to a bare tile, never worse.
  *
- * Ceiling (by design): consonants-only, so a wrong-but-present consonant can still
- * pass — full per-segment/vowel validation needs grapheme→phoneme alignment Kokoro
- * doesn't expose. This is a best-effort net that ONLY removes overrides, so
- * generated audio is never worse than bare. Authored content is hand-verified and
- * never passes through here.
+ * Residual ceiling (documented): a kept override's VOWEL quality is LLM-trusted —
+ * its consonants are validated against both the tile and the word, but choosing the
+ * right vowel among a tile's several valid readings needs grapheme→phoneme
+ * alignment Kokoro's flat /dev/phonemize can't give. This is a best-effort net that
+ * ONLY removes overrides. Authored content is hand-verified and never passes here.
  */
 function applyRepair(config: RepairablePhonics, phonemesByWord: Map<string, string>): void {
   const say = config.say;
@@ -247,7 +250,10 @@ function applyRepair(config: RepairablePhonics, phonemesByWord: Map<string, stri
     const known = (tileWords.get(tile) ?? [])
       .map((w) => phonemesByWord.get(w))
       .filter((p): p is string => p != null);
-    const validated = hasConsonant(ipa) && known.some((p) => plausibleOverride(ipa, p));
+    const validated =
+      hasConsonant(ipa) &&
+      tileAllowsConsonants(tile, ipa) &&
+      known.some((p) => plausibleOverride(ipa, p));
     if (!validated) delete say[tile]; // fail-closed: keep only positively-confirmed overrides
   }
 }

@@ -284,6 +284,21 @@ describe("repairPhonicsSay (drop hallucinated tile overrides; fail-open)", () =>
     expect(out.say).toEqual({ c: "k" }); // vowel tile falls back to bare, consonant kept
   });
 
+  it("drops a consonant override the TILE can't spell (cross-tile hallucination)", async () => {
+    // /t/ is present in "cat", so the whole-word check alone would wrongly keep these;
+    // the tile-aware check rejects them because "a"/"c" can't spell /t/.
+    const config = {
+      tiles: ["c", "a", "t"],
+      say: { a: "t", c: "t", t: "t" }, // only t→/t/ is spellable by its tile
+      words: [{ word: "cat" }],
+    };
+    const phonemize = vi.fn(async () => "kˈæt");
+
+    const out = await repairPhonicsSay(config, phonemize);
+
+    expect(out.say).toEqual({ t: "t" }); // a→t and c→t dropped; t→t kept
+  });
+
   it("returns the config unchanged when there is no `say` map", async () => {
     const config: { tiles: string[]; say?: Record<string, string>; words: { word: string }[] } = {
       tiles: ["c", "a", "t"],
