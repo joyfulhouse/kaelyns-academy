@@ -407,30 +407,35 @@ export async function listEnrollmentsDetailed(
 }
 
 /**
- * Parse a stored enrollment config jsonb defensively. A malformed value (e.g. a
- * hand-edited row with `aiPractice: "false"`) must NOT fail-open the §8 gate's
- * `aiPractice === false` check — so on parse failure we log and treat it as `{}`
- * (which leaves all parental flags at their safe defaults).
+ * Parse a stored enrollment config jsonb defensively, failing CLOSED on
+ * corruption. A legitimately empty/absent config stays `{}` (default-allow —
+ * the §8 gate only blocks on `aiPractice === false`). But a value that FAILS to
+ * parse (e.g. a hand-edited row with `aiPractice: "false"`) could have been
+ * meant to disable AI, and degrading it to `{}` would leave `aiPractice`
+ * undefined → the gate would NOT block → fail-open. So on parse failure we log
+ * and return `{ aiPractice: false }`, which blocks AI for that corrupt row.
  */
 function parseEnrollmentConfig(raw: unknown, context: string): EnrollmentConfig {
   const parsed = enrollmentConfigSchema.safeParse(raw ?? {});
   if (parsed.success) return parsed.data;
   captureNonCritical(`malformed enrollment config (${context})`, parsed.error);
-  return {};
+  return { aiPractice: false };
 }
 
-/** Same defensive parse for the per-learner settings jsonb. */
+/** Same defensive, fail-closed parse for the per-learner settings jsonb: a
+ *  malformed value yields `{ aiPractice: false }` (block), never `{}` (allow). */
 function parseLearnerSettings(raw: unknown, context: string): LearnerSettings {
   const parsed = learnerSettingsSchema.safeParse(raw ?? {});
   if (parsed.success) return parsed.data;
   captureNonCritical(`malformed learner settings (${context})`, parsed.error);
-  return {};
+  return { aiPractice: false };
 }
 
 /**
  * Read the enrollment config for a specific (learner, program) pair (owned-by-account).
  * Returns {} when the learner is not owned by the account or no enrollment exists.
- * safeParses the stored jsonb so a malformed value can't fail-open the §8 gate.
+ * safeParses the stored jsonb so a malformed value can't fail-open the §8 gate
+ * (a corrupt config fails CLOSED to `{ aiPractice: false }`, not `{}`).
  */
 export async function getEnrollmentConfig(
   accountId: string,
@@ -477,7 +482,8 @@ export async function getEnrollmentForGate(
 /**
  * §8 AI-gate read: the per-learner settings (owned-by-account), safeParsed.
  * Returns null when the learner is not owned by the account; {} when the row
- * has no/empty settings. The gate reads `settings?.aiPractice === false` as the
+ * has no/empty settings; `{ aiPractice: false }` (fail-closed) when the stored
+ * settings are malformed. The gate reads `settings?.aiPractice === false` as the
  * top-level (all-programs) parental kill-switch.
  */
 export async function getLearnerSettings(

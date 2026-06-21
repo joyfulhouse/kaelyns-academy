@@ -95,13 +95,14 @@ describe("getEnrollmentForGate", () => {
     expect(got?.status).toBe("removed");
   });
 
-  it("treats a malformed config as {} (no fail-open) and logs", async () => {
-    // A hand-edited row storing the STRING "false" must not satisfy === false;
-    // safeParse fails → config becomes {} and the malformed value is reported.
+  it("fails CLOSED on a malformed config (aiPractice:false) and logs", async () => {
+    // A hand-edited row storing the STRING "false" must not satisfy === false
+    // via the raw value; safeParse fails → config fails CLOSED to
+    // { aiPractice: false } (blocks AI for the corrupt row), and is reported.
     enrollmentRows.value = [{ status: "active", config: { aiPractice: "false" } }];
     const got = await getEnrollmentForGate("acc-1", "L1", "prog");
-    expect(got).toEqual({ status: "active", config: {} });
-    expect(got?.config.aiPractice).toBeUndefined();
+    expect(got).toEqual({ status: "active", config: { aiPractice: false } });
+    expect(got?.config.aiPractice).toBe(false);
     expect(captureException).toHaveBeenCalledOnce();
   });
 });
@@ -117,23 +118,37 @@ describe("getLearnerSettings", () => {
     expect(await getLearnerSettings("acc-1", "L1")).toEqual({ aiPractice: false, readAloud: true });
   });
 
-  it("treats malformed settings as {} (no fail-open) and logs", async () => {
+  it("fails CLOSED on malformed settings (aiPractice:false) and logs", async () => {
+    // A corrupt settings jsonb that was meant to disable AI must not degrade to
+    // {} (which would leave aiPractice undefined → not blocked → fail-open).
     learnerRows.value = [{ settings: { aiPractice: "nope" } }];
-    expect(await getLearnerSettings("acc-1", "L1")).toEqual({});
+    expect(await getLearnerSettings("acc-1", "L1")).toEqual({ aiPractice: false });
     expect(captureException).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a legitimately empty settings row permissive ({})", async () => {
+    // Absence/empty config is default-allow (correct) — only malformed fails closed.
+    learnerRows.value = [{ settings: {} }];
+    expect(await getLearnerSettings("acc-1", "L1")).toEqual({});
   });
 });
 
 describe("getEnrollmentConfig (safeParse on read)", () => {
-  it("treats a malformed stored config as {} rather than fail-open", async () => {
+  it("fails CLOSED on a malformed stored config (aiPractice:false)", async () => {
     enrollmentRows.value = [{ config: { aiPractice: "false" } }];
     const got = await getEnrollmentConfig("acc-1", "L1", "prog");
-    expect(got.aiPractice).toBeUndefined();
+    expect(got.aiPractice).toBe(false);
     expect(captureException).toHaveBeenCalledOnce();
   });
 
-  it("returns {} when no enrollment row exists", async () => {
+  it("returns {} (default-allow) when no enrollment row exists", async () => {
     enrollmentRows.value = [];
     expect(await getEnrollmentConfig("acc-1", "L1", "prog")).toEqual({});
+  });
+
+  it("keeps a legitimately empty stored config permissive ({})", async () => {
+    enrollmentRows.value = [{ config: {} }];
+    expect(await getEnrollmentConfig("acc-1", "L1", "prog")).toEqual({});
+    expect(captureException).not.toHaveBeenCalled();
   });
 });
