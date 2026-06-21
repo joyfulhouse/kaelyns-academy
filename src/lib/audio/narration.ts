@@ -8,7 +8,7 @@
 import { captureNonCritical } from "@/lib/capture";
 import { MAX_TTS_TEXT_LEN, type Persist, enSpeed, enVoice, prefixFor } from "./config";
 import { synthesizeMp3 } from "./kokoro";
-import { ttsKey } from "./ttsKey";
+import { normalizeText, ttsKey } from "./ttsKey";
 import { clipExists, putClip } from "./store";
 
 export interface EnsureNarrationOptions {
@@ -35,18 +35,20 @@ export async function ensureNarration(
   const voice = options.voice ?? enVoice();
   const speed = options.speed ?? enSpeed();
   const prefix = prefixFor(options.persist);
-  const key = ttsKey(text, voice, speed);
+  // Canonicalize once with the SAME normalization ttsKey hashes, then use it for the
+  // length guard, key, dedupe, AND synthesis — so a whitespace-padded variant can't
+  // slip past the cap or cache non-canonical audio under the clean key.
+  const canonical = normalizeText(text);
+  const key = ttsKey(canonical, voice, speed);
 
-  // Mirror the /api/tts guard: never synthesize (or cache) oversized text. The
-  // runtime route rejects anything past this, so warming it is wasted spend — and
-  // it caps denial-of-wallet via pre-synth of AI-generated configs.
-  if (text.trim().length > MAX_TTS_TEXT_LEN) return { key, prefix, stored: false };
+  // Mirror the /api/tts guard: never synthesize (or cache) empty or oversized text.
+  if (!canonical || canonical.length > MAX_TTS_TEXT_LEN) return { key, prefix, stored: false };
 
   // Collapse concurrent identical synths so one clip isn't synthesized/written twice.
   const dedupeKey = `${prefix}/${key}`;
   const running = inflight.get(dedupeKey);
   if (running) return running;
-  const task = synthAndStore(text, voice, speed, prefix, key);
+  const task = synthAndStore(canonical, voice, speed, prefix, key);
   inflight.set(dedupeKey, task);
   try {
     return await task;

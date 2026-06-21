@@ -16,7 +16,7 @@ import {
   prefixFor,
 } from "@/lib/audio/config";
 import { synthesizeMp3 } from "@/lib/audio/kokoro";
-import { ttsKey } from "@/lib/audio/ttsKey";
+import { normalizeText, ttsKey } from "@/lib/audio/ttsKey";
 import { clipExists, putClip } from "@/lib/audio/store";
 import { captureNonCritical } from "@/lib/capture";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -70,7 +70,9 @@ export async function POST(req: Request): Promise<Response> {
   // A literal `null` (or any non-object) JSON body parses without throwing, but
   // would throw on field access below — treat it as a bad request, not a 500.
   if (typeof body !== "object" || body === null) return new Response(null, { status: 400 });
-  const text = typeof body.text === "string" ? body.text.trim() : "";
+  // Canonicalize the same way ttsKey hashes so the synth input, cache key, and
+  // length check all agree (a whitespace-padded body can't bypass the cap).
+  const text = typeof body.text === "string" ? normalizeText(body.text) : "";
   if (!text) return new Response(null, { status: 400 });
   if (text.length > MAX_TTS_TEXT_LEN) return new Response(null, { status: 400 });
 

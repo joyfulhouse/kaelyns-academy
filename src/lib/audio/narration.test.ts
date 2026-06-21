@@ -64,4 +64,15 @@ describe("ensureNarration", () => {
     expect(synthesizeMp3).not.toHaveBeenCalled();
     expect(putClip).not.toHaveBeenCalled();
   });
+
+  it("canonicalizes padded input so it can't bypass the cap or mis-key", async () => {
+    vi.mocked(clipExists).mockResolvedValue(false);
+    vi.mocked(synthesizeMp3).mockResolvedValue(new Uint8Array([1]) as Uint8Array<ArrayBuffer>);
+    vi.mocked(putClip).mockResolvedValue(true);
+    // Trims short (so the old text.trim() guard passed), but the raw is >500 chars.
+    const padded = `${" ".repeat(600)}cat${" ".repeat(600)}`;
+    await ensureNarration(padded);
+    // Synthesizes the CANONICAL "cat", never the padded raw input.
+    expect(synthesizeMp3).toHaveBeenCalledWith("cat", "af_heart", 0.9);
+  });
 });
