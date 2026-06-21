@@ -46,6 +46,16 @@ describe("ensureNarration", () => {
     expect(r.stored).toBe(false);
   });
 
+  it("collapses concurrent identical calls into one synth (in-flight dedupe)", async () => {
+    vi.mocked(clipExists).mockResolvedValue(false);
+    vi.mocked(synthesizeMp3).mockResolvedValue(new Uint8Array([1]) as Uint8Array<ArrayBuffer>);
+    vi.mocked(putClip).mockResolvedValue(true);
+    // Both calls start before the first resolves: the second finds the in-flight task.
+    const [r1, r2] = await Promise.all([ensureNarration("same text"), ensureNarration("same text")]);
+    expect(synthesizeMp3).toHaveBeenCalledTimes(1); // two concurrent calls, one synth
+    expect(r1).toEqual(r2);
+  });
+
   it("skips oversized text without synthesizing (denial-of-wallet guard)", async () => {
     const huge = "a".repeat(501); // mirrors the /api/tts MAX_TTS_TEXT_LEN=500 cap
     const r = await ensureNarration(huge);

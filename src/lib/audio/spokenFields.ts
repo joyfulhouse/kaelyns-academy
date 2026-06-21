@@ -6,6 +6,7 @@
  * pre-generated clip pipeline and are intentionally NOT covered here.
  */
 import { tilePhonemeText, wordPhonemeText } from "./phonemes";
+import { normalizeText } from "./ttsKey";
 
 /** Ordered, de-duplicated, non-blank spoken strings for one config item. */
 export function spokenEnglishStrings(item: unknown): string[] {
@@ -69,9 +70,12 @@ export function prewarmTexts(items: readonly unknown[], cap: number = PREWARM_MA
   const seen = new Set<string>();
   for (const item of items) {
     for (const text of spokenEnglishStrings(item)) {
+      // Dedupe by the SAME normalized identity ttsKey hashes, so whitespace
+      // variants (" cat", "cat\n") collapse to one warm call, not several.
+      const id = normalizeText(text);
+      if (seen.has(id)) continue;
       if (out.length >= cap) return out;
-      if (seen.has(text)) continue;
-      seen.add(text);
+      seen.add(id);
       out.push(text);
     }
   }

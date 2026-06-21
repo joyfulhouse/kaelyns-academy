@@ -72,6 +72,13 @@ describe("prewarmTexts", () => {
     expect(prewarmTexts(many)).toEqual(["Go", "ab", "a", "b"]);
   });
 
+  it("dedupes whitespace variants that hash to the same narration key", () => {
+    // ttsKey normalizes whitespace, so " cat ", "cat\n", "cat" are ONE clip; the
+    // raw-string Set would miss this and warm the same key several times.
+    const items = [{ instruction: "cat" }, { instruction: " cat " }, { instruction: "cat\n" }];
+    expect(prewarmTexts(items)).toEqual(["cat"]);
+  });
+
   it("hard-caps the total for a large distinct batch (bounds prewarm fan-out)", () => {
     const items = Array.from({ length: 8 }, (_, i) => ({
       instruction: `instr ${i}`,
