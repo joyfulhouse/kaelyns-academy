@@ -34,7 +34,7 @@ A **parallel agent is actively reworking TTS phonemes** (foreign-language pronun
 **Rules for this plan:**
 - **Do NOT modify any TTS-pipeline file** listed above. The editor's pronunciation control **consumes `/api/tts` read-only** (a "preview" button) and writes pronunciation data into content; it never changes synthesis.
 - **Multi-lingual is first-class:** `program_version` carries `locale` + `languages[]`; the marketplace and editor treat language as a visible dimension (the existing `world-languages` program seeds as a 4-language program).
-- **Pronunciation seam:** `activity.pronunciation` is a forward-compatible `jsonb` column added in **Slice 1** but left structurally open. The **pronunciation authoring widget (Slice 5, Task 5.x) is gated** on confirming the phoneme representation the TTS agent settles on (IPA string? per-token override map? explicit `ttsKey`?). Build the rest of the editor first; align the pronunciation field shape to their output before implementing that widget. Until then, the field round-trips as opaque JSON.
+- **Pronunciation seam (RESOLVED — see `[[kokoro-phoneme-overrides]]`):** Kokoro/misaki voices **inline IPA overrides** written into the spoken text as `[label](/IPA/)`. So pronunciation overrides live **inside `activity.config`'s spoken strings** — there is **no separate `pronunciation` column**. Slice 5's pronunciation control is an authoring aid that produces + verifies these inline overrides: it may call a read-only `/dev/phonemize` proxy (ground-truth IPA from the kokoro svc) and `/api/tts` (preview), and may import `src/lib/audio/phonemes.ts` (`withPhonemes`) read-only. It MUST NOT modify any TTS-pipeline file.
 
 ---
 
@@ -145,8 +145,8 @@ export const activity = pgTable(
     skillTags: jsonb("skill_tags").$type<string[]>().notNull().default([]),
     standardTags: jsonb("standard_tags").$type<string[]>().notNull().default([]),
     config: jsonb("config").$type<unknown>().notNull(),
-    // Forward-compatible pronunciation/multi-lingual seam (shape aligned to TTS work; see Coordination).
-    pronunciation: jsonb("pronunciation").$type<unknown>(),
+    // Pronunciation overrides live INLINE in config spoken strings as `[label](/IPA/)`
+    // (see Coordination + [[kokoro-phoneme-overrides]]) — no separate column.
   },
   (t) => [uniqueIndex("activity_lesson_key_uq").on(t.lessonId, t.activityKey)],
 );
@@ -403,7 +403,7 @@ it("seeds builtin programs + skills idempotently", async () => {
 - `store.ts` mutations: `createProgramDraft(input)`, `upsertVersionTree(versionId, tree)`, `reorderEntity(table, id, beforeKey, afterKey)` (fractional-indexing `generateKeyBetween`), `publishVersion(versionId)` (set version status=published, program.status=published, program.publishedVersionId; demote prior), `archiveProgram(programId)`, `cloneVersionToDraft(versionId)`.
 - `admin/actions.ts`: server actions wrapping the above behind `requireAdmin()`, Zod-validating each activity `config` via `ACTIVITY_CONFIG_SCHEMAS[kind]`.
 
-**Editor design:** one RHF `useForm` over the whole tree; `useFieldArray` per level; dnd-kit `SortableContext` per list calling `useFieldArray.move()` + persisting the moved row's `orderKey`; `ConfigFields` dispatches on `kind` to a ~150-line Zod-node→Wonder-Studio-input renderer reusing `ACTIVITY_CONFIG_SCHEMAS` (incl. `.refine()` on submit); `SkillTagCombobox`/`LanguageSelect` via Radix Popover + cmdk styled with our tokens; **`PronunciationControl`** writes `activity.pronunciation` and previews via `POST /api/tts` (read-only).
+**Editor design:** one RHF `useForm` over the whole tree; `useFieldArray` per level; dnd-kit `SortableContext` per list calling `useFieldArray.move()` + persisting the moved row's `orderKey`; `ConfigFields` dispatches on `kind` to a ~150-line Zod-node→Wonder-Studio-input renderer reusing `ACTIVITY_CONFIG_SCHEMAS` (incl. `.refine()` on submit); `SkillTagCombobox`/`LanguageSelect` via Radix Popover + cmdk styled with our tokens; **`PronunciationControl`** inserts inline `[label](/IPA/)` overrides into the activity's spoken `config` strings and previews via `POST /api/tts` (read-only; see `[[kokoro-phoneme-overrides]]`).
 
 **Consumes:** Slices 1–2; library deps.
 
@@ -448,6 +448,6 @@ it("seeds builtin programs + skills idempotently", async () => {
 | Per-child curriculum overview on home + learner detail | 3 (+ home read in 3) |
 | Data export / profile delete | 6 |
 | Multi-lingual first-class | 1 (`locale`/`languages`), 4, 5 |
-| Pronunciation/phoneme authoring (TTS-coordinated) | 1 (seam), 5 (widget, gated) |
+| Pronunciation/phoneme authoring (inline `[label](/IPA/)`, no column) | 5 (widget) |
 
-**Open coordination item:** the `activity.pronunciation` shape + `PronunciationControl` widget must align with the parallel TTS-phoneme work before Slice 5's pronunciation task — tracked in Coordination above.
+**Coordination item (resolved):** the TTS phoneme format is inline `[label](/IPA/)` (see `[[kokoro-phoneme-overrides]]`); the `PronunciationControl` widget (Slice 5) authors these inline overrides and consumes `/dev/phonemize` + `/api/tts` read-only. No schema column needed.
