@@ -3,8 +3,8 @@
 import { useState, useTransition } from "react";
 import {
   CheckCircleIcon,
-  ClockIcon,
   DownloadSimpleIcon,
+  ListChecksIcon,
   RobotIcon,
   SpeakerHighIcon,
   TrashIcon,
@@ -18,30 +18,29 @@ import { SampleBadge } from "@/components/parent/SampleBadge";
 import { saveLearnerSettingsAction } from "@/app/(parent)/actions";
 
 /**
- * Parent settings form. Controls map to `LearnerSettings` (dailyGoal,
- * aiPractice, readAloud) and persist via `saveLearnerSettingsAction` when a
- * `primaryLearnerId` is available. Settings are scoped to the primary (first)
- * learner for now; per-learner settings UI lands in a later phase.
+ * Parent settings form. Controls map directly to `LearnerSettings`
+ * (dailyGoal, aiPractice, readAloud) and persist via `saveLearnerSettingsAction`
+ * when a `primaryLearnerId` is available. Settings are scoped to the primary
+ * (first) learner for now; per-learner settings UI lands in a later phase.
  */
 
-const TIME_LIMIT_OPTIONS = [
-  { value: "0", label: "No limit" },
-  { value: "15", label: "15 minutes" },
-  { value: "20", label: "20 minutes" },
-  { value: "30", label: "30 minutes" },
-  { value: "45", label: "45 minutes" },
-  { value: "60", label: "1 hour" },
+const DAILY_GOAL_OPTIONS = [
+  { value: "0", label: "No goal" },
+  { value: "3", label: "3 activities" },
+  { value: "5", label: "5 activities" },
+  { value: "10", label: "10 activities" },
+  { value: "15", label: "15 activities" },
+  { value: "20", label: "20 activities" },
 ];
 
 interface SettingsState {
-  dailyTimeLimit: string;
+  dailyGoal: string;
   aiFeatures: boolean;
   readAloudDefault: boolean;
 }
 
-// Sensible defaults matching the LearnerSettings defaults (daily limit: 30 min → 5 activities/day proxy).
 const DEFAULTS: SettingsState = {
-  dailyTimeLimit: "30",
+  dailyGoal: "5",
   aiFeatures: true,
   readAloudDefault: true,
 };
@@ -64,14 +63,10 @@ export function SettingsForm({ primaryLearnerId }: { primaryLearnerId: string | 
   function handleSave() {
     if (isPending) return;
 
-    // Map the form state to LearnerSettings. dailyTimeLimit is in minutes;
-    // dailyGoal is activities/day — use a rough proxy (minutes ÷ 6) until a
-    // proper mapping is established; 0 = no limit → 0 activities floor.
-    const minuteLimit = parseInt(settings.dailyTimeLimit, 10);
-    const dailyGoal = minuteLimit > 0 ? Math.max(1, Math.round(minuteLimit / 6)) : 0;
+    const dailyGoal = parseInt(settings.dailyGoal, 10);
 
     if (!primaryLearnerId) {
-      // No learner yet: store locally only (same as the old behaviour).
+      // No learner yet: nothing to persist; acknowledge locally.
       setSaveState({ status: "saved" });
       return;
     }
@@ -79,7 +74,7 @@ export function SettingsForm({ primaryLearnerId }: { primaryLearnerId: string | 
     startTransition(async () => {
       try {
         const result = await saveLearnerSettingsAction(primaryLearnerId, {
-          dailyGoal,
+          dailyGoal: Number.isFinite(dailyGoal) ? dailyGoal : undefined,
           aiPractice: settings.aiFeatures,
           readAloud: settings.readAloudDefault,
         });
@@ -99,10 +94,10 @@ export function SettingsForm({ primaryLearnerId }: { primaryLearnerId: string | 
 
   return (
     <div className="flex flex-col gap-10">
-      {/* Safety & time */}
+      {/* Learning & AI */}
       <section>
         <div className="flex items-center justify-between gap-3">
-          <h2 className="font-display text-xl font-semibold tracking-tight">Safety &amp; time</h2>
+          <h2 className="font-display text-xl font-semibold tracking-tight">Learning &amp; AI</h2>
           {!primaryLearnerId && <SampleBadge />}
         </div>
         {!primaryLearnerId && (
@@ -113,19 +108,19 @@ export function SettingsForm({ primaryLearnerId }: { primaryLearnerId: string | 
 
         <div className="mt-5 flex flex-col divide-y divide-line rounded-xl border border-line">
           <div className="flex items-start gap-3 p-5">
-            <ClockIcon weight="regular" className="mt-0.5 size-5 shrink-0 text-accent-deep" />
+            <ListChecksIcon weight="regular" className="mt-0.5 size-5 shrink-0 text-accent-deep" />
             <div className="min-w-0 flex-1">
               <Field
-                id="time-limit"
-                label="Daily time limit"
-                hint="A gentle cap on learning time per day. The studio winds down, it never slams shut."
+                id="daily-goal"
+                label="Daily activity goal"
+                hint="How many activities your child aims to complete each day. 0 means no goal."
               >
                 {(field) => (
                   <Select
                     {...field}
-                    options={TIME_LIMIT_OPTIONS}
-                    value={settings.dailyTimeLimit}
-                    onChange={(e) => update("dailyTimeLimit", e.target.value)}
+                    options={DAILY_GOAL_OPTIONS}
+                    value={settings.dailyGoal}
+                    onChange={(e) => update("dailyGoal", e.target.value)}
                     disabled={isPending}
                     className="mt-1 max-w-xs"
                   />
