@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { captureNonCritical } from "@/lib/capture";
 import { UnauthenticatedError, withAccount } from "@/lib/tenancy";
-import { findActivity, getProgram, getSkill, type SkillTag } from "@/content";
+import { findActivity, getSkill, type SkillTag } from "@/content";
+import { getProgramAsync } from "@/lib/content/repository";
 import {
   createLearner,
   ensureEnrollment,
@@ -164,7 +165,7 @@ export async function requestProgressReport(learnerId?: string): Promise<Progres
 
       // Ground the report's recent list in the real activity titles where we
       // can resolve them (falling back to the plain-language kind label).
-      const program = getProgram(ADAPTIVE_PROGRAM_SLUG);
+      const program = await getProgramAsync(ADAPTIVE_PROGRAM_SLUG);
       return {
         learner,
         state,

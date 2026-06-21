@@ -16,14 +16,13 @@ import { deriveOutcome, type SkillState } from "@/lib/tutor/mastery";
 import {
   SKILLS,
   findActivity,
-  findProgramByActivityId,
-  getProgram,
   skillTagsForProgram,
   type ActivityKind,
   type Program,
   type SkillOutcome,
   type SkillTag,
 } from "@/content";
+import { getProgramAsync, findProgramByActivityIdAsync } from "@/lib/content/repository";
 
 /**
  * Read helpers for the parent surface, every one scoped through `withAccount`
@@ -43,13 +42,14 @@ export const ADAPTIVE_PROGRAM_SLUG = "kaelyn-adaptive";
  * learner may not have touched. So the dashboard summary scopes to the core
  * program's skills; the learner-detail page still renders every domain (incl.
  * the language strands) in its own labelled section.
+ *
+ * Resolved per-request (DB-preferred, static-fallback) rather than at module
+ * top level, so the build stays safe and the value reflects the live catalog.
  */
-function skillTagsForSlug(slug: string): SkillTag[] {
-  const program = getProgram(slug);
-  return program ? skillTagsForProgram(program) : SKILLS.map((s) => s.slug);
+async function adaptiveSkillTags(): Promise<SkillTag[]> {
+  const p = await getProgramAsync(ADAPTIVE_PROGRAM_SLUG);
+  return p ? skillTagsForProgram(p) : SKILLS.map((s) => s.slug);
 }
-
-const ADAPTIVE_SKILL_TAGS: SkillTag[] = skillTagsForSlug(ADAPTIVE_PROGRAM_SLUG);
 
 /**
  * Parent-readable label per activity kind, mirroring each plugin's `label`
@@ -121,13 +121,13 @@ export interface ActivityRow {
   when: string;
 }
 
-function toActivityRow(program: Program | undefined, a: RecentAttempt): ActivityRow {
+async function toActivityRow(program: Program | undefined, a: RecentAttempt): Promise<ActivityRow> {
   let found = program ? findActivity(program, a.activityId) : undefined;
   if (!found) {
     // Attempts can span programs (e.g. a World Languages activity shown on the
     // core dashboard) — resolve the owning program so the parent sees a real
     // title, not the raw id.
-    const owner = findProgramByActivityId(a.activityId);
+    const owner = await findProgramByActivityIdAsync(a.activityId);
     found = owner ? findActivity(owner, a.activityId) : undefined;
   }
   return {
@@ -144,11 +144,14 @@ function toActivityRow(program: Program | undefined, a: RecentAttempt): Activity
 export async function listLearnerCards(): Promise<LearnerCard[]> {
   return withAccount(async ({ accountId }) => {
     const learners = await listLearners(accountId);
-    const program = getProgram(ADAPTIVE_PROGRAM_SLUG);
+    const [program, adaptiveTags] = await Promise.all([
+      getProgramAsync(ADAPTIVE_PROGRAM_SLUG),
+      adaptiveSkillTags(),
+    ]);
     return Promise.all(
       learners.map(async (learner) => {
-        const counts = await skillOutcomeCounts(accountId, learner.id, ADAPTIVE_SKILL_TAGS);
-        return { learner, program, summary: summarize(counts, ADAPTIVE_SKILL_TAGS.length) };
+        const counts = await skillOutcomeCounts(accountId, learner.id, adaptiveTags);
+        return { learner, program, summary: summarize(counts, adaptiveTags.length) };
       }),
     );
   });
@@ -191,7 +194,7 @@ export async function getLearnerDetail(learnerId: string): Promise<LearnerDetail
     const learner = await getLearner(accountId, learnerId);
     if (!learner) return null;
 
-    const program = getProgram(ADAPTIVE_PROGRAM_SLUG);
+    const program = await getProgramAsync(ADAPTIVE_PROGRAM_SLUG);
     const [state, attempts] = await Promise.all([
       getSkillState(accountId, learnerId),
       getRecentAttempts(accountId, learnerId, 12),
@@ -209,7 +212,7 @@ export async function getLearnerDetail(learnerId: string): Promise<LearnerDetail
       learner,
       program,
       skills,
-      recent: attempts.map((a) => toActivityRow(program, a)),
+      recent: await Promise.all(attempts.map((a) => toActivityRow(program, a))),
       hasActivity: attempts.length > 0,
     };
   });
@@ -230,12 +233,15 @@ export interface OverviewData {
 export async function getOverview(): Promise<OverviewData> {
   return withAccount(async ({ accountId }) => {
     const learners = await listLearners(accountId);
-    const program = getProgram(ADAPTIVE_PROGRAM_SLUG);
+    const [program, adaptiveTags] = await Promise.all([
+      getProgramAsync(ADAPTIVE_PROGRAM_SLUG),
+      adaptiveSkillTags(),
+    ]);
 
     const cards: LearnerCard[] = await Promise.all(
       learners.map(async (learner) => {
-        const counts = await skillOutcomeCounts(accountId, learner.id, ADAPTIVE_SKILL_TAGS);
-        return { learner, program, summary: summarize(counts, ADAPTIVE_SKILL_TAGS.length) };
+        const counts = await skillOutcomeCounts(accountId, learner.id, adaptiveTags);
+        return { learner, program, summary: summarize(counts, adaptiveTags.length) };
       }),
     );
 
@@ -249,7 +255,7 @@ export async function getOverview(): Promise<OverviewData> {
         learner: first.learner,
         program: first.program,
         summary: first.summary,
-        recent: attempts.map((a) => toActivityRow(first.program, a)),
+        recent: await Promise.all(attempts.map((a) => toActivityRow(first.program, a))),
         hasActivity: attempts.length > 0,
       },
     };
