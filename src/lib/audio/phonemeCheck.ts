@@ -51,17 +51,26 @@ const CONSONANTS = new Set<string>([
 ]);
 
 /**
- * The ordered consonant phonemes in an IPA/misaki string. Lowercases first so
- * misaki's case variants fold in (the flap `T` in "ciTy"/"buTTer" → /t/; uppercase
- * vowels like `A`/`I` lowercase to non-consonants and are correctly dropped), and
- * folds the affricate digraphs tʃ/dʒ → ʧ/ʤ so a two-char affricate counts once.
+ * The ordered consonant phonemes in an IPA/misaki string. Normalizes notation so
+ * the two sides compare on equal footing:
+ *  - lowercases (misaki's flap `T` in "ciTy"/"buTTer" → /t/; uppercase vowels
+ *    `A`/`I` become non-consonants and are correctly dropped),
+ *  - folds affricate digraphs tʃ/dʒ → ʧ/ʤ so a two-char affricate counts once,
+ *  - folds ASCII r → ɹ and ASCII g → ɡ. This is ESSENTIAL: misaki (lang "a")
+ *    emits the rhotic `ɹ` and script-g `ɡ`, but an LLM asked for "IPA" almost
+ *    always writes the colloquial ASCII `r`/`g`. Without this fold an override
+ *    like "r" for "run" (ɹˈʌn) would fail the subsequence check and be wrongly
+ *    dropped to bare — silently re-breaking the most common phonics tiles (r, g,
+ *    r-controlled vowels, gr/br/fr blends).
  * Stress marks, length marks, and all vowels are ignored.
  */
 function consonants(ipa: string): string[] {
   const folded = ipa
     .toLowerCase()
     .replace(/tʃ/g, "ʧ") // tʃ → ʧ
-    .replace(/dʒ/g, "ʤ"); // dʒ → ʤ
+    .replace(/dʒ/g, "ʤ") // dʒ → ʤ
+    .replace(/r/g, "ɹ") // ASCII r → misaki rhotic ɹ
+    .replace(/g/g, "ɡ"); // ASCII g → misaki script-g ɡ
   const out: string[] = [];
   for (const ch of folded) {
     if (CONSONANTS.has(ch)) out.push(ch);

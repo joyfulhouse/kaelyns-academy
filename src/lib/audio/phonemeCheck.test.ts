@@ -54,4 +54,16 @@ describe("plausibleOverride", () => {
     expect(plausibleOverride("ŋ", "sˈɪŋ")).toBe(true); // ng in sing
     expect(plausibleOverride("p", "ʃˈɪp")).toBe(true);
   });
+
+  it("folds ASCII r/g to misaki ɹ/ɡ so LLM-style overrides aren't wrongly dropped", () => {
+    // misaki (lang "a") emits ɹ and ɡ, but the model writes colloquial ASCII r/g.
+    // run → ɹˈʌn, got → ɡˈɑt: the override MUST be kept, not dropped to bare.
+    expect(plausibleOverride("r", "ɹˈʌn")).toBe(true); // ASCII r ⊑ ɹ
+    expect(plausibleOverride("g", "ɡˈɑt")).toBe(true); // ASCII g ⊑ ɡ
+    expect(plausibleOverride("ɑr", "kˈɑɹ")).toBe(true); // "ar" r-controlled in car
+    expect(plausibleOverride("ɡr", "ɡɹˈin")).toBe(true); // "gr" blend in green
+    expect(plausibleOverride("br", "bɹˈIn")).toBe(true); // "br" blend (brine)
+    // a genuine mismatch still fails (fold doesn't make everything pass).
+    expect(plausibleOverride("z", "ɹˈʌn")).toBe(false);
+  });
 });
