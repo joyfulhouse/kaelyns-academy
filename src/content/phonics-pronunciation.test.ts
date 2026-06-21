@@ -92,6 +92,26 @@ describe("phonics-wordbuild pronunciation overrides", () => {
     }
   });
 
+  it("rejects oversized configs so generated content can't fan out TTS prewarm", () => {
+    // Every tile is pre-synthesized to durable TTS; without a cap a bad generated
+    // config could trigger hundreds of warm calls. Schema caps the array sizes.
+    const tooManyTiles = {
+      focus: "x",
+      instruction: "y",
+      tiles: Array.from({ length: 200 }, (_, i) => `t${i}`),
+      words: [{ word: "test" }],
+    };
+    expect(() => phonicsWordbuildConfig.parse(tooManyTiles)).toThrow();
+
+    const tooManyWords = {
+      focus: "x",
+      instruction: "y",
+      tiles: ["a", "b"],
+      words: Array.from({ length: 50 }, (_, i) => ({ word: `w${i}` })),
+    };
+    expect(() => phonicsWordbuildConfig.parse(tooManyWords)).toThrow();
+  });
+
   it("the reported 'six syllable types' activity fixes the known-bad tiles", () => {
     // Regression for the original bug: in isolation ta→"tah", ble→"blee",
     // ti→"tee", ger→"jer" (soft g). Each must carry an IPA override now.
