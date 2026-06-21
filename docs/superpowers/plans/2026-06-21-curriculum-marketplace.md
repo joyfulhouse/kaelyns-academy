@@ -15,6 +15,7 @@
 ## Global Constraints (every task inherits these)
 
 - **Package manager is bun.** Never npm/yarn/pnpm. Run one test: `bun run test src/path/file.test.ts`. Full gate: `bun run lint && bun run typecheck && bun run test && bun run build`.
+- **Testing convention (important — there is NO live test DB):** `getDb()` is never hit in tests. Unit-test **pure functions** (Zod schemas, mapping/transform helpers, `REQUIRED_COLUMNS`) and assert DB *call sequences* via the hand-rolled fake-`tx` pattern in `src/lib/tutor/store.test.ts`. Structure DB code so the logic is a pure transform with a thin `getDb()` glue around it; the glue is verified **manually** (run a script against the dev DB via `scripts/db.sh`, then check `/api/health`). Do NOT add pglite/testcontainers/pg-mem — keep the suite pure + fast.
 - **Build-safety (non-negotiable):** never call `getDb()`/`getAuth()`/`getEnv()`/network at module top level. Lazy, per-request only. New content reads use lazy `getDb()` inside functions; the async repository must not connect at import.
 - **Never disable a lint rule, never `@ts-ignore`, never ignore a warning.** Fix the root cause.
 - **Tenancy:** every learner-scoped read/write goes through `withAccount()`/`requireAccount()` (`src/lib/tenancy.ts`). Content (program/version/unit/lesson/activity/skill/publisher) is **global**, not account-scoped; enrollment/config/progress/settings are account-/learner-scoped.
@@ -302,23 +303,36 @@ export type LearnerSettings = z.infer<typeof learnerSettingsSchema>;
 
 - [ ] **Step 7: Extend `REQUIRED_COLUMNS` + its test** — add the columns listed in "Shared schema". Update `src/lib/db/health.test.ts` to assert the new tables/columns are present in `REQUIRED_COLUMNS`. Run `bun run test src/lib/db/health.test.ts` → PASS.
 
-- [ ] **Step 8: Write `seed-content.ts` (test first)** — the test imports the static `kaelynAdaptive`/`worldLanguages` programs + static `SKILLS` (still present this slice) and asserts `seedContent()` writes one `program` + one published `program_version` per static program, units/lessons/activities with `activityKey` == the static `activity.id`, and one `skill` row per static skill. Use a transactional test DB or mock `getDb()` per the existing `store.test.ts` pattern.
+- [ ] **Step 8: Write the pure seed-transform test first** — split the seed into a **pure** `buildSeedPlan(programs, skills)` (NO DB) returning the row value-sets, and a thin `seedContent()` glue that inserts them. Test only the pure transform:
 
 ```ts
-// scripts/seed-content.test.ts (shape — mirror src/lib/tutor/store.test.ts DB harness)
+// scripts/seed-content.test.ts
 import { describe, expect, it } from "vitest";
-import { seedContent } from "./seed-content";
-// ...set up the test db, run migrations...
-it("seeds builtin programs + skills idempotently", async () => {
-  const first = await seedContent();
-  expect(first.programs).toBeGreaterThanOrEqual(2);
-  expect(first.skills).toBeGreaterThan(0);
-  const second = await seedContent(); // idempotent
-  expect(second.programs).toBe(0); // onConflictDoNothing
+import { buildSeedPlan } from "./seed-content";
+import { listPrograms, SKILLS } from "@/content";
+
+describe("buildSeedPlan", () => {
+  const plan = buildSeedPlan(listPrograms(), SKILLS);
+  it("emits one program + one published v1 per static program", () => {
+    expect(plan.programs.length).toBe(listPrograms().length);
+    expect(plan.versions.every((v) => v.version === 1 && v.status === "published")).toBe(true);
+  });
+  it("preserves authored ids as stable keys (activityKey == authored activity.id)", () => {
+    const a = listPrograms()[0].units[0].lessons[0].activities[0];
+    expect(plan.activities.some((r) => r.activityKey === a.id)).toBe(true);
+  });
+  it("maps every skill", () => {
+    expect(plan.skills.length).toBe(SKILLS.length);
+  });
+  it("orders siblings with lexically-sortable orderKeys matching authored order", () => {
+    const u = plan.units.filter((r) => r.programVersionKey === plan.versions[0].key);
+    const sorted = [...u].sort((x, y) => x.orderKey.localeCompare(y.orderKey));
+    expect(sorted.map((r) => r.unitKey)).toEqual(u.map((r) => r.unitKey));
+  });
 });
 ```
 
-- [ ] **Step 9: Implement `seed-content.ts`** — read `listPrograms()` + `SKILLS` from `@/content`; for each program insert `publisher`(builtin, once), `program`(slug, status=published, publishedVersionId set after), `program_version`(version 1, status=published, title/subtitle/ageBand/summary/world/locale/languages), then walk units→lessons→activities inserting rows with `orderKey` from `generateNKeysBetween(null, null, n)` (Slice 5 adds the dep; for Slice 1 use a simple zero-padded ordinal string e.g. `String(i).padStart(6,"0")` to avoid pulling the dep early) and `activityKey = activity.id`. Insert `skill` rows from `SKILLS`. All inserts `onConflictDoNothing`. Set `program.publishedVersionId` to the created version id.
+- [ ] **Step 9: Run it (FAIL) → implement `buildSeedPlan` + `seedContent`.** `buildSeedPlan` is **pure**: for each `Program` emit `publisher`(builtin, deduped), `program`(slug, status=`published`), `program_version`(version 1, status=`published`, title/subtitle/ageBand/summary/world, `locale`, and `languages` — derive for `world-languages` from its units, else `["en-US"]`), then walk units→lessons→activities emitting rows keyed by the **authored ids** (`unitKey=unit.id`, `lessonKey=lesson.id`, `activityKey=activity.id`) with `orderKey = String(order).padStart(6,"0")` (simple/sortable; Slice 5 swaps in `fractional-indexing`). Use intra-plan `key` fields to wire parent↔child without DB ids (e.g. `programVersionKey`), resolved to real UUIDs in the glue. `seedContent()` is the thin glue: open `getDb()`, insert each set with `onConflictDoNothing`, set each `program.publishedVersionId`. **No DB in the test;** `seedContent()` is verified manually in Step 10. Run `bun run test scripts/seed-content.test.ts` → PASS.
 
 - [ ] **Step 10: Run seed test → PASS**; then run the full gate `bun run lint && bun run typecheck && bun run test`. Apply the migration locally (`bun run db:migrate`) and run `bun scripts/seed-content.ts` against the dev DB; spot-check with `scripts/db.sh -c "select slug,status from program; select count(*) from activity; select count(*) from skill;"`.
 
