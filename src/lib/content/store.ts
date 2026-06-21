@@ -71,7 +71,7 @@ export function assembleProgram(rows: ProgramTreeRows): Program {
 
       return {
         id: unitRow.id,
-        order: unitIndex,
+        order: unitIndex + 1,
         title: unitRow.title,
         emoji: unitRow.emoji ?? "",
         world: (unitRow.world as World) ?? "sunshine",
@@ -95,7 +95,7 @@ export function assembleProgram(rows: ProgramTreeRows): Program {
 
           return {
             id: lessonRow.id,
-            order: lessonIndex,
+            order: lessonIndex + 1,
             title: lessonRow.title,
             activities: assembledActivities,
           };
