@@ -21,6 +21,7 @@ import {
 } from "@/content";
 import { captureNonCritical } from "@/lib/capture";
 import {
+  anyProgramExists,
   assembleProgram,
   getPublishedProgramTreeRows,
   getProgramVersionTreeRows,
@@ -46,6 +47,24 @@ function staticSummaries(): ProgramSummary[] {
     world: null,
     languages: [],
   }));
+}
+
+/**
+ * The list analog of getProgramAsync's existence guard. When the published-list
+ * read came back EMPTY, decide whether to serve the static catalog:
+ *   - no `program` rows exist at all → static fallback is fine (true)
+ *   - program rows exist but none are published (all draft/archived) → the
+ *     catalog is deliberately empty; do NOT resurrect static programs (false)
+ *   - the existence check itself errors → fall back to static (true), so a DB
+ *     blip degrades to the built-in catalog rather than an empty store.
+ */
+async function shouldStaticFallbackForEmptyList(): Promise<boolean> {
+  try {
+    return !(await anyProgramExists());
+  } catch (existsErr) {
+    captureNonCritical("content repository existence check failed (list)", existsErr);
+    return true;
+  }
 }
 
 // ── Exported resolvers (cache()-wrapped) ─────────────────────────────────────
@@ -118,7 +137,12 @@ export const listProgramsAsync: () => Promise<Program[]> = cache(
         }
         if (programs.length > 0) return programs;
       }
+      // Zero PUBLISHED programs. Only fall back to the static catalog when the DB
+      // has no program rows at all — if rows exist but none are published, the
+      // catalog is deliberately empty (don't resurrect static programs).
+      if (!(await shouldStaticFallbackForEmptyList())) return [];
     } catch (err) {
+      // Real DB error (e.g. missing DATABASE_URL, connection refused) → static fallback.
       captureNonCritical("content repository DB error (listProgramsAsync)", err);
     }
     return listPrograms();
@@ -135,7 +159,12 @@ export const listProgramSummariesAsync: () => Promise<ProgramSummary[]> = cache(
     try {
       const summaries = await listPublishedProgramSummaries();
       if (summaries.length > 0) return summaries;
+      // Zero PUBLISHED programs. Only fall back to static summaries when the DB
+      // has no program rows at all — if rows exist but none are published, the
+      // catalog is deliberately empty (don't resurrect static programs).
+      if (!(await shouldStaticFallbackForEmptyList())) return [];
     } catch (err) {
+      // Real DB error → static fallback.
       captureNonCritical("content repository DB error (listProgramSummariesAsync)", err);
     }
     return staticSummaries();

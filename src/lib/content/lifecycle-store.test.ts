@@ -22,17 +22,45 @@ vi.mock("drizzle-orm", () => ({
 // Canned rows the fake relational layer returns.
 const programRow = { value: null as Record<string, unknown> | null };
 const versionFindFirst = { value: null as Record<string, unknown> | null };
+// Optional FIFO override for programVersion.findFirst: when non-empty, each call
+// shifts the next value (used to drive the clone's "no existing draft, then a
+// winner" convergence sequence). Falls back to versionFindFirst.value when empty.
+const versionFindFirstQueue: (Record<string, unknown> | null)[] = [];
+// Canned rows for the unit/lesson/activity findMany reads in the clone source
+// tree-load path (empty trees keep the clone insert minimal).
+const findManyRows = { units: [] as unknown[], lessons: [] as unknown[], activities: [] as unknown[] };
+// Resolves the db.select(...).from(...).where(...) max(version) read in clone.
+const selectMaxRows = { value: [{ maxVersion: 1, id: "vSrc" }] as Record<string, unknown>[] };
 
 const transaction = vi.fn();
+
+function nextVersionFindFirst(): Record<string, unknown> | null {
+  return versionFindFirstQueue.length > 0
+    ? (versionFindFirstQueue.shift() ?? null)
+    : versionFindFirst.value;
+}
+
+/** Awaitable select chain resolving to the canned max(version) rows. */
+function selectChain() {
+  const chain: Record<string, unknown> = {};
+  for (const m of ["from", "where"]) chain[m] = () => chain;
+  (chain as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
+    Promise.resolve(selectMaxRows.value).then(resolve);
+  return chain;
+}
 
 vi.mock("@/lib/db", () => ({
   getDb: () => ({
     query: {
       program: { findFirst: () => Promise.resolve(programRow.value) },
-      // Both the publish lookup (by id) and the clone existing-draft lookup
-      // (by programId+status) route through this single canned value.
-      programVersion: { findFirst: () => Promise.resolve(versionFindFirst.value) },
+      // Publish lookup (by id), clone existing-draft lookup (by programId+status),
+      // and clone winner re-resolve all route through this (queue-aware) stub.
+      programVersion: { findFirst: () => Promise.resolve(nextVersionFindFirst()) },
+      unit: { findMany: () => Promise.resolve(findManyRows.units) },
+      lesson: { findMany: () => Promise.resolve(findManyRows.lessons) },
+      activity: { findMany: () => Promise.resolve(findManyRows.activities) },
     },
+    select: () => selectChain(),
     transaction,
   }),
   schema: {
@@ -59,6 +87,11 @@ function fakeTx() {
 beforeEach(() => {
   programRow.value = null;
   versionFindFirst.value = null;
+  versionFindFirstQueue.length = 0;
+  findManyRows.units = [];
+  findManyRows.lessons = [];
+  findManyRows.activities = [];
+  selectMaxRows.value = [{ maxVersion: 1, id: "vSrc" }];
   transaction.mockReset();
   transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) => fn(fakeTx()));
 });
@@ -106,5 +139,62 @@ describe("cloneVersionToDraft (idempotent clone)", () => {
   it("throws when the program does not exist", async () => {
     programRow.value = null;
     await expect(cloneVersionToDraft("nope")).rejects.toThrow("Program not found");
+  });
+
+  it("converges to the winner's draft when a concurrent clone wins the version race", async () => {
+    // No existing draft on the first lookup → both clones proceed to insert. We
+    // simulate the loser: its INSERT hits the (programId, version) unique index.
+    programRow.value = { id: "p1", publishedVersionId: "vSrc" };
+    // The clone path makes three programVersion.findFirst calls in order:
+    //   1. existing-draft check          → null (no open draft yet)
+    //   2. source-tree load (vSrc row)   → the published source version
+    //   3. winner re-resolve (in catch)  → the draft the concurrent winner committed
+    const sourceVersion = {
+      id: "vSrc",
+      programId: "p1",
+      status: "published",
+      title: "Source",
+      subtitle: null,
+      ageBand: null,
+      summary: null,
+      world: null,
+      locale: null,
+      languages: [],
+    };
+    versionFindFirstQueue.push(
+      null,
+      sourceVersion,
+      { id: "vWinner", programId: "p1", status: "draft" },
+    );
+
+    // The insert transaction throws the Postgres unique_violation for our index.
+    const uniqueErr = Object.assign(new Error("duplicate key value"), {
+      code: "23505",
+      constraint: "program_version_program_version_uq",
+    });
+    transaction.mockRejectedValueOnce(uniqueErr);
+
+    const result = await cloneVersionToDraft("p1");
+    expect(result).toEqual({ versionId: "vWinner" });
+  });
+
+  it("rethrows a non-unique transaction error (no false convergence)", async () => {
+    programRow.value = { id: "p1", publishedVersionId: "vSrc" };
+    const sourceVersion = {
+      id: "vSrc",
+      programId: "p1",
+      status: "published",
+      title: "Source",
+      subtitle: null,
+      ageBand: null,
+      summary: null,
+      world: null,
+      locale: null,
+      languages: [],
+    };
+    versionFindFirstQueue.push(null, sourceVersion); // no existing draft, then source row
+    transaction.mockRejectedValueOnce(new Error("connection reset"));
+
+    await expect(cloneVersionToDraft("p1")).rejects.toThrow("connection reset");
   });
 });

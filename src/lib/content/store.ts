@@ -244,6 +244,20 @@ export async function programExistsBySlug(slug: string): Promise<boolean> {
 }
 
 /**
+ * Whether ANY `program` row exists in the DB, in any status (draft, published,
+ * or archived). The list analog of {@link programExistsBySlug}: it lets the
+ * repository's list resolvers distinguish "DB has no programs at all → static
+ * fallback is fine" from "programs exist but none are published → return an
+ * empty list, do NOT resurrect the static catalog". Throws on DB error (callers
+ * treat a thrown error as 'unreachable → static fallback').
+ */
+export async function anyProgramExists(): Promise<boolean> {
+  const db = getDb();
+  const row = await db.query.program.findFirst({ columns: { id: true } });
+  return row != null;
+}
+
+/**
  * Light catalog metadata — slug, title, subtitle, ageBand, summary, world,
  * languages — without loading the full tree.
  */
@@ -770,6 +784,31 @@ export async function publishVersion(versionId: string): Promise<void> {
   });
 }
 
+/** Postgres unique_violation SQLSTATE — surfaced by node-postgres on the failing
+ *  INSERT when two concurrent clones race the same (programId, version). */
+const PG_UNIQUE_VIOLATION = "23505";
+
+/** True when `err` is the unique-violation on the program_version (programId,
+ *  version) index — i.e. a concurrent clone already inserted this version. */
+function isProgramVersionUniqueViolation(err: unknown): boolean {
+  const e = err as { code?: unknown; constraint?: unknown } | null;
+  return (
+    e?.code === PG_UNIQUE_VIOLATION &&
+    e?.constraint === "program_version_program_version_uq"
+  );
+}
+
+/** Resolve the program's current open draft (highest-numbered draft row), or null. */
+async function findOpenDraft(
+  db: ReturnType<typeof getDb>,
+  programId: string,
+): Promise<{ id: string } | null> {
+  const draft = await db.query.programVersion.findFirst({
+    where: (v, { and: andOp }) => andOp(eq(v.programId, programId), eq(v.status, "draft")),
+  });
+  return draft ? { id: draft.id } : null;
+}
+
 /**
  * Clone the program's current published (or highest-numbered) version's metadata
  * and tree into a new `program_version` (version = max+1, status `draft`).
@@ -778,6 +817,14 @@ export async function publishVersion(versionId: string): Promise<void> {
  * Idempotent: if the program already has an open draft version, that draft's id
  * is returned instead of inserting a second draft — re-cloning (e.g. a double
  * click, or cloning an already-cloned program) never spawns orphan drafts.
+ *
+ * Concurrency: the existing-draft check and `max(version)+1` are computed OUTSIDE
+ * the insert transaction, so two concurrent clones can both compute the same
+ * `nextVersion` and the `program_version_program_version_uq` (programId, version)
+ * unique index will reject the loser's INSERT. We converge instead of erroring:
+ * on that unique-violation, the loser re-resolves to the winner's now-committed
+ * open draft and returns its id (so a double-submit yields one draft, not a
+ * generic failure). A non-unique error still propagates.
  */
 export async function cloneVersionToDraft(
   programId: string,
@@ -790,9 +837,7 @@ export async function cloneVersionToDraft(
   if (!programRow) throw new Error(`Program not found: ${programId}`);
 
   // If an open draft already exists, return it (idempotent clone — no second draft).
-  const existingDraft = await db.query.programVersion.findFirst({
-    where: (v, { and: andOp }) => andOp(eq(v.programId, programId), eq(v.status, "draft")),
-  });
+  const existingDraft = await findOpenDraft(db, programId);
   if (existingDraft) return { versionId: existingDraft.id };
 
   // Prefer the published version; fall back to the highest version number.
@@ -810,7 +855,8 @@ export async function cloneVersionToDraft(
   const sourceRows = await getProgramVersionTreeRows(sourceVersionId);
   if (!sourceRows) throw new Error(`Source version not found: ${sourceVersionId}`);
 
-  // Determine the next version number.
+  // Determine the next version number. Computed outside the tx (see the
+  // concurrency note above) — a losing race is reconciled in the catch below.
   const maxResult = await db
     .select({ maxVersion: max(schema.programVersion.version) })
     .from(schema.programVersion)
@@ -821,24 +867,34 @@ export async function cloneVersionToDraft(
   const { units: unitRows, lessons: lessonRows, activities: activityRows } =
     buildVersionTreeRows(newVersionId, sourceRowsToEditable(sourceRows));
 
-  await db.transaction(async (tx) => {
-    await tx.insert(schema.programVersion).values({
-      id: newVersionId,
-      programId,
-      version: nextVersion,
-      status: "draft",
-      title: sourceRows.version.title,
-      subtitle: sourceRows.version.subtitle ?? null,
-      ageBand: sourceRows.version.ageBand ?? null,
-      summary: sourceRows.version.summary ?? null,
-      world: sourceRows.version.world ?? null,
-      locale: sourceRows.version.locale ?? null,
-      languages: sourceRows.version.languages,
+  try {
+    await db.transaction(async (tx) => {
+      await tx.insert(schema.programVersion).values({
+        id: newVersionId,
+        programId,
+        version: nextVersion,
+        status: "draft",
+        title: sourceRows.version.title,
+        subtitle: sourceRows.version.subtitle ?? null,
+        ageBand: sourceRows.version.ageBand ?? null,
+        summary: sourceRows.version.summary ?? null,
+        world: sourceRows.version.world ?? null,
+        locale: sourceRows.version.locale ?? null,
+        languages: sourceRows.version.languages,
+      });
+      if (unitRows.length > 0) await tx.insert(schema.unit).values(unitRows);
+      if (lessonRows.length > 0) await tx.insert(schema.lesson).values(lessonRows);
+      if (activityRows.length > 0) await tx.insert(schema.activity).values(activityRows);
     });
-    if (unitRows.length > 0) await tx.insert(schema.unit).values(unitRows);
-    if (lessonRows.length > 0) await tx.insert(schema.lesson).values(lessonRows);
-    if (activityRows.length > 0) await tx.insert(schema.activity).values(activityRows);
-  });
+  } catch (err) {
+    // A concurrent clone won the (programId, version) race. Converge: return the
+    // winner's now-committed open draft instead of surfacing a generic error.
+    if (isProgramVersionUniqueViolation(err)) {
+      const winner = await findOpenDraft(db, programId);
+      if (winner) return { versionId: winner.id };
+    }
+    throw err;
+  }
 
   return { versionId: newVersionId };
 }

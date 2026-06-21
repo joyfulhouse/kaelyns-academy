@@ -17,6 +17,7 @@ vi.mock("./store", () => ({
   assembleProgram: vi.fn(),
   getProgramVersionTreeRows: vi.fn(),
   listPublishedProgramSummaries: vi.fn(),
+  anyProgramExists: vi.fn(),
 }));
 
 vi.mock("@sentry/nextjs", () => ({

@@ -247,7 +247,9 @@ export async function assignProgramAction(
     const programs = await listProgramsAsync();
     const exists = programs.some((p) => p.slug === slug);
     if (!exists) {
-      return { ok: false, reason: "unavailable", message: "Program not found." };
+      // A missing program is "not-found" (the slug doesn't resolve to a published
+      // program), distinct from a transient DB error which keeps "unavailable".
+      return { ok: false, reason: "not-found", message: "Program not found." };
     }
 
     const programVersionId = await getPublishedVersionId(slug);
