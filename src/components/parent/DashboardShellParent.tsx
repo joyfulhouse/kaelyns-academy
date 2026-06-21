@@ -9,6 +9,7 @@ import {
   GearSixIcon,
   SignOutIcon,
   SpinnerGapIcon,
+  StorefrontIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import { Mascot } from "@/components/art/Mascot";
 import { signOut } from "@/lib/auth-client";
@@ -24,6 +25,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { href: "/parent", label: "Home", icon: HouseIcon },
   { href: "/parent/learners", label: "Learners", icon: UsersThreeIcon },
+  { href: "/parent/curriculum", label: "Curriculum", icon: StorefrontIcon },
   { href: "/parent/settings", label: "Settings", icon: GearSixIcon },
 ];
 

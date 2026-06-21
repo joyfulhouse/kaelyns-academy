@@ -17,6 +17,8 @@ import { deriveOutcome, type SkillState } from "@/lib/tutor/mastery";
 import {
   SKILLS,
   findActivity,
+  getSkill,
+  programStats,
   skillTagsForProgram,
   type ActivityKind,
   type Program,
@@ -331,4 +333,131 @@ export async function getLearnerCurriculum(learnerId: string): Promise<LearnerCu
 
     return { enrolled, available };
   });
+}
+
+/* ── Marketplace catalog read helpers ─────────────────────────────────────── */
+
+/**
+ * A catalog entry: the light summary plus computed stats derived from the full
+ * program tree. We resolve the full program per slug to run programStats; the
+ * cost is proportional to the number of published programs.
+ */
+export interface CatalogProgram extends ProgramSummary {
+  stats: { units: number; lessons: number; activities: number };
+}
+
+/**
+ * All published programs as catalog cards, each annotated with counts derived
+ * from their full program tree. No account scope — this is a public-ish catalog
+ * (the auth gate is on the parent route, not here).
+ */
+export async function getCatalog(): Promise<CatalogProgram[]> {
+  const summaries = await listProgramSummariesAsync();
+  return Promise.all(
+    summaries.map(async (s) => {
+      const program = await getProgramAsync(s.slug);
+      const stats = program
+        ? programStats(program)
+        : { units: 0, lessons: 0, activities: 0 };
+      return { ...s, stats };
+    }),
+  );
+}
+
+/**
+ * A learner annotated with their current enrollment status for one program
+ * slug. Used on the program-detail page's assign control.
+ */
+export interface LearnerWithStatus {
+  id: string;
+  displayName: string;
+  /** "none" when the learner has never been enrolled, or the enrollment status. */
+  status: EnrollmentStatus | "none";
+}
+
+/**
+ * A unit summary derived from the full program tree.
+ */
+export interface UnitSummary {
+  key: string;
+  title: string;
+  emoji?: string;
+}
+
+/**
+ * A skill entry for the program-detail page (label + domain, deduped).
+ */
+export interface ProgramSkillEntry {
+  label: string;
+  domain: string;
+}
+
+/**
+ * Everything the program-detail page needs: program metadata, computed counts,
+ * unit/skill lists, and each account learner annotated with their status.
+ */
+export interface ProgramDetail {
+  summary: ProgramSummary;
+  units: UnitSummary[];
+  skills: ProgramSkillEntry[];
+  stats: { units: number; lessons: number; activities: number };
+  learners: LearnerWithStatus[];
+}
+
+/**
+ * Resolve a program-detail view. Account-scoped (withAccount) so each learner's
+ * enrollment status is scoped to the signed-in parent. Returns null when the
+ * program does not exist (page should 404).
+ */
+export async function getProgramDetail(slug: string): Promise<ProgramDetail | null> {
+  const program = await getProgramAsync(slug);
+  if (!program) return null;
+
+  // Summary: derive from the static fallback shape if not in DB summaries.
+  const allSummaries = await listProgramSummariesAsync();
+  const summary: ProgramSummary = allSummaries.find((s) => s.slug === slug) ?? {
+    slug: program.slug,
+    title: program.title,
+    subtitle: program.subtitle ?? null,
+    ageBand: program.ageBand ?? null,
+    summary: program.summary ?? null,
+    world: null,
+    languages: [],
+  };
+
+  // Units: ordered from the program tree, carrying the emoji if present.
+  const units: UnitSummary[] = program.units.map((u) => ({
+    key: u.id,
+    title: u.title,
+    emoji: u.emoji,
+  }));
+
+  // Skills: unique (label, domain) pairs from the program's skill tags, in
+  // SKILLS rubric order (getSkill preserves that ordering).
+  const seenLabels = new Set<string>();
+  const skills: ProgramSkillEntry[] = [];
+  for (const tag of skillTagsForProgram(program)) {
+    const skill = getSkill(tag);
+    if (skill && !seenLabels.has(skill.label)) {
+      seenLabels.add(skill.label);
+      skills.push({ label: skill.label, domain: skill.domain });
+    }
+  }
+
+  const stats = programStats(program);
+
+  // Learners: account's children, each with their enrollment status for this slug.
+  const learners = await withAccount(async ({ accountId }) => {
+    const learnerRows = await listLearners(accountId);
+    return Promise.all(
+      learnerRows.map(async (learner) => {
+        const enrollments = await listEnrollmentsDetailed(accountId, learner.id);
+        const enrollment = enrollments.find((e) => e.slug === slug);
+        const status: EnrollmentStatus | "none" = enrollment ? enrollment.status : "none";
+        return { id: learner.id, displayName: learner.displayName, status };
+      }),
+    );
+  });
+
+  return { summary, units, skills, stats, learners };
 }
