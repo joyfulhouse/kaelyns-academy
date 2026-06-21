@@ -17,7 +17,7 @@ const { phonemize } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/audio/phonemize", () => ({ phonemize }));
 
-import { generatePracticeItems, KIND_BRIEF, repairPhonicsSay } from "./practice";
+import { generatePracticeItems, KIND_BRIEF, repairPhonicsBatch, repairPhonicsSay } from "./practice";
 
 /** Build a fake OpenAI-compatible chat-completions response. */
 function completion(content: string, ok = true, status = 200): Response {
@@ -277,5 +277,64 @@ describe("repairPhonicsSay (drop hallucinated tile overrides; fail-open)", () =>
 
     expect(out.say).toBeUndefined();
     expect(phonemize).not.toHaveBeenCalled();
+  });
+
+  it("keeps a shared tile's override when it's correct for ANY of its words (order-independent)", async () => {
+    // "c" is /k/ in cat but /s/ in city; the flat say map holds one sound. say.c=/k/
+    // is correct for cat. It must NOT be dropped just because "city" appears first.
+    const config = {
+      tiles: ["c", "i", "t", "y", "a"],
+      say: { c: "k" },
+      words: [{ word: "city" }, { word: "cat" }], // city first on purpose
+    };
+    const phonemize = vi.fn(async (w: string) => (w === "city" ? "sˈɪTi" : "kˈæt"));
+
+    const out = await repairPhonicsSay(config, phonemize);
+
+    expect(out.say).toEqual({ c: "k" }); // kept: plausible for "cat"
+  });
+
+  it("drops a shared tile's override only when it's wrong for EVERY word", async () => {
+    const config = {
+      tiles: ["c", "i", "t", "y", "a"],
+      say: { c: "z" }, // /z/ is in neither city nor cat
+      words: [{ word: "city" }, { word: "cat" }],
+    };
+    const phonemize = vi.fn(async (w: string) => (w === "city" ? "sˈɪTi" : "kˈæt"));
+
+    const out = await repairPhonicsSay(config, phonemize);
+
+    expect(out.say).toEqual({}); // dropped: implausible for all words
+  });
+});
+
+describe("repairPhonicsBatch (dedupe + circuit-break across items)", () => {
+  it("phonemizes a word shared across items only once", async () => {
+    const configs: { tiles: string[]; say: Record<string, string>; words: { word: string }[] }[] = [
+      { tiles: ["c", "a", "t"], say: { c: "k" }, words: [{ word: "cat" }] },
+      { tiles: ["c", "a", "t"], say: { t: "t" }, words: [{ word: "cat" }] },
+    ];
+    const phonemize = vi.fn(async () => "kˈæt");
+
+    await repairPhonicsBatch(configs, phonemize);
+
+    expect(phonemize).toHaveBeenCalledTimes(1); // "cat" deduped across both items
+  });
+
+  it("circuit-breaks: stops calling Kokoro after the first failure", async () => {
+    // 10 distinct words; phonemize always fails. The breaker must stop after the
+    // first concurrent wave (≤ the concurrency limit), not call all 10.
+    const configs = Array.from({ length: 10 }, (_, i) => ({
+      tiles: [`w${i}`],
+      say: { [`w${i}`]: "k" },
+      words: [{ word: `w${i}` }],
+    }));
+    const phonemize = vi.fn(async () => null);
+
+    await repairPhonicsBatch(configs, phonemize);
+
+    expect(phonemize.mock.calls.length).toBeLessThanOrEqual(4); // not all 10
+    // fail-open: every override kept despite Kokoro being down.
+    for (const c of configs) expect(Object.keys(c.say)).toHaveLength(1);
   });
 });

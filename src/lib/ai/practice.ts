@@ -197,51 +197,104 @@ interface RepairablePhonics {
   words: { word: string }[];
 }
 
+/** tile → every word in the config that uses it (greedy-segmented the SAME way the
+ *  Player segments, so the tile is judged in real contexts). */
+function wordsByTile(config: RepairablePhonics): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const { word } of config.words) {
+    for (const seg of segmentWord(word, config.tiles)) {
+      const arr = map.get(seg);
+      if (arr) arr.push(word);
+      else map.set(seg, [word]);
+    }
+  }
+  return map;
+}
+
 /**
- * Validate an AI-generated phonics-wordbuild config's per-tile `say` overrides
- * against Kokoro ground truth and DROP the hallucinated ones (→ bare fallback, no
- * regression). For each `say` tile we find a word that actually USES that tile
- * (via the SAME greedy {@link segmentWord} the Player uses), phonemize that word
- * once (cached), and delete the override when {@link plausibleOverride} is false.
+ * Validate `config.say` against already-resolved word phonemes and DROP only the
+ * overrides that are implausible for EVERY word that uses the tile. Pure + sync.
  *
- * Fail-open: if `phonemizeFn` returns null (Kokoro down) we KEEP the entry —
- * sanitization + length/array caps still bound it, and a missing override only
- * means a possibly-imperfect lone-tile reading, never broken audio. A `say` key
- * not used by ANY word is left untouched (it's inert: no tile ⇒ never spoken).
- * Mutates `config.say` in place and returns it.
+ * Why "every word, keep-if-any" (not first-word): the same tile can voice
+ * differently across words ("c" = /k/ in cat, /s/ in city). A flat `say` map holds
+ * one sound per tile, so the soundest rule is to keep an override that's right for
+ * at least one of its words — never silently drop a genuinely-correct sound just
+ * because another word in the batch uses the tile differently. (Order-independent.)
+ *
+ * Fail-open: a tile whose words are all absent from `phonemesByWord` (Kokoro was
+ * down for them) is left as-is. A `say` key no word uses is inert and untouched.
+ *
+ * NOTE (known ceiling): the check is whole-word + consonants-only (see
+ * {@link plausibleOverride}) because grapheme→phoneme alignment isn't tractable
+ * via Kokoro (phonemizing a substring is the very out-of-context bug we fix). So a
+ * wrong-but-present consonant, or any wrong VOWEL, can pass. This is a best-effort
+ * sanity net over an LLM that's already good at the task — never a guarantee — and
+ * it only ever REMOVES overrides, so it can't make audio worse than bare.
+ */
+function applyRepair(config: RepairablePhonics, phonemesByWord: Map<string, string>): void {
+  const say = config.say;
+  if (!say) return;
+  const tileWords = wordsByTile(config);
+  for (const tile of Object.keys(say)) {
+    const words = tileWords.get(tile);
+    if (!words) continue; // inert: no tile in any word
+    const known = words.map((w) => phonemesByWord.get(w)).filter((p): p is string => p != null);
+    if (known.length === 0) continue; // fail-open: no ground truth for any of its words
+    if (!known.some((p) => plausibleOverride(say[tile]!, p))) delete say[tile];
+  }
+}
+
+/** The set of words actually referenced by some `say` tile across all configs —
+ *  the only words worth phonemizing. */
+function wordsToPhonemize(configs: readonly RepairablePhonics[]): string[] {
+  const words = new Set<string>();
+  for (const config of configs) {
+    if (!config.say) continue;
+    const tiles = new Set(Object.keys(config.say));
+    for (const [tile, used] of wordsByTile(config)) {
+      if (tiles.has(tile)) for (const w of used) words.add(w);
+    }
+  }
+  return [...words];
+}
+
+/**
+ * Validate the per-tile `say` overrides of a BATCH of generated phonics configs
+ * against Kokoro ground truth, dropping hallucinations (→ bare fallback). Mutates
+ * each config's `say` in place.
+ *
+ * Resilience: phonemizes each unique word at most once (deduped across the whole
+ * batch) with bounded concurrency, and CIRCUIT-BREAKS — once one call fails/times
+ * out it stops calling Kokoro, so a black-holed endpoint costs ~one timeout total,
+ * not one per word (Codex finding). Every unresolved word is treated fail-open in
+ * {@link applyRepair} (override kept), so degraded Kokoro never breaks generation.
+ */
+export async function repairPhonicsBatch(
+  configs: readonly RepairablePhonics[],
+  phonemizeFn: PhonemizeFn,
+): Promise<void> {
+  const words = wordsToPhonemize(configs);
+  const phonemesByWord = new Map<string, string>();
+  let kokoroDown = false;
+  await mapWithConcurrency(words, 4, async (word) => {
+    if (kokoroDown) return; // circuit open: don't pile on more 10s timeouts
+    const p = await phonemizeFn(word);
+    if (p == null) kokoroDown = true;
+    else phonemesByWord.set(word, p);
+  });
+  for (const config of configs) applyRepair(config, phonemesByWord);
+}
+
+/**
+ * Single-config convenience wrapper over {@link repairPhonicsBatch} (mutates and
+ * returns `config`). Kept for focused unit tests; the generator uses the batch
+ * form so phonemize calls dedupe and circuit-break across all items at once.
  */
 export async function repairPhonicsSay<T extends RepairablePhonics>(
   config: T,
   phonemizeFn: PhonemizeFn,
 ): Promise<T> {
-  const say = config.say;
-  if (!say) return config;
-
-  // First word (greedy-segmented) that uses each tile, so each tile is judged in
-  // a real context. Tiles no word uses get no entry here ⇒ left inert.
-  const wordForTile = new Map<string, string>();
-  for (const { word } of config.words) {
-    for (const seg of segmentWord(word, config.tiles)) {
-      if (!wordForTile.has(seg)) wordForTile.set(seg, word);
-    }
-  }
-
-  const phonemeCache = new Map<string, string | null>();
-  const phonemesFor = async (word: string): Promise<string | null> => {
-    const cached = phonemeCache.get(word);
-    if (cached !== undefined) return cached;
-    const p = await phonemizeFn(word);
-    phonemeCache.set(word, p);
-    return p;
-  };
-
-  for (const tile of Object.keys(say)) {
-    const word = wordForTile.get(tile);
-    if (!word) continue; // tile unused by any word: inert, leave as-is
-    const wordPhonemes = await phonemesFor(word);
-    if (wordPhonemes === null) continue; // fail-open: keep when Kokoro is unreachable
-    if (!plausibleOverride(say[tile]!, wordPhonemes)) delete say[tile];
-  }
+  await repairPhonicsBatch([config], phonemizeFn);
   return config;
 }
 
@@ -313,9 +366,10 @@ export async function generatePracticeItems<K extends ActivityKind>(
   // strings; phonemize is fail-open (Kokoro down ⇒ keep, still sanitized/bounded).
   if (kind === "phonics-wordbuild") {
     // K is generic so the runtime `kind` check can't narrow `items`' type; the
-    // runtime shape is a phonics config, structurally a RepairablePhonics.
+    // runtime shape is a phonics config, structurally a RepairablePhonics. The batch
+    // form dedupes phonemize calls and circuit-breaks across all items at once.
     const phonics = items as unknown as RepairablePhonics[];
-    await mapWithConcurrency(phonics, 4, (item) => repairPhonicsSay(item, phonemize));
+    await repairPhonicsBatch(phonics, phonemize);
   }
 
   // Fire-and-forget: warm the durable narration cache for everything the child will
