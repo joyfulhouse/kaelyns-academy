@@ -63,14 +63,14 @@ export function assembleProgram(rows: ProgramTreeRows): Program {
     subtitle: version.subtitle ?? "",
     ageBand: version.ageBand ?? "",
     summary: version.summary ?? "",
-    units: sortedUnits.map((unitRow): Unit => {
+    units: sortedUnits.map((unitRow, unitIndex): Unit => {
       const unitLessons = lessons
         .filter((l) => l.unitId === unitRow.id)
         .sort((a, b) => a.orderKey.localeCompare(b.orderKey));
 
       return {
         id: unitRow.id,
-        order: 0, // orderKey is the authoritative sort; order is a legacy numeric field
+        order: unitIndex,
         title: unitRow.title,
         emoji: unitRow.emoji ?? "",
         world: (unitRow.world as World) ?? "sunshine",
@@ -81,7 +81,7 @@ export function assembleProgram(rows: ProgramTreeRows): Program {
         ...(unitRow.checkpoint != null
           ? { checkpoint: unitRow.checkpoint as "baseline" | "mid" | "final" }
           : {}),
-        lessons: unitLessons.map((lessonRow): Lesson => {
+        lessons: unitLessons.map((lessonRow, lessonIndex): Lesson => {
           const lessonActivities = activities
             .filter((a) => a.lessonId === lessonRow.id)
             .sort((a, b) => a.orderKey.localeCompare(b.orderKey));
@@ -94,7 +94,7 @@ export function assembleProgram(rows: ProgramTreeRows): Program {
 
           return {
             id: lessonRow.id,
-            order: 0, // orderKey is authoritative
+            order: lessonIndex,
             title: lessonRow.title,
             activities: assembledActivities,
           };

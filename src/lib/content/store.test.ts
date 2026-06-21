@@ -124,6 +124,12 @@ describe("assembleProgram", () => {
     // Activities ordered by orderKey ascending
     expect(program.units[0].lessons[0].activities[0].id).toBe("a1");
     expect(program.units[0].lessons[0].activities[1].id).toBe("a2");
+    // Units carry 0-based order indices (set during assembly, not hard-coded 0)
+    expect(program.units[0].order).toBe(0);
+    expect(program.units[1].order).toBe(1);
+    // Lessons carry 0-based order indices
+    expect(program.units[0].lessons[0].order).toBe(0);
+    expect(program.units[0].lessons[1].order).toBe(1);
     // Unit with no lessons (u2) has empty lessons array
     expect(program.units[1].lessons).toHaveLength(0);
   });
