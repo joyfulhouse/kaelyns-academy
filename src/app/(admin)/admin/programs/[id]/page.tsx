@@ -113,21 +113,20 @@ export default async function ProgramDetailPage({
         />
       </Surface>
 
-      {/* Editor entry point — placeholder for Task 5.3 */}
-      <Surface tone="sunk" className="border border-dashed border-line p-6">
+      {/* Editor entry point */}
+      <Surface tone="raised" className="border border-line p-6">
         <h2 className="mb-2 font-display text-sm font-semibold text-ink">
           Content editor
         </h2>
         <p className="mb-4 text-sm text-ink-soft">
-          The nested tree editor (units, lessons, activities) is coming in the
-          next task. Use the button below once it&rsquo;s live.
+          Edit the program&rsquo;s unit, lesson, and activity tree. Only draft
+          versions are editable — use &ldquo;Clone to draft&rdquo; if this
+          program is published.
         </p>
         <Button
           href={`/admin/programs/${program.programId}/edit`}
           variant="soft"
           size="sm"
-          aria-disabled
-          className="pointer-events-none opacity-50"
         >
           <PencilIcon weight="regular" className="size-4" />
           Edit content
