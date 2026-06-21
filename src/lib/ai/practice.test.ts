@@ -10,7 +10,14 @@ const { ensureNarration } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/audio/narration", () => ({ ensureNarration }));
 
-import { generatePracticeItems } from "./practice";
+// Mock Kokoro's G2P so the phonics `say`-repair has deterministic "ground truth"
+// without a live endpoint. Default: cat → kˈæt; individual tests override.
+const { phonemize } = vi.hoisted(() => ({
+  phonemize: vi.fn<(text: string) => Promise<string | null>>(),
+}));
+vi.mock("@/lib/audio/phonemize", () => ({ phonemize }));
+
+import { generatePracticeItems, KIND_BRIEF, repairPhonicsSay } from "./practice";
 
 /** Build a fake OpenAI-compatible chat-completions response. */
 function completion(content: string, ok = true, status = 200): Response {
@@ -28,6 +35,7 @@ describe("generatePracticeItems (bounded + schema-validated)", () => {
     process.env.LITELLM_URL = "http://litellm.test/v1";
     process.env.LITELLM_API_KEY = "test-key";
     ensureNarration.mockResolvedValue({ key: "k", prefix: "en", stored: true });
+    phonemize.mockResolvedValue("kˈæt"); // cat's real phonemes (default ground truth)
   });
 
   afterEach(() => {
@@ -166,5 +174,108 @@ describe("generatePracticeItems (bounded + schema-validated)", () => {
       generatePracticeItems("lang-symbol-intro", "ready", "symbols", 1, { skillHints: [] }),
     ).rejects.toThrow(/language skill hint/);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("emits the corrected `say` (drops a hallucinated override) end-to-end", async () => {
+    // Model returns a good "c"/k override and a bogus "a" override claiming a /z/.
+    const valid = JSON.stringify({
+      items: [
+        {
+          focus: "short a CVC",
+          instruction: "Build the word.",
+          tiles: ["c", "a", "t"],
+          say: { c: "k", a: "z", t: "t" },
+          words: [{ word: "cat", picture: "🐱" }],
+        },
+      ],
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(completion(valid)));
+    // cat → kˈæt (phonemize mock, set in beforeEach): "c"/k and "t"/t are real
+    // consonants; "a"/z is a hallucination (no /z/ in "cat") and must be dropped.
+    const items = await generatePracticeItems("phonics-wordbuild", "ready", "short a", 1);
+    expect(items[0].say).toEqual({ c: "k", t: "t" }); // bogus "a":"z" dropped
+  });
+});
+
+describe("KIND_BRIEF", () => {
+  it("instructs the model to emit per-tile `say` IPA and `silent` for phonics", () => {
+    const brief = KIND_BRIEF["phonics-wordbuild"];
+    expect(brief).toContain("say");
+    expect(brief).toContain("silent");
+    expect(brief).toMatch(/IPA/);
+    expect(brief).toMatch(/NOT the letter name/);
+    // Concrete examples anchor the contract for the model.
+    expect(brief).toContain('"ta":"teɪ"');
+    expect(brief).toContain('"c":"k"');
+  });
+});
+
+describe("repairPhonicsSay (drop hallucinated tile overrides; fail-open)", () => {
+  it("keeps plausible overrides and drops implausible ones", async () => {
+    const config = {
+      tiles: ["c", "a", "t"],
+      say: { c: "k", a: "z" }, // c→/k/ good; a→/z/ hallucinated (no z in "cat")
+      words: [{ word: "cat" }],
+    };
+    // phonemize returns cat's real phonemes for the lookup.
+    const phonemize = vi.fn(async () => "kˈæt");
+
+    const out = await repairPhonicsSay(config, phonemize);
+
+    expect(out.say).toEqual({ c: "k" }); // the bad a→z entry is removed
+    expect(phonemize).toHaveBeenCalledWith("cat");
+  });
+
+  it("phonemizes each unique word only once (cached)", async () => {
+    const config = {
+      tiles: ["c", "a", "t"],
+      say: { c: "k", a: "æ", t: "t" }, // all three tiles segment from "cat"
+      words: [{ word: "cat" }],
+    };
+    const phonemize = vi.fn(async () => "kˈæt");
+
+    await repairPhonicsSay(config, phonemize);
+
+    expect(phonemize).toHaveBeenCalledTimes(1); // one word ⇒ one phonemize call
+  });
+
+  it("fails open: keeps ALL overrides when phonemize returns null (Kokoro down)", async () => {
+    const config = {
+      tiles: ["c", "a", "t"],
+      say: { c: "k", a: "z" }, // would normally drop a→z
+      words: [{ word: "cat" }],
+    };
+    const phonemize = vi.fn(async () => null);
+
+    const out = await repairPhonicsSay(config, phonemize);
+
+    expect(out.say).toEqual({ c: "k", a: "z" }); // nothing dropped on failure
+  });
+
+  it("leaves a `say` key untouched when no word uses that tile (inert)", async () => {
+    const config = {
+      tiles: ["c", "a", "t", "zz"],
+      say: { zz: "garbage" }, // "zz" never appears in any word
+      words: [{ word: "cat" }],
+    };
+    const phonemize = vi.fn(async () => "kˈæt");
+
+    const out = await repairPhonicsSay(config, phonemize);
+
+    expect(out.say).toEqual({ zz: "garbage" }); // unused ⇒ never spoken ⇒ left as-is
+    expect(phonemize).not.toHaveBeenCalled(); // no word needed phonemizing
+  });
+
+  it("returns the config unchanged when there is no `say` map", async () => {
+    const config: { tiles: string[]; say?: Record<string, string>; words: { word: string }[] } = {
+      tiles: ["c", "a", "t"],
+      words: [{ word: "cat" }],
+    };
+    const phonemize = vi.fn(async () => "kˈæt");
+
+    const out = await repairPhonicsSay(config, phonemize);
+
+    expect(out.say).toBeUndefined();
+    expect(phonemize).not.toHaveBeenCalled();
   });
 });

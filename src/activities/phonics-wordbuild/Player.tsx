@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { ArrowCounterClockwiseIcon, BackspaceIcon } from "@phosphor-icons/react/dist/ssr";
 import type { PhonicsWordbuildConfig } from "@/content/activity-configs";
+import { segmentWord } from "@/content/phonics";
 import type { ActivityPlayerProps } from "@/content/types";
 import { tilePhonemeText, wordPhonemeText } from "@/lib/audio/phonemes";
 import { cn } from "@/lib/cn";
@@ -13,22 +14,6 @@ import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeech } from "../_shared/useSpeech";
 import { schema, score, type PhonicsWordbuildResponse } from "./logic";
-
-/** Split a target word into the tiles that spell it, greedily matching the
- *  longest available multi-letter tile first (so "sh"+"i"+"p", not s+h+i+p). */
-function segmentWord(word: string, tiles: string[]): string[] {
-  const byLengthDesc = [...new Set(tiles)].sort((a, b) => b.length - a.length);
-  const segments: string[] = [];
-  let i = 0;
-  const lower = word.toLowerCase();
-  while (i < lower.length) {
-    const match = byLengthDesc.find((t) => lower.startsWith(t.toLowerCase(), i));
-    if (!match) return [...lower.slice(i)]; // fall back to single chars for the remainder
-    segments.push(match);
-    i += match.length;
-  }
-  return segments;
-}
 
 function shuffle<T>(items: T[], seed: number): T[] {
   const out = [...items];

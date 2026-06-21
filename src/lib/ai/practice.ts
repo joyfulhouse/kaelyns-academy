@@ -6,7 +6,10 @@ import {
   ACTIVITY_CONFIG_SCHEMAS,
   type ActivityKind,
 } from "@/content/activity-configs";
+import { segmentWord } from "@/content/phonics";
 import { ensureNarration } from "@/lib/audio/narration";
+import { plausibleOverride } from "@/lib/audio/phonemeCheck";
+import { phonemize } from "@/lib/audio/phonemize";
 import { prewarmTexts } from "@/lib/audio/spokenFields";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import type { LanguageDef, ScriptEntry } from "@/content/languages";
@@ -34,11 +37,16 @@ import {
 const MAX_ITEMS = 8;
 
 /** Plain-language guidance per kind so the model emits the right config shape. */
-const KIND_BRIEF: Record<ActivityKind, string> = {
+export const KIND_BRIEF: Record<ActivityKind, string> = {
   "phonics-wordbuild":
-    'Build-a-word items. Each: {focus, instruction, tiles:[letters/digraphs], words:[{word, picture?}]}. ' +
+    'Build-a-word items. Each: {focus, instruction, tiles:[letters/digraphs], say:{tile:IPA}, silent:[tiles], words:[{word, picture?}]}. ' +
     "Every target word MUST be spellable from the provided tiles. `picture` is a single emoji. " +
-    "Keep words decodable for the focus; 2 to 4 words per item.",
+    "Keep words decodable for the focus; 2 to 4 words per item. " +
+    "Each tile is tapped and spoken ALONE, so a bare letter mis-reads (lone \"c\" says its name \"see\", \"ble\" says \"blee\"). " +
+    "In `say`, map EVERY tile to its IPA SOUND as pronounced INSIDE the word, NOT the letter name (stress mark ˈ optional). " +
+    'For "table"=ta+ble use {"ta":"teɪ","ble":"bəl"}; for "cat"=c+a+t use {"c":"k","a":"æ","t":"t"}. ' +
+    'The same letter can differ by word: "a" is /æ/ in cat but /eɪ/ in cake; "c" is /k/ in cat but /s/ in city. ' +
+    'List any SILENT letter (e.g. the magic e in "cake") in `silent` instead of `say`.',
   "sightword-game":
     "Sight-word hunt items. Each: {instruction, words:[real sight words], decoys:[similar-looking non-targets]}. " +
     "Decoys must be plausible but clearly not the target words. 3 to 6 words, 2 to 5 decoys.",
@@ -177,6 +185,66 @@ function buildLangUserPrompt(
     .join("\n");
 }
 
+/** A function that maps a word to its real phonemes (or null on failure). Injected
+ *  so the repair is unit-testable without touching Kokoro. */
+export type PhonemizeFn = (text: string) => Promise<string | null>;
+
+/** The phonics-wordbuild fields the repair reads. A loose structural shape so it
+ *  accepts both the Zod input and output config objects. */
+interface RepairablePhonics {
+  tiles: string[];
+  say?: Record<string, string>;
+  words: { word: string }[];
+}
+
+/**
+ * Validate an AI-generated phonics-wordbuild config's per-tile `say` overrides
+ * against Kokoro ground truth and DROP the hallucinated ones (→ bare fallback, no
+ * regression). For each `say` tile we find a word that actually USES that tile
+ * (via the SAME greedy {@link segmentWord} the Player uses), phonemize that word
+ * once (cached), and delete the override when {@link plausibleOverride} is false.
+ *
+ * Fail-open: if `phonemizeFn` returns null (Kokoro down) we KEEP the entry —
+ * sanitization + length/array caps still bound it, and a missing override only
+ * means a possibly-imperfect lone-tile reading, never broken audio. A `say` key
+ * not used by ANY word is left untouched (it's inert: no tile ⇒ never spoken).
+ * Mutates `config.say` in place and returns it.
+ */
+export async function repairPhonicsSay<T extends RepairablePhonics>(
+  config: T,
+  phonemizeFn: PhonemizeFn,
+): Promise<T> {
+  const say = config.say;
+  if (!say) return config;
+
+  // First word (greedy-segmented) that uses each tile, so each tile is judged in
+  // a real context. Tiles no word uses get no entry here ⇒ left inert.
+  const wordForTile = new Map<string, string>();
+  for (const { word } of config.words) {
+    for (const seg of segmentWord(word, config.tiles)) {
+      if (!wordForTile.has(seg)) wordForTile.set(seg, word);
+    }
+  }
+
+  const phonemeCache = new Map<string, string | null>();
+  const phonemesFor = async (word: string): Promise<string | null> => {
+    const cached = phonemeCache.get(word);
+    if (cached !== undefined) return cached;
+    const p = await phonemizeFn(word);
+    phonemeCache.set(word, p);
+    return p;
+  };
+
+  for (const tile of Object.keys(say)) {
+    const word = wordForTile.get(tile);
+    if (!word) continue; // tile unused by any word: inert, leave as-is
+    const wordPhonemes = await phonemesFor(word);
+    if (wordPhonemes === null) continue; // fail-open: keep when Kokoro is unreachable
+    if (!plausibleOverride(say[tile]!, wordPhonemes)) delete say[tile];
+  }
+  return config;
+}
+
 export interface GeneratePracticeOptions {
   /** Optional canonical skill tags to steer generation (e.g. ["phonics.digraphs"]). */
   skillHints?: SkillTag[];
@@ -237,6 +305,19 @@ export async function generatePracticeItems<K extends ActivityKind>(
   });
 
   const items = result.items as z.output<(typeof ACTIVITY_CONFIG_SCHEMAS)[K]>[];
+
+  // Phonics tiles are spoken in isolation, so the model emits a per-tile IPA `say`
+  // override (KIND_BRIEF). The model can hallucinate IPA, so validate each override
+  // against the word's REAL phonemes from Kokoro and drop the implausible ones
+  // (→ bare fallback, no regression). Awaited so prewarm caches the corrected
+  // strings; phonemize is fail-open (Kokoro down ⇒ keep, still sanitized/bounded).
+  if (kind === "phonics-wordbuild") {
+    // K is generic so the runtime `kind` check can't narrow `items`' type; the
+    // runtime shape is a phonics config, structurally a RepairablePhonics.
+    const phonics = items as unknown as RepairablePhonics[];
+    await mapWithConcurrency(phonics, 4, (item) => repairPhonicsSay(item, phonemize));
+  }
+
   // Fire-and-forget: warm the durable narration cache for everything the child will
   // hear, so the speaker button is an instant hit. Never blocks/breaks the response
   // (ensureNarration swallows its own errors). prewarmTexts dedupes + hard-caps the
