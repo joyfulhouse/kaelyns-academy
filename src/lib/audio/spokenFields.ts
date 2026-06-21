@@ -5,7 +5,7 @@
  * button is an instant cache hit. Foreign (`lang-*`) configs are handled by the
  * pre-generated clip pipeline and are intentionally NOT covered here.
  */
-import { tilePhonemeText, withPhonemes } from "./phonemes";
+import { tilePhonemeText, wordPhonemeText } from "./phonemes";
 
 /** Ordered, de-duplicated, non-blank spoken strings for one config item. */
 export function spokenEnglishStrings(item: unknown): string[] {
@@ -33,9 +33,7 @@ export function spokenEnglishStrings(item: unknown): string[] {
         // phonics-wordbuild words: spoken whole, with an optional IPA override.
         const wo = w as Record<string, unknown>;
         const word = typeof wo.word === "string" ? wo.word : "";
-        if (word) {
-          push(typeof wo.ipa === "string" && wo.ipa.trim() ? withPhonemes(word, wo.ipa) : word);
-        }
+        if (word) push(wordPhonemeText(word, wo.ipa) ?? word);
       }
     }
   }

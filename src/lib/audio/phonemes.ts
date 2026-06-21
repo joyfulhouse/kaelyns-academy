@@ -23,17 +23,28 @@ const MARKUP_DELIMITERS = /[[\]()/]+/g;
  *  surrounding slashes/whitespace and sanitizes markup delimiters; returns the
  *  bare label when `ipa` is blank so we never emit broken markup. */
 export function withPhonemes(label: string, ipa: string): string {
-  const cleaned = ipa.trim().replace(MARKUP_DELIMITERS, "");
-  return cleaned ? `[${label}](/${cleaned}/)` : label;
+  // Sanitize BOTH sides: a markup delimiter in the label OR the IPA would
+  // break/escape the `[label](/ipa/)` wrapper. Authored content has none; this
+  // guards AI-generated tiles/words, which also flow through here.
+  const cleanedLabel = label.replace(MARKUP_DELIMITERS, "");
+  const cleanedIpa = ipa.trim().replace(MARKUP_DELIMITERS, "");
+  return cleanedIpa ? `[${cleanedLabel}](/${cleanedIpa}/)` : cleanedLabel;
 }
 
-/** The neural-TTS text for a phonics tile: the wrapped IPA override when the
- *  activity authored one for `tile`, else `undefined` so the caller speaks the
- *  bare tile through default G2P. Robust to untrusted `say` maps. */
+/** The neural-TTS text for a spoken `label`: the wrapped IPA override when `ipa`
+ *  is a non-blank string, else `undefined` so the caller speaks `label` bare
+ *  through default G2P. Robust to untrusted/missing `ipa`. The single source of
+ *  the override decision shared by the Player and the warm-pass, so both emit the
+ *  byte-identical string (and therefore the same `ttsKey`). */
+export function wordPhonemeText(label: string, ipa: unknown): string | undefined {
+  return typeof ipa === "string" && ipa.trim() ? withPhonemes(label, ipa) : undefined;
+}
+
+/** As {@link wordPhonemeText}, but looks the override up in an activity's `say`
+ *  map by tile. */
 export function tilePhonemeText(
   tile: string,
   say: Record<string, string> | undefined,
 ): string | undefined {
-  const ipa = say?.[tile];
-  return typeof ipa === "string" && ipa.trim() ? withPhonemes(tile, ipa) : undefined;
+  return wordPhonemeText(tile, say?.[tile]);
 }

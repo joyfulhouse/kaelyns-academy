@@ -5,7 +5,7 @@ import { motion } from "motion/react";
 import { ArrowCounterClockwiseIcon, BackspaceIcon } from "@phosphor-icons/react/dist/ssr";
 import type { PhonicsWordbuildConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
-import { tilePhonemeText, withPhonemes } from "@/lib/audio/phonemes";
+import { tilePhonemeText, wordPhonemeText } from "@/lib/audio/phonemes";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { Prompt, SpeakerButton } from "../_shared/ActivityChrome";
@@ -171,7 +171,7 @@ export function PhonicsWordbuildPlayer({
           <SpeakerButton
             speech={speech}
             text={current.word}
-            tts={current.ipa ? withPhonemes(current.word, current.ipa) : undefined}
+            tts={wordPhonemeText(current.word, current.ipa)}
             label={`Say the word ${current.word}`}
           />
           <span className="text-sm text-ink-soft">Word {wordIndex + 1} of {parsed.words.length}</span>

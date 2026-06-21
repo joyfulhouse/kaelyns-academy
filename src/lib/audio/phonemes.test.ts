@@ -15,6 +15,11 @@ describe("withPhonemes", () => {
     expect(withPhonemes("x", "a)b](c")).toBe("[x](/abc/)");
   });
 
+  it("sanitizes markup delimiters in the label too (not just the IPA)", () => {
+    expect(withPhonemes("ta]x", "tˈA")).toBe("[tax](/tˈA/)");
+    expect(withPhonemes("a)b", "")).toBe("ab"); // bare-label path is sanitized as well
+  });
+
   it("returns the bare label when the IPA is empty (no broken markup)", () => {
     expect(withPhonemes("p", "  ")).toBe("p");
   });
