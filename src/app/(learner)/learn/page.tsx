@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
-import { listPrograms } from "@/content";
+import { listProgramsAsync } from "@/lib/content/repository";
 import { ProgramPicker, type PickerProgram } from "@/components/learner/ProgramPicker";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Pick a world" };
 
@@ -11,8 +13,8 @@ export const metadata: Metadata = { title: "Pick a world" };
  * decision is client-side (it depends on the session + the remembered learner),
  * so this RSC just hands the picker the registry's program tiles.
  */
-export default function LearnPage() {
-  const programs: PickerProgram[] = listPrograms().map((p) => ({
+export default async function LearnPage() {
+  const programs: PickerProgram[] = (await listProgramsAsync()).map((p) => ({
     slug: p.slug,
     title: p.title,
     subtitle: p.subtitle,

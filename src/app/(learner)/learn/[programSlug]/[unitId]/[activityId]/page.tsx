@@ -1,31 +1,19 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { findActivity, getProgram, listPrograms } from "@/content";
+import { findActivity } from "@/content";
 import type { Program } from "@/content";
+import { getProgramAsync } from "@/lib/content/repository";
 import { ActivityHost } from "@/components/learner/ActivityHost";
+
+export const dynamic = "force-dynamic";
 
 interface ActivityPageProps {
   params: Promise<{ programSlug: string; unitId: string; activityId: string }>;
 }
 
-/** Every (programSlug, unitId, activityId) triple across all programs, for SSG. */
-export function generateStaticParams(): {
-  programSlug: string;
-  unitId: string;
-  activityId: string;
-}[] {
-  return listPrograms().flatMap((p) =>
-    p.units.flatMap((u) =>
-      u.lessons.flatMap((l) =>
-        l.activities.map((a) => ({ programSlug: p.slug, unitId: u.id, activityId: a.id })),
-      ),
-    ),
-  );
-}
-
 export async function generateMetadata({ params }: ActivityPageProps): Promise<Metadata> {
   const { programSlug, activityId } = await params;
-  const program = getProgram(programSlug);
+  const program = await getProgramAsync(programSlug);
   const found = program ? findActivity(program, activityId) : undefined;
   return { title: found ? found.activity.title : "Studio" };
 }
@@ -50,7 +38,7 @@ function nextActivityHref(
 
 export default async function ActivityPage({ params }: ActivityPageProps) {
   const { programSlug, unitId, activityId } = await params;
-  const program = getProgram(programSlug);
+  const program = await getProgramAsync(programSlug);
   const found = program ? findActivity(program, activityId) : undefined;
 
   // Guard against an unknown program or a mismatched route (activity not in the

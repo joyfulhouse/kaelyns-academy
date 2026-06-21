@@ -14,10 +14,9 @@ import {
 } from "@/lib/tutor/store";
 import {
   activityIdsForProgram,
-  getProgram,
-  listPrograms,
   skillTagsForProgram,
 } from "@/content";
+import { getProgramAsync, listProgramsAsync } from "@/lib/content/repository";
 import type { SkillState } from "@/lib/tutor";
 
 /**
@@ -148,7 +147,7 @@ export async function ensureEnrollmentAction(
   programSlug: string,
 ): Promise<EnsureEnrollmentResult> {
   if (!learnerId) return { ok: false, reason: "invalid" };
-  const known = listPrograms().some((p) => p.slug === programSlug);
+  const known = (await listProgramsAsync()).some((p) => p.slug === programSlug);
   if (!known) return { ok: false, reason: "invalid" };
   try {
     await withAccount(async ({ accountId }) => {
@@ -249,7 +248,7 @@ export async function getLearnerStateAction(
   programSlug: string,
 ): Promise<LearnerStateResult> {
   if (!learnerId) return EMPTY_STATE;
-  const program = getProgram(programSlug);
+  const program = await getProgramAsync(programSlug);
   if (!program) return EMPTY_STATE;
 
   const activityIds = new Set(activityIdsForProgram(program));
