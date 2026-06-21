@@ -139,6 +139,26 @@ cross-platform) and upload to `en/<ttsKey(...)>.mp3` in MinIO via `mc`/minio cli
 seeding path used for the foreign clips. Idempotent (skip existing). This makes all current
 UI narration an instant durable hit on day one.
 
+### Phoneme overrides — `src/lib/audio/phonemes.ts` (added 2026-06-21)
+
+Kokoro's misaki G2P mis-reads out-of-context fragments, so phonics tiles spoken in
+isolation voice wrong ("ble" → "blee", lone "c" → its letter name "see"). Fix: send the
+inline override `[label](/ipa/)` as the TTS `input` — misaki then voices the supplied IPA
+verbatim (verified honored end-to-end on the deployed kokoro-fastapi v0.5.0; derive values
+from its `/dev/phonemize`).
+
+- `withPhonemes(label, ipa)` builds the markup (sanitizing the markup delimiters
+  `[ ] ( ) /` on both sides). `wordPhonemeText(label, ipa)` / `tilePhonemeText(tile, say)`
+  are the single shared override-decision helpers used by BOTH the Player and the warm pass,
+  so the emitted string — and therefore its `ttsKey` — is byte-identical on each side. The
+  browser-`speechSynthesis` fallback always speaks the plain label, never the markup.
+- `phonics-wordbuild` config gains optional `say` (tile→IPA), `silent` (tiles voiced as
+  silent — e.g. the magic-e, which still fills a slot), and per-word `ipa`. Only
+  genuinely-misread tiles are overridden; citation forms are kept for short/long-vowel and
+  roots lessons.
+- `MAX_TTS_TEXT_LEN` (`config.ts`, 500) now caps BOTH `/api/tts` and `ensureNarration`, so
+  the warm/pre-synth path can't synthesize text the route would reject (denial-of-wallet).
+
 ### Config & secrets
 
 | Var | Scope | Value / note |
