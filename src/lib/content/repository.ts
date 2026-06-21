@@ -182,3 +182,73 @@ export const findProgramByActivityIdAsync: (
   const programs = await listProgramsAsync();
   return programs.find((p) => findActivity(p, activityId) !== undefined);
 });
+
+// ── Enrollment-pinned resolution ─────────────────────────────────────────────
+
+/**
+ * Pure decision: given an enrollment's pinned `programVersionId` and the two
+ * resolvers, pick which tree to serve. Factored out so the dispatch is unit
+ * testable without a DB.
+ *
+ *   - pinned id set → resolve THAT version; if the version row is gone
+ *     (`undefined`), fall back to the current published/static tree.
+ *   - no pin (null `programVersionId`, OR no/unowned enrollment → `null`) →
+ *     resolve the current published/static tree by slug.
+ *
+ * `byVersion`/`bySlug` are passed in (not closed over) so the test can supply
+ * fakes and assert exactly which path was taken.
+ */
+export async function resolveProgramByVersionPin(
+  pin: { programVersionId: string | null } | null,
+  byVersion: (versionId: string) => Promise<Program | undefined>,
+  bySlug: () => Promise<Program | undefined>,
+): Promise<Program | undefined> {
+  const versionId = pin?.programVersionId;
+  if (versionId) {
+    const pinned = await byVersion(versionId);
+    if (pinned !== undefined) return pinned;
+    // The pinned version row is gone (e.g. hard-deleted) — degrade to the
+    // current published/static tree rather than 404 the learner's whole world.
+  }
+  return bySlug();
+}
+
+/**
+ * Resolve the program a specific learner should see for `slug`, honoring the
+ * enrollment's version pin (C#5). The single seam both the learner state action
+ * (tree + progress scoping) and the §8 AI gate go through, so all three agree on
+ * the learner's version.
+ *
+ * Reads the learner's enrollment version (ownership-checked) and dispatches via
+ * {@link resolveProgramByVersionPin}: a pinned version is served as-is (with a
+ * fall-back to current published if that version row is gone); a null pin / no
+ * enrollment / unowned learner falls back to the current published (or static)
+ * tree by slug — the guest-equivalent the picker + gate handle separately.
+ *
+ * Build-safe: the tutor store is imported lazily (per-request), never at module
+ * top level. `cache()`-wrapped for per-request memoization like the other
+ * resolvers.
+ */
+export const resolveLearnerProgram: (
+  accountId: string,
+  learnerId: string,
+  slug: string,
+) => Promise<Program | undefined> = cache(
+  async (accountId: string, learnerId: string, slug: string): Promise<Program | undefined> => {
+    let pin: { programVersionId: string | null } | null = null;
+    try {
+      const { getEnrollmentVersionId } = await import("@/lib/tutor/store");
+      pin = await getEnrollmentVersionId(accountId, learnerId, slug);
+    } catch (err) {
+      // A DB blip reading the pin must not break the learner surface — degrade to
+      // the current published/static tree (the null-pin path) rather than crash.
+      captureNonCritical("resolveLearnerProgram enrollment-pin read failed", err);
+      pin = null;
+    }
+    return resolveProgramByVersionPin(
+      pin,
+      (versionId) => getProgramVersionAsync(versionId),
+      () => getProgramAsync(slug),
+    );
+  },
+);

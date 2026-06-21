@@ -454,6 +454,35 @@ export async function getEnrollmentConfig(
 }
 
 /**
+ * Read the enrollment's pinned program version for a (learner, program) pair
+ * (owned-by-account). Returns:
+ *   - `{ programVersionId }` when an enrollment row exists (the id may be null
+ *     for a lazy/default enrollment that was never pinned to a specific version),
+ *   - `null` when the learner is not owned OR no enrollment row exists.
+ *
+ * The learner surface uses this to honor the version pin: a learner pinned to an
+ * older version keeps seeing THAT version's tree (and scopes progress to it) even
+ * after a newer version is published. Status is intentionally NOT consulted here
+ * — pinning is about WHICH tree to render; the §8 AI gate (getEnrollmentForGate)
+ * separately enforces active-enrollment before any generation.
+ */
+export async function getEnrollmentVersionId(
+  accountId: string,
+  learnerId: string,
+  slug: string,
+): Promise<{ programVersionId: string | null } | null> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return null;
+  const rows = await getDb()
+    .select({ programVersionId: enrollment.programVersionId })
+    .from(enrollment)
+    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
+    .limit(1);
+  if (!rows[0]) return null;
+  return { programVersionId: rows[0].programVersionId };
+}
+
+/**
  * §8 AI-gate read: the enrollment row's status + safeParsed config for a
  * (learner, program) pair (owned-by-account). Returns null when the learner is
  * not owned OR no enrollment row exists — both of which the gate treats as
