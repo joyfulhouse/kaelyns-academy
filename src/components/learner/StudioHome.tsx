@@ -236,7 +236,7 @@ function WorldMap({
   onSwitchLearner: () => void;
 }) {
   const reduce = useReducedMotion();
-  const { skillState, completed, getStars, ready } = state;
+  const { skillState, completed, getStars, ready, config } = state;
 
   // Build a stable, hydration-safe snapshot. Before state is read, treat the
   // map as empty, then progress fills in once ready.
@@ -271,6 +271,19 @@ function WorldMap({
         : undefined,
     [program, skillState, ready, completedKey],
   );
+
+  // activeUnitKeys curation: when set (non-empty), only those unit ids are shown.
+  const activeUnitKeys =
+    config.activeUnitKeys && config.activeUnitKeys.length > 0
+      ? new Set(config.activeUnitKeys)
+      : null;
+  const visibleUnits = activeUnitKeys
+    ? program.units.filter((u) => activeUnitKeys.has(u.id))
+    : program.units;
+
+  // dailyGoal: count today's completed authored activities from the progressMap.
+  const dailyGoal = config.dailyGoal && config.dailyGoal > 0 ? config.dailyGoal : null;
+  const todayCompletedCount = ready ? completed.size : 0;
 
   return (
     <AppShellKid
@@ -310,6 +323,14 @@ function WorldMap({
                 Switch worlds
               </Link>
             </div>
+            {/* Daily goal pill: a light indicator, no enforcement */}
+            {dailyGoal !== null && (
+              <div className="mt-2">
+                <span className="inline-flex items-center rounded-pill border-2 border-ink/20 bg-paper px-3 py-1 font-display text-sm font-semibold text-ink-soft">
+                  {todayCompletedCount} / {dailyGoal} today
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -319,12 +340,12 @@ function WorldMap({
         <NextThingCard pick={topPick} programSlug={program.slug} reduce={Boolean(reduce)} />
       )}
 
-      {/* The path of worlds */}
+      {/* The path of worlds (curated by activeUnitKeys when set) */}
       <ol className="relative flex flex-col gap-5">
-        {program.units.map((unit, i) => {
+        {visibleUnits.map((unit, i) => {
           const up = computeUnitProgress(unit, progressMap);
           const prevDone =
-            i === 0 ? true : computeUnitProgress(program.units[i - 1], progressMap).completed > 0;
+            i === 0 ? true : computeUnitProgress(visibleUnits[i - 1], progressMap).completed > 0;
           // Forgiving gate: the first world is always open; each next world
           // opens once the child has started the one before. No penalties, just
           // a sense of journey.

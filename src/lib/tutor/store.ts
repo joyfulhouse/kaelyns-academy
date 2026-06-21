@@ -392,6 +392,25 @@ export async function listEnrollmentsDetailed(
 }
 
 /**
+ * Read the enrollment config for a specific (learner, program) pair (owned-by-account).
+ * Returns {} when the learner is not owned by the account or no enrollment exists.
+ */
+export async function getEnrollmentConfig(
+  accountId: string,
+  learnerId: string,
+  slug: string,
+): Promise<EnrollmentConfig> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return {};
+  const rows = await getDb()
+    .select({ config: enrollment.config })
+    .from(enrollment)
+    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
+    .limit(1);
+  return (rows[0]?.config as EnrollmentConfig) ?? {};
+}
+
+/**
  * Update the learner's settings (owned-by-account).
  * No-ops silently when the learner is not owned by the account.
  */

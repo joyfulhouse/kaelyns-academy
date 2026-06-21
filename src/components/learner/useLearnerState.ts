@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import type { Activity, ActivityScore } from "@/content";
 import { getProgram } from "@/content";
 import { applyEvidence, type SkillState } from "@/lib/tutor";
+import type { EnrollmentConfig } from "@/lib/content/config";
 import {
   ensureEnrollmentAction,
   ensureHouseholdLearner,
@@ -84,6 +85,12 @@ export interface UseLearnerState {
     score: ActivityScore,
     opts?: { generated?: boolean },
   ) => void;
+  /**
+   * The parent-set per-child, per-program enrollment config. Empty object in
+   * guest mode or when no config has been set. Clients read this to apply
+   * activeUnitKeys curation, AI-practice gating, band defaults, and dailyGoal.
+   */
+  config: EnrollmentConfig;
 }
 
 /** Remembered account-learner choice (distinct from the guest active-learner key). */
@@ -138,6 +145,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const [accountSkill, setAccountSkill] = useState<SkillState>(EMPTY_STATE);
   const [accountCompleted, setAccountCompleted] = useState<Set<string>>(new Set());
   const [accountStars, setAccountStars] = useState<Record<string, 0 | 1 | 2 | 3>>({});
+  const [accountConfig, setAccountConfig] = useState<EnrollmentConfig>({});
   // Which (learner, program) the loaded DB state belongs to (null = nothing
   // loaded yet). `ready` is derived from this matching the active learner +
   // program, so switching either shows a brief loading beat (not stale data)
@@ -193,10 +201,8 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const loadAccountState = useCallback(
     async (learnerId: string, slug: string) => {
       const token = ++reloadToken.current;
-      const { skillState, completedActivityIds, starsByActivity } = await getLearnerStateAction(
-        learnerId,
-        slug,
-      );
+      const { skillState, completedActivityIds, starsByActivity, config } =
+        await getLearnerStateAction(learnerId, slug);
       // Stale-response guard: ignore all but the latest in-flight load.
       if (!mountedRef.current || token !== reloadToken.current) return;
       setAccountSkill(skillState);
@@ -204,6 +210,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       // Server best-stars become the source of truth on load; this also clears
       // any optimistic stars from a prior learner/program so glyphs match.
       setAccountStars(starsByActivity as Record<string, 0 | 1 | 2 | 3>);
+      setAccountConfig(config);
       setLoadedKey(`${learnerId}:${slug}`);
     },
     [],
@@ -294,6 +301,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       selectLearner,
       setupProfile,
       record,
+      config: accountConfig,
     };
   }
 
@@ -315,6 +323,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       selectLearner,
       setupProfile,
       record,
+      config: {},
     };
   }
 
@@ -331,6 +340,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
     selectLearner,
     setupProfile,
     record,
+    config: {},
   };
 }
 

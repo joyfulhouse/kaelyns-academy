@@ -70,7 +70,7 @@ export function ActivityHost({
   // localStorage guest otherwise. The guest learner id only matters in guest
   // mode; in account mode the hook resolves the selected account learner. State
   // is scoped to the active program by its slug.
-  const { skillState, record, signedIn } = useLearnerState(learner.id, programSlug);
+  const { skillState, record, signedIn, config, selectedLearnerId } = useLearnerState(learner.id, programSlug);
   const [phase, setPhase] = useState<Phase>({ kind: "play" });
   const [generatedCount, setGeneratedCount] = useState(0);
 
@@ -103,12 +103,16 @@ export function ActivityHost({
   }, [router, backHref]);
 
   // Ask the bounded generator for one more item at this activity's level.
+  // `config.band` overrides the authored band when set (parent's difficulty pref).
+  // `learnerId` + `programSlug` are sent so the server can enforce the AI gate.
   const handleMore = useCallback(async () => {
     stopSpeaking();
     setPhase({ kind: "generating" });
 
     const primarySkill = activity.skillTags[0];
     const focus = (primarySkill ? getSkill(primarySkill)?.label : undefined) ?? activity.title;
+    const band = config.band ?? activity.band;
+    const learnerId = selectedLearnerId;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), PRACTICE_TIMEOUT_MS);
@@ -118,10 +122,12 @@ export function ActivityHost({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           kind: activity.kind,
-          band: activity.band,
+          band,
           focus,
           n: 1,
           skillHints: activity.skillTags.slice(0, 8),
+          learnerId,
+          programSlug,
         }),
         signal: controller.signal,
       });
@@ -147,7 +153,7 @@ export function ActivityHost({
     } finally {
       clearTimeout(timer);
     }
-  }, [activity]);
+  }, [activity, config.band, selectedLearnerId, programSlug]);
 
   // Auto-offer more when this activity's primary skill is still emerging, and
   // only while we're under the generation cap and the kind is renderable.
@@ -155,7 +161,11 @@ export function ActivityHost({
   // AI practice spends on the LiteLLM gateway via /api/practice, which now
   // requires an account — so only offer "more, made just for me" to a signed-in
   // household. Guests play authored content only (no false, always-failing tap).
-  const canGenerate = Boolean(activityType) && generatedCount < MAX_GENERATED && signedIn;
+  // Additionally, if the parent has set aiPractice === false for this child's
+  // program, hide the button (defense-in-depth: the server also returns 403).
+  const aiPracticeEnabled = config.aiPractice !== false;
+  const canGenerate =
+    Boolean(activityType) && generatedCount < MAX_GENERATED && signedIn && aiPracticeEnabled;
   const autoOffer =
     canGenerate && primarySkill !== undefined && outcomeOf(skillState, primarySkill) === "emerging";
 

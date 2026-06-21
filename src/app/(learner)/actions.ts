@@ -7,11 +7,13 @@ import {
   ensureDefaultLearner,
   ensureEnrollment,
   getCompletedActivityIds,
+  getEnrollmentConfig,
   getLearner,
   getSkillState,
-  listEnrollments,
+  listEnrollmentsDetailed,
   recordAttempt,
 } from "@/lib/tutor/store";
+import type { EnrollmentConfig } from "@/lib/content/config";
 import {
   activityIdsForProgram,
   skillTagsForProgram,
@@ -116,15 +118,19 @@ export async function ensureHouseholdLearner(): Promise<TutorLearner | null> {
 }
 
 /**
- * The program slugs the learner is enrolled in. Drives the `/learn` picker: one
- * enrollment auto-redirects into that program; several render program tiles.
+ * The program slugs the learner is **actively** enrolled in (status === "active").
+ * Drives the `/learn` picker: one enrollment auto-redirects; several render tiles.
+ * Paused or removed programs are hidden — parents can restore them at any time.
  * Returns [] when unauthenticated or on failure (the picker then falls back to
  * showing every program, which is also the guest-mode behavior).
  */
 export async function getEnrollmentsAction(learnerId: string): Promise<string[]> {
   if (!learnerId) return [];
   try {
-    return await withAccount(({ accountId }) => listEnrollments(accountId, learnerId));
+    return await withAccount(async ({ accountId }) => {
+      const all = await listEnrollmentsDetailed(accountId, learnerId);
+      return all.filter((e) => e.status === "active").map((e) => e.slug);
+    });
   } catch (error) {
     if (!(error instanceof UnauthenticatedError)) {
       captureNonCritical("getEnrollmentsAction failed", error);
@@ -224,12 +230,15 @@ export interface LearnerStateResult {
   completedActivityIds: string[];
   /** Best stars (0..3) per completed authored activity (for star glyphs). */
   starsByActivity: Record<string, number>;
+  /** Per-child, per-program enrollment config set by the parent (empty object if none). */
+  config: EnrollmentConfig;
 }
 
 const EMPTY_STATE: LearnerStateResult = {
   skillState: {},
   completedActivityIds: [],
   starsByActivity: {},
+  config: {},
 };
 
 /**
@@ -256,9 +265,10 @@ export async function getLearnerStateAction(
 
   try {
     return await withAccount(async ({ accountId }) => {
-      const [fullSkillState, completed] = await Promise.all([
+      const [fullSkillState, completed, config] = await Promise.all([
         getSkillState(accountId, learnerId),
         getCompletedActivityIds(accountId, learnerId),
+        getEnrollmentConfig(accountId, learnerId, programSlug),
       ]);
 
       // Scope skill_state to this program's skills.
@@ -276,7 +286,7 @@ export async function getLearnerStateAction(
         starsByActivity[c.activityId] = c.stars;
       }
 
-      return { skillState, completedActivityIds, starsByActivity };
+      return { skillState, completedActivityIds, starsByActivity, config };
     });
   } catch (error) {
     if (!(error instanceof UnauthenticatedError)) {
