@@ -54,4 +54,27 @@ describe("REQUIRED_COLUMNS coverage (schema-drift canary)", () => {
       expect.arrayContaining(["id", "identifier", "value"]),
     );
   });
+
+  it("covers the new curriculum marketplace tables", () => {
+    expect(REQUIRED_COLUMNS.publisher).toEqual(expect.arrayContaining(["id", "name", "kind"]));
+    expect(REQUIRED_COLUMNS.program).toEqual(expect.arrayContaining(["id", "slug", "status"]));
+    expect(REQUIRED_COLUMNS.program_version).toEqual(
+      expect.arrayContaining(["id", "program_id", "version", "status", "title"]),
+    );
+    expect(REQUIRED_COLUMNS.unit).toEqual(
+      expect.arrayContaining(["id", "program_version_id", "unit_key", "order_key", "title"]),
+    );
+    expect(REQUIRED_COLUMNS.lesson).toEqual(
+      expect.arrayContaining(["id", "unit_id", "lesson_key", "order_key", "title"]),
+    );
+    expect(REQUIRED_COLUMNS.activity).toEqual(
+      expect.arrayContaining(["id", "lesson_id", "activity_key", "order_key", "kind", "title", "config"]),
+    );
+    expect(REQUIRED_COLUMNS.skill).toEqual(
+      expect.arrayContaining(["id", "slug", "domain", "label"]),
+    );
+    expect(REQUIRED_COLUMNS.enrollment).toEqual(
+      expect.arrayContaining(["config", "status", "program_version_id"]),
+    );
+  });
 });

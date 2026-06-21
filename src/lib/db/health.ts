@@ -18,7 +18,7 @@ export const REQUIRED_COLUMNS: ColumnMap = {
     "created_at",
     "updated_at",
   ],
-  enrollment: ["id", "learner_id", "program_slug", "status", "started_at"],
+  enrollment: ["id", "learner_id", "program_slug", "status", "started_at", "config", "program_version_id"],
   attempt: [
     "id",
     "learner_id",
@@ -36,6 +36,15 @@ export const REQUIRED_COLUMNS: ColumnMap = {
   session: ["id", "user_id", "token", "expires_at"],
   account: ["id", "user_id", "provider_id", "account_id"],
   verification: ["id", "identifier", "value", "expires_at"],
+  // Curriculum marketplace tables (Slice 1). Drift on any of these 503s the
+  // deploy canary before the app tries to read versioned content.
+  publisher: ["id", "name", "kind"],
+  program: ["id", "slug", "status"],
+  program_version: ["id", "program_id", "version", "status", "title"],
+  unit: ["id", "program_version_id", "unit_key", "order_key", "title"],
+  lesson: ["id", "unit_id", "lesson_key", "order_key", "title"],
+  activity: ["id", "lesson_id", "activity_key", "order_key", "kind", "title", "config"],
+  skill: ["id", "slug", "domain", "label"],
 };
 
 export function missingColumns(required: ColumnMap, live: ColumnMap): string[] {
