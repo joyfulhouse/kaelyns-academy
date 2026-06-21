@@ -9,7 +9,7 @@ import { Surface } from "@/components/ui/Surface";
 import { Button } from "@/components/ui/Button";
 import { ProgramLifecycleControls } from "@/components/admin/ProgramLifecycleControls";
 import { listAdminPrograms } from "@/lib/content/store";
-import type { PillTone } from "@/components/ui/Pill";
+import { PROGRAM_STATUS_TONE, PROGRAM_STATUS_LABEL } from "@/lib/status-display";
 
 /**
  * Program detail page — RSC, already gated by the admin layout.
@@ -17,18 +17,6 @@ import type { PillTone } from "@/components/ui/Pill";
  * point (the full nested tree editor lands in Task 5.3).
  */
 export const dynamic = "force-dynamic";
-
-const STATUS_TONE: Record<string, PillTone> = {
-  draft: "ready",
-  published: "success",
-  archived: "neutral",
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  draft: "Draft",
-  published: "Published",
-  archived: "Archived",
-};
 
 export default async function ProgramDetailPage({
   params,
@@ -60,8 +48,8 @@ export default async function ProgramDetailPage({
             <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">
               {program.title}
             </h1>
-            <Pill tone={STATUS_TONE[program.status] ?? "neutral"}>
-              {STATUS_LABEL[program.status] ?? program.status}
+            <Pill tone={PROGRAM_STATUS_TONE[program.status] ?? "neutral"}>
+              {PROGRAM_STATUS_LABEL[program.status] ?? program.status}
             </Pill>
           </div>
           <p className="mt-1 text-sm text-ink-faint">/{program.slug}</p>

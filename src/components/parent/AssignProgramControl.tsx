@@ -11,24 +11,15 @@ import { Button } from "@/components/ui/Button";
 import { Pill } from "@/components/ui/Pill";
 import { Surface } from "@/components/ui/Surface";
 import { assignProgramAction } from "@/app/(parent)/actions";
-import type { EnrollmentStatus } from "@/lib/tutor/enrollment";
+import {
+  ENROLLMENT_STATUS_PILL_TONE,
+  ENROLLMENT_STATUS_LABEL_ASSIGN,
+} from "@/lib/status-display";
 import type { LearnerWithStatus } from "@/app/(parent)/data";
 
 type ActionState =
   | { status: "idle" }
   | { status: "error"; learnerId: string; message: string };
-
-const STATUS_PILL_TONE: Record<EnrollmentStatus, "success" | "ready" | "neutral"> = {
-  active: "success",
-  paused: "ready",
-  removed: "neutral",
-};
-
-const STATUS_LABEL: Record<EnrollmentStatus, string> = {
-  active: "Assigned",
-  paused: "Paused",
-  removed: "Removed",
-};
 
 /**
  * Per-learner assign controls for the program-detail page. Shows each child's
@@ -108,8 +99,8 @@ export function AssignProgramControl({
 
             <div className="flex shrink-0 items-center gap-2">
               {learner.status !== "none" && (
-                <Pill tone={STATUS_PILL_TONE[learner.status]}>
-                  {STATUS_LABEL[learner.status]}
+                <Pill tone={ENROLLMENT_STATUS_PILL_TONE[learner.status]}>
+                  {ENROLLMENT_STATUS_LABEL_ASSIGN[learner.status]}
                 </Pill>
               )}
 

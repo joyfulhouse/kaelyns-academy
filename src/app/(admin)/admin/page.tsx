@@ -4,25 +4,13 @@ import { Pill } from "@/components/ui/Pill";
 import { Surface } from "@/components/ui/Surface";
 import { CreateProgramForm } from "@/components/admin/CreateProgramForm";
 import { listAdminPrograms } from "@/lib/content/store";
-import type { PillTone } from "@/components/ui/Pill";
+import { PROGRAM_STATUS_TONE, PROGRAM_STATUS_LABEL } from "@/lib/status-display";
 
 /**
  * Admin program list — RSC, already gated by the admin layout.
  * Calls the store directly (the layout has already enforced admin).
  */
 export const dynamic = "force-dynamic";
-
-const STATUS_TONE: Record<string, PillTone> = {
-  draft: "ready",
-  published: "success",
-  archived: "neutral",
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  draft: "Draft",
-  published: "Published",
-  archived: "Archived",
-};
 
 export default async function AdminProgramsPage() {
   const programs = await listAdminPrograms();
@@ -76,8 +64,8 @@ export default async function AdminProgramsPage() {
                     <span className="font-display text-sm font-semibold text-ink">
                       {program.title}
                     </span>
-                    <Pill tone={STATUS_TONE[program.status] ?? "neutral"}>
-                      {STATUS_LABEL[program.status] ?? program.status}
+                    <Pill tone={PROGRAM_STATUS_TONE[program.status] ?? "neutral"}>
+                      {PROGRAM_STATUS_LABEL[program.status] ?? program.status}
                     </Pill>
                   </div>
                   <p className="mt-0.5 truncate text-xs text-ink-faint">

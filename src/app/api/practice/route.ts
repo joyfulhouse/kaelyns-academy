@@ -5,7 +5,7 @@ import { captureNonCritical } from "@/lib/capture";
 import { generatePracticeItems } from "@/lib/ai/practice";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { UnauthenticatedError, requireAccount } from "@/lib/tenancy";
-import { getEnrollmentConfig } from "@/lib/tutor/store";
+import { getLearner, getEnrollmentConfig } from "@/lib/tutor/store";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +63,14 @@ export async function POST(request: Request) {
   }
 
   const { kind, band, focus, n, skillHints, learnerId, programSlug } = parsed.data;
+
+  // Ownership check: a foreign or stale learnerId returns 404 rather than
+  // silently generating generic practice. (The §8 aiPractice 403 below is a
+  // separate, subsequent gate — do not merge these two checks.)
+  const ownedLearner = await getLearner(accountId, learnerId);
+  if (!ownedLearner) {
+    return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
 
   // Server-side AI gate (spec §8, defense-in-depth): always re-check the
   // enrollment config before any model call. Returns 403 when aiPractice is

@@ -63,7 +63,9 @@ export function LearnerDataControls({
           const anchor = document.createElement("a");
           anchor.href = url;
           anchor.download = `${learnerName}-export.json`;
+          document.body.appendChild(anchor);
           anchor.click();
+          document.body.removeChild(anchor);
           URL.revokeObjectURL(url);
         } else {
           setExportState({

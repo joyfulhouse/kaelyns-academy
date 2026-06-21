@@ -33,6 +33,8 @@ import {
 } from "@/lib/content/repository";
 import type { EnrollmentConfig } from "@/lib/content/config";
 import type { EnrollmentStatus } from "@/lib/tutor/enrollment";
+import type { EnrolledProgramView } from "@/lib/parent-views";
+export type { EnrolledProgramView } from "@/lib/parent-views";
 
 /**
  * Read helpers for the parent surface, every one scoped through `withAccount`
@@ -279,15 +281,9 @@ export function avatarInitial(displayName: string): string {
 
 /* ── Curriculum read helper ────────────────────────────────────────────────── */
 
-/** A single enrolled program as the parent curriculum panel needs it. */
-export interface EnrolledProgramView {
-  slug: string;
-  title: string;
-  status: EnrollmentStatus;
-  config: EnrollmentConfig;
-  /** Ordered units from the resolved program tree. */
-  units: { key: string; title: string }[];
-}
+// EnrolledProgramView is the canonical shape shared with the client via
+// @/lib/parent-views (re-exported at the top of this file so callers can
+// import it from either location).
 
 /** The two lists the CurriculumPanel renders. */
 export interface LearnerCurriculum {

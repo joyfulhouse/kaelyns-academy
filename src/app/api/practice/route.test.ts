@@ -8,14 +8,18 @@ vi.mock("@/lib/tenancy", async (importActual) => ({
   requireAccount: vi.fn(),
 }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: vi.fn() }));
-// Stub the store so tests don't need a real DB. Default: no config (AI enabled).
-vi.mock("@/lib/tutor/store", () => ({ getEnrollmentConfig: vi.fn() }));
+// Stub the store so tests don't need a real DB. Default: no config (AI enabled),
+// learner is owned by the account.
+vi.mock("@/lib/tutor/store", () => ({
+  getLearner: vi.fn(),
+  getEnrollmentConfig: vi.fn(),
+}));
 
 import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
 import { generatePracticeItems } from "@/lib/ai/practice";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { UnauthenticatedError, requireAccount } from "@/lib/tenancy";
-import { getEnrollmentConfig } from "@/lib/tutor/store";
+import { getLearner, getEnrollmentConfig } from "@/lib/tutor/store";
 import { POST } from "./route";
 
 const KIND = Object.keys(ACTIVITY_CONFIG_SCHEMAS)[0];
@@ -34,7 +38,14 @@ const VALID_BASE = { kind: KIND, band: "ready", focus: "counting", learnerId: "l
 beforeEach(() => {
   vi.mocked(requireAccount).mockResolvedValue({ accountId: "acc-1", userId: "acc-1" });
   vi.mocked(checkRateLimit).mockReturnValue({ ok: true, retryAfterSec: 0 });
-  // Default: AI practice not disabled (empty config).
+  // Default: learner is owned by the account; AI practice not disabled (empty config).
+  vi.mocked(getLearner).mockResolvedValue({
+    id: "l-1",
+    accountId: "acc-1",
+    displayName: "Test Learner",
+    avatar: null,
+    birthMonth: null,
+  });
   vi.mocked(getEnrollmentConfig).mockResolvedValue({});
 });
 afterEach(() => vi.resetAllMocks());
@@ -68,6 +79,14 @@ describe("POST /api/practice", () => {
     const res = await POST(post({ ...VALID_BASE }));
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: "ai_disabled" });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("404s when the learnerId is not owned by the authenticated account", async () => {
+    vi.mocked(getLearner).mockResolvedValue(null);
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: "not_found" });
     expect(generatePracticeItems).not.toHaveBeenCalled();
   });
 

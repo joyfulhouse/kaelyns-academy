@@ -342,9 +342,19 @@ export async function updateEnrollmentConfigAction(
     return { ok: false, reason: "invalid", message };
   }
 
+  // Normalize: an empty activeUnitKeys array means "all units active", which is
+  // the same as the field being absent. Store it as omitted so the DB never drifts
+  // from that intent regardless of what the client sent.
+  const normalized: EnrollmentConfig = {
+    ...configParsed.data,
+    ...(configParsed.data.activeUnitKeys?.length === 0
+      ? { activeUnitKeys: undefined }
+      : undefined),
+  };
+
   try {
     await withAccount(async ({ accountId }) => {
-      await setEnrollmentConfig(accountId, learnerId, slug, configParsed.data as EnrollmentConfig);
+      await setEnrollmentConfig(accountId, learnerId, slug, normalized);
     });
 
     revalidateEnrollmentPaths(learnerId);

@@ -20,44 +20,12 @@ import {
   removeProgramAction,
   restoreProgramAction,
 } from "@/app/(parent)/actions";
-import { canTransitionStatus, type EnrollmentStatus } from "@/lib/tutor/enrollment";
-import type { EnrollmentConfig } from "@/lib/content/config";
-
-/**
- * A single enrolled program as the curriculum panel needs it. Mirrors
- * the shape returned by getLearnerCurriculum in data.ts (server-only), but
- * defined here so this client component does not import that server module.
- */
-export interface EnrolledProgramView {
-  slug: string;
-  title: string;
-  status: EnrollmentStatus;
-  config: EnrollmentConfig;
-  units: { key: string; title: string }[];
-}
-
-/** Light catalog entry for the "add a program" control. */
-export interface AvailableProgram {
-  slug: string;
-  title: string;
-}
-
-export interface LearnerCurriculumProps {
-  enrolled: EnrolledProgramView[];
-  available: AvailableProgram[];
-}
-
-const STATUS_LABEL: Record<EnrollmentStatus, string> = {
-  active: "Active",
-  paused: "Paused",
-  removed: "Removed",
-};
-
-const STATUS_PILL_TONE: Record<EnrollmentStatus, "success" | "ready" | "neutral"> = {
-  active: "success",
-  paused: "ready",
-  removed: "neutral",
-};
+import { canTransitionStatus } from "@/lib/tutor/enrollment";
+import {
+  ENROLLMENT_STATUS_LABEL,
+  ENROLLMENT_STATUS_PILL_TONE,
+} from "@/lib/status-display";
+import type { LearnerCurriculumProps } from "@/lib/parent-views";
 
 type ActionState =
   | { status: "idle" }
@@ -205,8 +173,8 @@ export function CurriculumPanel({
                   </div>
 
                   <div className="flex shrink-0 flex-wrap items-center gap-2">
-                    <Pill tone={STATUS_PILL_TONE[program.status]}>
-                      {STATUS_LABEL[program.status]}
+                    <Pill tone={ENROLLMENT_STATUS_PILL_TONE[program.status]}>
+                      {ENROLLMENT_STATUS_LABEL[program.status]}
                     </Pill>
 
                     {canRemove && (
