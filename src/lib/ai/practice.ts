@@ -7,7 +7,7 @@ import {
   type ActivityKind,
 } from "@/content/activity-configs";
 import { ensureNarration } from "@/lib/audio/narration";
-import { spokenEnglishStrings } from "@/lib/audio/spokenFields";
+import { prewarmTexts } from "@/lib/audio/spokenFields";
 import type { LanguageDef, ScriptEntry } from "@/content/languages";
 import type { Band, SkillTag } from "@/content/types";
 import { chatJSON, fenceUntrusted, TUTOR_FAST, TUTOR_RICH, type TutorModel } from "./models";
@@ -238,9 +238,8 @@ export async function generatePracticeItems<K extends ActivityKind>(
   const items = result.items as z.output<(typeof ACTIVITY_CONFIG_SCHEMAS)[K]>[];
   // Fire-and-forget: warm the durable narration cache for everything the child
   // will hear, so the speaker button is an instant hit. Never blocks/breaks the
-  // response (ensureNarration swallows its own errors).
-  for (const item of items) {
-    for (const text of spokenEnglishStrings(item)) void ensureNarration(text);
-  }
+  // response (ensureNarration swallows its own errors). `prewarmTexts` dedupes and
+  // hard-caps the set so one response can't fan out an unbounded synth burst.
+  for (const text of prewarmTexts(items)) void ensureNarration(text);
   return items;
 }

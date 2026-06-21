@@ -54,3 +54,26 @@ export function spokenEnglishStrings(item: unknown): string[] {
   // Stable de-dup (first occurrence wins).
   return [...new Set(out)];
 }
+
+/** Hard ceiling on durable narration warm-ups enqueued for ONE generated batch.
+ *  Generation is capped at 8 items, so a normal batch warms well under this; the
+ *  cap only bites on adversarial max-size configs, bounding the fire-and-forget
+ *  synth burst (which bypasses the /api/tts rate limit). */
+export const PREWARM_MAX = 128;
+
+/** The deduped, hard-capped list of strings to pre-warm for a batch of generated
+ *  activity configs. Bounds fan-out so one /api/practice response can't enqueue an
+ *  unbounded burst of durable Kokoro/MinIO synths. */
+export function prewarmTexts(items: readonly unknown[], cap: number = PREWARM_MAX): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    for (const text of spokenEnglishStrings(item)) {
+      if (out.length >= cap) return out;
+      if (seen.has(text)) continue;
+      seen.add(text);
+      out.push(text);
+    }
+  }
+  return out;
+}

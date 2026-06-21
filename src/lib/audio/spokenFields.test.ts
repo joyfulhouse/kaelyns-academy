@@ -1,6 +1,6 @@
 // src/lib/audio/spokenFields.test.ts
 import { describe, expect, it } from "vitest";
-import { spokenEnglishStrings } from "./spokenFields";
+import { prewarmTexts, spokenEnglishStrings } from "./spokenFields";
 
 describe("spokenEnglishStrings", () => {
   it("pulls instruction + passage + question prompts from a reading item", () => {
@@ -62,5 +62,24 @@ describe("spokenEnglishStrings", () => {
       "[a](/A/)",
       "[k](/k/)",
     ]);
+  });
+});
+
+describe("prewarmTexts", () => {
+  it("dedupes identical strings across items", () => {
+    const item = { instruction: "Go", tiles: ["a", "b"], words: [{ word: "ab" }] };
+    const many = Array.from({ length: 50 }, () => item);
+    expect(prewarmTexts(many)).toEqual(["Go", "ab", "a", "b"]);
+  });
+
+  it("hard-caps the total for a large distinct batch (bounds prewarm fan-out)", () => {
+    const items = Array.from({ length: 8 }, (_, i) => ({
+      instruction: `instr ${i}`,
+      tiles: Array.from({ length: 16 }, (_, j) => `t${i}-${j}`),
+      words: Array.from({ length: 12 }, (_, j) => ({ word: `w${i}-${j}` })),
+    }));
+    const out = prewarmTexts(items, 64);
+    expect(out.length).toBe(64);
+    expect(new Set(out).size).toBe(64); // all unique, nothing past the cap
   });
 });
