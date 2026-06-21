@@ -12,13 +12,20 @@ import { ttsKey } from "@/lib/audio/ttsKey";
 import { clipExists, putClip } from "@/lib/audio/store";
 import { captureNonCritical } from "@/lib/capture";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { UnauthenticatedError, requireAccount } from "@/lib/tenancy";
+import { clientIp } from "@/lib/request-ip";
+import { getAccountOrNull } from "@/lib/tenancy";
 
 export const dynamic = "force-dynamic";
 
-/** Each synth is a ~30s Kokoro call + a MinIO write, so this route is gated:
- *  auth (primary defense) + a best-effort per-account, per-instance limiter. */
-const RATE_LIMIT = { limit: 60, windowMs: 60_000 };
+/** Each synth is a ~30s Kokoro call + a MinIO write, so this route is throttled.
+ *  The public "explore" learner flow is unauthenticated, so anonymous callers are
+ *  allowed but keyed (and capped tighter) by client IP — a best-effort,
+ *  per-instance denial-of-wallet control (a determined attacker rotating IPs can
+ *  still spend; a cluster-wide cap would need a shared store). Signed-in accounts
+ *  get a more generous per-account window. On-demand writes are ephemeral-only
+ *  (below), so anonymous text never reaches the durable cache. */
+const RATE_LIMIT_ACCOUNT = { limit: 60, windowMs: 60_000 };
+const RATE_LIMIT_ANON = { limit: 20, windowMs: 60_000 };
 
 /** Reject implausibly long input before paying for synthesis. A child-facing UI
  *  string is short; anything past this is abuse, not narration. */
@@ -34,17 +41,15 @@ interface Body {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  // Auth + rate limit BEFORE any synth or MinIO work. Only signed-in accounts
-  // may drive Kokoro, and each is capped to a sane per-minute burst.
-  let accountId: string;
-  try {
-    ({ accountId } = await requireAccount());
-  } catch (error) {
-    if (error instanceof UnauthenticatedError) return new Response(null, { status: 401 });
-    throw error;
-  }
+  // Rate limit BEFORE any synth or MinIO work. Anonymous callers (public explore
+  // flow) are allowed but keyed + capped by client IP; signed-in accounts get a
+  // generous per-account window.
+  const account = await getAccountOrNull();
+  const { limitKey, policy } = account
+    ? { limitKey: `tts:acct:${account.accountId}`, policy: RATE_LIMIT_ACCOUNT }
+    : { limitKey: `tts:ip:${clientIp(req.headers) ?? "noip"}`, policy: RATE_LIMIT_ANON };
 
-  const limit = checkRateLimit(`tts:${accountId}`, RATE_LIMIT);
+  const limit = checkRateLimit(limitKey, policy);
   if (!limit.ok) {
     return new Response(null, {
       status: 429,

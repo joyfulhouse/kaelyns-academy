@@ -42,6 +42,21 @@ export async function requireAccount(): Promise<AccountContext> {
 }
 
 /**
+ * Resolve the current account context, or `null` when there is no valid session.
+ * The no-throw variant for routes that serve both signed-in and anonymous
+ * callers (e.g. the public "explore" learner flow), where being unauthenticated
+ * is expected rather than an error.
+ */
+export async function getAccountOrNull(): Promise<AccountContext | null> {
+  try {
+    return await requireAccount();
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) return null;
+    throw error;
+  }
+}
+
+/**
  * Run `fn` with the current account context, scoping any learner queries to
  * that account. Throws {@link UnauthenticatedError} if there is no session.
  *
