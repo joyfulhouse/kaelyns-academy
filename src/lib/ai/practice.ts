@@ -237,11 +237,20 @@ function wordsByTile(config: RepairablePhonics): Map<string, string[]> {
  * voiced wrong for one word. This is order-independent and never-worse-than-bare
  * for the consonant. (Non-conflicting shared tiles — same sound everywhere — survive.)
  *
- * Residual ceiling (documented): a kept override's VOWEL quality is LLM-trusted —
- * its consonants are validated against both the tile and every word, but choosing
- * the right vowel among a tile's several valid readings needs grapheme→phoneme
- * alignment Kokoro's flat /dev/phonemize can't give. This is a best-effort net that
- * ONLY removes overrides. Authored content is hand-verified and never passes here.
+ * Residual ceiling (ACCEPTED known limitation — product decision 2026-06-21):
+ * this is a best-effort sanity net, not a proof, because it lacks grapheme→phoneme
+ * ALIGNMENT (Kokoro's flat /dev/phonemize returns no per-letter offsets; and
+ * phonemizing a tile's letters in isolation is the very out-of-context bug we fix).
+ * Two classes therefore slip through, both rare and both never worse than a missing
+ * override would be in the average case:
+ *   1. VOWEL quality — a kept override's vowel isn't validated (vowels vary by word;
+ *      checking them would false-reject), so the LLM's vowel is trusted.
+ *   2. CONSONANT position — a consonant the tile CAN spell that also appears
+ *      elsewhere in the word passes even if it's not the tile's actual sound (e.g.
+ *      soft-c "s" on the "c" tile of "scat", where /s/ comes from the "s" tile).
+ * Closing these requires a real G2P aligner — tracked in
+ * docs/claude/GENERATED_PHONICS_PRONUNCIATION.md. The pass ONLY ever removes
+ * overrides, and authored content is hand-verified and never passes through here.
  */
 function applyRepair(config: RepairablePhonics, phonemesByWord: Map<string, string>): void {
   const say = config.say;

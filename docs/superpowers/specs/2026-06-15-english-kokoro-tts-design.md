@@ -158,6 +158,11 @@ from its `/dev/phonemize`).
   roots lessons.
 - `MAX_TTS_TEXT_LEN` (`config.ts`, 500) now caps BOTH `/api/tts` and `ensureNarration`, so
   the warm/pre-synth path can't synthesize text the route would reject (denial-of-wallet).
+- AI-**generated** phonics (`/api/practice`) has the model emit `say` overrides, validated
+  server-side against Kokoro `/dev/phonemize` (`applyRepair`) and dropped unless positively
+  confirmed for every word using the tile. It's a best-effort net with a documented residual
+  (no grapheme→phoneme alignment) — see `docs/claude/GENERATED_PHONICS_PRONUNCIATION.md`.
+  **Authored** phonics overrides are hand-verified and never validated/stripped.
 
 ### Config & secrets
 
