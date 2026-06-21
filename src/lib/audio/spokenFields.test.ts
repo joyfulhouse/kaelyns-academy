@@ -27,4 +27,40 @@ describe("spokenEnglishStrings", () => {
   it("returns [] for an item with no spoken fields", () => {
     expect(spokenEnglishStrings({ rows: 3, cols: 4, mode: "build" })).toEqual([]);
   });
+
+  it("emits each phonics-wordbuild word and tile, applying phoneme overrides", () => {
+    const item = {
+      focus: "the six syllable types",
+      instruction: "Build it.",
+      tiles: ["ta", "ble", "rab"],
+      say: { ta: "tˈA", ble: "bəl" }, // "rab" already phonemizes fine → spoken bare
+      words: [{ word: "table" }, { word: "rabbit", ipa: "ɹˈæbət" }],
+    };
+    expect(spokenEnglishStrings(item)).toEqual([
+      "Build it.",
+      "table",
+      "[rabbit](/ɹˈæbət/)",
+      "[ta](/tˈA/)",
+      "[ble](/bəl/)",
+      "rab",
+    ]);
+  });
+
+  it("skips silent tiles (e.g. magic-e) — they make no sound to warm", () => {
+    const item = {
+      focus: "silent-e",
+      instruction: "Add the magic e.",
+      tiles: ["c", "a", "k", "e"],
+      say: { c: "k", a: "A", k: "k" },
+      silent: ["e"],
+      words: [{ word: "cake" }],
+    };
+    expect(spokenEnglishStrings(item)).toEqual([
+      "Add the magic e.",
+      "cake",
+      "[c](/k/)",
+      "[a](/A/)",
+      "[k](/k/)",
+    ]);
+  });
 });

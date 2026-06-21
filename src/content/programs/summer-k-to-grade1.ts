@@ -46,6 +46,8 @@ export const summerKToGrade1: Program = {
                 focus: "short vowels (CVC)",
                 instruction: "Let's build a word! Tap the sounds to spell the picture.",
                 tiles: ["c", "a", "t", "s", "u", "n", "p", "i", "g"],
+                // Lone letters say their NAME ("see", "tee"); pin each to its sound.
+                say: { c: "k", a: "æ", t: "t", s: "s", u: "ʌ", n: "n", p: "p", i: "ɪ", g: "ɡ" },
                 words: [{ word: "cat", picture: "🐱" }, { word: "sun", picture: "☀️" }, { word: "pig", picture: "🐷" }],
               },
             },
@@ -103,6 +105,8 @@ export const summerKToGrade1: Program = {
                 focus: "digraphs sh / ch / th",
                 instruction: "Two letters, one sound! Build the word for each picture.",
                 tiles: ["sh", "ch", "th", "i", "p", "a", "t", "f", "s"],
+                // Digraphs read as letter names ("es-aitch"); pin to one sound each.
+                say: { sh: "ʃ", ch: "ʧ", th: "θ", i: "ɪ", p: "p", a: "æ", t: "t", f: "f", s: "s" },
                 words: [{ word: "ship", picture: "🚢" }, { word: "chip", picture: "🍟" }, { word: "fish", picture: "🐟" }],
               },
             },
@@ -159,7 +163,11 @@ export const summerKToGrade1: Program = {
               config: {
                 focus: "beginning blends bl / st / gr",
                 instruction: "Slide the two sounds together to start the word.",
-                tiles: ["bl", "st", "gr", "o", "p", "a", "r", "e", "m"],
+                // b + t are needed to spell grab/blot; r is a decoy. (Was missing b/t,
+                // leaving grab and blot unbuildable.)
+                tiles: ["bl", "st", "gr", "o", "p", "a", "b", "t", "r"],
+                // Blends read as letter names ("bee-ell") and lone letters too; pin sounds.
+                say: { bl: "bl", st: "st", gr: "ɡɹ", o: "ɑ", p: "p", a: "æ", b: "b", t: "t", r: "ɹ" },
                 words: [{ word: "stop", picture: "🛑" }, { word: "grab", picture: "✊" }, { word: "blot", picture: "🔵" }],
               },
             },
@@ -207,6 +215,9 @@ export const summerKToGrade1: Program = {
                 focus: "ending blends -nd / -st / -mp",
                 instruction: "Finish each word with the right ending blend.",
                 tiles: ["nd", "st", "mp", "ha", "ne", "ju", "la", "be", "fi"],
+                // Ending blends read as letter names ("en-dee") and onset tiles take
+                // the wrong vowel in isolation (ha→"hah", ne→"nee", ju→"joo"); pin each.
+                say: { nd: "nd", st: "st", mp: "mp", ha: "hˈæ", ne: "nˈɛ", ju: "ʤˈʌ", la: "lˈæ", be: "bˈɛ", fi: "fˈɪ" },
                 words: [{ word: "hand", picture: "✋" }, { word: "nest", picture: "🪺" }, { word: "jump", picture: "🤸" }],
               },
             },
@@ -265,6 +276,10 @@ export const summerKToGrade1: Program = {
                 focus: "silent-e (a_e, i_e, o_e)",
                 instruction: "Add the magic e and hear the vowel say its name!",
                 tiles: ["c", "a", "k", "e", "b", "i", "n", "o"],
+                // Magic-e: the vowels say their LONG name (a→/eɪ/, i→/aɪ/, o→/oʊ/);
+                // the magic "e" is silent — it fills a slot but makes no sound.
+                say: { c: "k", a: "A", k: "k", b: "b", i: "I", n: "n", o: "O" },
+                silent: ["e"],
                 words: [{ word: "cake", picture: "🍰" }, { word: "bike", picture: "🚲" }, { word: "bone", picture: "🦴" }],
               },
             },
@@ -311,6 +326,9 @@ export const summerKToGrade1: Program = {
                 focus: "vowel teams ai / ee / oa",
                 instruction: "Two vowels go walking. Build each word!",
                 tiles: ["r", "ai", "n", "b", "ee", "oa", "t", "s", "d"],
+                // "ee" already voices /i/ correctly; "ai"/"oa" misread as letter names
+                // ("ay-eye") and lone letters say their names — pin the rest.
+                say: { r: "ɹ", ai: "A", n: "n", b: "b", oa: "O", t: "t", s: "s", d: "d" },
                 words: [{ word: "rain", picture: "🌧️" }, { word: "bee", picture: "🐝" }, { word: "boat", picture: "⛵" }],
               },
             },
@@ -358,6 +376,9 @@ export const summerKToGrade1: Program = {
                 focus: "r-controlled ar / or / ir",
                 instruction: "The R is bossy! Build each word.",
                 tiles: ["ar", "or", "ir", "c", "f", "b", "d", "n", "t"],
+                // ar/or/ir already voice their r-controlled sounds correctly; only the
+                // lone consonant letters say their names — pin those to sounds.
+                say: { c: "k", f: "f", b: "b", d: "d", n: "n", t: "t" },
                 words: [{ word: "car", picture: "🚗" }, { word: "corn", picture: "🌽" }, { word: "bird", picture: "🐦" }],
               },
             },
@@ -404,6 +425,9 @@ export const summerKToGrade1: Program = {
                 focus: "diphthongs oi / ou / ow",
                 instruction: "These vowels glide! Build each word.",
                 tiles: ["oi", "ou", "ow", "c", "n", "l", "d", "c", "w"],
+                // oi/ow already correct; "ou" misreads as "oh" (want "ow" as in cloud);
+                // lone letters say their names — pin the rest.
+                say: { ou: "W", c: "k", n: "n", l: "l", d: "d", w: "w" },
                 words: [{ word: "coin", picture: "🪙" }, { word: "cloud", picture: "☁️" }, { word: "cow", picture: "🐄" }],
               },
             },
@@ -450,6 +474,9 @@ export const summerKToGrade1: Program = {
                 focus: "inflectional endings -ing / -ed",
                 instruction: "Add the ending to finish the word.",
                 tiles: ["ing", "ed", "s", "jump", "play", "run"],
+                // ing/jump/play/run already voice correctly; "-ed" alone says "ed" but
+                // in "played" it is /d/; "-s" alone says "ess" but the ending is /s/.
+                say: { ed: "d", s: "s" },
                 words: [{ word: "jumping", picture: "🦘" }, { word: "played", picture: "🎮" }],
               },
             },

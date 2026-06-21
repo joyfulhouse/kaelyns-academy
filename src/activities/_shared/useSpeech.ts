@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { type NarrateHandle, narrate } from "@/components/learner/narrate";
-import { routeSpeak } from "./speechRouting";
+import { type SpeakOptions, routeSpeak } from "./speechRouting";
 import { pickVoice, speechParamsFor } from "./voiceUtils";
 
 /**
@@ -22,8 +22,10 @@ export interface SpeechController {
    * assume yes; a non-English locale is only true once a matching voice loads.
    */
   hasVoice: boolean;
-  /** Speak a phrase (cancels anything in flight). No-op when unsupported. */
-  speak: (text: string) => void;
+  /** Speak a phrase (cancels anything in flight). No-op when unsupported. The
+   *  optional `tts` override sends phoneme markup to the neural voice only; the
+   *  browser-synth fallback always speaks the plain `text`. */
+  speak: (text: string, opts?: SpeakOptions) => void;
   /** Stop any current utterance. */
   cancel: () => void;
 }
@@ -95,11 +97,11 @@ export function useSpeech(locale = "en-US"): SpeechController {
   );
 
   const speak = useCallback(
-    (text: string) => {
+    (text: string, opts?: SpeakOptions) => {
       narrateRef.current?.cancel();
       narrateRef.current = null;
       (synthRef.current ?? getSynth())?.cancel();
-      narrateRef.current = routeSpeak(locale, text, { narrate, speakViaSynth });
+      narrateRef.current = routeSpeak(locale, text, { narrate, speakViaSynth }, opts);
     },
     [locale, speakViaSynth],
   );

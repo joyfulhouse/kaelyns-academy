@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { ArrowCounterClockwiseIcon, BackspaceIcon } from "@phosphor-icons/react/dist/ssr";
 import type { PhonicsWordbuildConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
+import { tilePhonemeText, withPhonemes } from "@/lib/audio/phonemes";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { Prompt, SpeakerButton } from "../_shared/ActivityChrome";
@@ -101,7 +102,12 @@ export function PhonicsWordbuildPlayer({
   function tapTile(tile: string) {
     if (wrong || isComplete) return;
     setBuilt((prev) => [...prev, tile]);
-    speech.speak(tile);
+    // Silent letters (e.g. the magic-e) fill the slot but make no sound.
+    if (parsed.silent?.includes(tile)) return;
+    // A lone tile is voiced out of context; its authored IPA (when present) makes
+    // the neural voice say the in-word sound instead of mis-reading the spelling.
+    const tts = tilePhonemeText(tile, parsed.say);
+    speech.speak(tile, tts ? { tts } : undefined);
   }
 
   function undo() {
@@ -158,7 +164,12 @@ export function PhonicsWordbuildPlayer({
           </motion.div>
         )}
         <div className="flex items-center gap-2">
-          <SpeakerButton speech={speech} text={current.word} label={`Say the word ${current.word}`} />
+          <SpeakerButton
+            speech={speech}
+            text={current.word}
+            tts={current.ipa ? withPhonemes(current.word, current.ipa) : undefined}
+            label={`Say the word ${current.word}`}
+          />
           <span className="text-sm text-ink-soft">Word {wordIndex + 1} of {parsed.words.length}</span>
         </div>
       </div>

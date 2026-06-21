@@ -5,6 +5,7 @@
  * button is an instant cache hit. Foreign (`lang-*`) configs are handled by the
  * pre-generated clip pipeline and are intentionally NOT covered here.
  */
+import { tilePhonemeText, withPhonemes } from "./phonemes";
 
 /** Ordered, de-duplicated, non-blank spoken strings for one config item. */
 export function spokenEnglishStrings(item: unknown): string[] {
@@ -24,7 +25,33 @@ export function spokenEnglishStrings(item: unknown): string[] {
     }
   }
   push(r.retellPrompt);
-  if (Array.isArray(r.words)) for (const w of r.words) push(w); // sightword-game targets
+  if (Array.isArray(r.words)) {
+    for (const w of r.words) {
+      if (typeof w === "string") {
+        push(w); // sightword-game targets
+      } else if (w && typeof w === "object") {
+        // phonics-wordbuild words: spoken whole, with an optional IPA override.
+        const wo = w as Record<string, unknown>;
+        const word = typeof wo.word === "string" ? wo.word : "";
+        if (word) {
+          push(typeof wo.ipa === "string" && wo.ipa.trim() ? withPhonemes(word, wo.ipa) : word);
+        }
+      }
+    }
+  }
+  // phonics-wordbuild tiles: each is spoken in isolation when tapped, so warm the
+  // SAME string the Player sends — its phoneme override when authored, else bare.
+  // Silent tiles (e.g. the magic-e) make no sound, so there's nothing to warm.
+  if (Array.isArray(r.tiles)) {
+    const say = r.say && typeof r.say === "object" ? (r.say as Record<string, string>) : undefined;
+    const silent = Array.isArray(r.silent)
+      ? new Set(r.silent.filter((x): x is string => typeof x === "string"))
+      : undefined;
+    for (const t of r.tiles) {
+      if (typeof t !== "string" || silent?.has(t)) continue;
+      push(tilePhonemeText(t, say) ?? t);
+    }
+  }
 
   // Stable de-dup (first occurrence wins).
   return [...new Set(out)];
