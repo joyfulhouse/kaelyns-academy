@@ -6,6 +6,8 @@ import { getDb } from "@/lib/db";
 import { attempt, enrollment, learner, skillState } from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
+import type { EnrollmentConfig, LearnerSettings } from "@/lib/content/config";
+import type { EnrollmentDetail, EnrollmentStatus } from "./enrollment";
 
 /**
  * The DB-backed tutor store: the server equivalent of the client's
@@ -283,4 +285,111 @@ export async function skillOutcomeCounts(
   const bySkill = new Map(rows.map((r) => [r.skill, r.outcome as SkillOutcome]));
   for (const s of skills) counts[bySkill.get(s) ?? "not_yet"] += 1;
   return counts;
+}
+
+// ── Enrollment lifecycle + config + settings ─────────────────────────────────
+
+/**
+ * Upsert a program enrollment for the learner (owned-by-account check first).
+ * Insert with status="active" and programVersionId when none exists; if one
+ * already exists, restore to active and re-pin the version.
+ */
+export async function assignProgram(
+  accountId: string,
+  learnerId: string,
+  slug: string,
+  programVersionId: string | null,
+): Promise<void> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return;
+  await getDb()
+    .insert(enrollment)
+    .values({
+      learnerId,
+      programSlug: slug,
+      status: "active",
+      config: {},
+      programVersionId,
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: [enrollment.learnerId, enrollment.programSlug],
+      set: { status: "active", programVersionId, updatedAt: new Date() },
+    });
+}
+
+/**
+ * Update the enrollment status for a learner's program (owned-by-account).
+ * No-ops silently when the learner is not owned by the account.
+ */
+export async function setEnrollmentStatus(
+  accountId: string,
+  learnerId: string,
+  slug: string,
+  status: EnrollmentStatus,
+): Promise<void> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return;
+  await getDb()
+    .update(enrollment)
+    .set({ status, updatedAt: new Date() })
+    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)));
+}
+
+/**
+ * Update the enrollment config for a learner's program (owned-by-account).
+ * No-ops silently when the learner is not owned by the account.
+ */
+export async function setEnrollmentConfig(
+  accountId: string,
+  learnerId: string,
+  slug: string,
+  config: EnrollmentConfig,
+): Promise<void> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return;
+  await getDb()
+    .update(enrollment)
+    .set({ config, updatedAt: new Date() })
+    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)));
+}
+
+/**
+ * All enrollments for the learner (owned-by-account), mapped to EnrollmentDetail.
+ * Returns an empty array when the learner is not owned by the account.
+ */
+export async function listEnrollmentsDetailed(
+  accountId: string,
+  learnerId: string,
+): Promise<EnrollmentDetail[]> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return [];
+  const rows = await getDb()
+    .select()
+    .from(enrollment)
+    .where(eq(enrollment.learnerId, learnerId));
+  return rows.map((r) => ({
+    slug: r.programSlug,
+    status: r.status as EnrollmentStatus,
+    config: r.config as EnrollmentConfig,
+    programVersionId: r.programVersionId,
+    startedAt: r.startedAt,
+  }));
+}
+
+/**
+ * Update the learner's settings (owned-by-account).
+ * No-ops silently when the learner is not owned by the account.
+ */
+export async function saveLearnerSettings(
+  accountId: string,
+  learnerId: string,
+  settings: LearnerSettings,
+): Promise<void> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return;
+  await getDb()
+    .update(learner)
+    .set({ settings, updatedAt: new Date() })
+    .where(eq(learner.id, learnerId));
 }

@@ -211,6 +211,23 @@ export async function getProgramVersionTreeRows(
 }
 
 /**
+ * Return the `publishedVersionId` for a published program by slug.
+ * Returns null when the program is absent, not published, or the DB is
+ * unreachable (mirrors the repository layer's "try DB → return null" pattern).
+ */
+export async function getPublishedVersionId(slug: string): Promise<string | null> {
+  try {
+    const db = getDb();
+    const row = await db.query.program.findFirst({
+      where: (p, { and }) => and(eq(p.slug, slug), eq(p.status, "published")),
+    });
+    return row?.publishedVersionId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Light catalog metadata — slug, title, subtitle, ageBand, summary, world,
  * languages — without loading the full tree.
  */
