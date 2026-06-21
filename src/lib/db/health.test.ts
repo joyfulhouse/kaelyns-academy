@@ -74,7 +74,7 @@ describe("REQUIRED_COLUMNS coverage (schema-drift canary)", () => {
       expect.arrayContaining(["id", "slug", "domain", "label"]),
     );
     expect(REQUIRED_COLUMNS.enrollment).toEqual(
-      expect.arrayContaining(["config", "status", "program_version_id"]),
+      expect.arrayContaining(["config", "status", "program_version_id", "updated_at"]),
     );
   });
 });

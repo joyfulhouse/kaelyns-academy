@@ -18,7 +18,7 @@ export const REQUIRED_COLUMNS: ColumnMap = {
     "created_at",
     "updated_at",
   ],
-  enrollment: ["id", "learner_id", "program_slug", "status", "started_at", "config", "program_version_id"],
+  enrollment: ["id", "learner_id", "program_slug", "status", "started_at", "config", "program_version_id", "updated_at"],
   attempt: [
     "id",
     "learner_id",
