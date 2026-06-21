@@ -13,6 +13,7 @@ import {
   type EnrollmentConfig,
   type LearnerSettings,
 } from "@/lib/content/config";
+import { getPublishedVersionId } from "@/lib/content/store";
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
 import { shapeLearnerExport, type LearnerExport } from "./export";
 
@@ -104,10 +105,24 @@ export async function ensureDefaultLearner(
   return createLearner(accountId, defaults);
 }
 
+/**
+ * Lazily create a (learner, program) enrollment, pinned to the program's CURRENT
+ * published version at creation time (Fix-E Layer 3). Resolving
+ * `getPublishedVersionId` and storing it as `programVersionId` means a
+ * default/self-enroll learner is anchored to the version they started on and does
+ * NOT silently follow whatever publishes next — matching parent-assigned
+ * enrollments (assignProgram), which already pin. A static builtin with no DB
+ * published version resolves to null → null pin → the learner surface serves the
+ * static tree (correct). Kept `onConflictDoNothing`: an existing or soft-removed
+ * enrollment is never repinned or resurrected (a paused/removed program stays so,
+ * and a learner mid-program is never moved to a newer pin). No backfill of
+ * pre-existing rows is done (pilot: no durable enrollment data to migrate).
+ */
 export async function ensureEnrollment(learnerId: string, programSlug: string): Promise<void> {
+  const programVersionId = await getPublishedVersionId(programSlug);
   await getDb()
     .insert(enrollment)
-    .values({ learnerId, programSlug })
+    .values({ learnerId, programSlug, programVersionId })
     .onConflictDoNothing({ target: [enrollment.learnerId, enrollment.programSlug] });
 }
 
