@@ -102,8 +102,12 @@ export function PhonicsWordbuildPlayer({
   function tapTile(tile: string) {
     if (wrong || isComplete) return;
     setBuilt((prev) => [...prev, tile]);
-    // Silent letters (e.g. the magic-e) fill the slot but make no sound.
-    if (parsed.silent?.includes(tile)) return;
+    // Silent letters (e.g. the magic-e) fill the slot but make no sound — cancel
+    // any in-flight utterance so a quick tap can't leave the prior tile audible.
+    if (parsed.silent?.includes(tile)) {
+      speech.cancel();
+      return;
+    }
     // A lone tile is voiced out of context; its authored IPA (when present) makes
     // the neural voice say the in-word sound instead of mis-reading the spelling.
     const tts = tilePhonemeText(tile, parsed.say);

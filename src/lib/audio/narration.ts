@@ -6,7 +6,7 @@
  * synth via /api/tts.
  */
 import { captureNonCritical } from "@/lib/capture";
-import { type Persist, enSpeed, enVoice, prefixFor } from "./config";
+import { MAX_TTS_TEXT_LEN, type Persist, enSpeed, enVoice, prefixFor } from "./config";
 import { synthesizeMp3 } from "./kokoro";
 import { ttsKey } from "./ttsKey";
 import { clipExists, putClip } from "./store";
@@ -32,6 +32,11 @@ export async function ensureNarration(
   const speed = options.speed ?? enSpeed();
   const prefix = prefixFor(options.persist);
   const key = ttsKey(text, voice, speed);
+
+  // Mirror the /api/tts guard: never synthesize (or cache) oversized text. The
+  // runtime route rejects anything past this, so warming it is wasted spend — and
+  // it caps denial-of-wallet via pre-synth of AI-generated configs.
+  if (text.trim().length > MAX_TTS_TEXT_LEN) return { key, prefix, stored: false };
 
   try {
     if (await clipExists(prefix, key)) return { key, prefix, stored: true };

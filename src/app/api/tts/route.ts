@@ -6,7 +6,15 @@
  * even without durable storage. Kokoro unreachable → 503 so the client falls back
  * to browser TTS. Build-safe: all env/network is per-request.
  */
-import { type Persist, clipObjectPath, clipPublicUrl, enSpeed, enVoice, prefixFor } from "@/lib/audio/config";
+import {
+  MAX_TTS_TEXT_LEN,
+  type Persist,
+  clipObjectPath,
+  clipPublicUrl,
+  enSpeed,
+  enVoice,
+  prefixFor,
+} from "@/lib/audio/config";
 import { synthesizeMp3 } from "@/lib/audio/kokoro";
 import { ttsKey } from "@/lib/audio/ttsKey";
 import { clipExists, putClip } from "@/lib/audio/store";
@@ -26,10 +34,6 @@ export const dynamic = "force-dynamic";
  *  (below), so anonymous text never reaches the durable cache. */
 const RATE_LIMIT_ACCOUNT = { limit: 60, windowMs: 60_000 };
 const RATE_LIMIT_ANON = { limit: 20, windowMs: 60_000 };
-
-/** Reject implausibly long input before paying for synthesis. A child-facing UI
- *  string is short; anything past this is abuse, not narration. */
-const MAX_TEXT_LEN = 500;
 
 /** Dedupe concurrent identical synths within a process so a burst → one Kokoro call. */
 const inflight = new Map<string, Promise<Uint8Array<ArrayBuffer>>>();
@@ -68,7 +72,7 @@ export async function POST(req: Request): Promise<Response> {
   if (typeof body !== "object" || body === null) return new Response(null, { status: 400 });
   const text = typeof body.text === "string" ? body.text.trim() : "";
   if (!text) return new Response(null, { status: 400 });
-  if (text.length > MAX_TEXT_LEN) return new Response(null, { status: 400 });
+  if (text.length > MAX_TTS_TEXT_LEN) return new Response(null, { status: 400 });
 
   const voice = typeof body.voice === "string" && body.voice ? body.voice : enVoice();
   const speed = enSpeed();

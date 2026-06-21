@@ -10,8 +10,9 @@ describe("withPhonemes", () => {
     expect(withPhonemes("ble", " /bəl/ ")).toBe("[ble](/bəl/)");
   });
 
-  it("strips stray slashes anywhere so the markup can't break", () => {
+  it("strips stray markup delimiters anywhere so the markup can't break", () => {
     expect(withPhonemes("x", "a/b")).toBe("[x](/ab/)");
+    expect(withPhonemes("x", "a)b](c")).toBe("[x](/abc/)");
   });
 
   it("returns the bare label when the IPA is empty (no broken markup)", () => {

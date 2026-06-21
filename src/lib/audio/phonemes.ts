@@ -13,14 +13,17 @@
  * exact string — and therefore its `ttsKey` cache key — matches on both sides.
  */
 
+/** The markup delimiters of an inline override: `[ ] ( ) /`. misaki IPA never
+ *  contains them, so we strip any that slip in from authored or AI-generated
+ *  content — a stray one would break `[label](/…/)` or inject extra tokens. */
+const MARKUP_DELIMITERS = /[[\]()/]+/g;
+
 /** Wrap `label` so the neural voice pronounces `ipa`
  *  (`withPhonemes("ta", "tˈA") === "[ta](/tˈA/)"`). Tolerates author-supplied
- *  surrounding slashes and whitespace; returns the bare label when `ipa` is
- *  blank so we never emit broken markup. */
+ *  surrounding slashes/whitespace and sanitizes markup delimiters; returns the
+ *  bare label when `ipa` is blank so we never emit broken markup. */
 export function withPhonemes(label: string, ipa: string): string {
-  // Strip ALL slashes: misaki IPA never contains "/", it's only our delimiter, so
-  // a stray author slash (anywhere) can't produce malformed `[label](/…/)` markup.
-  const cleaned = ipa.trim().replace(/\/+/g, "");
+  const cleaned = ipa.trim().replace(MARKUP_DELIMITERS, "");
   return cleaned ? `[${label}](/${cleaned}/)` : label;
 }
 

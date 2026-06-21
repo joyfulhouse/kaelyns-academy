@@ -45,4 +45,13 @@ describe("ensureNarration", () => {
     const r = await ensureNarration("Find the word");
     expect(r.stored).toBe(false);
   });
+
+  it("skips oversized text without synthesizing (denial-of-wallet guard)", async () => {
+    const huge = "a".repeat(501); // mirrors the /api/tts MAX_TTS_TEXT_LEN=500 cap
+    const r = await ensureNarration(huge);
+    expect(r.stored).toBe(false);
+    expect(clipExists).not.toHaveBeenCalled();
+    expect(synthesizeMp3).not.toHaveBeenCalled();
+    expect(putClip).not.toHaveBeenCalled();
+  });
 });
