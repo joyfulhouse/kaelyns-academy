@@ -148,6 +148,15 @@ export type EnsureEnrollmentResult =
  * Lazily enroll a learner into a program the first time they open it. The slug
  * is validated against the program registry before any write, so an untrusted
  * URL slug can never create a bogus enrollment. Never throws to the client.
+ *
+ * CURATION GAP (accepted, P0 pilot): this lets a signed-in child self-enroll
+ * into ANY published program by opening it (the kid surface shows all published
+ * programs when they have no active assignments — see ProgramPicker). Parent
+ * assignment is intentionally not strictly enforced on the kid surface, so a
+ * child never lands on an empty/locked screen. Bounds: tenancy is still enforced
+ * (only a learner the account owns is enrolled), removed programs stay removed,
+ * and only PUBLISHED programs are reachable. See
+ * docs/claude/KNOWN-RISKS-P0-PILOT.md ("Kid-surface curation").
  */
 export async function ensureEnrollmentAction(
   learnerId: string,
@@ -266,13 +275,14 @@ export async function getLearnerStateAction(
 
   try {
     return await withAccount(async ({ accountId }) => {
-      // Reliably commit an ACTIVE enrollment before the AI gate can be reached,
-      // so a freshly-opened program isn't fail-closed-blocked by the §8 gate's
-      // "active enrollment required" rule (the lazy ensureEnrollmentAction is
-      // fire-and-forget and may not have committed yet). ensureEnrollment is an
-      // owned-by-account, onConflictDoNothing upsert — it will NOT resurrect a
-      // soft-removed/paused enrollment (soft-remove is respected), so a removed
-      // program stays removed and the gate keeps blocking it.
+      // Ensure an enrollment row exists for this program before the AI gate can
+      // be reached, so a freshly-opened program isn't fail-closed-blocked by the
+      // §8 gate's "active enrollment required" rule (the lazy
+      // ensureEnrollmentAction is fire-and-forget and may not have committed
+      // yet). ensureEnrollment is an owned-by-account, onConflictDoNothing
+      // insert: it creates the row (status="active") only when none exists, and
+      // deliberately does NOT resurrect a soft-removed/paused enrollment — so a
+      // removed program stays removed and the gate keeps blocking it.
       const owned = await getLearner(accountId, learnerId);
       if (owned) await ensureEnrollment(learnerId, programSlug);
 

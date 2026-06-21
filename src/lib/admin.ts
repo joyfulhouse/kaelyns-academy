@@ -39,6 +39,16 @@ export function isAdminEmail(
  * @throws {UnauthenticatedError} when there is no valid session.
  * @throws {AdminForbiddenError} when the session user is not in ADMIN_EMAILS.
  * Build-safe: only invoked per-request, never at module top-level.
+ *
+ * SECURITY (P4): This gate authorizes purely by `email ∈ ADMIN_EMAILS`. With
+ * self-serve signup enabled and email verification OFF, an attacker could
+ * self-register an *unclaimed* allowlisted email and be admitted as admin
+ * (the session's email is whatever they signed up with — it isn't proven to be
+ * theirs). Accepted for the P0 homelab pilot: a single trusted operator, no
+ * public traffic, and no durable third-party data behind the studio. The proper
+ * fix lands in P4 — require a VERIFIED email (and/or a server-side role on the
+ * user row) before this check, so an unverified address can never satisfy the
+ * allowlist. Tracked in docs/claude/KNOWN-RISKS-P0-PILOT.md.
  */
 export async function requireAdmin(): Promise<{ userId: string; email: string }> {
   const session = await getAuth().api.getSession({ headers: await headers() });
