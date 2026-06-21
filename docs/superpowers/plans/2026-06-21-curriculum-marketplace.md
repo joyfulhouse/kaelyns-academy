@@ -344,7 +344,12 @@ describe("buildSeedPlan", () => {
 
 ## Slice 2 — Async content repository + static→DB cutover
 
-**Goal:** The app reads curriculum from the DB through one async seam; the static TS modules become seed-only. Learner routes go dynamic. No visible behavior change.
+**Goal:** The app reads curriculum through one async seam that **prefers DB content and falls back to the static in-repo programs** when the DB is empty/unreachable (tests, `next build`, unseeded local) — so the suite stays green without a test DB and the static modules serve as both seed source and fallback. Learner routes go dynamic. No visible behavior change.
+
+**Decisions (execution-time refinements):**
+- (a) Only the **program** getters go async. **`SKILLS` stays static at runtime** (mastery/recommend/reports keep the synchronous rubric); the DB `skill` table feeds authoring + marketplace in Slices 4–5. This avoids an invasive async-skills cutover.
+- (b) Split into **Task 2.1** (async content layer — new code, nothing calls it yet) + **Task 2.2** (cutover — rewire call sites, make learner routes dynamic).
+- (c) **No import cycle:** `src/content/index.ts` stays static-only (raw `PROGRAMS` array + pure tree-walkers). `repository.ts` depends on `@/content` for the fallback; `index.ts` must NEVER import `repository.ts`.
 
 **Files:** Create `src/lib/content/store.ts`, `src/lib/content/repository.ts`; modify `src/content/index.ts`, `src/content/skills.ts`, all `src/app/(learner)/*` pages + `actions.ts`, `src/app/(parent)/data.ts`, `src/app/(parent)/actions.ts`, `src/lib/ai/practice.ts` (skill-rubric reads only — **not** the TTS calls). Tests colocated.
 
