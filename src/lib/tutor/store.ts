@@ -300,15 +300,17 @@ export async function skillOutcomeCounts(
  * Upsert a program enrollment for the learner (owned-by-account check first).
  * Insert with status="active" and programVersionId when none exists; if one
  * already exists, restore to active and re-pin the version.
+ * Returns false when the learner is not owned by the account (no write); true on
+ * success — so the calling action can report not-found instead of a false ok.
  */
 export async function assignProgram(
   accountId: string,
   learnerId: string,
   slug: string,
   programVersionId: string | null,
-): Promise<void> {
+): Promise<boolean> {
   const owned = await getLearner(accountId, learnerId);
-  if (!owned) return;
+  if (!owned) return false;
   await getDb()
     .insert(enrollment)
     .values({
@@ -323,22 +325,24 @@ export async function assignProgram(
       target: [enrollment.learnerId, enrollment.programSlug],
       set: { status: "active", programVersionId, updatedAt: new Date() },
     });
+  return true;
 }
 
 /**
  * Update the enrollment status for a learner's program (owned-by-account).
  * Enforces the transition guard: reads the current status first and no-ops if
  * the transition is not allowed (defense-in-depth against invalid state moves).
- * Also no-ops when the learner is not owned by the account or no enrollment exists.
+ * Returns false when the learner is not owned, no enrollment exists, or the
+ * transition is disallowed (no row written); true when the status is updated.
  */
 export async function setEnrollmentStatus(
   accountId: string,
   learnerId: string,
   slug: string,
   status: EnrollmentStatus,
-): Promise<void> {
+): Promise<boolean> {
   const owned = await getLearner(accountId, learnerId);
-  if (!owned) return;
+  if (!owned) return false;
 
   // Read the current row to enforce the transition matrix.
   const rows = await getDb()
@@ -346,33 +350,37 @@ export async function setEnrollmentStatus(
     .from(enrollment)
     .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
     .limit(1);
-  if (!rows[0]) return; // No enrollment row — no-op.
+  if (!rows[0]) return false; // No enrollment row.
 
   const current = rows[0].status as EnrollmentStatus;
-  if (!canTransitionStatus(current, status)) return;
+  if (!canTransitionStatus(current, status)) return false;
 
   await getDb()
     .update(enrollment)
     .set({ status, updatedAt: new Date() })
     .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)));
+  return true;
 }
 
 /**
  * Update the enrollment config for a learner's program (owned-by-account).
- * No-ops silently when the learner is not owned by the account.
+ * Returns false when the learner is not owned or no matching enrollment row
+ * exists (no write); true when the config is updated.
  */
 export async function setEnrollmentConfig(
   accountId: string,
   learnerId: string,
   slug: string,
   config: EnrollmentConfig,
-): Promise<void> {
+): Promise<boolean> {
   const owned = await getLearner(accountId, learnerId);
-  if (!owned) return;
-  await getDb()
+  if (!owned) return false;
+  const updated = await getDb()
     .update(enrollment)
     .set({ config, updatedAt: new Date() })
-    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)));
+    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
+    .returning({ id: enrollment.id });
+  return updated.length > 0;
 }
 
 /**
@@ -487,19 +495,21 @@ export async function getLearnerSettings(
 
 /**
  * Update the learner's settings (owned-by-account).
- * No-ops silently when the learner is not owned by the account.
+ * Returns false when the learner is not owned by the account (no write); true on
+ * success. Scopes the write to (id, accountId) so the ownership check and the
+ * update can't drift, and uses the affected-row count as the source of truth.
  */
 export async function saveLearnerSettings(
   accountId: string,
   learnerId: string,
   settings: LearnerSettings,
-): Promise<void> {
-  const owned = await getLearner(accountId, learnerId);
-  if (!owned) return;
-  await getDb()
+): Promise<boolean> {
+  const updated = await getDb()
     .update(learner)
     .set({ settings, updatedAt: new Date() })
-    .where(eq(learner.id, learnerId));
+    .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
+    .returning({ id: learner.id });
+  return updated.length > 0;
 }
 
 // ── Per-child data export + profile delete (spec §8) ─────────────────────────
@@ -543,12 +553,14 @@ export async function buildLearnerExport(
       id: learnerRow.id,
       displayName: learnerRow.displayName,
       birthMonth: learnerRow.birthMonth,
-      settings: (learnerRow.settings as LearnerSettings) ?? {},
+      // learner.settings / enrollment.config are jsonb `$type<...>()` columns, so
+      // Drizzle already infers the right type here — no cast needed.
+      settings: learnerRow.settings,
     },
     enrollments: enrollmentRows.map((e) => ({
       programSlug: e.programSlug,
       status: e.status,
-      config: (e.config as EnrollmentConfig) ?? {},
+      config: e.config,
     })),
     skillState: skillStateRows.map((s) => ({
       skill: s.skill,

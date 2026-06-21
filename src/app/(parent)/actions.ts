@@ -29,7 +29,7 @@ import {
   type ProgressReportSkill,
 } from "@/lib/ai/report";
 import { enrollmentConfigSchema, learnerSettingsSchema } from "@/lib/content/config";
-import type { EnrollmentConfig, LearnerSettings } from "@/lib/content/config";
+import type { EnrollmentConfig } from "@/lib/content/config";
 import { ADAPTIVE_PROGRAM_SLUG, kindLabel } from "./data";
 
 /**
@@ -223,7 +223,11 @@ function revalidateEnrollmentPaths(learnerId: string): void {
 /** Shared discriminated result for enrollment actions. */
 type EnrollmentActionResult =
   | { ok: true }
-  | { ok: false; reason: "unauthenticated" | "invalid" | "unavailable"; message: string };
+  | {
+      ok: false;
+      reason: "unauthenticated" | "invalid" | "not-found" | "unavailable";
+      message: string;
+    };
 
 /**
  * Assign (or restore) a published program to a learner. Validates the slug
@@ -248,9 +252,17 @@ export async function assignProgramAction(
 
     const programVersionId = await getPublishedVersionId(slug);
 
-    await withAccount(async ({ accountId }) => {
-      await assignProgram(accountId, learnerId, slug, programVersionId);
+    const assigned = await withAccount(async ({ accountId }) => {
+      return assignProgram(accountId, learnerId, slug, programVersionId);
     });
+
+    if (!assigned) {
+      captureNonCritical(
+        "assignProgramAction: learner not owned by account",
+        new Error(`learner=${learnerId} slug=${slug}`),
+      );
+      return { ok: false, reason: "not-found", message: "Learner not found." };
+    }
 
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
@@ -277,9 +289,17 @@ export async function removeProgramAction(
   }
 
   try {
-    await withAccount(async ({ accountId }) => {
-      await setEnrollmentStatus(accountId, learnerId, slug, "removed");
+    const updated = await withAccount(async ({ accountId }) => {
+      return setEnrollmentStatus(accountId, learnerId, slug, "removed");
     });
+
+    if (!updated) {
+      captureNonCritical(
+        "removeProgramAction: no enrollment updated (not owned, missing, or disallowed transition)",
+        new Error(`learner=${learnerId} slug=${slug}`),
+      );
+      return { ok: false, reason: "not-found", message: "Enrollment not found." };
+    }
 
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
@@ -306,9 +326,17 @@ export async function restoreProgramAction(
   }
 
   try {
-    await withAccount(async ({ accountId }) => {
-      await setEnrollmentStatus(accountId, learnerId, slug, "active");
+    const updated = await withAccount(async ({ accountId }) => {
+      return setEnrollmentStatus(accountId, learnerId, slug, "active");
     });
+
+    if (!updated) {
+      captureNonCritical(
+        "restoreProgramAction: no enrollment updated (not owned, missing, or disallowed transition)",
+        new Error(`learner=${learnerId} slug=${slug}`),
+      );
+      return { ok: false, reason: "not-found", message: "Enrollment not found." };
+    }
 
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
@@ -353,9 +381,17 @@ export async function updateEnrollmentConfigAction(
   };
 
   try {
-    await withAccount(async ({ accountId }) => {
-      await setEnrollmentConfig(accountId, learnerId, slug, normalized);
+    const updated = await withAccount(async ({ accountId }) => {
+      return setEnrollmentConfig(accountId, learnerId, slug, normalized);
     });
+
+    if (!updated) {
+      captureNonCritical(
+        "updateEnrollmentConfigAction: no enrollment updated (not owned or missing)",
+        new Error(`learner=${learnerId} slug=${slug}`),
+      );
+      return { ok: false, reason: "not-found", message: "Enrollment not found." };
+    }
 
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
@@ -388,9 +424,19 @@ export async function saveLearnerSettingsAction(
   }
 
   try {
-    await withAccount(async ({ accountId }) => {
-      await saveLearnerSettings(accountId, learnerId, settingsParsed.data as LearnerSettings);
+    // settingsParsed.data is already LearnerSettings (inferred from the Zod
+    // schema) — no cast, so a schema/type drift surfaces as a type error here.
+    const saved = await withAccount(async ({ accountId }) => {
+      return saveLearnerSettings(accountId, learnerId, settingsParsed.data);
     });
+
+    if (!saved) {
+      captureNonCritical(
+        "saveLearnerSettingsAction: learner not owned by account",
+        new Error(`learner=${learnerId}`),
+      );
+      return { ok: false, reason: "not-found", message: "Learner not found." };
+    }
 
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
