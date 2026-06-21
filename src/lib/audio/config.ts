@@ -12,6 +12,13 @@ export const DURABLE_PREFIX = "en";
 /** Auto-expiring tier (MinIO lifecycle): one-off dynamic speech. */
 export const EPHEMERAL_PREFIX = "en/cache";
 
+/** Max characters synthesized in one TTS call. Shared by the on-demand `/api/tts`
+ *  route AND the warm/pre-synth path (`ensureNarration`) so neither pays for — or
+ *  durably caches — oversized text (a child-facing string is short; longer is
+ *  abuse or AI noise). Keeping both in sync prevents a denial-of-wallet gap where
+ *  pre-synth would synthesize text the runtime route would reject anyway. */
+export const MAX_TTS_TEXT_LEN = 500;
+
 export function prefixFor(persist: Persist | undefined): string {
   return persist === "ephemeral" ? EPHEMERAL_PREFIX : DURABLE_PREFIX;
 }

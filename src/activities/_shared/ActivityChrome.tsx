@@ -11,11 +11,14 @@ import type { SpeechController } from "./useSpeech";
 export function SpeakerButton({
   speech,
   text,
+  tts,
   label = "Hear it again",
   className,
 }: {
   speech: SpeechController;
   text: string;
+  /** Optional phoneme override sent to the neural voice (see withPhonemes). */
+  tts?: string;
   label?: string;
   className?: string;
 }) {
@@ -23,7 +26,7 @@ export function SpeakerButton({
   return (
     <button
       type="button"
-      onClick={() => speech.speak(text)}
+      onClick={() => speech.speak(text, tts ? { tts } : undefined)}
       aria-label={label}
       className={cn(
         "grid size-16 shrink-0 place-items-center rounded-2xl border-[3px] border-ink bg-honey text-ink shadow-pop",

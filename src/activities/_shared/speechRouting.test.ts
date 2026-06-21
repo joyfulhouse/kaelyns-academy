@@ -55,6 +55,27 @@ describe("routeSpeak", () => {
     expect(speakViaSynth).toHaveBeenCalledWith("hi");
   });
 
+  it("English with a phoneme override → neural gets the override, synth fallback gets the plain text", () => {
+    // A lone tile mis-phonemizes ("ble" → "blee"); the override fixes the neural
+    // voice, but the browser-synth fallback must NEVER read the markup aloud.
+    const narrate = vi.fn<SpeakRouter["narrate"]>((_t, opts) => {
+      opts.onUnavailable();
+      return { cancel: vi.fn() };
+    });
+    const speakViaSynth = vi.fn();
+    routeSpeak("en-US", "ble", { narrate, speakViaSynth }, { tts: "[ble](/bəl/)" });
+    expect(narrate.mock.calls[0]![0]).toBe("[ble](/bəl/)");
+    expect(speakViaSynth).toHaveBeenCalledWith("ble");
+  });
+
+  it("non-English ignores the tts override (Web Speech can't read phoneme markup)", () => {
+    const narrate = vi.fn<SpeakRouter["narrate"]>(() => ({ cancel: vi.fn() }));
+    const speakViaSynth = vi.fn();
+    routeSpeak("ko-KR", "안녕", { narrate, speakViaSynth }, { tts: "[x](/y/)" });
+    expect(speakViaSynth).toHaveBeenCalledWith("안녕");
+    expect(narrate).not.toHaveBeenCalled();
+  });
+
   it("empty text → no-op, null", () => {
     const narrate = vi.fn<SpeakRouter["narrate"]>(() => ({ cancel: vi.fn() }));
     const speakViaSynth = vi.fn();

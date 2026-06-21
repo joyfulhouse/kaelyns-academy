@@ -1,0 +1,103 @@
+import { describe, expect, it } from "vitest";
+import { hasConsonant, plausibleOverride, tileAllowsConsonants } from "./phonemeCheck";
+
+// Real misaki phoneme strings from Kokoro's /dev/phonemize (language "a"):
+//   table → tˈAbᵊl   cat → kˈæt   city → sˈɪTi   cake → kˈAk   ship → ʃˈɪp
+//   cheese → ʧˈiz   jump → ʤˈʌmp   sing → sˈɪŋ
+describe("plausibleOverride", () => {
+  it('keeps a syllable override whose consonants are a subsequence of the word', () => {
+    expect(plausibleOverride("teɪ", "tˈAbᵊl")).toBe(true); // "ta" /teɪ/ → t ⊑ t,b,l
+    expect(plausibleOverride("bəl", "tˈAbᵊl")).toBe(true); // "ble" /bəl/ → b,l ⊑ t,b,l
+  });
+
+  it("rejects an override whose consonants the word doesn't contain", () => {
+    expect(plausibleOverride("zoo", "tˈAbᵊl")).toBe(false); // z not in table
+  });
+
+  it("accepts the soft-c /s/ override for a word with /s/", () => {
+    expect(plausibleOverride("s", "sˈɪti")).toBe(true);
+  });
+
+  it("treats a pure-vowel override as always plausible (vowels shift by word)", () => {
+    expect(plausibleOverride("æ", "kˈæt")).toBe(true);
+    expect(plausibleOverride("eɪ", "kˈAk")).toBe(true);
+    expect(plausibleOverride("", "kˈæt")).toBe(true); // no consonants at all
+  });
+
+  it("requires consonant ORDER (out-of-order consonants fail)", () => {
+    // override "lb" (l before b) is NOT a subsequence of table's b,l order.
+    expect(plausibleOverride("ləb", "tˈAbᵊl")).toBe(false);
+    // but in-order b...l passes.
+    expect(plausibleOverride("bəl", "tˈAbᵊl")).toBe(true);
+  });
+
+  it("matches single-char consonant overrides", () => {
+    expect(plausibleOverride("k", "kˈæt")).toBe(true); // c /k/ in cat
+    expect(plausibleOverride("t", "kˈæt")).toBe(true); // t in cat
+    expect(plausibleOverride("k", "sˈɪTi")).toBe(false); // hard-c /k/ wrong for "city"
+  });
+
+  it("folds misaki's flap T (uppercase) to /t/ so it counts as a consonant", () => {
+    // butter → bˈʌTəɹ : the medial T is /t/. An override "t" must be plausible.
+    expect(plausibleOverride("t", "bˈʌTəɹ")).toBe(true);
+    expect(plausibleOverride("tə", "sˈɪTi")).toBe(true); // "ty" /ti/ → t ⊑ s,t
+  });
+
+  it("treats the affricate digraph tʃ as the single misaki char ʧ", () => {
+    // override written as IPA digraph "tʃiz" must match misaki's "ʧˈiz" (cheese).
+    expect(plausibleOverride("tʃ", "ʧˈiz")).toBe(true);
+    expect(plausibleOverride("dʒ", "ʤˈʌmp")).toBe(true); // jump
+  });
+
+  it("matches digraph/cluster overrides in order", () => {
+    expect(plausibleOverride("ʃ", "ʃˈɪp")).toBe(true); // sh in ship
+    expect(plausibleOverride("ŋ", "sˈɪŋ")).toBe(true); // ng in sing
+    expect(plausibleOverride("p", "ʃˈɪp")).toBe(true);
+  });
+
+  it("folds ASCII r/g to misaki ɹ/ɡ so LLM-style overrides aren't wrongly dropped", () => {
+    // misaki (lang "a") emits ɹ and ɡ, but the model writes colloquial ASCII r/g.
+    // run → ɹˈʌn, got → ɡˈɑt: the override MUST be kept, not dropped to bare.
+    expect(plausibleOverride("r", "ɹˈʌn")).toBe(true); // ASCII r ⊑ ɹ
+    expect(plausibleOverride("g", "ɡˈɑt")).toBe(true); // ASCII g ⊑ ɡ
+    expect(plausibleOverride("ɑr", "kˈɑɹ")).toBe(true); // "ar" r-controlled in car
+    expect(plausibleOverride("ɡr", "ɡɹˈin")).toBe(true); // "gr" blend in green
+    expect(plausibleOverride("br", "bɹˈIn")).toBe(true); // "br" blend (brine)
+    // a genuine mismatch still fails (fold doesn't make everything pass).
+    expect(plausibleOverride("z", "ɹˈʌn")).toBe(false);
+  });
+});
+
+describe("hasConsonant", () => {
+  it("is true for consonant-bearing IPA, false for pure vowels", () => {
+    expect(hasConsonant("tˈeɪ")).toBe(true);
+    expect(hasConsonant("k")).toBe(true);
+    expect(hasConsonant("æ")).toBe(false); // pure vowel
+    expect(hasConsonant("ˈeɪ")).toBe(false);
+    expect(hasConsonant("")).toBe(false);
+  });
+});
+
+describe("tileAllowsConsonants (override must be spellable by the tile's letters)", () => {
+  it("rejects a consonant the tile cannot spell", () => {
+    // Codex case: /t/ override on the vowel tile "a" — /t/ is in "cat" but "a" can't spell it.
+    expect(tileAllowsConsonants("a", "t")).toBe(false);
+    // /t/ on the "c" tile: "c" spells /k/ or /s/, never /t/.
+    expect(tileAllowsConsonants("c", "t")).toBe(false);
+  });
+
+  it("accepts a consonant the tile can spell (incl. soft c, digraphs, clusters)", () => {
+    expect(tileAllowsConsonants("c", "k")).toBe(true); // hard c
+    expect(tileAllowsConsonants("c", "s")).toBe(true); // soft c
+    expect(tileAllowsConsonants("t", "t")).toBe(true);
+    expect(tileAllowsConsonants("sh", "ʃ")).toBe(true); // digraph
+    expect(tileAllowsConsonants("th", "θ")).toBe(true);
+    expect(tileAllowsConsonants("ble", "bəl")).toBe(true); // b,l spellable; ə vowel ignored
+    expect(tileAllowsConsonants("ta", "teɪ")).toBe(true); // t spellable; eɪ vowel ignored
+    expect(tileAllowsConsonants("gr", "ɡɹ")).toBe(true); // cluster, ASCII-fold safe
+  });
+
+  it("treats a pure-vowel override as allowed here (consonants gate it elsewhere)", () => {
+    expect(tileAllowsConsonants("a", "æ")).toBe(true); // no consonants to disallow
+  });
+});

@@ -318,6 +318,10 @@ export const kaelynAdaptive: Program = {
                 focus: "the six syllable types (closed, open, silent-e, vowel team, r-controlled, consonant-le)",
                 instruction: "Build each word from its syllable tiles, then say whether the vowel is short or long and why.",
                 tiles: ["rab", "bit", "ta", "ble", "ti", "ger", "gar", "den"],
+                // Open/r-controlled/consonant-le tiles mis-voice in isolation
+                // (ta→"tah", ble→"blee", ti→"tee", ger→soft-g "jer"); pin the
+                // in-word sound. rab/bit/gar/den already voice correctly.
+                say: { ta: "tˈA", ble: "bəl", ti: "tˈI", ger: "ɡˈɜɹ" },
                 words: [
                   { word: "rabbit" },
                   { word: "table" },
@@ -345,6 +349,9 @@ export const kaelynAdaptive: Program = {
                 focus: "dividing multisyllable words (VC/CV, V/CV, C+le)",
                 instruction: "These expedition words are split into syllables. Put them in order, read each part, then blend.",
                 tiles: ["ad", "ven", "ture", "vol", "can", "ic", "con", "ti", "nent"],
+                // Isolated misreads: ture→"tyoor" (want "cher"), ic→"ike" (want
+                // short-i), ti→"tee" (reduced to schwa in continent). Rest read fine.
+                say: { ture: "ʧəɹ", ic: "ɪk", ti: "tə" },
                 words: [
                   { word: "adventure" },
                   { word: "volcanic" },
@@ -399,6 +406,8 @@ export const kaelynAdaptive: Program = {
                 focus: "prefixes that change meaning (un-, re-, pre-, dis-, mis-, non-)",
                 instruction: "Snap a prefix onto each base word. Read what you made, then say what the prefix did to the meaning.",
                 tiles: ["un", "re", "pre", "dis", "happy", "play", "heat", "appear"],
+                // "re" alone reads "ray"; in "replay" it's "ree". Others read fine.
+                say: { re: "ɹˈi" },
                 words: [
                   { word: "unhappy" },
                   { word: "replay" },
@@ -439,7 +448,11 @@ export const kaelynAdaptive: Program = {
               config: {
                 focus: "Greek and Latin roots (tele = far, graph = write, geo = earth, port = carry, struct = build, meter = measure)",
                 instruction: "Each tile is a root that carries meaning. Build the word, read it, then reason out what it means from its parts.",
-                tiles: ["tele", "graph", "geo", "trans", "port", "thermo", "meter"],
+                // "y" completes the -y suffix in geography (geo+graph+y); without it
+                // geography was unbuildable. Roots voice fine in isolation (citation
+                // form); only the lone "y" misreads as "why" — pin it to /i/.
+                tiles: ["tele", "graph", "geo", "trans", "port", "thermo", "meter", "y"],
+                say: { y: "i" },
                 words: [
                   { word: "telegraph" },
                   { word: "geography" },

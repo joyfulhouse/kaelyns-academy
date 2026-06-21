@@ -6,8 +6,12 @@ import {
   ACTIVITY_CONFIG_SCHEMAS,
   type ActivityKind,
 } from "@/content/activity-configs";
+import { segmentWord } from "@/content/phonics";
 import { ensureNarration } from "@/lib/audio/narration";
-import { spokenEnglishStrings } from "@/lib/audio/spokenFields";
+import { hasConsonant, plausibleOverride, tileAllowsConsonants } from "@/lib/audio/phonemeCheck";
+import { phonemize } from "@/lib/audio/phonemize";
+import { prewarmTexts } from "@/lib/audio/spokenFields";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import type { LanguageDef, ScriptEntry } from "@/content/languages";
 import type { Band, SkillTag } from "@/content/types";
 import { chatJSON, fenceUntrusted, TUTOR_FAST, TUTOR_RICH, type TutorModel } from "./models";
@@ -33,11 +37,15 @@ import {
 const MAX_ITEMS = 8;
 
 /** Plain-language guidance per kind so the model emits the right config shape. */
-const KIND_BRIEF: Record<ActivityKind, string> = {
+export const KIND_BRIEF: Record<ActivityKind, string> = {
   "phonics-wordbuild":
-    'Build-a-word items. Each: {focus, instruction, tiles:[letters/digraphs], words:[{word, picture?}]}. ' +
+    'Build-a-word items. Each: {focus, instruction, tiles:[letters/digraphs], say:{tile:IPA}, words:[{word, picture?}]}. ' +
     "Every target word MUST be spellable from the provided tiles. `picture` is a single emoji. " +
-    "Keep words decodable for the focus; 2 to 4 words per item.",
+    "Keep words decodable for the focus; 2 to 4 words per item. " +
+    "Each tile is tapped and spoken ALONE, so a bare letter mis-reads (lone \"c\" says its name \"see\", \"ble\" says \"blee\"). " +
+    "In `say`, map EVERY tile to its IPA SOUND as pronounced INSIDE the word, NOT the letter name (stress mark ˈ optional). " +
+    'For "table"=ta+ble use {"ta":"teɪ","ble":"bəl"}; for "cat"=c+a+t use {"c":"k","a":"æ","t":"t"}. ' +
+    'The same letter can differ by word: "a" is /æ/ in cat but /eɪ/ in cake; "c" is /k/ in cat but /s/ in city.',
   "sightword-game":
     "Sight-word hunt items. Each: {instruction, words:[real sight words], decoys:[similar-looking non-targets]}. " +
     "Decoys must be plausible but clearly not the target words. 3 to 6 words, 2 to 5 decoys.",
@@ -176,6 +184,180 @@ function buildLangUserPrompt(
     .join("\n");
 }
 
+/** A function that maps a word to its real phonemes (or null on failure). Injected
+ *  so the repair is unit-testable without touching Kokoro. */
+export type PhonemizeFn = (text: string) => Promise<string | null>;
+
+/** The phonics-wordbuild fields the repair reads. A loose structural shape so it
+ *  accepts both the Zod input and output config objects. */
+interface RepairablePhonics {
+  tiles: string[];
+  say?: Record<string, string>;
+  silent?: string[];
+  words: { word: string; ipa?: string }[];
+}
+
+/** tile → every word in the config that uses it (greedy-segmented the SAME way the
+ *  Player segments, so the tile is judged in real contexts). */
+function wordsByTile(config: RepairablePhonics): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const { word } of config.words) {
+    for (const seg of segmentWord(word, config.tiles)) {
+      const arr = map.get(seg);
+      if (arr) arr.push(word);
+      else map.set(seg, [word]);
+    }
+  }
+  return map;
+}
+
+/**
+ * Validate a GENERATED `config.say` against resolved word phonemes, keeping ONLY
+ * the overrides we can positively confirm and dropping all the rest (→ bare).
+ * Pure + sync. Fail-CLOSED: this is untrusted model output, so anything we can't
+ * check is removed rather than shipped on faith.
+ *
+ * An override for `tile` is KEPT iff ALL of:
+ *  1. some word in the config uses the tile (not an inert/decoy key), AND
+ *  2. EVERY word using the tile was successfully phonemized (full ground truth —
+ *     a partial outage can't confirm the override for the unseen words), AND
+ *  3. the override has ≥1 consonant ({@link hasConsonant}) so it's checkable —
+ *     a pure-vowel override can't be validated (vowels vary by word) and is
+ *     dropped, leaving the vowel tile to fall back to bare, AND
+ *  4. every override consonant is one the TILE's own letters can spell
+ *     ({@link tileAllowsConsonants}) — rejects a cross-tile consonant like /t/ on
+ *     an "a" tile, or /t/ on a "c" tile, that step 5 alone would miss, AND
+ *  5. it's {@link plausibleOverride plausible} for EVERY word using the tile.
+ *
+ * Why EVERY word (not "any"): the Player applies the one flat `say[tile]` whenever
+ * that tile is tapped, REGARDLESS of which word is being built. So an override is
+ * only safe if it's correct in every context the tile appears in. A tile that
+ * sounds different across the config's words ("c" = /k/ in cat, /s/ in city) can't
+ * be represented by one entry, so it's dropped (→ bare in all of them) rather than
+ * voiced wrong for one word. This is order-independent and never-worse-than-bare
+ * for the consonant. (Non-conflicting shared tiles — same sound everywhere — survive.)
+ *
+ * Residual ceiling (ACCEPTED known limitation — product decision 2026-06-21):
+ * this is a best-effort sanity net, not a proof, because it lacks grapheme→phoneme
+ * ALIGNMENT (Kokoro's flat /dev/phonemize returns no per-letter offsets; and
+ * phonemizing a tile's letters in isolation is the very out-of-context bug we fix).
+ * Two classes therefore slip through, both rare and both never worse than a missing
+ * override would be in the average case:
+ *   1. VOWEL quality — a kept override's vowel isn't validated (vowels vary by word;
+ *      checking them would false-reject), so the LLM's vowel is trusted.
+ *   2. CONSONANT position — a consonant the tile CAN spell that also appears
+ *      elsewhere in the word passes even if it's not the tile's actual sound (e.g.
+ *      soft-c "s" on the "c" tile of "scat", where /s/ comes from the "s" tile).
+ * Closing these requires a real G2P aligner — tracked in
+ * docs/claude/GENERATED_PHONICS_PRONUNCIATION.md. The pass ONLY ever removes
+ * overrides, and authored content is hand-verified and never passes through here.
+ */
+function applyRepair(config: RepairablePhonics, phonemesByWord: Map<string, string>): void {
+  const say = config.say;
+  if (!say) return;
+  const tileWords = wordsByTile(config);
+  for (const tile of Object.keys(say)) {
+    const ipa = say[tile]!;
+    const words = tileWords.get(tile) ?? [];
+    const phonemes = words.map((w) => phonemesByWord.get(w));
+    const allGroundTruthed = words.length > 0 && phonemes.every((p) => p != null);
+    const validated =
+      hasConsonant(ipa) &&
+      tileAllowsConsonants(tile, ipa) &&
+      allGroundTruthed &&
+      phonemes.every((p) => plausibleOverride(ipa, p!));
+    if (!validated) delete say[tile]; // fail-closed: keep only overrides correct in EVERY context
+  }
+}
+
+/** The set of words actually referenced by some `say` tile across all configs —
+ *  the only words worth phonemizing. */
+function wordsToPhonemize(configs: readonly RepairablePhonics[]): string[] {
+  const words = new Set<string>();
+  for (const config of configs) {
+    if (!config.say) continue;
+    const tiles = new Set(Object.keys(config.say));
+    for (const [tile, used] of wordsByTile(config)) {
+      if (tiles.has(tile)) for (const w of used) words.add(w);
+    }
+  }
+  return [...words];
+}
+
+/**
+ * Validate the per-tile `say` overrides of a BATCH of generated phonics configs
+ * against Kokoro ground truth, dropping hallucinations (→ bare fallback). Mutates
+ * each config's `say` in place.
+ *
+ * Resilience: phonemizes each unique word at most once (deduped across the whole
+ * batch) with bounded concurrency, and CIRCUIT-BREAKS — once one call fails/times
+ * out it stops calling Kokoro, so a black-holed endpoint costs ~one timeout total,
+ * not one per word. Fail-CLOSED: {@link applyRepair} drops any override it can't
+ * positively confirm (incl. every override when Kokoro was down for its words), so
+ * an unvalidated model guess never reaches the child — it degrades to bare instead.
+ */
+export async function repairPhonicsBatch(
+  configs: readonly RepairablePhonics[],
+  phonemizeFn: PhonemizeFn,
+): Promise<void> {
+  const words = wordsToPhonemize(configs);
+  const phonemesByWord = new Map<string, string>();
+  let kokoroDown = false;
+  await mapWithConcurrency(words, 4, async (word) => {
+    if (kokoroDown) return; // circuit open: don't pile on more 10s timeouts
+    const p = await phonemizeFn(word);
+    if (p == null) kokoroDown = true;
+    else phonemesByWord.set(word, p);
+  });
+  for (const config of configs) applyRepair(config, phonemesByWord);
+}
+
+/**
+ * Single-config convenience wrapper over {@link repairPhonicsBatch} (mutates and
+ * returns `config`). Kept for focused unit tests; the generator uses the batch
+ * form so phonemize calls dedupe and circuit-break across all items at once.
+ */
+export async function repairPhonicsSay<T extends RepairablePhonics>(
+  config: T,
+  phonemizeFn: PhonemizeFn,
+): Promise<T> {
+  await repairPhonicsBatch([config], phonemizeFn);
+  return config;
+}
+
+/**
+ * Remove the AI-generated pronunciation controls we CANNOT soundly validate, so
+ * generated audio can never drop below bare TTS:
+ *  - `silent`: marking a tile silent needs to know a letter is truly unvoiced —
+ *    that's the same grapheme→phoneme alignment Kokoro can't give. A bad `silent`
+ *    would mute a tile that should sound (worse than bare). Drop it → the tile
+ *    falls back to its letter sound.
+ *  - per-word `ipa`: a wrong whole-word override would mis-voice the target. Drop
+ *    it → the word speaker falls back to bare G2P, which voices WHOLE words
+ *    correctly (only isolated fragments mis-read, and those are the `say` tiles).
+ * Authored configs keep both (they're hand-verified); this runs on model output only.
+ */
+function stripUnvalidatedControls(config: RepairablePhonics): void {
+  delete config.silent;
+  for (const w of config.words) delete w.ipa;
+}
+
+/**
+ * Make a batch of AI-generated phonics-wordbuild configs safe to voice: validate
+ * the per-tile `say` overrides against Kokoro ground truth (drop hallucinations,
+ * {@link repairPhonicsBatch}) AND strip the controls we can't validate
+ * ({@link stripUnvalidatedControls}). After this, generated phonics audio is never
+ * worse than bare TTS — every surviving control is either validated or a correct
+ * whole-word fallback. Mutates each config in place.
+ */
+export async function sanitizeGeneratedPhonics(
+  configs: readonly RepairablePhonics[],
+  phonemizeFn: PhonemizeFn,
+): Promise<void> {
+  await repairPhonicsBatch(configs, phonemizeFn);
+  for (const config of configs) stripUnvalidatedControls(config);
+}
+
 export interface GeneratePracticeOptions {
   /** Optional canonical skill tags to steer generation (e.g. ["phonics.digraphs"]). */
   skillHints?: SkillTag[];
@@ -236,11 +418,26 @@ export async function generatePracticeItems<K extends ActivityKind>(
   });
 
   const items = result.items as z.output<(typeof ACTIVITY_CONFIG_SCHEMAS)[K]>[];
-  // Fire-and-forget: warm the durable narration cache for everything the child
-  // will hear, so the speaker button is an instant hit. Never blocks/breaks the
-  // response (ensureNarration swallows its own errors).
-  for (const item of items) {
-    for (const text of spokenEnglishStrings(item)) void ensureNarration(text);
+
+  // Phonics tiles are spoken in isolation, so the model emits a per-tile IPA `say`
+  // override (KIND_BRIEF). The model can hallucinate IPA, so validate each override
+  // against the word's REAL phonemes from Kokoro and drop the implausible ones
+  // (→ bare fallback, no regression). Awaited so prewarm caches the corrected
+  // strings; phonemize is fail-open (Kokoro down ⇒ keep, still sanitized/bounded).
+  if (kind === "phonics-wordbuild") {
+    // K is generic so the runtime `kind` check can't narrow `items`' type; the
+    // runtime shape is a phonics config, structurally a RepairablePhonics. Validate
+    // `say` and strip the controls we can't validate so generated audio is never
+    // worse than bare TTS (dedupes + circuit-breaks phonemize across all items).
+    const phonics = items as unknown as RepairablePhonics[];
+    await sanitizeGeneratedPhonics(phonics, phonemize);
   }
+
+  // Fire-and-forget: warm the durable narration cache for everything the child will
+  // hear, so the speaker button is an instant hit. Never blocks/breaks the response
+  // (ensureNarration swallows its own errors). prewarmTexts dedupes + hard-caps the
+  // set; mapWithConcurrency bounds in-flight synths to 4 so one response can't burst
+  // many concurrent Kokoro/MinIO ops.
+  void mapWithConcurrency(prewarmTexts(items), 4, (text) => ensureNarration(text));
   return items;
 }
