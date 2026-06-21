@@ -312,32 +312,47 @@ describe("repairPhonicsSay (drop hallucinated tile overrides; fail-open)", () =>
     expect(phonemize).not.toHaveBeenCalled();
   });
 
-  it("keeps a shared tile's override when it's correct for ANY of its words (order-independent)", async () => {
-    // "c" is /k/ in cat but /s/ in city; the flat say map holds one sound. say.c=/k/
-    // is correct for cat. It must NOT be dropped just because "city" appears first.
+  it("drops a shared tile's override that conflicts across words (flat map can't voice both)", async () => {
+    // "c" is /k/ in cat but /s/ in city; the flat say.c is applied whenever "c" is
+    // tapped, regardless of word. say.c=/k/ would voice hard-c while building "city",
+    // so it must be DROPPED (→ bare in both) rather than mis-voice city. Order-independent.
     const config = {
       tiles: ["c", "i", "t", "y", "a"],
       say: { c: "k" },
-      words: [{ word: "city" }, { word: "cat" }], // city first on purpose
-    };
-    const phonemize = vi.fn(async (w: string) => (w === "city" ? "sˈɪTi" : "kˈæt"));
-
-    const out = await repairPhonicsSay(config, phonemize);
-
-    expect(out.say).toEqual({ c: "k" }); // kept: plausible for "cat"
-  });
-
-  it("drops a shared tile's override only when it's wrong for EVERY word", async () => {
-    const config = {
-      tiles: ["c", "i", "t", "y", "a"],
-      say: { c: "z" }, // /z/ is in neither city nor cat
       words: [{ word: "city" }, { word: "cat" }],
     };
     const phonemize = vi.fn(async (w: string) => (w === "city" ? "sˈɪTi" : "kˈæt"));
 
     const out = await repairPhonicsSay(config, phonemize);
 
-    expect(out.say).toEqual({}); // dropped: implausible for all words
+    expect(out.say).toEqual({}); // conflicting tile → dropped, never voiced wrong for a word
+  });
+
+  it("keeps a shared tile's override when it's correct for EVERY word that uses it", async () => {
+    // "t" is /t/ in both cat and city → one flat override is correct everywhere → kept.
+    const config = {
+      tiles: ["c", "i", "t", "y", "a"],
+      say: { t: "t" },
+      words: [{ word: "city" }, { word: "cat" }],
+    };
+    const phonemize = vi.fn(async (w: string) => (w === "city" ? "sˈɪTi" : "kˈæt"));
+
+    const out = await repairPhonicsSay(config, phonemize);
+
+    expect(out.say).toEqual({ t: "t" }); // non-conflicting shared tile survives
+  });
+
+  it("drops a shared tile's override that's wrong for every word", async () => {
+    const config = {
+      tiles: ["c", "i", "t", "y", "a"],
+      say: { c: "z" }, // /z/ is in neither city nor cat (and "c" can't spell /z/)
+      words: [{ word: "city" }, { word: "cat" }],
+    };
+    const phonemize = vi.fn(async (w: string) => (w === "city" ? "sˈɪTi" : "kˈæt"));
+
+    const out = await repairPhonicsSay(config, phonemize);
+
+    expect(out.say).toEqual({});
   });
 });
 

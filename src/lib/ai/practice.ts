@@ -219,25 +219,27 @@ function wordsByTile(config: RepairablePhonics): Map<string, string[]> {
  *
  * An override for `tile` is KEPT iff ALL of:
  *  1. some word in the config uses the tile (not an inert/decoy key), AND
- *  2. at least one of those words was successfully phonemized (we have ground
- *     truth — Kokoro wasn't down for it), AND
+ *  2. EVERY word using the tile was successfully phonemized (full ground truth —
+ *     a partial outage can't confirm the override for the unseen words), AND
  *  3. the override has ≥1 consonant ({@link hasConsonant}) so it's checkable —
  *     a pure-vowel override can't be validated (vowels vary by word) and is
  *     dropped, leaving the vowel tile to fall back to bare, AND
  *  4. every override consonant is one the TILE's own letters can spell
  *     ({@link tileAllowsConsonants}) — rejects a cross-tile consonant like /t/ on
  *     an "a" tile, or /t/ on a "c" tile, that step 5 alone would miss, AND
- *  5. it's {@link plausibleOverride plausible} for ≥1 of its words (its
- *     consonants are an in-order subsequence of that word's real consonants).
+ *  5. it's {@link plausibleOverride plausible} for EVERY word using the tile.
  *
- * Keep-if-plausible-for-ANY-word (not first-word) is order-independent: the same
- * tile can voice differently across words ("c" = /k/ in cat, /s/ in city) and the
- * flat map holds one sound, so an override correct for some word it's used in
- * survives. Everything dropped here degrades to a bare tile, never worse.
+ * Why EVERY word (not "any"): the Player applies the one flat `say[tile]` whenever
+ * that tile is tapped, REGARDLESS of which word is being built. So an override is
+ * only safe if it's correct in every context the tile appears in. A tile that
+ * sounds different across the config's words ("c" = /k/ in cat, /s/ in city) can't
+ * be represented by one entry, so it's dropped (→ bare in all of them) rather than
+ * voiced wrong for one word. This is order-independent and never-worse-than-bare
+ * for the consonant. (Non-conflicting shared tiles — same sound everywhere — survive.)
  *
  * Residual ceiling (documented): a kept override's VOWEL quality is LLM-trusted —
- * its consonants are validated against both the tile and the word, but choosing the
- * right vowel among a tile's several valid readings needs grapheme→phoneme
+ * its consonants are validated against both the tile and every word, but choosing
+ * the right vowel among a tile's several valid readings needs grapheme→phoneme
  * alignment Kokoro's flat /dev/phonemize can't give. This is a best-effort net that
  * ONLY removes overrides. Authored content is hand-verified and never passes here.
  */
@@ -247,14 +249,15 @@ function applyRepair(config: RepairablePhonics, phonemesByWord: Map<string, stri
   const tileWords = wordsByTile(config);
   for (const tile of Object.keys(say)) {
     const ipa = say[tile]!;
-    const known = (tileWords.get(tile) ?? [])
-      .map((w) => phonemesByWord.get(w))
-      .filter((p): p is string => p != null);
+    const words = tileWords.get(tile) ?? [];
+    const phonemes = words.map((w) => phonemesByWord.get(w));
+    const allGroundTruthed = words.length > 0 && phonemes.every((p) => p != null);
     const validated =
       hasConsonant(ipa) &&
       tileAllowsConsonants(tile, ipa) &&
-      known.some((p) => plausibleOverride(ipa, p));
-    if (!validated) delete say[tile]; // fail-closed: keep only positively-confirmed overrides
+      allGroundTruthed &&
+      phonemes.every((p) => plausibleOverride(ipa, p!));
+    if (!validated) delete say[tile]; // fail-closed: keep only overrides correct in EVERY context
   }
 }
 
