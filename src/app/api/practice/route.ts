@@ -20,10 +20,10 @@ const requestSchema = z.object({
   focus: z.string().min(1).max(200),
   n: z.number().int().min(1).max(8).default(3),
   skillHints: z.array(z.string().min(1).max(60)).max(8).optional(),
-  // Per-child AI gate (spec §8). The server re-checks enrollment config to
-  // enforce aiPractice === false even if the client button was somehow shown.
-  learnerId: z.string().min(1).max(100).optional(),
-  programSlug: z.string().min(1).max(100).optional(),
+  // Per-child AI gate (spec §8). Required so the server always enforces the
+  // parental control — no client may bypass by omitting these fields.
+  learnerId: z.string().min(1).max(100),
+  programSlug: z.string().min(1).max(100),
 });
 
 export async function POST(request: Request) {
@@ -64,14 +64,14 @@ export async function POST(request: Request) {
 
   const { kind, band, focus, n, skillHints, learnerId, programSlug } = parsed.data;
 
-  // Server-side AI gate (spec §8, defense-in-depth): if the request names a
-  // learner+program pair, re-check the enrollment config. Return 403 before any
-  // model call when aiPractice is explicitly disabled for that child+program.
-  if (learnerId && programSlug) {
-    const enrollConfig = await getEnrollmentConfig(accountId, learnerId, programSlug);
-    if (enrollConfig.aiPractice === false) {
-      return NextResponse.json({ error: "ai_disabled" }, { status: 403 });
-    }
+  // Server-side AI gate (spec §8, defense-in-depth): always re-check the
+  // enrollment config before any model call. Returns 403 when aiPractice is
+  // explicitly disabled for that child+program, regardless of what the client
+  // sent. learnerId/programSlug are required in the schema so this gate cannot
+  // be skipped by omitting fields.
+  const enrollConfig = await getEnrollmentConfig(accountId, learnerId, programSlug);
+  if (enrollConfig.aiPractice === false) {
+    return NextResponse.json({ error: "ai_disabled" }, { status: 403 });
   }
 
   try {

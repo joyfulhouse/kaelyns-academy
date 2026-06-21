@@ -327,7 +327,7 @@ function WorldMap({
             {dailyGoal !== null && (
               <div className="mt-2">
                 <span className="inline-flex items-center rounded-pill border-2 border-ink/20 bg-paper px-3 py-1 font-display text-sm font-semibold text-ink-soft">
-                  {todayCompletedCount} / {dailyGoal} today
+                  {todayCompletedCount} / {dailyGoal} done
                 </span>
               </div>
             )}
