@@ -175,6 +175,64 @@ describe("editableToForm + formToEditable round-trip", () => {
   });
 });
 
+describe("formToEditable config hardening (M2)", () => {
+  /** Build a one-activity form whose single activity carries `configJson`. */
+  function formWithConfigJson(kind: string, configJson: string) {
+    const form = editableToForm(FIXTURE);
+    form.units = [
+      {
+        ...form.units[0]!,
+        lessons: [
+          {
+            ...form.units[0]!.lessons[0]!,
+            activities: [
+              { ...form.units[0]!.lessons[0]!.activities[0]!, kind, configJson },
+            ],
+          },
+        ],
+      },
+    ];
+    return form;
+  }
+
+  function firstActivityConfig(form: ReturnType<typeof editableToForm>): unknown {
+    return formToEditable(form).units[0]?.lessons[0]?.activities[0]?.config;
+  }
+
+  it("does NOT pass malformed JSON through as a valid-looking config", () => {
+    const config = firstActivityConfig(
+      formWithConfigJson("phonics-wordbuild", "{ not valid json"),
+    );
+    // The raw string must never leak through, and whatever sentinel we carry
+    // must be rejected by the kind's schema (so the save can't accept it).
+    expect(config).not.toBe("{ not valid json");
+    expect(typeof config).toBe("object");
+    expect(ACTIVITY_CONFIG_SCHEMAS["phonics-wordbuild"].safeParse(config).success).toBe(false);
+  });
+
+  it("does NOT pass schema-invalid (but parseable) JSON through as valid", () => {
+    // Valid JSON, but tiles must have >= 2 entries — schema-invalid for the kind.
+    const config = firstActivityConfig(
+      formWithConfigJson(
+        "phonics-wordbuild",
+        JSON.stringify({ focus: "s", instruction: "Build", tiles: ["s"], words: [{ word: "s" }] }),
+      ),
+    );
+    expect(ACTIVITY_CONFIG_SCHEMAS["phonics-wordbuild"].safeParse(config).success).toBe(false);
+  });
+
+  it("passes valid config JSON through as the parsed object", () => {
+    const config = firstActivityConfig(
+      formWithConfigJson(
+        "phonics-wordbuild",
+        JSON.stringify({ focus: "sh", instruction: "Build", tiles: ["s", "h"], words: [{ word: "sh" }] }),
+      ),
+    );
+    expect(ACTIVITY_CONFIG_SCHEMAS["phonics-wordbuild"].safeParse(config).success).toBe(true);
+    expect((config as { focus: string }).focus).toBe("sh");
+  });
+});
+
 describe("validateConfigJson", () => {
   it("returns ok for valid phonics-wordbuild JSON", () => {
     const json = JSON.stringify({
@@ -230,5 +288,15 @@ describe("factory functions", () => {
     expect(a.activityKey).toBeTruthy();
     const result = validateConfigJson(a.kind, a.configJson);
     expect(result.ok).toBe(true);
+  });
+
+  it("seeds unique keys across rapid adds (UUID, not Date.now collision)", () => {
+    // 100 of each in the same tick: Date.now()-seeded keys would collide.
+    const units = new Set(Array.from({ length: 100 }, () => newUnit().unitKey));
+    const lessons = new Set(Array.from({ length: 100 }, () => newLesson().lessonKey));
+    const activities = new Set(Array.from({ length: 100 }, () => newActivity().activityKey));
+    expect(units.size).toBe(100);
+    expect(lessons.size).toBe(100);
+    expect(activities.size).toBe(100);
   });
 });

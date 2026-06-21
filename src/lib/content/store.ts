@@ -371,6 +371,55 @@ export class ActivityConfigValidationError extends Error {
   }
 }
 
+/**
+ * Thrown when a submitted tree has duplicate sibling keys (a unitKey repeated in
+ * a version, a lessonKey in a unit, or an activityKey in a lesson). Maps to
+ * reason:"invalid" in actions, like the other validation errors. Sibling keys
+ * must be unique because they are the authored, stable identity of a node across
+ * a save's delete/reinsert cycle and across versions.
+ */
+export class DuplicateKeyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DuplicateKeyError";
+  }
+}
+
+/**
+ * PURE. Scan a submitted unit tree for duplicate sibling keys and return the
+ * first one found (or null when every sibling level is unique). Checked BEFORE
+ * the save transaction so a collision is rejected without touching the DB.
+ *   - unitKey: unique within the version (the units array)
+ *   - lessonKey: unique within its unit
+ *   - activityKey: unique within its lesson
+ * Keys are compared only against their own siblings — the same key may legally
+ * appear under different parents.
+ */
+export function findDuplicateKeys(
+  units: EditableUnit[],
+): { level: "unit" | "lesson" | "activity"; key: string } | null {
+  const unitKeys = new Set<string>();
+  for (const unit of units) {
+    if (unitKeys.has(unit.unitKey)) return { level: "unit", key: unit.unitKey };
+    unitKeys.add(unit.unitKey);
+
+    const lessonKeys = new Set<string>();
+    for (const lesson of unit.lessons) {
+      if (lessonKeys.has(lesson.lessonKey)) return { level: "lesson", key: lesson.lessonKey };
+      lessonKeys.add(lesson.lessonKey);
+
+      const activityKeys = new Set<string>();
+      for (const activity of lesson.activities) {
+        if (activityKeys.has(activity.activityKey)) {
+          return { level: "activity", key: activity.activityKey };
+        }
+        activityKeys.add(activity.activityKey);
+      }
+    }
+  }
+  return null;
+}
+
 // ── PURE: version-tree row builder ───────────────────────────────────────────
 
 /**
@@ -613,6 +662,14 @@ export async function saveVersionTree(
   if (!versionRow) throw new Error(`Version not found: ${versionId}`);
   if (versionRow.status !== "draft") {
     throw new VersionNotDraftError(versionId, versionRow.status);
+  }
+
+  // Reject duplicate sibling keys BEFORE the delete/reinsert tx: a repeated
+  // unitKey/lessonKey/activityKey would silently merge two authored nodes into
+  // one identity (and break version-pinned enrollment lookups).
+  const dup = findDuplicateKeys(input.units);
+  if (dup) {
+    throw new DuplicateKeyError(`Duplicate ${dup.level} key: "${dup.key}"`);
   }
 
   // Validate all activity configs BEFORE touching the DB.

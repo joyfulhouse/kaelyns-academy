@@ -107,7 +107,9 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
 export function newActivity(): ActivityFormValues {
   const kind: ActivityKind = "phonics-wordbuild";
   return {
-    activityKey: `activity-${Date.now()}`,
+    // Seed from a UUID, not Date.now(): two activities added in the same tick
+    // would otherwise collide on key, which saveVersionTree now rejects.
+    activityKey: `activity-${globalThis.crypto.randomUUID()}`,
     kind,
     title: "",
     blurb: "",
@@ -121,7 +123,8 @@ export function newActivity(): ActivityFormValues {
 
 export function newLesson(): LessonFormValues {
   return {
-    lessonKey: `lesson-${Date.now()}`,
+    // UUID-seeded (not Date.now()) so rapid sibling adds can't collide on key.
+    lessonKey: `lesson-${globalThis.crypto.randomUUID()}`,
     title: "",
     activities: [],
   };
@@ -129,7 +132,8 @@ export function newLesson(): LessonFormValues {
 
 export function newUnit(): UnitFormValues {
   return {
-    unitKey: `unit-${Date.now()}`,
+    // UUID-seeded (not Date.now()) so rapid sibling adds can't collide on key.
+    unitKey: `unit-${globalThis.crypto.randomUUID()}`,
     title: "",
     emoji: "",
     world: "sunshine",
@@ -256,13 +260,22 @@ function formToLesson(l: LessonFormValues): EditableLesson {
   };
 }
 
+/**
+ * A sentinel `config` for an activity whose `configJson` could not be parsed.
+ * It is deliberately shaped so NO activity-config schema will accept it, so a
+ * malformed config can never reach the save as a "valid-looking" object. The
+ * editor's submit gate (validateConfigJson in ProgramEditor.onSubmit) blocks
+ * before we ever get here; this is the defense-in-depth fallback if it doesn't.
+ */
+const INVALID_CONFIG_SENTINEL = { __invalidConfig: true } as const;
+
 function formToActivity(a: ActivityFormValues): EditableActivity {
-  let config: unknown = {};
-  try {
+  // Only parse JSON that validates against this kind's schema. On malformed or
+  // schema-invalid JSON, carry an explicit reject-me sentinel rather than the
+  // raw string, so nothing downstream can mistake it for a valid config object.
+  let config: unknown = INVALID_CONFIG_SENTINEL;
+  if (validateConfigJson(a.kind, a.configJson).ok) {
     config = JSON.parse(a.configJson) as unknown;
-  } catch {
-    // Malformed JSON — pass raw; server will reject with 'invalid'
-    config = a.configJson;
   }
   return {
     activityKey: a.activityKey,

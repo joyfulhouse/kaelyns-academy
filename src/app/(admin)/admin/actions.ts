@@ -26,8 +26,8 @@ import {
   DuplicateSlugError,
   VersionNotDraftError,
   ActivityConfigValidationError,
+  DuplicateKeyError,
   type EditableUnit,
-  type VersionMetadata,
   type EditableLesson,
   type EditableActivity,
   type EditableVersion,
@@ -62,6 +62,9 @@ function mapError(error: unknown): AdminErrorResult {
     return { ok: false, reason: "invalid", message: error.message };
   }
   if (error instanceof ActivityConfigValidationError) {
+    return { ok: false, reason: "invalid", message: error.message };
+  }
+  if (error instanceof DuplicateKeyError) {
     return { ok: false, reason: "invalid", message: error.message };
   }
   return { ok: false, reason: "unavailable", message: "An unexpected error occurred. Please try again." };
@@ -194,16 +197,20 @@ export async function saveVersionTreeAction(
   }
 
   try {
+    // No casts: parsed.data is already the validated shape, so any drift between
+    // the Zod schema and the store's VersionMetadata/EditableUnit types surfaces
+    // here as a type error rather than being silently papered over.
     await saveVersionTree(versionId, {
-      metadata: parsed.data.metadata as VersionMetadata,
-      units: parsed.data.units as EditableUnit[],
+      metadata: parsed.data.metadata,
+      units: parsed.data.units,
     });
     revalidateAdmin();
     return { ok: true };
   } catch (error) {
     if (
       error instanceof VersionNotDraftError ||
-      error instanceof ActivityConfigValidationError
+      error instanceof ActivityConfigValidationError ||
+      error instanceof DuplicateKeyError
     ) {
       return mapError(error);
     }

@@ -8,7 +8,8 @@ vi.mock("@sentry/nextjs", () => ({
 }));
 
 // Lazy import so the mock is in place before the module loads.
-const { assembleProgram, buildVersionTreeRows } = await import("./store");
+const { assembleProgram, buildVersionTreeRows, findDuplicateKeys } = await import("./store");
+type EditableUnit = import("./store").EditableUnit;
 
 describe("assembleProgram", () => {
   const baseVersion = {
@@ -469,5 +470,60 @@ describe("buildVersionTreeRows", () => {
     expect(result.units).toHaveLength(0);
     expect(result.lessons).toHaveLength(0);
     expect(result.activities).toHaveLength(0);
+  });
+});
+
+// ── findDuplicateKeys ─────────────────────────────────────────────────────────
+
+describe("findDuplicateKeys", () => {
+  function unit(unitKey: string, lessons: EditableUnit["lessons"] = []): EditableUnit {
+    return { unitKey, title: unitKey, world: "sunshine", lessons };
+  }
+  function lesson(lessonKey: string, activityKeys: string[] = []): EditableUnit["lessons"][number] {
+    return {
+      lessonKey,
+      title: lessonKey,
+      activities: activityKeys.map((activityKey) => ({
+        activityKey,
+        kind: "math-tenframe",
+        title: activityKey,
+        band: "ready",
+        skillTags: [],
+        standardTags: [],
+        config: {},
+      })),
+    };
+  }
+
+  it("returns null for a fully-unique tree", () => {
+    const tree = [
+      unit("u1", [lesson("l1", ["a1", "a2"]), lesson("l2", ["a3"])]),
+      unit("u2", [lesson("l3", ["a4"])]),
+    ];
+    expect(findDuplicateKeys(tree)).toBeNull();
+  });
+
+  it("detects a duplicate unitKey within a version", () => {
+    expect(findDuplicateKeys([unit("dup"), unit("dup")])).toEqual({ level: "unit", key: "dup" });
+  });
+
+  it("detects a duplicate lessonKey within a unit", () => {
+    const tree = [unit("u1", [lesson("dup"), lesson("dup")])];
+    expect(findDuplicateKeys(tree)).toEqual({ level: "lesson", key: "dup" });
+  });
+
+  it("detects a duplicate activityKey within a lesson", () => {
+    const tree = [unit("u1", [lesson("l1", ["dup", "dup"])])];
+    expect(findDuplicateKeys(tree)).toEqual({ level: "activity", key: "dup" });
+  });
+
+  it("allows the same key under different parents (siblings only)", () => {
+    // lessonKey "l1" reused across two different units is legal; same for
+    // activityKey "a1" across two different lessons.
+    const tree = [
+      unit("u1", [lesson("l1", ["a1"])]),
+      unit("u2", [lesson("l1", ["a1"])]),
+    ];
+    expect(findDuplicateKeys(tree)).toBeNull();
   });
 });
