@@ -4,10 +4,12 @@ import { z } from "zod";
 import { captureNonCritical } from "@/lib/capture";
 import { UnauthenticatedError, requireAccount, withAccount } from "@/lib/tenancy";
 import {
+  EnrollmentNotActiveError,
   ensureDefaultLearner,
   ensureEnrollment,
   getCompletedActivityIds,
   getEnrollmentConfig,
+  getEnrollmentForGate,
   getLearner,
   getLearnerSettings,
   getSkillState,
@@ -187,6 +189,7 @@ const skillEvidenceSchema = z.object({
 
 const recordAttemptSchema = z.object({
   learnerId: z.string().min(1),
+  programSlug: z.string().min(1),
   activityId: z.string().min(1),
   kind: z.string().min(1).max(60),
   generated: z.boolean().optional(),
@@ -203,12 +206,19 @@ export type RecordAttemptInput = z.infer<typeof recordAttemptSchema>;
 
 export type RecordResult =
   | { ok: true }
-  | { ok: false; reason: "unauthenticated" | "invalid" | "error" };
+  | { ok: false; reason: "unauthenticated" | "invalid" | "inactive" | "error" };
 
 /**
  * Persist one completed activity (authored or AI-generated practice) and fold
  * its skill evidence into the learner's skill_state. The day is stamped from
  * the server clock so the mastery gate's "distinct days" rule is consistent.
+ *
+ * Server-authoritative curation gate (Fix-F A4): `recordAttempt` verifies the
+ * learner has an ACTIVE enrollment for `programSlug` inside the same transaction
+ * (after the tenancy re-check). A removed/paused/missing enrollment throws
+ * EnrollmentNotActiveError → no attempt or skill_state is written, and the
+ * caller gets `reason: "inactive"`. This makes the kid-surface render-block (A3)
+ * non-bypassable even via a direct API call with a stale/unassigned program.
  */
 export async function recordAttemptAction(input: RecordAttemptInput): Promise<RecordResult> {
   const parsed = recordAttemptSchema.safeParse(input);
@@ -219,6 +229,7 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
     await withAccount(({ accountId }) =>
       recordAttempt(accountId, {
         learnerId: data.learnerId,
+        programSlug: data.programSlug,
         activityId: data.activityId,
         kind: data.kind,
         generated: data.generated ?? false,
@@ -230,6 +241,7 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
     return { ok: true };
   } catch (error) {
     if (error instanceof UnauthenticatedError) return { ok: false, reason: "unauthenticated" };
+    if (error instanceof EnrollmentNotActiveError) return { ok: false, reason: "inactive" };
     captureNonCritical("recordAttemptAction failed", error);
     return { ok: false, reason: "error" };
   }
@@ -251,6 +263,15 @@ export interface LearnerStateResult {
    * in one round-trip (C#5 consistency).
    */
   program: Program | null;
+  /**
+   * Whether the account learner may play this program (Fix-F A2): true ONLY when
+   * the learner has an ACTIVE enrollment for `slug`. False for removed/paused/no
+   * enrollment — and the result then carries NO playable `program` (the client
+   * shows the calm "ask a grown-up" state in account mode). Always false for
+   * guest/unauth/failure; the client only enforces it in `mode === "account"`,
+   * so guest mode keeps playing the published prop unaffected.
+   */
+  available: boolean;
 }
 
 const EMPTY_STATE: LearnerStateResult = {
@@ -259,6 +280,7 @@ const EMPTY_STATE: LearnerStateResult = {
   starsByActivity: {},
   config: {},
   program: null,
+  available: false,
 };
 
 /**
@@ -280,22 +302,21 @@ export async function getLearnerStateAction(
 
   try {
     return await withAccount(async ({ accountId }) => {
-      // Ensure an enrollment row exists for this program before the AI gate can
-      // be reached, so a freshly-opened program isn't fail-closed-blocked by the
-      // §8 gate's "active enrollment required" rule (the lazy
-      // ensureEnrollmentAction is fire-and-forget and may not have committed
-      // yet). ensureEnrollment is an owned-by-account, onConflictDoNothing
-      // insert: it creates the row (status="active") only when none exists, and
-      // deliberately does NOT resurrect a soft-removed/paused enrollment — so a
-      // removed program stays removed and the gate keeps blocking it.
-      const owned = await getLearner(accountId, learnerId);
-      if (owned) await ensureEnrollment(learnerId, programSlug);
+      // Curation gate (Fix-F A1+A2): NO lazy auto-enroll-on-open. Opening a
+      // program must not self-activate it. Read the enrollment status and fail
+      // closed (no playable program) unless it is ACTIVE — so a removed/paused/
+      // never-assigned program returns available:false and the kid surface shows
+      // the calm "ask a grown-up" state (account mode). Default + parent-assigned
+      // programs keep an active enrollment (ensureHouseholdLearner / assignProgram),
+      // so legitimate play is unaffected. getEnrollmentForGate already enforces
+      // tenancy (owned-by-account) and never resurrects a soft-removed row.
+      const gate = await getEnrollmentForGate(accountId, learnerId, programSlug);
+      if (gate?.status !== "active") return EMPTY_STATE;
 
       // Resolve the learner's PINNED program version (C#5). State scoping AND the
       // rendered tree both derive from this same resolved tree, so they always
       // agree on the version — and they match the /api/practice gate, which also
-      // resolves via resolveLearnerProgram. (Resolved AFTER the ensureEnrollment
-      // above so a freshly-pinned enrollment is visible to the version read.)
+      // resolves via resolveLearnerProgram.
       const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
       if (!program) return EMPTY_STATE;
       const activityIds = new Set(activityIdsForProgram(program));
@@ -330,7 +351,14 @@ export async function getLearnerStateAction(
       const effectiveConfig: EnrollmentConfig =
         settings?.aiPractice === false ? { ...config, aiPractice: false } : config;
 
-      return { skillState, completedActivityIds, starsByActivity, config: effectiveConfig, program };
+      return {
+        skillState,
+        completedActivityIds,
+        starsByActivity,
+        config: effectiveConfig,
+        program,
+        available: true,
+      };
     });
   } catch (error) {
     if (!(error instanceof UnauthenticatedError)) {

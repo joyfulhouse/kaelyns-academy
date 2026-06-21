@@ -18,6 +18,7 @@ import { Mascot } from "@/components/art/Mascot";
 import { Sun } from "@/components/art/Decorations";
 import { ProgressRing } from "@/components/ui/ProgressRing";
 import { Stars } from "@/components/ui/Stars";
+import { Button } from "@/components/ui/Button";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner, LEARNERS } from "./learners";
 import { useLearnerState, type SurfaceLearner, type UseLearnerState } from "./useLearnerState";
@@ -59,6 +60,15 @@ export function StudioHome({ program }: { program: Program }) {
   }
 
   if (picked) {
+    // Account-mode curation gate (Fix-F A3): once a learner has picked, block a
+    // program a grown-up hasn't added (removed/paused/not-assigned → available
+    // false) with the calm "ask a grown-up" state instead of the map. Enforced
+    // ONLY in account mode and ONLY once state has loaded (`ready`) — guest mode
+    // is unaffected, and while loading we keep showing the map (built from the
+    // published prop) so there's no flash-of-block before the signal arrives.
+    if (state.mode === "account" && state.ready && !state.available) {
+      return <NotAssigned programSlug={program.slug} onSwitchLearner={() => setPicked(false)} />;
+    }
     return (
       <WorldMap
         program={effectiveProgram}
@@ -85,6 +95,54 @@ export function StudioHome({ program }: { program: Program }) {
         return ok;
       }}
     />
+  );
+}
+
+/* ── Not assigned (account-mode curation, Fix-F A3) ──────────────────────────
+   A signed-in child picked a program a grown-up hasn't added to their plan
+   (removed, paused, or never assigned → available:false). Never a scary lock —
+   a warm nudge to ask a grown-up, with a way back to their own worlds and to
+   switch learner (in case the wrong profile was picked). Guest mode never sees
+   this; curation is account-mode only. */
+
+function NotAssigned({
+  programSlug,
+  onSwitchLearner,
+}: {
+  programSlug: string;
+  onSwitchLearner: () => void;
+}) {
+  const reduce = useReducedMotion();
+  return (
+    <AppShellKid backHref="/learn" readAloud="Ask a grown-up to add this. Back to your worlds.">
+      <motion.div
+        initial={reduce ? false : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+        className="mx-auto flex max-w-md flex-col items-center pt-10 text-center"
+      >
+        <Mascot mood="happy" size={120} />
+        <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight">
+          Ask a grown-up to add this!
+        </h1>
+        <p className="mt-3 text-lg text-ink-soft">
+          This one isn&rsquo;t ready for you yet. Let&rsquo;s find something to play.
+        </p>
+        <div className="mt-9 flex w-full flex-col items-stretch gap-3">
+          <Button href="/learn" variant="primary" size="kid">
+            <CompassIcon weight="duotone" className="size-6" />
+            Go to my worlds
+          </Button>
+          <button
+            type="button"
+            onClick={onSwitchLearner}
+            className="inline-flex min-h-11 items-center justify-center rounded-pill text-base font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
+          >
+            Not you? Switch learner
+          </button>
+        </div>
+      </motion.div>
+    </AppShellKid>
   );
 }
 

@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/Button";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner } from "./learners";
 import { useLearnerState } from "./useLearnerState";
+import { NotAssigned } from "./UnitView";
 import { ACTIVITY_META } from "./activityMeta";
 import { stopSpeaking } from "./speak";
 
@@ -87,7 +88,7 @@ export function ActivityHost({
   // mode; in account mode the hook resolves the selected account learner. State
   // is scoped to the active program by its slug, and `program` is the learner's
   // RESOLVED (version-pinned) tree (null in guest/loading).
-  const { skillState, record, signedIn, config, selectedLearnerId, program } =
+  const { skillState, record, signedIn, config, selectedLearnerId, program, mode, available, ready } =
     useLearnerState(learner.id, programSlug);
   const [phase, setPhase] = useState<Phase>({ kind: "play" });
   const [generatedCount, setGeneratedCount] = useState(0);
@@ -206,6 +207,20 @@ export function ActivityHost({
       clearTimeout(timer);
     }
   }, [effectiveActivity, config.band, selectedLearnerId, programSlug]);
+
+  // Account-mode curation gate (Fix-F A3), checked AFTER every hook above so hook
+  // order stays stable. Enforced ONLY in account mode and ONLY once state has
+  // loaded (`ready`) — guest mode is unaffected and the loading beat isn't a
+  // flash-of-block. Blocked when the program isn't playable (available:false) OR
+  // this route's unit key is curated out of a non-empty activeUnitKeys (closes
+  // the direct-URL hole for the activity route, mirroring UnitView + the map).
+  const curatedOut =
+    config.activeUnitKeys !== undefined &&
+    config.activeUnitKeys.length > 0 &&
+    !config.activeUnitKeys.includes(unitKey);
+  if (mode === "account" && ready && (!available || curatedOut)) {
+    return <NotAssigned programSlug={programSlug} />;
+  }
 
   // The key resolved in neither the pinned nor the published tree → the activity
   // moved out of the learner's version (or a bogus URL). Calm "moved" state, not

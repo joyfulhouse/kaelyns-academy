@@ -41,7 +41,25 @@ export function UnitView({
   // Stars + the resolved (version-pinned) tree come from the active surface: DB
   // in account mode, localStorage guest otherwise. The mock learner id only
   // matters in guest mode; state is scoped to the active program by its slug.
-  const { getStars, ready, program } = useLearnerState(learner.id, programSlug);
+  // `mode`/`available`/`config` drive the account-mode curation gate (Fix-F A3).
+  const { getStars, ready, program, mode, available, config } = useLearnerState(
+    learner.id,
+    programSlug,
+  );
+
+  // Account-mode curation gate (Fix-F A3). Enforced ONLY in account mode and
+  // ONLY once state has loaded (`ready`) — so guest mode is unaffected and the
+  // loading beat isn't a flash-of-block. Blocked when the program isn't playable
+  // (removed/paused/not-assigned → available:false) OR this unit's stable key is
+  // curated out of a non-empty activeUnitKeys (closes the direct-URL hole the
+  // StudioHome map already filters client-side).
+  const curatedOut =
+    config.activeUnitKeys !== undefined &&
+    config.activeUnitKeys.length > 0 &&
+    !config.activeUnitKeys.includes(unitKey);
+  if (mode === "account" && ready && (!available || curatedOut)) {
+    return <NotAssigned programSlug={programSlug} />;
+  }
 
   // Resolve from the PINNED tree when it has loaded; otherwise the server's
   // published unit (guest mode / the brief account-load window). `getUnit` keys
@@ -193,6 +211,40 @@ function UnitMoved({ programSlug }: { programSlug: string }) {
           This world moved!
         </h1>
         <p className="mt-3 text-lg text-ink-soft">Let&rsquo;s head back to the map.</p>
+        <div className="mt-9 w-full">
+          <Button href={`/learn/${programSlug}`} variant="primary" size="kid" className="w-full">
+            <MapTrifoldIcon weight="duotone" className="size-6" />
+            Back to the map
+          </Button>
+        </div>
+      </motion.div>
+    </AppShellKid>
+  );
+}
+
+/* ── Not assigned (account-mode curation, Fix-F A3) ──────────────────────────
+   A signed-in child reached a program/world a grown-up hasn't added (removed,
+   paused, never assigned, or curated out of activeUnitKeys). Never a scary lock
+   — a warm nudge to ask a grown-up, with the map as the safe floor. Mirrors the
+   UnitMoved tone; guest mode never sees this (curation is account-mode only). */
+
+export function NotAssigned({ programSlug }: { programSlug: string }) {
+  const reduce = useReducedMotion();
+  return (
+    <AppShellKid backHref={`/learn/${programSlug}`} readAloud="Ask a grown-up to add this. Back to the map.">
+      <motion.div
+        initial={reduce ? false : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+        className="mx-auto flex max-w-md flex-col items-center pt-10 text-center"
+      >
+        <Mascot mood="happy" size={120} />
+        <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight">
+          Ask a grown-up to add this!
+        </h1>
+        <p className="mt-3 text-lg text-ink-soft">
+          This one isn&rsquo;t ready for you yet. Let&rsquo;s head back to your map.
+        </p>
         <div className="mt-9 w-full">
           <Button href={`/learn/${programSlug}`} variant="primary" size="kid" className="w-full">
             <MapTrifoldIcon weight="duotone" className="size-6" />

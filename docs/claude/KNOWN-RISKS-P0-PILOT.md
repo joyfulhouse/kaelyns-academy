@@ -41,36 +41,56 @@ satisfy `requireAdmin`. Tie this to turning on Better Auth email verification.
 
 ---
 
-## Kid-surface curation (parent assignment not strictly enforced)
+## Kid-surface curation (ENFORCED for play + record — Fix-F #2)
 
-**Where:** `src/components/learner/ProgramPicker.tsx` (the `visibleSlugs: … : null`
-fallback) and `src/app/(learner)/actions.ts` — `ensureEnrollmentAction`.
+**Status:** the previously-accepted gap below is now **closed** for account
+(signed-in) learners. Parent curation is enforced: a signed-in child can only
+**play** and **record progress** for programs they have an **ACTIVE** enrollment
+in (the pilot default `kaelyn-adaptive` + parent assignments via
+`assignProgram`). Removed/paused/never-assigned programs, and units curated out
+of a non-empty `activeUnitKeys`, are unreachable — a calm "ask a grown-up to add
+this" state replaces the map/world/activity. Guest mode (not signed in,
+localStorage) is unchanged: it has no account/enrollments and still plays every
+published program.
 
-**Vector.** When a signed-in child has **zero active enrollments**, the picker
-shows **all published programs** (`visibleSlugs = null`), and opening a tile
-lazily self-enrolls the learner into that program (`ensureEnrollmentAction`). So
-a child can reach and enroll in any published program the parent never explicitly
-assigned — parent curation is not strictly enforced on the kid surface.
+**What enforces it (Fix-F A1–A4):**
 
-**Scope / bounds.** Forgiving by design — a child never lands on an empty or
-locked screen. The exposure is tightly bounded:
+- **No lazy auto-enroll-on-open (A1).** `getLearnerStateAction` no longer calls
+  `ensureEnrollment`, and `useLearnerState` no longer fires
+  `ensureEnrollmentAction` on open. Opening a program never self-activates it.
+  (`ensureEnrollmentAction` remains exported but is no longer called by the
+  surface; `ensureHouseholdLearner`'s default-program enrollment + parent
+  `assignProgramAction` are the only paths that create an active enrollment.)
+- **Availability signal (A2).** `getLearnerStateAction` reads the enrollment
+  status (`getEnrollmentForGate`) and returns `available: true` with a playable
+  pinned `program` ONLY when status is `active`; otherwise
+  `{ ...EMPTY_STATE, available: false }` (no program).
+- **Render-gating (A3, client-side).** `StudioHome` / `UnitView` / `ActivityHost`
+  render a `NotAssigned` ("ask a grown-up") state in **account mode** when
+  `available === false` OR the route's `unitKey` is curated out of a non-empty
+  `config.activeUnitKeys`. The Fix-D `loadedForActive`/`ready` guard is kept, so
+  while state loads the surface shows the calm loading beat, not a flash-of-block.
+- **Record fails closed (A4, SERVER-authoritative).** `recordAttemptAction` now
+  threads `programSlug`, and `recordAttempt` verifies an ACTIVE enrollment for
+  `(learner, programSlug)` **inside the transaction** (after the tenancy
+  re-check) before persisting. A removed/paused/missing enrollment throws
+  `EnrollmentNotActiveError` → no attempt and no skill_state are written, and the
+  action returns `reason: "inactive"`. So progress can never be recorded for a
+  removed/unassigned program even via a direct API call that bypasses the UI.
 
-- **Tenancy holds:** only a learner the signed-in account actually owns is
-  enrolled (`getLearner` ownership check before any write). No cross-account
-  exposure.
-- **Removed stays removed:** `ensureEnrollment` is an `onConflictDoNothing`
-  insert; it never resurrects a soft-removed or paused enrollment. A program the
-  parent removed stays removed and the §8 AI gate keeps blocking it.
-- **Published only:** unpublished (draft/archived) programs are not reachable.
+**Threat model note (why render-gating stays client-side).** A3's render-block is
+client-side because learner identity is client-resolved (the same trust model as
+the version-pinned tree render). The SERVER-authoritative gates are tenancy
+(`withAccount` / `getLearner`), the §8 AI gate (`/api/practice`), and now
+`recordAttempt` (A4). This is appropriate to the threat model — a child with a
+URL, not an attacker, and authored curriculum is not sensitive cross-account
+data. A signed-in child can still *fetch* a published program's tree by direct
+URL (it renders the published prop only in guest mode; in account mode the block
+shows), but cannot **record** against it (A4) and cannot generate AI for it (§8).
 
-**Why accepted for P0.** One pilot learner whose parent is the operator. The
-"curation" being relaxed is the parent's own program list for their own child;
-there is no harmful content to gate against in the pilot catalog. A frustrating
-empty/locked kid screen is judged worse than a child opening an unassigned but
-benign published program.
-
-**Planned fix (when curation matters — multi-program / multi-family).** Enforce
-parent assignment on the kid surface: when a learner has zero active
-enrollments, show an explicit "ask a grown-up" state instead of the full
-catalog, and gate `ensureEnrollmentAction` on an existing parent assignment
-(rather than auto-creating one on open).
+**Remaining (deferred) bound.** `src/components/learner/ProgramPicker.tsx` still
+shows all published programs when a learner has zero active enrollments (so a
+child never sees an empty picker), but opening any of them now yields the
+`NotAssigned` state rather than self-enrolling. Tightening the picker itself to a
+"nothing assigned yet — ask a grown-up" tile (instead of the full catalog) is a
+cosmetic follow-up; it no longer affects what a child can actually play or record.

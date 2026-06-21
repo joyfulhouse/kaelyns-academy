@@ -137,8 +137,24 @@ export async function listEnrollments(accountId: string, learnerId: string): Pro
   return rows.map((r) => r.programSlug);
 }
 
+/**
+ * Thrown by {@link recordAttempt} when the learner has no ACTIVE enrollment for
+ * the program the attempt belongs to (Fix-F A4). The attempt is NOT persisted;
+ * the action maps this to `reason: "inactive"`. This is the server-authoritative
+ * curation gate: progress can never be written for a removed/paused/unassigned
+ * program, even via a direct API call that bypasses the kid-surface render-block.
+ */
+export class EnrollmentNotActiveError extends Error {
+  constructor(learnerId: string, programSlug: string) {
+    super(`No active enrollment for learner "${learnerId}" in program "${programSlug}"`);
+    this.name = "EnrollmentNotActiveError";
+  }
+}
+
 export interface RecordAttemptInput {
   learnerId: string;
+  /** The program the activity belongs to — the active-enrollment gate keys on it. */
+  programSlug: string;
   activityId: string;
   kind: string;
   generated?: boolean;
@@ -150,7 +166,12 @@ export interface RecordAttemptInput {
 
 /**
  * Record one completed activity and fold its skill evidence into skill_state.
- * Verifies the learner belongs to the account first (tenancy boundary).
+ * Verifies the learner belongs to the account AND has an ACTIVE enrollment for
+ * the program (tenancy + curation boundaries), both inside the transaction.
+ * @throws when the learner is not owned by the account (tenancy).
+ * @throws {EnrollmentNotActiveError} when no ACTIVE enrollment exists for the
+ *   (learner, programSlug) pair — nothing is persisted (server-authoritative
+ *   curation gate, Fix-F A4).
  */
 export async function recordAttempt(accountId: string, input: RecordAttemptInput): Promise<void> {
   // The attempt row and every per-skill fold must commit together: a partial
@@ -167,6 +188,21 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
       .where(and(eq(learner.id, input.learnerId), eq(learner.accountId, accountId)))
       .limit(1);
     if (!owned[0]) throw new Error("learner not found for account");
+
+    // Curation boundary (Fix-F A4): the learner must be ACTIVELY enrolled in the
+    // program. Read inside the same tx (shares the snapshot with the tenancy
+    // check above). A removed/paused/missing enrollment → no write at all; the
+    // client render-block (A3) is the UX, this is the non-bypassable enforcement.
+    const enrolled = await tx
+      .select({ status: enrollment.status })
+      .from(enrollment)
+      .where(
+        and(eq(enrollment.learnerId, input.learnerId), eq(enrollment.programSlug, input.programSlug)),
+      )
+      .limit(1);
+    if (enrolled[0]?.status !== "active") {
+      throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
+    }
 
     await tx.insert(attempt).values({
       learnerId: input.learnerId,
