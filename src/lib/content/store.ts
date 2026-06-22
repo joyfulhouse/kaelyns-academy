@@ -5,7 +5,7 @@
  * layer (repository.ts) is the public API for reads; the admin actions layer
  * calls the write mutations directly.
  */
-import { eq, max, and, ne, desc } from "drizzle-orm";
+import { eq, max, and, desc } from "drizzle-orm";
 import type { ActivityKind } from "@/content/activity-configs";
 import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
 import type { Activity, Band, Program, SkillTag, Unit, Lesson, World } from "@/content/types";
@@ -720,6 +720,21 @@ export async function saveVersionTree(
     buildVersionTreeRows(versionId, input.units);
 
   await db.transaction(async (tx) => {
+    // Re-check the draft status INSIDE the tx, locking the version row FOR UPDATE
+    // (Fix-F B2). The pre-tx findFirst above can race a concurrent publish: a
+    // publish that flipped this version draft→published between that read and
+    // here would otherwise let us delete/reinsert a published (pinned-immutable)
+    // version's tree. Locking + re-reading the status closes that window — a
+    // non-draft now throws and rolls back before any mutation.
+    const locked = await tx
+      .select({ status: schema.programVersion.status })
+      .from(schema.programVersion)
+      .where(eq(schema.programVersion.id, versionId))
+      .for("update");
+    if (locked[0]?.status !== "draft") {
+      throw new VersionNotDraftError(versionId, locked[0]?.status ?? "missing");
+    }
+
     // Update version metadata.
     await tx
       .update(schema.programVersion)
@@ -745,11 +760,16 @@ export async function saveVersionTree(
 }
 
 /**
- * Publish a draft version:
- * - Set the version status to `published` + stamp `publishedAt`.
- * - Set the program status to `published` + set `publishedVersionId`.
- * - Archive any other previously-published version of the same program.
- * Transaction ensures all three changes are atomic.
+ * Publish a draft version (transactional, race-hardened — Fix-F B1):
+ * - Lock the program row FOR UPDATE so concurrent publishes of the same program
+ *   serialize instead of interleaving.
+ * - Archive the currently-published version FIRST, then publish the target via a
+ *   CONDITIONAL update (only if still `draft`); 0 affected rows → VersionNotDraftError
+ *   (rolls back). Archive-old-before-publish-new keeps the ≤1-published-per-program
+ *   partial unique index (B3) satisfied at every step inside the tx.
+ * - Set the program status to `published` + `publishedVersionId`, same tx.
+ * @throws {VersionNotDraftError} when the version is not a draft (pre-tx fast
+ *   path) OR was flipped out of draft by a concurrent tx (in-tx conditional).
  */
 export async function publishVersion(versionId: string): Promise<void> {
   const db = getDb();
@@ -768,7 +788,22 @@ export async function publishVersion(versionId: string): Promise<void> {
   const now = new Date();
 
   await db.transaction(async (tx) => {
-    // Archive any currently-published version of the same program (skip self).
+    // Serialize concurrent publishes of the SAME program: lock the program row
+    // FOR UPDATE so a second publish blocks here until this tx commits/rolls
+    // back (Fix-F B1). Without it, two publishes could interleave their
+    // archive/publish steps and momentarily leave two published versions (which
+    // the B3 partial unique index would also reject, but as a hard error rather
+    // than clean serialization).
+    await tx
+      .select({ id: schema.program.id })
+      .from(schema.program)
+      .where(eq(schema.program.id, versionRow.programId))
+      .for("update");
+
+    // Archive the currently-published version of this program FIRST, then
+    // publish the target — this order keeps the B3 partial unique index
+    // (one published row per program) satisfied at every point inside the tx.
+    // The target is a draft, so it is never the row archived here.
     await tx
       .update(schema.programVersion)
       .set({ status: "archived" })
@@ -776,17 +811,29 @@ export async function publishVersion(versionId: string): Promise<void> {
         and(
           eq(schema.programVersion.programId, versionRow.programId),
           eq(schema.programVersion.status, "published"),
-          ne(schema.programVersion.id, versionId),
         ),
       );
 
-    // Publish the target version.
-    await tx
+    // Publish the target CONDITIONALLY: only if it is still a draft. A
+    // concurrent publish/save that flipped it out of draft between the pre-tx
+    // read and here yields 0 affected rows → throw to roll the whole tx back
+    // (the archive above is undone). This is the in-tx race guard the pre-tx
+    // status check above can't provide on its own.
+    const published = await tx
       .update(schema.programVersion)
       .set({ status: "published", publishedAt: now })
-      .where(eq(schema.programVersion.id, versionId));
+      .where(
+        and(
+          eq(schema.programVersion.id, versionId),
+          eq(schema.programVersion.status, "draft"),
+        ),
+      )
+      .returning({ id: schema.programVersion.id });
+    if (published.length === 0) {
+      throw new VersionNotDraftError(versionId, "not draft at publish time");
+    }
 
-    // Update the program record.
+    // Update the program record (same tx, under the row lock above).
     await tx
       .update(schema.program)
       .set({ status: "published", publishedVersionId: versionId, updatedAt: now })

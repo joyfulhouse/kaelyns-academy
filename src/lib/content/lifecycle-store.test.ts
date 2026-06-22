@@ -75,17 +75,70 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-const { publishVersion, cloneVersionToDraft, VersionNotDraftError } = await import("./store");
+const { publishVersion, saveVersionTree, cloneVersionToDraft, VersionNotDraftError } =
+  await import("./store");
 
-/** A minimal chainable fake `tx`: update/set/where AND insert/values return
- *  `this` and the chain is awaitable, so both the publish and the clone-insert
- *  transaction bodies run without a real DB. */
+// ── Configurable fake `tx` (Fix-F B1/B2) ─────────────────────────────────────
+// The publish/save tx bodies now do a row-lock SELECT … FOR UPDATE and a
+// CONDITIONAL publish UPDATE … RETURNING whose affected-row count is the guard.
+// These knobs drive each:
+//   txSelectForRows  → what `tx.select(...).from(...).where(...).for("update")`
+//                      resolves to (publish: the program-lock row, ignored;
+//                      save: the version-lock row whose `.status` is re-checked).
+//   txPublishReturns → what the conditional publish UPDATE … RETURNING resolves
+//                      to ([] = 0 rows = not-draft-at-tx-time; non-empty = ok).
+const txSelectForRows = { value: [{ status: "draft" }] as Record<string, unknown>[] };
+const txPublishReturns = { value: [{ id: "v1" }] as Record<string, unknown>[] };
+// Ordered record of the tx statements so a test can assert archive-before-publish.
+const txOps: string[] = [];
+
+/** A chainable fake `tx` covering update/set/where/returning, insert/values,
+ *  delete, and select(...).from(...).where(...).for("update") — so both the
+ *  publish and save transaction bodies run without a real DB. A chain resolves
+ *  to: its `.returning()` payload if called; else the FOR UPDATE select rows if
+ *  `.for()` was called; else []. */
 function fakeTx() {
-  const chain: Record<string, unknown> = {};
-  for (const m of ["update", "set", "where", "insert", "values"]) chain[m] = () => chain;
-  (chain as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
-    Promise.resolve([]).then(resolve);
-  return chain;
+  function chainFor(kind: "update" | "insert" | "delete" | "select") {
+    let usedFor = false;
+    let usedReturning = false;
+    let setStatus: string | undefined;
+    const chain: Record<string, unknown> = {};
+    chain.from = () => chain;
+    chain.where = () => chain;
+    chain.set = (v?: { status?: unknown }) => {
+      if (v && typeof v.status === "string") setStatus = v.status;
+      return chain;
+    };
+    chain.values = () => chain;
+    chain.delete = () => chain;
+    chain.for = () => {
+      usedFor = true;
+      return chain;
+    };
+    chain.returning = () => {
+      usedReturning = true;
+      // Record the publish vs archive UPDATE by the status it set.
+      if (kind === "update" && setStatus) txOps.push(`update:${setStatus}`);
+      return chain;
+    };
+    (chain as { then: unknown }).then = (resolve: (v: unknown) => unknown) => {
+      // A non-returning archive UPDATE is recorded here (it's awaited directly).
+      if (kind === "update" && !usedReturning && setStatus) txOps.push(`update:${setStatus}`);
+      const rows = usedReturning
+        ? txPublishReturns.value
+        : usedFor
+          ? txSelectForRows.value
+          : [];
+      return Promise.resolve(rows).then(resolve);
+    };
+    return chain;
+  }
+  return {
+    select: () => chainFor("select"),
+    update: () => chainFor("update"),
+    insert: () => chainFor("insert"),
+    delete: () => chainFor("delete"),
+  };
 }
 
 beforeEach(() => {
@@ -96,6 +149,9 @@ beforeEach(() => {
   findManyRows.lessons = [];
   findManyRows.activities = [];
   selectMaxRows.value = [{ maxVersion: 1, id: "vSrc" }];
+  txSelectForRows.value = [{ status: "draft" }];
+  txPublishReturns.value = [{ id: "v1" }];
+  txOps.length = 0;
   transaction.mockReset();
   transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) => fn(fakeTx()));
 });
@@ -124,6 +180,59 @@ describe("publishVersion (draft-status guard)", () => {
     versionFindFirst.value = { id: "v1", programId: "p1", status: "draft" };
     await publishVersion("v1");
     expect(transaction).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Fix-F B1: race-hardened publish (lock + archive-before-publish + cond.) ──
+
+  it("archives the prior published version BEFORE publishing the target (B3 index safe)", async () => {
+    versionFindFirst.value = { id: "v1", programId: "p1", status: "draft" };
+    await publishVersion("v1");
+    // The archive UPDATE (status→archived) must run before the publish UPDATE
+    // (status→published), so ≤1-published-per-program holds at every tx step.
+    const archiveIdx = txOps.indexOf("update:archived");
+    const publishIdx = txOps.indexOf("update:published");
+    expect(archiveIdx).toBeGreaterThanOrEqual(0);
+    expect(publishIdx).toBeGreaterThanOrEqual(0);
+    expect(archiveIdx).toBeLessThan(publishIdx);
+  });
+
+  it("throws VersionNotDraftError (rolls back) when the conditional publish affects 0 rows", async () => {
+    // Pre-tx read says draft, but a concurrent tx flipped it out of draft before
+    // the conditional UPDATE … WHERE status='draft' ran → 0 affected rows.
+    versionFindFirst.value = { id: "v1", programId: "p1", status: "draft" };
+    txPublishReturns.value = []; // 0 rows affected
+    await expect(publishVersion("v1")).rejects.toBeInstanceOf(VersionNotDraftError);
+    expect(transaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("saveVersionTree (Fix-F B2: in-tx draft re-check)", () => {
+  const emptyInput = {
+    metadata: { title: "T", languages: ["en-US"] },
+    units: [],
+  };
+
+  it("throws VersionNotDraftError when the version is not a draft at tx time (race)", async () => {
+    // Pre-tx findFirst passes (draft), but the in-tx FOR UPDATE lock sees that a
+    // concurrent publish flipped it to published → throw before any delete.
+    versionFindFirst.value = { id: "v1", programId: "p1", status: "draft" };
+    txSelectForRows.value = [{ status: "published" }];
+    await expect(saveVersionTree("v1", emptyInput)).rejects.toBeInstanceOf(VersionNotDraftError);
+    // No delete/reinsert ran (the guard threw first).
+    expect(txOps).not.toContain("update:published");
+  });
+
+  it("proceeds through the tx when the version is still a draft at tx time", async () => {
+    versionFindFirst.value = { id: "v1", programId: "p1", status: "draft" };
+    txSelectForRows.value = [{ status: "draft" }];
+    await saveVersionTree("v1", emptyInput);
+    expect(transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("still rejects a non-draft at the PRE-tx check (no transaction opened)", async () => {
+    versionFindFirst.value = { id: "v1", programId: "p1", status: "published" };
+    await expect(saveVersionTree("v1", emptyInput)).rejects.toBeInstanceOf(VersionNotDraftError);
+    expect(transaction).not.toHaveBeenCalled();
   });
 });
 

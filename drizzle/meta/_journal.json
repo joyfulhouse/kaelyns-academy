@@ -29,6 +29,13 @@
       "when": 1782050596970,
       "tag": "0003_rapid_quentin_quire",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1782066000000,
+      "tag": "0004_one_published_index",
+      "breakpoints": true
     }
   ]
 }
