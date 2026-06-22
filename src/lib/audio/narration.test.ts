@@ -45,4 +45,34 @@ describe("ensureNarration", () => {
     const r = await ensureNarration("Find the word");
     expect(r.stored).toBe(false);
   });
+
+  it("collapses concurrent identical calls into one synth (in-flight dedupe)", async () => {
+    vi.mocked(clipExists).mockResolvedValue(false);
+    vi.mocked(synthesizeMp3).mockResolvedValue(new Uint8Array([1]) as Uint8Array<ArrayBuffer>);
+    vi.mocked(putClip).mockResolvedValue(true);
+    // Both calls start before the first resolves: the second finds the in-flight task.
+    const [r1, r2] = await Promise.all([ensureNarration("same text"), ensureNarration("same text")]);
+    expect(synthesizeMp3).toHaveBeenCalledTimes(1); // two concurrent calls, one synth
+    expect(r1).toEqual(r2);
+  });
+
+  it("skips oversized text without synthesizing (denial-of-wallet guard)", async () => {
+    const huge = "a".repeat(501); // mirrors the /api/tts MAX_TTS_TEXT_LEN=500 cap
+    const r = await ensureNarration(huge);
+    expect(r.stored).toBe(false);
+    expect(clipExists).not.toHaveBeenCalled();
+    expect(synthesizeMp3).not.toHaveBeenCalled();
+    expect(putClip).not.toHaveBeenCalled();
+  });
+
+  it("canonicalizes padded input so it can't bypass the cap or mis-key", async () => {
+    vi.mocked(clipExists).mockResolvedValue(false);
+    vi.mocked(synthesizeMp3).mockResolvedValue(new Uint8Array([1]) as Uint8Array<ArrayBuffer>);
+    vi.mocked(putClip).mockResolvedValue(true);
+    // Trims short (so the old text.trim() guard passed), but the raw is >500 chars.
+    const padded = `${" ".repeat(600)}cat${" ".repeat(600)}`;
+    await ensureNarration(padded);
+    // Synthesizes the CANONICAL "cat", never the padded raw input.
+    expect(synthesizeMp3).toHaveBeenCalledWith("cat", "af_heart", 0.9);
+  });
 });

@@ -11,7 +11,7 @@ import {
   SparkleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import type { Activity, ActivityScore, Unit, World } from "@/content";
-import { findActivity, getUnit } from "@/content";
+import { findActivity, getSkill, getUnit } from "@/content";
 import { outcomeOf } from "@/lib/tutor";
 import "@/activities"; // side-effect: registers every available activity-type plugin
 import { getActivityType } from "@/activities";
@@ -149,17 +149,40 @@ export function ActivityHost({
     router.push(backHref);
   }, [router, backHref]);
 
-  // Ask the bounded generator for one more item at this activity's level. The
-  // client sends only IDENTIFIERS; the server derives every generation input
-  // (kind/band/focus/skillHints) from the authored activity + the parent's
-  // enrollment config, so the model can't be steered off-curriculum from here.
-  // `learnerId` + `programSlug` are sent so the server can enforce the §8 AI gate
-  // and `activityId` binds generation to a real activity in the learner's
-  // resolved program (the stable authored key, matching the gate's findActivity).
+  // Ask the bounded generator for one more item at this activity's level. Two
+  // flows, matching /api/practice: a SIGNED-IN account sends only IDENTIFIERS and
+  // the server §8-gates + derives every generation input from the authored
+  // activity (the model can't be steered off-curriculum from here); a GUEST
+  // (public "explore") has no enrollment, so it sends the bounded params
+  // directly. Output stays schema-validated server-side either way.
   const handleMore = useCallback(async () => {
     if (!effectiveActivity) return;
     stopSpeaking();
     setPhase({ kind: "generating" });
+
+    let body: Record<string, unknown>;
+    if (signedIn) {
+      // §8 path: identifiers only — `activityId` binds generation to a real
+      // activity in the learner's resolved program (the stable authored key).
+      body = {
+        learnerId: selectedLearnerId,
+        programSlug,
+        activityId: effectiveActivity.id,
+        n: 1,
+      };
+    } else {
+      // Explore path: the guest surface supplies the (bounded) generation params.
+      const primarySkill = effectiveActivity.skillTags[0];
+      const focus =
+        (primarySkill ? getSkill(primarySkill)?.label : undefined) ?? effectiveActivity.title;
+      body = {
+        kind: effectiveActivity.kind,
+        band: config.band ?? effectiveActivity.band,
+        focus,
+        n: 1,
+        skillHints: effectiveActivity.skillTags.slice(0, 8),
+      };
+    }
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), PRACTICE_TIMEOUT_MS);
@@ -167,12 +190,7 @@ export function ActivityHost({
       const res = await fetch("/api/practice", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          learnerId: selectedLearnerId,
-          programSlug,
-          activityId: effectiveActivity.id,
-          n: 1,
-        }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
       if (!res.ok) {
@@ -197,7 +215,7 @@ export function ActivityHost({
     } finally {
       clearTimeout(timer);
     }
-  }, [effectiveActivity, selectedLearnerId, programSlug]);
+  }, [effectiveActivity, signedIn, selectedLearnerId, programSlug, config.band]);
 
   // Account-mode curation gate (Fix-F A3), checked AFTER every hook above so hook
   // order stays stable. Enforced ONLY in account mode and ONLY once state has

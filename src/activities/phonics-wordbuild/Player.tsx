@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { ArrowCounterClockwiseIcon, BackspaceIcon } from "@phosphor-icons/react/dist/ssr";
 import type { PhonicsWordbuildConfig } from "@/content/activity-configs";
+import { segmentWord } from "@/content/phonics";
 import type { ActivityPlayerProps } from "@/content/types";
+import { tilePhonemeText, wordPhonemeText } from "@/lib/audio/phonemes";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { Prompt, SpeakerButton } from "../_shared/ActivityChrome";
@@ -12,22 +14,6 @@ import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeech } from "../_shared/useSpeech";
 import { schema, score, type PhonicsWordbuildResponse } from "./logic";
-
-/** Split a target word into the tiles that spell it, greedily matching the
- *  longest available multi-letter tile first (so "sh"+"i"+"p", not s+h+i+p). */
-function segmentWord(word: string, tiles: string[]): string[] {
-  const byLengthDesc = [...new Set(tiles)].sort((a, b) => b.length - a.length);
-  const segments: string[] = [];
-  let i = 0;
-  const lower = word.toLowerCase();
-  while (i < lower.length) {
-    const match = byLengthDesc.find((t) => lower.startsWith(t.toLowerCase(), i));
-    if (!match) return [...lower.slice(i)]; // fall back to single chars for the remainder
-    segments.push(match);
-    i += match.length;
-  }
-  return segments;
-}
 
 function shuffle<T>(items: T[], seed: number): T[] {
   const out = [...items];
@@ -101,7 +87,16 @@ export function PhonicsWordbuildPlayer({
   function tapTile(tile: string) {
     if (wrong || isComplete) return;
     setBuilt((prev) => [...prev, tile]);
-    speech.speak(tile);
+    // Silent letters (e.g. the magic-e) fill the slot but make no sound — cancel
+    // any in-flight utterance so a quick tap can't leave the prior tile audible.
+    if (parsed.silent?.includes(tile)) {
+      speech.cancel();
+      return;
+    }
+    // A lone tile is voiced out of context; its authored IPA (when present) makes
+    // the neural voice say the in-word sound instead of mis-reading the spelling.
+    const tts = tilePhonemeText(tile, parsed.say);
+    speech.speak(tile, tts ? { tts } : undefined);
   }
 
   function undo() {
@@ -158,7 +153,12 @@ export function PhonicsWordbuildPlayer({
           </motion.div>
         )}
         <div className="flex items-center gap-2">
-          <SpeakerButton speech={speech} text={current.word} label={`Say the word ${current.word}`} />
+          <SpeakerButton
+            speech={speech}
+            text={current.word}
+            tts={wordPhonemeText(current.word, current.ipa)}
+            label={`Say the word ${current.word}`}
+          />
           <span className="text-sm text-ink-soft">Word {wordIndex + 1} of {parsed.words.length}</span>
         </div>
       </div>

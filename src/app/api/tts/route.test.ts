@@ -3,43 +3,60 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/audio/kokoro", () => ({ synthesizeMp3: vi.fn() }));
 vi.mock("@/lib/audio/store", () => ({ clipExists: vi.fn(), putClip: vi.fn() }));
-// Keep the real UnauthenticatedError (the route does `instanceof`); stub only the resolver.
-vi.mock("@/lib/tenancy", async (importActual) => ({
-  ...(await importActual<typeof import("@/lib/tenancy")>()),
-  requireAccount: vi.fn(),
-}));
+vi.mock("@/lib/tenancy", () => ({ getAccountOrNull: vi.fn() }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: vi.fn() }));
 
 import { synthesizeMp3 } from "@/lib/audio/kokoro";
 import { clipExists, putClip } from "@/lib/audio/store";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { UnauthenticatedError, requireAccount } from "@/lib/tenancy";
+import { getAccountOrNull } from "@/lib/tenancy";
 import { POST } from "./route";
 
-function post(body: unknown): Request {
+function post(body: unknown, headers: Record<string, string> = {}): Request {
   return new Request("http://test/api/tts", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
 }
 
 beforeEach(() => {
   // Default: a signed-in account, under the rate limit.
-  vi.mocked(requireAccount).mockResolvedValue({ accountId: "acc-1", userId: "acc-1" });
+  vi.mocked(getAccountOrNull).mockResolvedValue({ accountId: "acc-1", userId: "acc-1" });
   vi.mocked(checkRateLimit).mockReturnValue({ ok: true, retryAfterSec: 0 });
 });
 afterEach(() => vi.resetAllMocks());
 
 describe("POST /api/tts", () => {
-  it("401s when there is no session, before any synth", async () => {
-    vi.mocked(requireAccount).mockRejectedValue(new UnauthenticatedError());
-    const res = await POST(post({ text: "Find the word" }));
-    expect(res.status).toBe(401);
-    expect(synthesizeMp3).not.toHaveBeenCalled();
+  it("serves anonymous callers (no 401), keyed + capped tighter by client IP", async () => {
+    vi.mocked(getAccountOrNull).mockResolvedValue(null);
+    vi.mocked(clipExists).mockResolvedValue(true); // a cache hit → 303, no synth
+    const res = await POST(post({ text: "Find the word" }, { "cf-connecting-ip": "203.0.113.7" }));
+    expect(res.status).not.toBe(401);
+    expect(res.status).toBe(303);
+    expect(checkRateLimit).toHaveBeenCalledWith("tts:ip:203.0.113.7", {
+      limit: 20,
+      windowMs: 60_000,
+    });
   });
 
-  it("429s when the per-account rate limit is exceeded, before any synth", async () => {
+  it("keys signed-in callers by account with a more generous window", async () => {
+    vi.mocked(clipExists).mockResolvedValue(true);
+    await POST(post({ text: "Find the word" }));
+    expect(checkRateLimit).toHaveBeenCalledWith("tts:acct:acc-1", {
+      limit: 60,
+      windowMs: 60_000,
+    });
+  });
+
+  it("buckets anonymous callers with no determinable IP together", async () => {
+    vi.mocked(getAccountOrNull).mockResolvedValue(null);
+    vi.mocked(clipExists).mockResolvedValue(true);
+    await POST(post({ text: "Find the word" })); // no IP headers
+    expect(checkRateLimit).toHaveBeenCalledWith("tts:ip:noip", { limit: 20, windowMs: 60_000 });
+  });
+
+  it("429s when the rate limit is exceeded, before any synth", async () => {
     vi.mocked(checkRateLimit).mockReturnValue({ ok: false, retryAfterSec: 30 });
     const res = await POST(post({ text: "Find the word" }));
     expect(res.status).toBe(429);
