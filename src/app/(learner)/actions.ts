@@ -4,20 +4,25 @@ import { z } from "zod";
 import { captureNonCritical } from "@/lib/capture";
 import { UnauthenticatedError, requireAccount, withAccount } from "@/lib/tenancy";
 import {
+  EnrollmentNotActiveError,
   ensureDefaultLearner,
   ensureEnrollment,
   getCompletedActivityIds,
+  getEnrollmentConfig,
+  getEnrollmentForGate,
   getLearner,
+  getLearnerSettings,
   getSkillState,
-  listEnrollments,
+  listEnrollmentsDetailed,
   recordAttempt,
 } from "@/lib/tutor/store";
+import type { EnrollmentConfig } from "@/lib/content/config";
 import {
   activityIdsForProgram,
-  getProgram,
-  listPrograms,
   skillTagsForProgram,
 } from "@/content";
+import type { Program } from "@/content";
+import { listProgramsAsync, resolveLearnerProgram } from "@/lib/content/repository";
 import type { SkillState } from "@/lib/tutor";
 
 /**
@@ -117,15 +122,19 @@ export async function ensureHouseholdLearner(): Promise<TutorLearner | null> {
 }
 
 /**
- * The program slugs the learner is enrolled in. Drives the `/learn` picker: one
- * enrollment auto-redirects into that program; several render program tiles.
+ * The program slugs the learner is **actively** enrolled in (status === "active").
+ * Drives the `/learn` picker: one enrollment auto-redirects; several render tiles.
+ * Paused or removed programs are hidden — parents can restore them at any time.
  * Returns [] when unauthenticated or on failure (the picker then falls back to
  * showing every program, which is also the guest-mode behavior).
  */
 export async function getEnrollmentsAction(learnerId: string): Promise<string[]> {
   if (!learnerId) return [];
   try {
-    return await withAccount(({ accountId }) => listEnrollments(accountId, learnerId));
+    return await withAccount(async ({ accountId }) => {
+      const all = await listEnrollmentsDetailed(accountId, learnerId);
+      return all.filter((e) => e.status === "active").map((e) => e.slug);
+    });
   } catch (error) {
     if (!(error instanceof UnauthenticatedError)) {
       captureNonCritical("getEnrollmentsAction failed", error);
@@ -142,13 +151,22 @@ export type EnsureEnrollmentResult =
  * Lazily enroll a learner into a program the first time they open it. The slug
  * is validated against the program registry before any write, so an untrusted
  * URL slug can never create a bogus enrollment. Never throws to the client.
+ *
+ * CURATION GAP (accepted, P0 pilot): this lets a signed-in child self-enroll
+ * into ANY published program by opening it (the kid surface shows all published
+ * programs when they have no active assignments — see ProgramPicker). Parent
+ * assignment is intentionally not strictly enforced on the kid surface, so a
+ * child never lands on an empty/locked screen. Bounds: tenancy is still enforced
+ * (only a learner the account owns is enrolled), removed programs stay removed,
+ * and only PUBLISHED programs are reachable. See
+ * docs/claude/KNOWN-RISKS-P0-PILOT.md ("Kid-surface curation").
  */
 export async function ensureEnrollmentAction(
   learnerId: string,
   programSlug: string,
 ): Promise<EnsureEnrollmentResult> {
   if (!learnerId) return { ok: false, reason: "invalid" };
-  const known = listPrograms().some((p) => p.slug === programSlug);
+  const known = (await listProgramsAsync()).some((p) => p.slug === programSlug);
   if (!known) return { ok: false, reason: "invalid" };
   try {
     await withAccount(async ({ accountId }) => {
@@ -171,6 +189,7 @@ const skillEvidenceSchema = z.object({
 
 const recordAttemptSchema = z.object({
   learnerId: z.string().min(1),
+  programSlug: z.string().min(1),
   activityId: z.string().min(1),
   kind: z.string().min(1).max(60),
   generated: z.boolean().optional(),
@@ -187,12 +206,19 @@ export type RecordAttemptInput = z.infer<typeof recordAttemptSchema>;
 
 export type RecordResult =
   | { ok: true }
-  | { ok: false; reason: "unauthenticated" | "invalid" | "error" };
+  | { ok: false; reason: "unauthenticated" | "invalid" | "inactive" | "error" };
 
 /**
  * Persist one completed activity (authored or AI-generated practice) and fold
  * its skill evidence into the learner's skill_state. The day is stamped from
  * the server clock so the mastery gate's "distinct days" rule is consistent.
+ *
+ * Server-authoritative curation gate (Fix-F A4): `recordAttempt` verifies the
+ * learner has an ACTIVE enrollment for `programSlug` inside the same transaction
+ * (after the tenancy re-check). A removed/paused/missing enrollment throws
+ * EnrollmentNotActiveError → no attempt or skill_state is written, and the
+ * caller gets `reason: "inactive"`. This makes the kid-surface render-block (A3)
+ * non-bypassable even via a direct API call with a stale/unassigned program.
  */
 export async function recordAttemptAction(input: RecordAttemptInput): Promise<RecordResult> {
   const parsed = recordAttemptSchema.safeParse(input);
@@ -203,6 +229,7 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
     await withAccount(({ accountId }) =>
       recordAttempt(accountId, {
         learnerId: data.learnerId,
+        programSlug: data.programSlug,
         activityId: data.activityId,
         kind: data.kind,
         generated: data.generated ?? false,
@@ -214,6 +241,7 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
     return { ok: true };
   } catch (error) {
     if (error instanceof UnauthenticatedError) return { ok: false, reason: "unauthenticated" };
+    if (error instanceof EnrollmentNotActiveError) return { ok: false, reason: "inactive" };
     captureNonCritical("recordAttemptAction failed", error);
     return { ok: false, reason: "error" };
   }
@@ -225,12 +253,34 @@ export interface LearnerStateResult {
   completedActivityIds: string[];
   /** Best stars (0..3) per completed authored activity (for star glyphs). */
   starsByActivity: Record<string, number>;
+  /** Per-child, per-program enrollment config set by the parent (empty object if none). */
+  config: EnrollmentConfig;
+  /**
+   * The learner's resolved (version-pinned) program tree — the SAME tree this
+   * state is scoped to. Null when unauthenticated, on failure, or for an unknown
+   * slug; the client then renders the server-passed published prop. Returning it
+   * here guarantees the rendered map and the scoped progress are the same version
+   * in one round-trip (C#5 consistency).
+   */
+  program: Program | null;
+  /**
+   * Whether the account learner may play this program (Fix-F A2): true ONLY when
+   * the learner has an ACTIVE enrollment for `slug`. False for removed/paused/no
+   * enrollment — and the result then carries NO playable `program` (the client
+   * shows the calm "ask a grown-up" state in account mode). Always false for
+   * guest/unauth/failure; the client only enforces it in `mode === "account"`,
+   * so guest mode keeps playing the published prop unaffected.
+   */
+  available: boolean;
 }
 
 const EMPTY_STATE: LearnerStateResult = {
   skillState: {},
   completedActivityIds: [],
   starsByActivity: {},
+  config: {},
+  program: null,
+  available: false,
 };
 
 /**
@@ -249,17 +299,34 @@ export async function getLearnerStateAction(
   programSlug: string,
 ): Promise<LearnerStateResult> {
   if (!learnerId) return EMPTY_STATE;
-  const program = getProgram(programSlug);
-  if (!program) return EMPTY_STATE;
-
-  const activityIds = new Set(activityIdsForProgram(program));
-  const skillTags = new Set(skillTagsForProgram(program));
 
   try {
     return await withAccount(async ({ accountId }) => {
-      const [fullSkillState, completed] = await Promise.all([
+      // Curation gate (Fix-F A1+A2): NO lazy auto-enroll-on-open. Opening a
+      // program must not self-activate it. Read the enrollment status and fail
+      // closed (no playable program) unless it is ACTIVE — so a removed/paused/
+      // never-assigned program returns available:false and the kid surface shows
+      // the calm "ask a grown-up" state (account mode). Default + parent-assigned
+      // programs keep an active enrollment (ensureHouseholdLearner / assignProgram),
+      // so legitimate play is unaffected. getEnrollmentForGate already enforces
+      // tenancy (owned-by-account) and never resurrects a soft-removed row.
+      const gate = await getEnrollmentForGate(accountId, learnerId, programSlug);
+      if (gate?.status !== "active") return EMPTY_STATE;
+
+      // Resolve the learner's PINNED program version (C#5). State scoping AND the
+      // rendered tree both derive from this same resolved tree, so they always
+      // agree on the version — and they match the /api/practice gate, which also
+      // resolves via resolveLearnerProgram.
+      const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
+      if (!program) return EMPTY_STATE;
+      const activityIds = new Set(activityIdsForProgram(program));
+      const skillTags = new Set(skillTagsForProgram(program));
+
+      const [fullSkillState, completed, config, settings] = await Promise.all([
         getSkillState(accountId, learnerId),
         getCompletedActivityIds(accountId, learnerId),
+        getEnrollmentConfig(accountId, learnerId, programSlug),
+        getLearnerSettings(accountId, learnerId),
       ]);
 
       // Scope skill_state to this program's skills.
@@ -277,7 +344,21 @@ export async function getLearnerStateAction(
         starsByActivity[c.activityId] = c.stars;
       }
 
-      return { skillState, completedActivityIds, starsByActivity };
+      // Effective config: the per-learner Settings kill-switch (all-programs)
+      // overrides the per-program flag, so the client hides "More, made just for
+      // me" whenever EITHER level disables AI — matching the server gate, which
+      // remains the authoritative enforcement.
+      const effectiveConfig: EnrollmentConfig =
+        settings?.aiPractice === false ? { ...config, aiPractice: false } : config;
+
+      return {
+        skillState,
+        completedActivityIds,
+        starsByActivity,
+        config: effectiveConfig,
+        program,
+        available: true,
+      };
     });
   } catch (error) {
     if (!(error instanceof UnauthenticatedError)) {

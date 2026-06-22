@@ -4,21 +4,32 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { captureNonCritical } from "@/lib/capture";
 import { UnauthenticatedError, withAccount } from "@/lib/tenancy";
-import { findActivity, getProgram, getSkill, type SkillTag } from "@/content";
+import { findActivity, getSkill, type SkillTag } from "@/content";
+import { getProgramAsync, listProgramsAsync } from "@/lib/content/repository";
+import { getPublishedVersionId } from "@/lib/content/store";
 import {
+  assignProgram,
+  buildLearnerExport,
   createLearner,
+  deleteLearner,
   ensureEnrollment,
   getRecentAttempts,
   getSkillState,
   listLearners,
+  saveLearnerSettings,
+  setEnrollmentConfig,
+  setEnrollmentStatus,
   type LearnerRow,
 } from "@/lib/tutor/store";
+import type { LearnerExport } from "@/lib/tutor/export";
 import { deriveOutcome, type SkillState } from "@/lib/tutor/mastery";
 import {
   generateProgressReport,
   type ProgressReport,
   type ProgressReportSkill,
 } from "@/lib/ai/report";
+import { enrollmentConfigSchema, learnerSettingsSchema } from "@/lib/content/config";
+import type { EnrollmentConfig } from "@/lib/content/config";
 import { ADAPTIVE_PROGRAM_SLUG, kindLabel } from "./data";
 
 /**
@@ -164,7 +175,7 @@ export async function requestProgressReport(learnerId?: string): Promise<Progres
 
       // Ground the report's recent list in the real activity titles where we
       // can resolve them (falling back to the plain-language kind label).
-      const program = getProgram(ADAPTIVE_PROGRAM_SLUG);
+      const program = await getProgramAsync(ADAPTIVE_PROGRAM_SLUG);
       return {
         learner,
         state,
@@ -197,5 +208,315 @@ export async function requestProgressReport(learnerId?: string): Promise<Progres
     // it is unavailable; we never leak raw model output or a stack to the UI.
     captureNonCritical("parent progress report generation failed", error);
     return { ok: false, reason: "unavailable" };
+  }
+}
+
+/* ── Enrollment lifecycle + config + settings ────────────────────────────── */
+
+/** Shared revalidation targets for all enrollment mutations. */
+function revalidateEnrollmentPaths(learnerId: string): void {
+  revalidatePath("/parent");
+  revalidatePath("/parent/learners");
+  revalidatePath(`/parent/learners/${learnerId}`);
+}
+
+/** Shared discriminated result for enrollment actions. */
+type EnrollmentActionResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: "unauthenticated" | "invalid" | "not-found" | "unavailable";
+      message: string;
+    };
+
+/**
+ * Assign (or restore) a published program to a learner. Validates the slug
+ * against the live program catalog and pins the current published version id.
+ */
+export async function assignProgramAction(
+  learnerId: string,
+  slug: string,
+): Promise<EnrollmentActionResult> {
+  const slugParsed = z.string().min(1).safeParse(slug);
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  if (!slugParsed.success || !learnerIdParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner or program." };
+  }
+
+  try {
+    const programs = await listProgramsAsync();
+    const exists = programs.some((p) => p.slug === slug);
+    if (!exists) {
+      // A missing program is "not-found" (the slug doesn't resolve to a published
+      // program), distinct from a transient DB error which keeps "unavailable".
+      return { ok: false, reason: "not-found", message: "Program not found." };
+    }
+
+    const programVersionId = await getPublishedVersionId(slug);
+
+    const assigned = await withAccount(async ({ accountId }) => {
+      return assignProgram(accountId, learnerId, slug, programVersionId);
+    });
+
+    if (!assigned) {
+      captureNonCritical(
+        "assignProgramAction: learner not owned by account",
+        new Error(`learner=${learnerId} slug=${slug}`),
+      );
+      return { ok: false, reason: "not-found", message: "Learner not found." };
+    }
+
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("assignProgramAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not assign the program. Please try again." };
+  }
+}
+
+/**
+ * Soft-remove a program from a learner's enrollment (sets status="removed").
+ */
+export async function removeProgramAction(
+  learnerId: string,
+  slug: string,
+): Promise<EnrollmentActionResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  const slugParsed = z.string().min(1).safeParse(slug);
+  if (!learnerIdParsed.success || !slugParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner or program." };
+  }
+
+  try {
+    const updated = await withAccount(async ({ accountId }) => {
+      return setEnrollmentStatus(accountId, learnerId, slug, "removed");
+    });
+
+    if (!updated) {
+      captureNonCritical(
+        "removeProgramAction: no enrollment updated (not owned, missing, or disallowed transition)",
+        new Error(`learner=${learnerId} slug=${slug}`),
+      );
+      return { ok: false, reason: "not-found", message: "Enrollment not found." };
+    }
+
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("removeProgramAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not remove the program. Please try again." };
+  }
+}
+
+/**
+ * Restore a previously removed program enrollment (sets status="active").
+ */
+export async function restoreProgramAction(
+  learnerId: string,
+  slug: string,
+): Promise<EnrollmentActionResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  const slugParsed = z.string().min(1).safeParse(slug);
+  if (!learnerIdParsed.success || !slugParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner or program." };
+  }
+
+  try {
+    const updated = await withAccount(async ({ accountId }) => {
+      return setEnrollmentStatus(accountId, learnerId, slug, "active");
+    });
+
+    if (!updated) {
+      captureNonCritical(
+        "restoreProgramAction: no enrollment updated (not owned, missing, or disallowed transition)",
+        new Error(`learner=${learnerId} slug=${slug}`),
+      );
+      return { ok: false, reason: "not-found", message: "Enrollment not found." };
+    }
+
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("restoreProgramAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not restore the program. Please try again." };
+  }
+}
+
+/**
+ * Update per-enrollment config (band, activeUnitKeys, aiPractice, dailyGoal).
+ * Parses the incoming `config` with enrollmentConfigSchema before persisting.
+ */
+export async function updateEnrollmentConfigAction(
+  learnerId: string,
+  slug: string,
+  config: unknown,
+): Promise<EnrollmentActionResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  const slugParsed = z.string().min(1).safeParse(slug);
+  if (!learnerIdParsed.success || !slugParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner or program." };
+  }
+
+  const configParsed = enrollmentConfigSchema.safeParse(config);
+  if (!configParsed.success) {
+    const message = configParsed.error.issues[0]?.message ?? "Invalid enrollment config.";
+    return { ok: false, reason: "invalid", message };
+  }
+
+  // Normalize: an empty activeUnitKeys array means "all units active", which is
+  // the same as the field being absent. Store it as omitted so the DB never drifts
+  // from that intent regardless of what the client sent.
+  const normalized: EnrollmentConfig = {
+    ...configParsed.data,
+    ...(configParsed.data.activeUnitKeys?.length === 0
+      ? { activeUnitKeys: undefined }
+      : undefined),
+  };
+
+  try {
+    const updated = await withAccount(async ({ accountId }) => {
+      return setEnrollmentConfig(accountId, learnerId, slug, normalized);
+    });
+
+    if (!updated) {
+      captureNonCritical(
+        "updateEnrollmentConfigAction: no enrollment updated (not owned or missing)",
+        new Error(`learner=${learnerId} slug=${slug}`),
+      );
+      return { ok: false, reason: "not-found", message: "Enrollment not found." };
+    }
+
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("updateEnrollmentConfigAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not update the config. Please try again." };
+  }
+}
+
+/**
+ * Persist learner-level settings (dailyGoal, aiPractice, readAloud).
+ * Parses the incoming `settings` with learnerSettingsSchema before persisting.
+ */
+export async function saveLearnerSettingsAction(
+  learnerId: string,
+  settings: unknown,
+): Promise<EnrollmentActionResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  if (!learnerIdParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner." };
+  }
+
+  const settingsParsed = learnerSettingsSchema.safeParse(settings);
+  if (!settingsParsed.success) {
+    const message = settingsParsed.error.issues[0]?.message ?? "Invalid learner settings.";
+    return { ok: false, reason: "invalid", message };
+  }
+
+  try {
+    // settingsParsed.data is already LearnerSettings (inferred from the Zod
+    // schema) — no cast, so a schema/type drift surfaces as a type error here.
+    const saved = await withAccount(async ({ accountId }) => {
+      return saveLearnerSettings(accountId, learnerId, settingsParsed.data);
+    });
+
+    if (!saved) {
+      captureNonCritical(
+        "saveLearnerSettingsAction: learner not owned by account",
+        new Error(`learner=${learnerId}`),
+      );
+      return { ok: false, reason: "not-found", message: "Learner not found." };
+    }
+
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("saveLearnerSettingsAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not save settings. Please try again." };
+  }
+}
+
+/* ── Per-child data export + profile delete (spec §8 COPPA controls) ─────── */
+
+/** Discriminated result for exportLearnerAction. */
+export type ExportLearnerResult =
+  | { ok: true; data: LearnerExport }
+  | { ok: false; reason: "unauthenticated" | "not-found" | "unavailable"; message?: string };
+
+/**
+ * Build and return the minimized per-child data export (spec §8). The
+ * resulting JSON is sent back to the client; the client is responsible for
+ * triggering the browser download (no temp files server-side).
+ */
+export async function exportLearnerAction(learnerId: string): Promise<ExportLearnerResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  if (!learnerIdParsed.success) {
+    return { ok: false, reason: "not-found", message: "Learner not found." };
+  }
+
+  try {
+    const data = await withAccount(async ({ accountId }) => {
+      // Stamp exportedAt here so the pure shaper stays free of new Date().
+      return buildLearnerExport(accountId, learnerId, new Date().toISOString());
+    });
+
+    if (!data) return { ok: false, reason: "not-found", message: "Learner not found." };
+    return { ok: true, data };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("exportLearnerAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not export data. Please try again." };
+  }
+}
+
+/** Discriminated result for deleteLearnerAction. */
+export type DeleteLearnerResult =
+  | { ok: true }
+  | { ok: false; reason: "unauthenticated" | "not-found" | "unavailable"; message?: string };
+
+/**
+ * Delete a child profile and all its data (enrollment/attempt/skill_state via
+ * FK cascade). Revalidates the parent surfaces on success so the deleted learner
+ * disappears immediately.
+ */
+export async function deleteLearnerAction(learnerId: string): Promise<DeleteLearnerResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  if (!learnerIdParsed.success) {
+    return { ok: false, reason: "not-found", message: "Learner not found." };
+  }
+
+  try {
+    const deleted = await withAccount(async ({ accountId }) => {
+      return deleteLearner(accountId, learnerId);
+    });
+
+    if (!deleted) return { ok: false, reason: "not-found", message: "Learner not found." };
+
+    revalidatePath("/parent");
+    revalidatePath("/parent/learners");
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("deleteLearnerAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not delete the profile. Please try again." };
   }
 }

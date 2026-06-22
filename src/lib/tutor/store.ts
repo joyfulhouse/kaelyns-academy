@@ -5,7 +5,17 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { attempt, enrollment, learner, skillState } from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
+import { captureNonCritical } from "@/lib/capture";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
+import {
+  enrollmentConfigSchema,
+  learnerSettingsSchema,
+  type EnrollmentConfig,
+  type LearnerSettings,
+} from "@/lib/content/config";
+import { getPublishedVersionId } from "@/lib/content/store";
+import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
+import { shapeLearnerExport, type LearnerExport } from "./export";
 
 /**
  * The DB-backed tutor store: the server equivalent of the client's
@@ -95,10 +105,24 @@ export async function ensureDefaultLearner(
   return createLearner(accountId, defaults);
 }
 
+/**
+ * Lazily create a (learner, program) enrollment, pinned to the program's CURRENT
+ * published version at creation time (Fix-E Layer 3). Resolving
+ * `getPublishedVersionId` and storing it as `programVersionId` means a
+ * default/self-enroll learner is anchored to the version they started on and does
+ * NOT silently follow whatever publishes next — matching parent-assigned
+ * enrollments (assignProgram), which already pin. A static builtin with no DB
+ * published version resolves to null → null pin → the learner surface serves the
+ * static tree (correct). Kept `onConflictDoNothing`: an existing or soft-removed
+ * enrollment is never repinned or resurrected (a paused/removed program stays so,
+ * and a learner mid-program is never moved to a newer pin). No backfill of
+ * pre-existing rows is done (pilot: no durable enrollment data to migrate).
+ */
 export async function ensureEnrollment(learnerId: string, programSlug: string): Promise<void> {
+  const programVersionId = await getPublishedVersionId(programSlug);
   await getDb()
     .insert(enrollment)
-    .values({ learnerId, programSlug })
+    .values({ learnerId, programSlug, programVersionId })
     .onConflictDoNothing({ target: [enrollment.learnerId, enrollment.programSlug] });
 }
 
@@ -113,8 +137,24 @@ export async function listEnrollments(accountId: string, learnerId: string): Pro
   return rows.map((r) => r.programSlug);
 }
 
+/**
+ * Thrown by {@link recordAttempt} when the learner has no ACTIVE enrollment for
+ * the program the attempt belongs to (Fix-F A4). The attempt is NOT persisted;
+ * the action maps this to `reason: "inactive"`. This is the server-authoritative
+ * curation gate: progress can never be written for a removed/paused/unassigned
+ * program, even via a direct API call that bypasses the kid-surface render-block.
+ */
+export class EnrollmentNotActiveError extends Error {
+  constructor(learnerId: string, programSlug: string) {
+    super(`No active enrollment for learner "${learnerId}" in program "${programSlug}"`);
+    this.name = "EnrollmentNotActiveError";
+  }
+}
+
 export interface RecordAttemptInput {
   learnerId: string;
+  /** The program the activity belongs to — the active-enrollment gate keys on it. */
+  programSlug: string;
   activityId: string;
   kind: string;
   generated?: boolean;
@@ -126,7 +166,12 @@ export interface RecordAttemptInput {
 
 /**
  * Record one completed activity and fold its skill evidence into skill_state.
- * Verifies the learner belongs to the account first (tenancy boundary).
+ * Verifies the learner belongs to the account AND has an ACTIVE enrollment for
+ * the program (tenancy + curation boundaries), both inside the transaction.
+ * @throws when the learner is not owned by the account (tenancy).
+ * @throws {EnrollmentNotActiveError} when no ACTIVE enrollment exists for the
+ *   (learner, programSlug) pair — nothing is persisted (server-authoritative
+ *   curation gate, Fix-F A4).
  */
 export async function recordAttempt(accountId: string, input: RecordAttemptInput): Promise<void> {
   // The attempt row and every per-skill fold must commit together: a partial
@@ -143,6 +188,21 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
       .where(and(eq(learner.id, input.learnerId), eq(learner.accountId, accountId)))
       .limit(1);
     if (!owned[0]) throw new Error("learner not found for account");
+
+    // Curation boundary (Fix-F A4): the learner must be ACTIVELY enrolled in the
+    // program. Read inside the same tx (shares the snapshot with the tenancy
+    // check above). A removed/paused/missing enrollment → no write at all; the
+    // client render-block (A3) is the UX, this is the non-bypassable enforcement.
+    const enrolled = await tx
+      .select({ status: enrollment.status })
+      .from(enrollment)
+      .where(
+        and(eq(enrollment.learnerId, input.learnerId), eq(enrollment.programSlug, input.programSlug)),
+      )
+      .limit(1);
+    if (enrolled[0]?.status !== "active") {
+      throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
+    }
 
     await tx.insert(attempt).values({
       learnerId: input.learnerId,
@@ -283,4 +343,341 @@ export async function skillOutcomeCounts(
   const bySkill = new Map(rows.map((r) => [r.skill, r.outcome as SkillOutcome]));
   for (const s of skills) counts[bySkill.get(s) ?? "not_yet"] += 1;
   return counts;
+}
+
+// ── Enrollment lifecycle + config + settings ─────────────────────────────────
+
+/**
+ * Upsert a program enrollment for the learner (owned-by-account check first).
+ * Insert with status="active" and programVersionId when none exists; if one
+ * already exists, restore to active and re-pin the version.
+ * Returns false when the learner is not owned by the account (no write); true on
+ * success — so the calling action can report not-found instead of a false ok.
+ */
+export async function assignProgram(
+  accountId: string,
+  learnerId: string,
+  slug: string,
+  programVersionId: string | null,
+): Promise<boolean> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return false;
+  await getDb()
+    .insert(enrollment)
+    .values({
+      learnerId,
+      programSlug: slug,
+      status: "active",
+      config: {},
+      programVersionId,
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: [enrollment.learnerId, enrollment.programSlug],
+      set: { status: "active", programVersionId, updatedAt: new Date() },
+    });
+  return true;
+}
+
+/**
+ * Update the enrollment status for a learner's program (owned-by-account).
+ * Enforces the transition guard: reads the current status first and no-ops if
+ * the transition is not allowed (defense-in-depth against invalid state moves).
+ * Returns false when the learner is not owned, no enrollment exists, or the
+ * transition is disallowed (no row written); true when the status is updated.
+ */
+export async function setEnrollmentStatus(
+  accountId: string,
+  learnerId: string,
+  slug: string,
+  status: EnrollmentStatus,
+): Promise<boolean> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return false;
+
+  // Read the current row to enforce the transition matrix.
+  const rows = await getDb()
+    .select({ status: enrollment.status })
+    .from(enrollment)
+    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
+    .limit(1);
+  if (!rows[0]) return false; // No enrollment row.
+
+  const current = rows[0].status as EnrollmentStatus;
+  if (!canTransitionStatus(current, status)) return false;
+
+  await getDb()
+    .update(enrollment)
+    .set({ status, updatedAt: new Date() })
+    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)));
+  return true;
+}
+
+/**
+ * Update the enrollment config for a learner's program (owned-by-account).
+ * Returns false when the learner is not owned or no matching enrollment row
+ * exists (no write); true when the config is updated.
+ */
+export async function setEnrollmentConfig(
+  accountId: string,
+  learnerId: string,
+  slug: string,
+  config: EnrollmentConfig,
+): Promise<boolean> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return false;
+  const updated = await getDb()
+    .update(enrollment)
+    .set({ config, updatedAt: new Date() })
+    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
+    .returning({ id: enrollment.id });
+  return updated.length > 0;
+}
+
+/**
+ * All enrollments for the learner (owned-by-account), mapped to EnrollmentDetail.
+ * Returns an empty array when the learner is not owned by the account.
+ */
+export async function listEnrollmentsDetailed(
+  accountId: string,
+  learnerId: string,
+): Promise<EnrollmentDetail[]> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return [];
+  const rows = await getDb()
+    .select()
+    .from(enrollment)
+    .where(eq(enrollment.learnerId, learnerId));
+  return rows.map((r) => ({
+    slug: r.programSlug,
+    status: r.status as EnrollmentStatus,
+    config: r.config as EnrollmentConfig,
+    programVersionId: r.programVersionId,
+    startedAt: r.startedAt,
+  }));
+}
+
+/**
+ * Parse a stored enrollment config jsonb defensively, failing CLOSED on
+ * corruption. A legitimately empty/absent config stays `{}` (default-allow —
+ * the §8 gate only blocks on `aiPractice === false`). But a value that FAILS to
+ * parse (e.g. a hand-edited row with `aiPractice: "false"`) could have been
+ * meant to disable AI, and degrading it to `{}` would leave `aiPractice`
+ * undefined → the gate would NOT block → fail-open. So on parse failure we log
+ * and return `{ aiPractice: false }`, which blocks AI for that corrupt row.
+ */
+function parseEnrollmentConfig(raw: unknown, context: string): EnrollmentConfig {
+  const parsed = enrollmentConfigSchema.safeParse(raw ?? {});
+  if (parsed.success) return parsed.data;
+  captureNonCritical(`malformed enrollment config (${context})`, parsed.error);
+  return { aiPractice: false };
+}
+
+/** Same defensive, fail-closed parse for the per-learner settings jsonb: a
+ *  malformed value yields `{ aiPractice: false }` (block), never `{}` (allow). */
+function parseLearnerSettings(raw: unknown, context: string): LearnerSettings {
+  const parsed = learnerSettingsSchema.safeParse(raw ?? {});
+  if (parsed.success) return parsed.data;
+  captureNonCritical(`malformed learner settings (${context})`, parsed.error);
+  return { aiPractice: false };
+}
+
+/**
+ * Read the enrollment config for a specific (learner, program) pair (owned-by-account).
+ * Returns {} when the learner is not owned by the account or no enrollment exists.
+ * safeParses the stored jsonb so a malformed value can't fail-open the §8 gate
+ * (a corrupt config fails CLOSED to `{ aiPractice: false }`, not `{}`).
+ */
+export async function getEnrollmentConfig(
+  accountId: string,
+  learnerId: string,
+  slug: string,
+): Promise<EnrollmentConfig> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return {};
+  const rows = await getDb()
+    .select({ config: enrollment.config })
+    .from(enrollment)
+    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
+    .limit(1);
+  if (!rows[0]) return {};
+  return parseEnrollmentConfig(rows[0].config, `learner=${learnerId} slug=${slug}`);
+}
+
+/**
+ * Read the enrollment's pinned program version for a (learner, program) pair
+ * (owned-by-account). Returns:
+ *   - `{ programVersionId }` when an enrollment row exists (the id may be null
+ *     for a lazy/default enrollment that was never pinned to a specific version),
+ *   - `null` when the learner is not owned OR no enrollment row exists.
+ *
+ * The learner surface uses this to honor the version pin: a learner pinned to an
+ * older version keeps seeing THAT version's tree (and scopes progress to it) even
+ * after a newer version is published. Status is intentionally NOT consulted here
+ * — pinning is about WHICH tree to render; the §8 AI gate (getEnrollmentForGate)
+ * separately enforces active-enrollment before any generation.
+ */
+export async function getEnrollmentVersionId(
+  accountId: string,
+  learnerId: string,
+  slug: string,
+): Promise<{ programVersionId: string | null } | null> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return null;
+  const rows = await getDb()
+    .select({ programVersionId: enrollment.programVersionId })
+    .from(enrollment)
+    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
+    .limit(1);
+  if (!rows[0]) return null;
+  return { programVersionId: rows[0].programVersionId };
+}
+
+/**
+ * §8 AI-gate read: the enrollment row's status + safeParsed config for a
+ * (learner, program) pair (owned-by-account). Returns null when the learner is
+ * not owned OR no enrollment row exists — both of which the gate treats as
+ * fail-closed (no AI). A soft-removed enrollment returns status "removed" (not
+ * resurrected), so the gate keeps blocking it.
+ */
+export async function getEnrollmentForGate(
+  accountId: string,
+  learnerId: string,
+  slug: string,
+): Promise<{ status: EnrollmentStatus; config: EnrollmentConfig } | null> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return null;
+  const rows = await getDb()
+    .select({ status: enrollment.status, config: enrollment.config })
+    .from(enrollment)
+    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
+    .limit(1);
+  if (!rows[0]) return null;
+  return {
+    status: rows[0].status as EnrollmentStatus,
+    config: parseEnrollmentConfig(rows[0].config, `gate learner=${learnerId} slug=${slug}`),
+  };
+}
+
+/**
+ * §8 AI-gate read: the per-learner settings (owned-by-account), safeParsed.
+ * Returns null when the learner is not owned by the account; {} when the row
+ * has no/empty settings; `{ aiPractice: false }` (fail-closed) when the stored
+ * settings are malformed. The gate reads `settings?.aiPractice === false` as the
+ * top-level (all-programs) parental kill-switch.
+ */
+export async function getLearnerSettings(
+  accountId: string,
+  learnerId: string,
+): Promise<LearnerSettings | null> {
+  const rows = await getDb()
+    .select({ settings: learner.settings })
+    .from(learner)
+    .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
+    .limit(1);
+  if (!rows[0]) return null;
+  return parseLearnerSettings(rows[0].settings, `gate learner=${learnerId}`);
+}
+
+/**
+ * Update the learner's settings (owned-by-account).
+ * Returns false when the learner is not owned by the account (no write); true on
+ * success. Scopes the write to (id, accountId) so the ownership check and the
+ * update can't drift, and uses the affected-row count as the source of truth.
+ */
+export async function saveLearnerSettings(
+  accountId: string,
+  learnerId: string,
+  settings: LearnerSettings,
+): Promise<boolean> {
+  const updated = await getDb()
+    .update(learner)
+    .set({ settings, updatedAt: new Date() })
+    .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
+    .returning({ id: learner.id });
+  return updated.length > 0;
+}
+
+// ── Per-child data export + profile delete (spec §8) ─────────────────────────
+
+/**
+ * Gather the owned learner's full data and shape it into the minimized export
+ * format (spec §8). Returns null when the learner does not exist or is not
+ * owned by the account (tenancy boundary).
+ *
+ * The caller (action) stamps `exportedAt` so the pure shaper stays free of
+ * `new Date()` and remains unit-testable without mocks.
+ */
+export async function buildLearnerExport(
+  accountId: string,
+  learnerId: string,
+  exportedAt: string,
+): Promise<LearnerExport | null> {
+  // Ownership check: must belong to this account.
+  const rows = await getDb()
+    .select()
+    .from(learner)
+    .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
+    .limit(1);
+  if (!rows[0]) return null;
+  const learnerRow = rows[0];
+
+  // Gather all related data in parallel (no write, just reads).
+  const [enrollmentRows, skillStateRows, attemptRows] = await Promise.all([
+    getDb().select().from(enrollment).where(eq(enrollment.learnerId, learnerId)),
+    getDb().select().from(skillState).where(eq(skillState.learnerId, learnerId)),
+    getDb()
+      .select()
+      .from(attempt)
+      .where(eq(attempt.learnerId, learnerId))
+      .orderBy(desc(attempt.createdAt)),
+  ]);
+
+  return shapeLearnerExport({
+    exportedAt,
+    learner: {
+      id: learnerRow.id,
+      displayName: learnerRow.displayName,
+      birthMonth: learnerRow.birthMonth,
+      // learner.settings / enrollment.config are jsonb `$type<...>()` columns, so
+      // Drizzle already infers the right type here — no cast needed.
+      settings: learnerRow.settings,
+    },
+    enrollments: enrollmentRows.map((e) => ({
+      programSlug: e.programSlug,
+      status: e.status,
+      config: e.config,
+    })),
+    skillState: skillStateRows.map((s) => ({
+      skill: s.skill,
+      outcome: s.outcome,
+      evidence: (s.evidence as { day: string; outcome: string }[]) ?? [],
+    })),
+    attempts: attemptRows.map((a) => ({
+      activityId: a.activityId,
+      kind: a.kind,
+      score: a.score as { stars: number; correct: number; total: number; skillEvidence: unknown[] },
+      day: a.day,
+      createdAt: a.createdAt,
+    })),
+  });
+}
+
+/**
+ * Delete a child profile (and all its data via cascade). Returns true if the
+ * learner was found and deleted, false if not owned or not found (tenancy boundary).
+ *
+ * FK cascade: `enrollment`, `attempt`, and `skill_state` all have
+ * `onDelete: "cascade"` on `learner.id`, so deleting the learner row removes
+ * everything. No orphan cleanup needed.
+ */
+export async function deleteLearner(
+  accountId: string,
+  learnerId: string,
+): Promise<boolean> {
+  const deleted = await getDb()
+    .delete(learner)
+    .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
+    .returning({ id: learner.id });
+  return deleted.length > 0;
 }

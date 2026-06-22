@@ -12,6 +12,9 @@ const lockedSkills: string[] = [];
 // Mutable canned rows the fake `tx` returns for each select target.
 const learnerRows = { value: [{ id: "L1" }] as Record<string, unknown>[] };
 const skillRows = { value: [] as Record<string, unknown>[] };
+// The in-tx active-enrollment gate read (Fix-F A4): default ACTIVE so the
+// happy-path tests persist; the gate tests override to removed/paused/none.
+const enrollmentRows = { value: [{ status: "active" }] as Record<string, unknown>[] };
 
 function tableName(t: unknown): string {
   return (t as { _name?: string })._name ?? "unknown";
@@ -57,7 +60,9 @@ function builder(op: string, table: string) {
           ? learnerRows.value
           : chain.op === "select" && chain.table === "skill_state"
             ? skillRows.value
-            : [];
+            : chain.op === "select" && chain.table === "enrollment"
+              ? enrollmentRows.value
+              : [];
       return Promise.resolve(rows).then(resolve);
     },
   };
@@ -82,7 +87,7 @@ vi.mock("@/lib/db", () => ({ getDb: () => ({ transaction }) }));
 vi.mock("@/lib/db/schema", () => ({
   learner: { _name: "learner", id: {}, accountId: {} },
   attempt: { _name: "attempt" },
-  enrollment: { _name: "enrollment" },
+  enrollment: { _name: "enrollment", learnerId: {}, programSlug: {}, status: {} },
   skillState: { _name: "skill_state", id: {}, learnerId: {}, skill: {} },
 }));
 // drizzle-orm operators are used only to build opaque predicate objects here.
@@ -93,10 +98,11 @@ vi.mock("drizzle-orm", () => ({
   inArray: (...a: unknown[]) => a,
 }));
 
-import { nextSkillRecord, recordAttempt } from "./store";
+import { EnrollmentNotActiveError, nextSkillRecord, recordAttempt } from "./store";
 
 const input = {
   learnerId: "L1",
+  programSlug: "kaelyn-adaptive",
   activityId: "act-1",
   kind: "math",
   score: {
@@ -115,6 +121,7 @@ describe("recordAttempt (atomic persistence)", () => {
     transaction.mockClear();
     learnerRows.value = [{ id: "L1" }];
     skillRows.value = [];
+    enrollmentRows.value = [{ status: "active" }];
   });
 
   it("runs inside a single transaction", async () => {
@@ -164,6 +171,41 @@ describe("recordAttempt (atomic persistence)", () => {
   it("rejects when the learner is not owned by the account (no attempt write)", async () => {
     learnerRows.value = [];
     await expect(recordAttempt("acct-1", input)).rejects.toThrow("learner not found");
+    expect(ops.some((o) => o.op === "insert" && o.table === "attempt")).toBe(false);
+  });
+
+  // ── Fix-F A4: server-authoritative curation gate (active enrollment required) ──
+
+  it("persists when an ACTIVE enrollment exists for the program", async () => {
+    enrollmentRows.value = [{ status: "active" }];
+    skillRows.value = [{ id: "S1", evidence: [] }];
+    await recordAttempt("acct-1", input);
+    // The active-enrollment read happens inside the tx, AFTER the tenancy check
+    // and BEFORE the attempt insert (fail-closed before any write).
+    const enrollIdx = ops.findIndex((o) => o.op === "select" && o.table === "enrollment");
+    const learnerIdx = ops.findIndex((o) => o.op === "select" && o.table === "learner");
+    const attemptIdx = ops.findIndex((o) => o.op === "insert" && o.table === "attempt");
+    expect(learnerIdx).toBeLessThan(enrollIdx);
+    expect(enrollIdx).toBeGreaterThanOrEqual(0);
+    expect(enrollIdx).toBeLessThan(attemptIdx);
+  });
+
+  it("throws EnrollmentNotActiveError and writes nothing when no enrollment exists", async () => {
+    enrollmentRows.value = [];
+    await expect(recordAttempt("acct-1", input)).rejects.toBeInstanceOf(EnrollmentNotActiveError);
+    expect(ops.some((o) => o.op === "insert" && o.table === "attempt")).toBe(false);
+    expect(ops.some((o) => o.op === "update" && o.table === "skill_state")).toBe(false);
+  });
+
+  it("throws EnrollmentNotActiveError and writes nothing when the enrollment is removed", async () => {
+    enrollmentRows.value = [{ status: "removed" }];
+    await expect(recordAttempt("acct-1", input)).rejects.toBeInstanceOf(EnrollmentNotActiveError);
+    expect(ops.some((o) => o.op === "insert" && o.table === "attempt")).toBe(false);
+  });
+
+  it("throws EnrollmentNotActiveError and writes nothing when the enrollment is paused", async () => {
+    enrollmentRows.value = [{ status: "paused" }];
+    await expect(recordAttempt("acct-1", input)).rejects.toBeInstanceOf(EnrollmentNotActiveError);
     expect(ops.some((o) => o.op === "insert" && o.table === "attempt")).toBe(false);
   });
 

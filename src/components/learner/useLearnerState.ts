@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { Activity, ActivityScore } from "@/content";
+import type { Activity, ActivityScore, Program } from "@/content";
 import { getProgram } from "@/content";
 import { applyEvidence, type SkillState } from "@/lib/tutor";
+import type { EnrollmentConfig } from "@/lib/content/config";
 import {
-  ensureEnrollmentAction,
   ensureHouseholdLearner,
   getLearnerStateAction,
   getTutorSession,
@@ -84,6 +84,32 @@ export interface UseLearnerState {
     score: ActivityScore,
     opts?: { generated?: boolean },
   ) => void;
+  /**
+   * The parent-set per-child, per-program enrollment config. Empty object in
+   * guest mode or when no config has been set. Clients read this to apply
+   * activeUnitKeys curation, AI-practice gating, band defaults, and dailyGoal.
+   */
+  config: EnrollmentConfig;
+  /**
+   * The active learner's RESOLVED (version-pinned) program tree (C#5), as scoped
+   * by {@link getLearnerStateAction}. Non-null only in account mode once the
+   * matching state has loaded; null in guest/loading mode and until the pinned
+   * tree resolves — the caller falls back to the server-passed published prop in
+   * that window so the map never blanks/flickers.
+   */
+  program: Program | null;
+  /**
+   * Account-mode curation signal (Fix-F A3): whether the active learner may play
+   * this program — true ONLY when they have an ACTIVE enrollment for the slug
+   * (from {@link getLearnerStateAction}). When false in account mode, the surface
+   * renders the calm "ask a grown-up to add this" state instead of the map.
+   *
+   * Guest mode is ALWAYS `true` (guests have no enrollments and play every
+   * published program). During the loading beat it is `true` too, so the surface
+   * shows the loading state — NOT a flash of the block — until account state
+   * loads (paired with the `loadedForActive` guard).
+   */
+  available: boolean;
 }
 
 /** Remembered account-learner choice (distinct from the guest active-learner key). */
@@ -138,6 +164,14 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const [accountSkill, setAccountSkill] = useState<SkillState>(EMPTY_STATE);
   const [accountCompleted, setAccountCompleted] = useState<Set<string>>(new Set());
   const [accountStars, setAccountStars] = useState<Record<string, 0 | 1 | 2 | 3>>({});
+  const [accountConfig, setAccountConfig] = useState<EnrollmentConfig>({});
+  // The resolved (version-pinned) program tree for the loaded (learner, program).
+  // Set from the same action result as the state above, so the rendered map and
+  // the scoped progress are guaranteed the same version (C#5).
+  const [accountProgram, setAccountProgram] = useState<Program | null>(null);
+  // Whether the loaded (learner, program) is playable (active enrollment) — the
+  // server's curation signal (Fix-F A3). Set from the same action result.
+  const [accountAvailable, setAccountAvailable] = useState(false);
   // Which (learner, program) the loaded DB state belongs to (null = nothing
   // loaded yet). `ready` is derived from this matching the active learner +
   // program, so switching either shows a brief loading beat (not stale data)
@@ -193,10 +227,8 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const loadAccountState = useCallback(
     async (learnerId: string, slug: string) => {
       const token = ++reloadToken.current;
-      const { skillState, completedActivityIds, starsByActivity } = await getLearnerStateAction(
-        learnerId,
-        slug,
-      );
+      const { skillState, completedActivityIds, starsByActivity, config, program, available } =
+        await getLearnerStateAction(learnerId, slug);
       // Stale-response guard: ignore all but the latest in-flight load.
       if (!mountedRef.current || token !== reloadToken.current) return;
       setAccountSkill(skillState);
@@ -204,6 +236,13 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       // Server best-stars become the source of truth on load; this also clears
       // any optimistic stars from a prior learner/program so glyphs match.
       setAccountStars(starsByActivity as Record<string, 0 | 1 | 2 | 3>);
+      setAccountConfig(config);
+      // The resolved (pinned) tree for this load. Null on unauth/failure/unknown
+      // slug → the caller keeps showing the server-passed published prop.
+      setAccountProgram(program);
+      // The curation signal for this load (Fix-F A3): false → not playable, the
+      // surface shows the calm "ask a grown-up" state in account mode.
+      setAccountAvailable(available);
       setLoadedKey(`${learnerId}:${slug}`);
     },
     [],
@@ -211,12 +250,14 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
 
   // Fetch DB state whenever the active account learner OR program changes (an
   // awaited action sets state from its result — not an external-store read in an
-  // effect). Lazily enroll the learner into this program on first open, so a
-  // learner who switches worlds is recorded as enrolled for the picker.
+  // effect). NO lazy auto-enroll-on-open (Fix-F A1): opening a program must not
+  // self-activate it. A learner only plays programs with a pre-existing active
+  // enrollment (the pilot default + parent assignments); getLearnerStateAction
+  // returns available:false for anything else, and the surface renders the calm
+  // "ask a grown-up" state instead.
   const accountLearnerToLoad = mode === "account" ? selectedLearnerId : null;
   useEffect(() => {
     if (!accountLearnerToLoad) return;
-    void ensureEnrollmentAction(accountLearnerToLoad, programSlug);
     void loadAccountState(accountLearnerToLoad, programSlug);
   }, [accountLearnerToLoad, programSlug, loadAccountState]);
 
@@ -254,6 +295,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
         void (async () => {
           await recordAttemptAction({
             learnerId: selectedLearnerId,
+            programSlug,
             activityId: activity.id,
             kind: activity.kind,
             generated,
@@ -279,6 +321,11 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
 
   // ── Project the active view based on mode ─────────────────────────────────
   if (mode === "account") {
+    // The loaded state is for the active (learner, program) only when the keys
+    // match — same gate as `ready`. While they don't (initial load or a switch),
+    // expose program: null so the caller keeps the published prop on screen
+    // rather than the prior world's pinned tree (no flicker, no stale map).
+    const loadedForActive = loadedKey === `${selectedLearnerId}:${programSlug}`;
     return {
       skillState: accountSkill,
       completed: accountCompleted,
@@ -286,7 +333,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       // Ready only once the loaded state belongs to the active learner AND
       // program (so a learner OR world switch shows a brief loading beat, not
       // the prior kid's/world's data).
-      ready: loadedKey === `${selectedLearnerId}:${programSlug}`,
+      ready: loadedForActive,
       mode,
       signedIn: true,
       learners,
@@ -294,6 +341,13 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       selectLearner,
       setupProfile,
       record,
+      config: accountConfig,
+      program: loadedForActive ? accountProgram : null,
+      // Curation (Fix-F A3): only enforce once the loaded state belongs to the
+      // active (learner, program). While loading (!loadedForActive) report
+      // `true` so the surface shows the loading beat, not a flash of the block
+      // (paired with `ready` above); once loaded, the server's signal governs.
+      available: loadedForActive ? accountAvailable : true,
     };
   }
 
@@ -315,6 +369,12 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       selectLearner,
       setupProfile,
       record,
+      config: {},
+      // Guest mode renders entirely from the server-passed published prop.
+      program: null,
+      // Guests have no enrollments and play every published program — curation
+      // is account-mode only, so guest mode is always available.
+      available: true,
     };
   }
 
@@ -331,6 +391,11 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
     selectLearner,
     setupProfile,
     record,
+    config: {},
+    program: null,
+    // During the loading beat, report available so the surface shows the loading
+    // state — not a flash of the "ask a grown-up" block — until mode resolves.
+    available: true,
   };
 }
 

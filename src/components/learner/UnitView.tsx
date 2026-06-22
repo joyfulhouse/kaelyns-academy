@@ -1,12 +1,14 @@
 "use client";
 
 import { motion, useReducedMotion } from "motion/react";
-import { CaretRightIcon, FlagIcon } from "@phosphor-icons/react/dist/ssr";
+import { CaretRightIcon, FlagIcon, MapTrifoldIcon } from "@phosphor-icons/react/dist/ssr";
 import type { Activity, Unit } from "@/content";
+import { getUnit } from "@/content";
 import { cn } from "@/lib/cn";
 import { Mascot } from "@/components/art/Mascot";
 import { Pill } from "@/components/ui/Pill";
 import { Stars } from "@/components/ui/Stars";
+import { Button } from "@/components/ui/Button";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner } from "./learners";
 import { useLearnerState } from "./useLearnerState";
@@ -16,14 +18,59 @@ import { ACTIVITY_META } from "./activityMeta";
  * A unit (the week's world): theme, big idea, phonics/math focus + project,
  * then its lessons' activities as big friendly buttons. Each activity leads
  * with its kind icon and shows earned stars. Themed by `data-world`.
+ *
+ * Version pinning (Fix-E Layer 2): the server passes the stable `unitKey` and a
+ * best-effort `ssrUnit` (the CURRENT PUBLISHED unit, or null). We render the
+ * learner's PINNED unit — `getUnit(state.program, unitKey)` — and fall back to
+ * `ssrUnit` only while the pinned tree is still loading (or in guest mode, where
+ * `state.program` is always null). If the key is in neither tree the unit has
+ * moved out of the learner's version; we show a calm "back to the map" state
+ * rather than crashing.
  */
-export function UnitView({ unit, programSlug }: { unit: Unit; programSlug: string }) {
+export function UnitView({
+  programSlug,
+  unitKey,
+  ssrUnit,
+}: {
+  programSlug: string;
+  unitKey: string;
+  ssrUnit: Unit | null;
+}) {
   const reduce = useReducedMotion();
   const { learner } = useActiveLearner();
-  // Stars come from the active surface: DB in account mode, localStorage guest
-  // otherwise. The mock learner id only matters in guest mode; state is scoped
-  // to the active program by its slug.
-  const { getStars, ready } = useLearnerState(learner.id, programSlug);
+  // Stars + the resolved (version-pinned) tree come from the active surface: DB
+  // in account mode, localStorage guest otherwise. The mock learner id only
+  // matters in guest mode; state is scoped to the active program by its slug.
+  // `mode`/`available`/`config` drive the account-mode curation gate (Fix-F A3).
+  const { getStars, ready, program, mode, available, config } = useLearnerState(
+    learner.id,
+    programSlug,
+  );
+
+  // Account-mode curation gate (Fix-F A3). Enforced ONLY in account mode and
+  // ONLY once state has loaded (`ready`) — so guest mode is unaffected and the
+  // loading beat isn't a flash-of-block. Blocked when the program isn't playable
+  // (removed/paused/not-assigned → available:false) OR this unit's stable key is
+  // curated out of a non-empty activeUnitKeys (closes the direct-URL hole the
+  // StudioHome map already filters client-side).
+  const curatedOut =
+    config.activeUnitKeys !== undefined &&
+    config.activeUnitKeys.length > 0 &&
+    !config.activeUnitKeys.includes(unitKey);
+  if (mode === "account" && ready && (!available || curatedOut)) {
+    return <NotAssigned programSlug={programSlug} />;
+  }
+
+  // Resolve from the PINNED tree when it has loaded; otherwise the server's
+  // published unit (guest mode / the brief account-load window). `getUnit` keys
+  // on the stable authored unitKey, so the same key resolves in either tree.
+  const effectiveUnit: Unit | null =
+    (program ? getUnit(program, unitKey) : undefined) ?? ssrUnit;
+
+  if (!effectiveUnit) {
+    return <UnitMoved programSlug={programSlug} />;
+  }
+  const unit = effectiveUnit;
 
   const readAloud = `${unit.title}. ${unit.bigIdea} Pick something to do.`;
 
@@ -141,5 +188,70 @@ function FocusPill({ label, value }: { label: string; value: string }) {
         <span className="font-semibold">{label}:</span> {value}
       </Pill>
     </div>
+  );
+}
+
+/* ── World moved (key in neither the pinned nor the published tree) ──────────
+   A pinned learner can land on a unit that isn't in their version (e.g. a bogus
+   URL, or a unit removed across versions). Never a crash or scary 404 — a warm
+   nudge back to the map. */
+
+function UnitMoved({ programSlug }: { programSlug: string }) {
+  const reduce = useReducedMotion();
+  return (
+    <AppShellKid backHref={`/learn/${programSlug}`} readAloud="This world moved. Back to the map.">
+      <motion.div
+        initial={reduce ? false : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+        className="mx-auto flex max-w-md flex-col items-center pt-10 text-center"
+      >
+        <Mascot mood="think" size={120} />
+        <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight">
+          This world moved!
+        </h1>
+        <p className="mt-3 text-lg text-ink-soft">Let&rsquo;s head back to the map.</p>
+        <div className="mt-9 w-full">
+          <Button href={`/learn/${programSlug}`} variant="primary" size="kid" className="w-full">
+            <MapTrifoldIcon weight="duotone" className="size-6" />
+            Back to the map
+          </Button>
+        </div>
+      </motion.div>
+    </AppShellKid>
+  );
+}
+
+/* ── Not assigned (account-mode curation, Fix-F A3) ──────────────────────────
+   A signed-in child reached a program/world a grown-up hasn't added (removed,
+   paused, never assigned, or curated out of activeUnitKeys). Never a scary lock
+   — a warm nudge to ask a grown-up, with the map as the safe floor. Mirrors the
+   UnitMoved tone; guest mode never sees this (curation is account-mode only). */
+
+export function NotAssigned({ programSlug }: { programSlug: string }) {
+  const reduce = useReducedMotion();
+  return (
+    <AppShellKid backHref={`/learn/${programSlug}`} readAloud="Ask a grown-up to add this. Back to the map.">
+      <motion.div
+        initial={reduce ? false : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+        className="mx-auto flex max-w-md flex-col items-center pt-10 text-center"
+      >
+        <Mascot mood="happy" size={120} />
+        <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight">
+          Ask a grown-up to add this!
+        </h1>
+        <p className="mt-3 text-lg text-ink-soft">
+          This one isn&rsquo;t ready for you yet. Let&rsquo;s head back to your map.
+        </p>
+        <div className="mt-9 w-full">
+          <Button href={`/learn/${programSlug}`} variant="primary" size="kid" className="w-full">
+            <MapTrifoldIcon weight="duotone" className="size-6" />
+            Back to the map
+          </Button>
+        </div>
+      </motion.div>
+    </AppShellKid>
   );
 }

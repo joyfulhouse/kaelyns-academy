@@ -1,9 +1,17 @@
 import type { Metadata } from "next";
+import { getPrimaryLearnerSettings } from "@/app/(parent)/data";
 import { SettingsForm } from "./SettingsForm";
 
 export const metadata: Metadata = { title: "Settings" };
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  // Resolve the primary (first) learner AND their persisted settings so the form
+  // can initialize its toggles from what's actually stored (not hardcoded
+  // defaults) — a parent who turned the §8 AI switch OFF must see it stay OFF
+  // across reloads. Settings are scoped to the primary learner for now;
+  // per-learner settings UI lands in a later phase.
+  const { primaryLearnerId, settings } = await getPrimaryLearnerSettings();
+
   return (
     <div className="mx-auto max-w-3xl">
       <header>
@@ -15,7 +23,7 @@ export default function SettingsPage() {
       </header>
 
       <div className="mt-8">
-        <SettingsForm />
+        <SettingsForm primaryLearnerId={primaryLearnerId} initialSettings={settings} />
       </div>
     </div>
   );

@@ -18,6 +18,7 @@ import { Mascot } from "@/components/art/Mascot";
 import { Sun } from "@/components/art/Decorations";
 import { ProgressRing } from "@/components/ui/ProgressRing";
 import { Stars } from "@/components/ui/Stars";
+import { Button } from "@/components/ui/Button";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner, LEARNERS } from "./learners";
 import { useLearnerState, type SurfaceLearner, type UseLearnerState } from "./useLearnerState";
@@ -40,9 +41,17 @@ export function StudioHome({ program }: { program: Program }) {
   // mode the hook ignores this id and uses the selected real learner instead.
   const { learner: guestLearner, setLearnerId } = useActiveLearner();
   // The active program comes from the route (this component is rendered per
-  // program slug), so all state is scoped to the world the kid is in.
+  // program slug), so all state is scoped to the world the kid is in. The slug
+  // is the stable hook key; the learner's PINNED version (a different tree for
+  // the SAME slug, C#5) arrives on `state.program` once account state loads.
   const state = useLearnerState(guestLearner.id, program.slug);
   const [picked, setPicked] = useState(false);
+
+  // Render the learner's resolved (version-pinned) tree once it has loaded;
+  // until then (guest mode, loading, or the brief account-load window) fall back
+  // to the server-passed published prop so the map never blanks or flickers. The
+  // pinned tree then swaps in seamlessly.
+  const effectiveProgram = state.program ?? program;
 
   // While the session resolves we show a calm loading beat rather than flashing
   // the mock picker at a signed-in household.
@@ -51,8 +60,21 @@ export function StudioHome({ program }: { program: Program }) {
   }
 
   if (picked) {
+    // Account-mode curation gate (Fix-F A3): once a learner has picked, block a
+    // program a grown-up hasn't added (removed/paused/not-assigned → available
+    // false) with the calm "ask a grown-up" state instead of the map. Enforced
+    // ONLY in account mode and ONLY once state has loaded (`ready`) — guest mode
+    // is unaffected, and while loading we keep showing the map (built from the
+    // published prop) so there's no flash-of-block before the signal arrives.
+    if (state.mode === "account" && state.ready && !state.available) {
+      return <NotAssigned programSlug={program.slug} onSwitchLearner={() => setPicked(false)} />;
+    }
     return (
-      <WorldMap program={program} state={state} onSwitchLearner={() => setPicked(false)} />
+      <WorldMap
+        program={effectiveProgram}
+        state={state}
+        onSwitchLearner={() => setPicked(false)}
+      />
     );
   }
 
@@ -73,6 +95,54 @@ export function StudioHome({ program }: { program: Program }) {
         return ok;
       }}
     />
+  );
+}
+
+/* ── Not assigned (account-mode curation, Fix-F A3) ──────────────────────────
+   A signed-in child picked a program a grown-up hasn't added to their plan
+   (removed, paused, or never assigned → available:false). Never a scary lock —
+   a warm nudge to ask a grown-up, with a way back to their own worlds and to
+   switch learner (in case the wrong profile was picked). Guest mode never sees
+   this; curation is account-mode only. */
+
+function NotAssigned({
+  programSlug,
+  onSwitchLearner,
+}: {
+  programSlug: string;
+  onSwitchLearner: () => void;
+}) {
+  const reduce = useReducedMotion();
+  return (
+    <AppShellKid backHref="/learn" readAloud="Ask a grown-up to add this. Back to your worlds.">
+      <motion.div
+        initial={reduce ? false : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+        className="mx-auto flex max-w-md flex-col items-center pt-10 text-center"
+      >
+        <Mascot mood="happy" size={120} />
+        <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight">
+          Ask a grown-up to add this!
+        </h1>
+        <p className="mt-3 text-lg text-ink-soft">
+          This one isn&rsquo;t ready for you yet. Let&rsquo;s find something to play.
+        </p>
+        <div className="mt-9 flex w-full flex-col items-stretch gap-3">
+          <Button href="/learn" variant="primary" size="kid">
+            <CompassIcon weight="duotone" className="size-6" />
+            Go to my worlds
+          </Button>
+          <button
+            type="button"
+            onClick={onSwitchLearner}
+            className="inline-flex min-h-11 items-center justify-center rounded-pill text-base font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
+          >
+            Not you? Switch learner
+          </button>
+        </div>
+      </motion.div>
+    </AppShellKid>
   );
 }
 
@@ -236,7 +306,7 @@ function WorldMap({
   onSwitchLearner: () => void;
 }) {
   const reduce = useReducedMotion();
-  const { skillState, completed, getStars, ready } = state;
+  const { skillState, completed, getStars, ready, config } = state;
 
   // Build a stable, hydration-safe snapshot. Before state is read, treat the
   // map as empty, then progress fills in once ready.
@@ -271,6 +341,19 @@ function WorldMap({
         : undefined,
     [program, skillState, ready, completedKey],
   );
+
+  // activeUnitKeys curation: when set (non-empty), only those unit ids are shown.
+  const activeUnitKeys =
+    config.activeUnitKeys && config.activeUnitKeys.length > 0
+      ? new Set(config.activeUnitKeys)
+      : null;
+  const visibleUnits = activeUnitKeys
+    ? program.units.filter((u) => activeUnitKeys.has(u.id))
+    : program.units;
+
+  // dailyGoal: count today's completed authored activities from the progressMap.
+  const dailyGoal = config.dailyGoal && config.dailyGoal > 0 ? config.dailyGoal : null;
+  const todayCompletedCount = ready ? completed.size : 0;
 
   return (
     <AppShellKid
@@ -310,6 +393,14 @@ function WorldMap({
                 Switch worlds
               </Link>
             </div>
+            {/* Daily goal pill: a light indicator, no enforcement */}
+            {dailyGoal !== null && (
+              <div className="mt-2">
+                <span className="inline-flex items-center rounded-pill border-2 border-ink/20 bg-paper px-3 py-1 font-display text-sm font-semibold text-ink-soft">
+                  {todayCompletedCount} / {dailyGoal} done
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -319,12 +410,12 @@ function WorldMap({
         <NextThingCard pick={topPick} programSlug={program.slug} reduce={Boolean(reduce)} />
       )}
 
-      {/* The path of worlds */}
+      {/* The path of worlds (curated by activeUnitKeys when set) */}
       <ol className="relative flex flex-col gap-5">
-        {program.units.map((unit, i) => {
+        {visibleUnits.map((unit, i) => {
           const up = computeUnitProgress(unit, progressMap);
           const prevDone =
-            i === 0 ? true : computeUnitProgress(program.units[i - 1], progressMap).completed > 0;
+            i === 0 ? true : computeUnitProgress(visibleUnits[i - 1], progressMap).completed > 0;
           // Forgiving gate: the first world is always open; each next world
           // opens once the child has started the one before. No penalties, just
           // a sense of journey.

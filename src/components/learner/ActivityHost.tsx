@@ -10,8 +10,8 @@ import {
   MapTrifoldIcon,
   SparkleIcon,
 } from "@phosphor-icons/react/dist/ssr";
-import type { Activity, ActivityScore, World } from "@/content";
-import { getSkill } from "@/content";
+import type { Activity, ActivityScore, Unit, World } from "@/content";
+import { findActivity, getSkill, getUnit } from "@/content";
 import { outcomeOf } from "@/lib/tutor";
 import "@/activities"; // side-effect: registers every available activity-type plugin
 import { getActivityType } from "@/activities";
@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/Button";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner } from "./learners";
 import { useLearnerState } from "./useLearnerState";
+import { NotAssigned } from "./UnitView";
 import { ACTIVITY_META } from "./activityMeta";
 import { stopSpeaking } from "./speak";
 
@@ -31,6 +32,20 @@ const MAX_GENERATED = 3;
 
 /** Request timeout for generation: a child should never wait long. */
 const PRACTICE_TIMEOUT_MS = 12_000;
+
+/**
+ * The next activity within the SAME (resolved) unit — kept inside the world so a
+ * child advances through one theme before the map decides the next. Returns null
+ * at the unit's end, where the reward screen offers only "back to the map".
+ * Computed from the learner's RESOLVED (pinned) unit and the stable authored
+ * keys, so the link points within the learner's own version (Fix-E Layer 2).
+ */
+function nextActivityHref(programSlug: string, unit: Unit, activityKey: string): string | null {
+  const ids = unit.lessons.flatMap((l) => l.activities.map((a) => a.id));
+  const idx = ids.indexOf(activityKey);
+  if (idx < 0 || idx + 1 >= ids.length) return null;
+  return `/learn/${programSlug}/${unit.id}/${ids[idx + 1]}`;
+}
 
 type Phase =
   | { kind: "play" }
@@ -52,49 +67,81 @@ type Phase =
  * through the same Player. Generation is capped and fails gently.
  */
 export function ActivityHost({
-  activity,
   programSlug,
+  unitKey,
+  activityKey,
+  ssrActivity,
+  ssrUnit,
   world,
-  backHref,
-  nextHref,
 }: {
-  activity: Activity;
   programSlug: string;
+  unitKey: string;
+  activityKey: string;
+  ssrActivity: Activity | null;
+  ssrUnit: Unit | null;
   world: World;
-  backHref: string;
-  nextHref: string | null;
 }) {
   const router = useRouter();
   const { learner } = useActiveLearner();
   // One state seam for both surfaces: DB-backed when a household is signed in,
   // localStorage guest otherwise. The guest learner id only matters in guest
   // mode; in account mode the hook resolves the selected account learner. State
-  // is scoped to the active program by its slug.
-  const { skillState, record, signedIn } = useLearnerState(learner.id, programSlug);
+  // is scoped to the active program by its slug, and `program` is the learner's
+  // RESOLVED (version-pinned) tree (null in guest/loading).
+  const { skillState, record, signedIn, config, selectedLearnerId, program, mode, available, ready } =
+    useLearnerState(learner.id, programSlug);
   const [phase, setPhase] = useState<Phase>({ kind: "play" });
   const [generatedCount, setGeneratedCount] = useState(0);
 
-  const activityType = getActivityType(activity.kind);
+  // Version pinning (Fix-E Layer 2): resolve the activity + its owning unit from
+  // the learner's PINNED tree, falling back to the server's published activity
+  // only while that tree is loading (or in guest mode). findActivity/getUnit key
+  // on the stable authored keys, so the same key resolves in either tree.
+  const pinnedFound = program ? findActivity(program, activityKey) : undefined;
+  const effectiveActivity: Activity | null = pinnedFound?.activity ?? ssrActivity;
+  // The owning unit drives the world theme + the next/back links. Prefer the
+  // pinned activity's own unit; else the pinned tree's unit for the route key
+  // (a pinned activity whose route unitKey still resolves); else the server's
+  // published unit (guest mode / pre-hydration, so the in-unit "Next" link and
+  // world theme work without a pinned tree).
+  const pinnedUnit: Unit | null =
+    pinnedFound?.unit ?? (program ? getUnit(program, unitKey) : undefined) ?? null;
+  const effectiveUnit: Unit | null = pinnedUnit ?? ssrUnit;
 
-  // The authored activity records both star progress and skill evidence.
+  // back = the world map for this (pinned) unit, by its stable key from params.
+  const backHref = `/learn/${programSlug}/${unitKey}`;
+  // next = the following activity WITHIN the resolved unit (so a child finishes a
+  // theme before the map decides what's next). Null at the unit's end, or when no
+  // unit resolved. Walks the same stable keys the links/record use.
+  const nextHref = effectiveUnit ? nextActivityHref(programSlug, effectiveUnit, activityKey) : null;
+  // World theme: the resolved unit's world, else the server-passed fallback.
+  const effectiveWorld: World = effectiveUnit?.world ?? world;
+
+  const activityType = effectiveActivity ? getActivityType(effectiveActivity.kind) : undefined;
+
+  // The authored activity records both star progress and skill evidence. Guarded
+  // on the resolved activity so the callbacks stay declared unconditionally
+  // (rules-of-hooks) while the "moved" state below short-circuits the render.
   const handleComplete = useCallback(
     (response: unknown, score: ActivityScore) => {
+      if (!effectiveActivity) return;
       stopSpeaking();
-      record(activity, response, score);
+      record(effectiveActivity, response, score);
       setPhase({ kind: "reward", stars: score.stars });
     },
-    [activity, record],
+    [effectiveActivity, record],
   );
 
   // A generated practice item records skill evidence too (it exercises the same
   // skills), but not star progress: it isn't an authored, trackable activity.
   const handlePracticeComplete = useCallback(
     (response: unknown, score: ActivityScore) => {
+      if (!effectiveActivity) return;
       stopSpeaking();
-      record(activity, response, score, { generated: true });
+      record(effectiveActivity, response, score, { generated: true });
       setPhase({ kind: "reward", stars: score.stars });
     },
-    [activity, record],
+    [effectiveActivity, record],
   );
 
   const handleExit = useCallback(() => {
@@ -102,13 +149,40 @@ export function ActivityHost({
     router.push(backHref);
   }, [router, backHref]);
 
-  // Ask the bounded generator for one more item at this activity's level.
+  // Ask the bounded generator for one more item at this activity's level. Two
+  // flows, matching /api/practice: a SIGNED-IN account sends only IDENTIFIERS and
+  // the server §8-gates + derives every generation input from the authored
+  // activity (the model can't be steered off-curriculum from here); a GUEST
+  // (public "explore") has no enrollment, so it sends the bounded params
+  // directly. Output stays schema-validated server-side either way.
   const handleMore = useCallback(async () => {
+    if (!effectiveActivity) return;
     stopSpeaking();
     setPhase({ kind: "generating" });
 
-    const primarySkill = activity.skillTags[0];
-    const focus = (primarySkill ? getSkill(primarySkill)?.label : undefined) ?? activity.title;
+    let body: Record<string, unknown>;
+    if (signedIn) {
+      // §8 path: identifiers only — `activityId` binds generation to a real
+      // activity in the learner's resolved program (the stable authored key).
+      body = {
+        learnerId: selectedLearnerId,
+        programSlug,
+        activityId: effectiveActivity.id,
+        n: 1,
+      };
+    } else {
+      // Explore path: the guest surface supplies the (bounded) generation params.
+      const primarySkill = effectiveActivity.skillTags[0];
+      const focus =
+        (primarySkill ? getSkill(primarySkill)?.label : undefined) ?? effectiveActivity.title;
+      body = {
+        kind: effectiveActivity.kind,
+        band: config.band ?? effectiveActivity.band,
+        focus,
+        n: 1,
+        skillHints: effectiveActivity.skillTags.slice(0, 8),
+      };
+    }
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), PRACTICE_TIMEOUT_MS);
@@ -116,13 +190,7 @@ export function ActivityHost({
       const res = await fetch("/api/practice", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          kind: activity.kind,
-          band: activity.band,
-          focus,
-          n: 1,
-          skillHints: activity.skillTags.slice(0, 8),
-        }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
       if (!res.ok) {
@@ -147,7 +215,29 @@ export function ActivityHost({
     } finally {
       clearTimeout(timer);
     }
-  }, [activity]);
+  }, [effectiveActivity, signedIn, selectedLearnerId, programSlug, config.band]);
+
+  // Account-mode curation gate (Fix-F A3), checked AFTER every hook above so hook
+  // order stays stable. Enforced ONLY in account mode and ONLY once state has
+  // loaded (`ready`) — guest mode is unaffected and the loading beat isn't a
+  // flash-of-block. Blocked when the program isn't playable (available:false) OR
+  // this route's unit key is curated out of a non-empty activeUnitKeys (closes
+  // the direct-URL hole for the activity route, mirroring UnitView + the map).
+  const curatedOut =
+    config.activeUnitKeys !== undefined &&
+    config.activeUnitKeys.length > 0 &&
+    !config.activeUnitKeys.includes(unitKey);
+  if (mode === "account" && ready && (!available || curatedOut)) {
+    return <NotAssigned programSlug={programSlug} />;
+  }
+
+  // The key resolved in neither the pinned nor the published tree → the activity
+  // moved out of the learner's version (or a bogus URL). Calm "moved" state, not
+  // a crash. Declared AFTER every hook above so hook order stays stable.
+  if (!effectiveActivity) {
+    return <ActivityMoved backHref={backHref} programSlug={programSlug} />;
+  }
+  const activity = effectiveActivity;
 
   // Auto-offer more when this activity's primary skill is still emerging, and
   // only while we're under the generation cap and the kind is renderable.
@@ -155,12 +245,16 @@ export function ActivityHost({
   // AI practice spends on the LiteLLM gateway via /api/practice, which now
   // requires an account — so only offer "more, made just for me" to a signed-in
   // household. Guests play authored content only (no false, always-failing tap).
-  const canGenerate = Boolean(activityType) && generatedCount < MAX_GENERATED && signedIn;
+  // Additionally, if the parent has set aiPractice === false for this child's
+  // program, hide the button (defense-in-depth: the server also returns 403).
+  const aiPracticeEnabled = config.aiPractice !== false;
+  const canGenerate =
+    Boolean(activityType) && generatedCount < MAX_GENERATED && signedIn && aiPracticeEnabled;
   const autoOffer =
     canGenerate && primarySkill !== undefined && outcomeOf(skillState, primarySkill) === "emerging";
 
   return (
-    <div data-world={world}>
+    <div data-world={effectiveWorld}>
       <AppShellKid backHref={backHref} readAloud={activity.title}>
         <AnimatePresence mode="wait">
           {phase.kind === "reward" ? (
@@ -478,5 +572,41 @@ function ComingSoon({
         </Button>
       </div>
     </motion.div>
+  );
+}
+
+/* ── Activity moved (key in neither the pinned nor the published tree) ───────
+   A pinned learner can land on an activity that isn't in their version (a bogus
+   URL, or an activity removed across versions). Never a crash or scary 404 — a
+   warm nudge back. `backHref` is this unit's map; if even the unit is gone the
+   program map is the safe floor. */
+
+function ActivityMoved({ backHref, programSlug }: { backHref: string; programSlug: string }) {
+  const reduce = useReducedMotion();
+  return (
+    <AppShellKid backHref={backHref} readAloud="This activity moved. Back to the map.">
+      <motion.div
+        initial={reduce ? false : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+        className="mx-auto flex max-w-md flex-col items-center pt-10 text-center"
+      >
+        <Mascot mood="think" size={120} />
+        <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight">
+          This one moved!
+        </h1>
+        <p className="mt-3 text-lg text-ink-soft">Let&rsquo;s head back to the map.</p>
+        <div className="mt-9 flex w-full flex-col items-stretch gap-3">
+          <Button href={backHref} variant="primary" size="kid">
+            <MapTrifoldIcon weight="duotone" className="size-6" />
+            Back to the world
+          </Button>
+          <Button href={`/learn/${programSlug}`} variant="soft" size="kid">
+            <MapTrifoldIcon weight="duotone" className="size-6" />
+            Back to the map
+          </Button>
+        </div>
+      </motion.div>
+    </AppShellKid>
   );
 }
