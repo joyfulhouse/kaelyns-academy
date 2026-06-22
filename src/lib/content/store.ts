@@ -410,19 +410,30 @@ export class DuplicateKeyError extends Error {
 }
 
 /**
- * PURE. Scan a submitted unit tree for duplicate sibling keys and return the
- * first one found (or null when every sibling level is unique). Checked BEFORE
- * the save transaction so a collision is rejected without touching the DB.
+ * PURE. Scan a submitted unit tree for duplicate keys and return the first
+ * collision found (or null when the tree is clean). Checked BEFORE the save
+ * transaction so a collision is rejected without touching the DB.
  *   - unitKey: unique within the version (the units array)
  *   - lessonKey: unique within its unit
- *   - activityKey: unique within its lesson
- * Keys are compared only against their own siblings — the same key may legally
- * appear under different parents.
+ *   - activityKey: unique **program-wide** within the version (across all
+ *     lessons/units), NOT just within its lesson.
+ *
+ * The activityKey rule is program-wide because Fix-E Layer 1 makes the assembled
+ * `activity.id` the `activityKey`, and `findActivity` searches the WHOLE program
+ * and returns the FIRST match — so a key reused across two lessons would make
+ * routing, the §8 gate, and attempt-keying ambiguous (the second occurrence
+ * would be unreachable, and a recorded attempt couldn't be attributed). unitKey
+ * (per-version) and lessonKey (per-unit) keep their sibling-scoped rules: the
+ * same lessonKey may legally appear under different units, since lesson ids are
+ * not used as the globally-addressable runtime id.
  */
 export function findDuplicateKeys(
   units: EditableUnit[],
 ): { level: "unit" | "lesson" | "activity"; key: string } | null {
   const unitKeys = new Set<string>();
+  // activityKey uniqueness spans the whole version (see doc above), so this set
+  // lives outside the unit/lesson loops.
+  const activityKeys = new Set<string>();
   for (const unit of units) {
     if (unitKeys.has(unit.unitKey)) return { level: "unit", key: unit.unitKey };
     unitKeys.add(unit.unitKey);
@@ -432,7 +443,6 @@ export function findDuplicateKeys(
       if (lessonKeys.has(lesson.lessonKey)) return { level: "lesson", key: lesson.lessonKey };
       lessonKeys.add(lesson.lessonKey);
 
-      const activityKeys = new Set<string>();
       for (const activity of lesson.activities) {
         if (activityKeys.has(activity.activityKey)) {
           return { level: "activity", key: activity.activityKey };

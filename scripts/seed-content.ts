@@ -43,6 +43,28 @@ function deriveLocaleAndLanguages(
   return { locale: "en-US", languages: ["en-US"] };
 }
 
+/**
+ * PURE. Return the first `activityKey` (== authored `activity.id`) that repeats
+ * program-wide across all the program's lessons/units, or null when every
+ * activity id is unique. Mirrors the runtime invariant `findDuplicateKeys`
+ * enforces in the admin save path: since Fix-E Layer 1 makes `activity.id` the
+ * authored key and `findActivity` returns the FIRST program-wide match, a
+ * duplicate would make a seeded activity unreachable and break attempt-keying.
+ * The seed must fail loudly on such a program rather than silently upserting it.
+ */
+export function findDuplicateProgramActivityKey(program: Program): string | null {
+  const seen = new Set<string>();
+  for (const unit of program.units) {
+    for (const lesson of unit.lessons) {
+      for (const activity of lesson.activities) {
+        if (seen.has(activity.id)) return activity.id;
+        seen.add(activity.id);
+      }
+    }
+  }
+  return null;
+}
+
 // ── Row value shapes (intra-plan keys, not DB UUIDs) ─────────────────────────
 
 interface PublisherRow {
@@ -139,6 +161,17 @@ export function buildSeedPlan(programs: Program[], skills: Skill[]): SeedPlan {
   const activityRows: ActivityRow[] = [];
 
   for (const prog of programs) {
+    // Fail loudly on a program-wide duplicate activityKey BEFORE building any
+    // rows (Fix-E Layer 1: activity.id == activityKey must be globally unique
+    // within a version for routing/gate/attempt-keying to be sound).
+    const dupKey = findDuplicateProgramActivityKey(prog);
+    if (dupKey !== null) {
+      throw new Error(
+        `Program "${prog.slug}" has a duplicate program-wide activityKey: "${dupKey}". ` +
+          `Activity ids must be unique across the whole program (not just per lesson).`,
+      );
+    }
+
     // Publisher — builtin, deduplicated by name
     const publisherName = "Kaelyn's Academy";
     if (!publisherMap.has(publisherName)) {

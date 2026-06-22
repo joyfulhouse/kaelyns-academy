@@ -583,12 +583,27 @@ describe("findDuplicateKeys", () => {
     expect(findDuplicateKeys(tree)).toEqual({ level: "activity", key: "dup" });
   });
 
-  it("allows the same key under different parents (siblings only)", () => {
-    // lessonKey "l1" reused across two different units is legal; same for
-    // activityKey "a1" across two different lessons.
+  it("detects a duplicate activityKey ACROSS lessons (program-wide uniqueness)", () => {
+    // Fix-E Layer 1: activity.id = activityKey and findActivity returns the FIRST
+    // match program-wide, so the same activityKey in two different lessons (even
+    // under different units) is a collision — the second would be unreachable.
+    const crossLesson = [unit("u1", [lesson("l1", ["a1"]), lesson("l2", ["a1"])])];
+    expect(findDuplicateKeys(crossLesson)).toEqual({ level: "activity", key: "a1" });
+
+    const crossUnit = [
+      unit("u1", [lesson("l1", ["a1"])]),
+      unit("u2", [lesson("l2", ["a1"])]),
+    ];
+    expect(findDuplicateKeys(crossUnit)).toEqual({ level: "activity", key: "a1" });
+  });
+
+  it("allows the same lessonKey under different units (lessonKey is per-unit)", () => {
+    // lessonKey "l1" reused across two different units is legal (lesson ids are
+    // not the globally-addressable runtime id). Activity keys must still differ
+    // program-wide, so use distinct activityKeys here.
     const tree = [
       unit("u1", [lesson("l1", ["a1"])]),
-      unit("u2", [lesson("l1", ["a1"])]),
+      unit("u2", [lesson("l1", ["a2"])]),
     ];
     expect(findDuplicateKeys(tree)).toBeNull();
   });
