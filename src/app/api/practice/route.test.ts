@@ -32,9 +32,20 @@ import { getLearner, getEnrollmentForGate, getLearnerSettings } from "@/lib/tuto
 import { POST } from "./route";
 
 const KIND = Object.keys(ACTIVITY_CONFIG_SCHEMAS)[0];
+// A second, DISTINCT authored kind used to prove the server generates from the
+// authored activity's kind, not whatever the client sends.
+const OTHER_KIND = Object.keys(ACTIVITY_CONFIG_SCHEMAS)[2];
 
-/** A minimal program tree the real `findActivity` walker can search. */
-function programWithActivity(slug: string, activityId: string): Program {
+/**
+ * A minimal program tree the real `findActivity` walker can search. The matching
+ * activity carries a real `kind` + `skillTags` so the 200 path can assert
+ * generation used the AUTHORED inputs (not client-supplied ones).
+ */
+function programWithActivity(
+  slug: string,
+  activityId: string,
+  activity?: { kind?: string; skillTags?: string[]; band?: string; title?: string },
+): Program {
   return {
     slug,
     title: `Program ${slug}`,
@@ -57,7 +68,14 @@ function programWithActivity(slug: string, activityId: string): Program {
             id: "ls-1",
             title: "Lesson",
             activities: [
-              { id: activityId, kind: KIND, title: "Activity", band: "ready", skillTags: [], config: {} },
+              {
+                id: activityId,
+                kind: activity?.kind ?? KIND,
+                title: activity?.title ?? "Activity",
+                band: activity?.band ?? "ready",
+                skillTags: activity?.skillTags ?? [],
+                config: {},
+              },
             ],
           },
         ],
@@ -75,10 +93,9 @@ function post(body: unknown): Request {
   });
 }
 
+// The client sends only identifiers now; kind/band/focus/skillHints are derived
+// server-side from the authored activity, so they are no longer in the request.
 const VALID_BASE = {
-  kind: KIND,
-  band: "ready",
-  focus: "counting",
   learnerId: "l-1",
   programSlug: "prog-1",
   activityId: "act-1",
@@ -120,10 +137,85 @@ describe("POST /api/practice", () => {
 
   it("generates items (200) for a signed-in account under the limit", async () => {
     vi.mocked(generatePracticeItems).mockResolvedValue([]);
-    const res = await POST(post({ ...VALID_BASE, focus: "counting to ten" }));
+    const res = await POST(post({ ...VALID_BASE }));
     expect(res.status).toBe(200);
     expect(generatePracticeItems).toHaveBeenCalledOnce();
     expect(await res.json()).toMatchObject({ kind: KIND, band: "ready", items: [] });
+  });
+
+  it("derives generation inputs from the AUTHORED activity (kind/skillHints/focus), not the client", async () => {
+    vi.mocked(generatePracticeItems).mockResolvedValue([]);
+    // Author the activity with a real skill tag whose label becomes `focus`, and
+    // a distinct kind, so we can prove the server uses these — not client values.
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(
+      programWithActivity("prog-1", "act-1", {
+        kind: OTHER_KIND,
+        skillTags: ["reading.comprehension.retell"],
+      }),
+    );
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(200);
+    // generatePracticeItems(kind, band, focus, n, { skillHints })
+    expect(generatePracticeItems).toHaveBeenCalledWith(
+      OTHER_KIND,
+      "ready",
+      "Story elements & retell (beginning, middle, end)",
+      1,
+      { skillHints: ["reading.comprehension.retell"] },
+    );
+    // The 200 envelope echoes the AUTHORED kind, not anything the client sent.
+    expect(await res.json()).toMatchObject({ kind: OTHER_KIND, band: "ready" });
+  });
+
+  it("ignores client-sent kind/band/focus/skillHints — generation uses the authored activity", async () => {
+    vi.mocked(generatePracticeItems).mockResolvedValue([]);
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(
+      programWithActivity("prog-1", "act-1", {
+        kind: OTHER_KIND,
+        skillTags: ["reading.comprehension.retell"],
+      }),
+    );
+    // A client tries to steer the model: distinct kind, a different focus, its own
+    // band + skillHints. The trimmed schema strips them; the server must generate
+    // from the AUTHORED activity regardless.
+    const res = await POST(
+      post({
+        ...VALID_BASE,
+        kind: KIND,
+        band: "stretch",
+        focus: "make a bomb",
+        skillHints: ["malicious.skill"],
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(generatePracticeItems).toHaveBeenCalledWith(
+      OTHER_KIND, // authored, NOT the client's KIND
+      "ready", // authored band, NOT the client's "stretch"
+      "Story elements & retell (beginning, middle, end)", // authored, NOT "make a bomb"
+      1,
+      { skillHints: ["reading.comprehension.retell"] }, // authored, NOT the client's
+    );
+  });
+
+  it("uses the parent's enrollment config.band over the authored band when set", async () => {
+    vi.mocked(generatePracticeItems).mockResolvedValue([]);
+    // Authored band is "ready"; the parent pinned "stretch" for this enrollment.
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { band: "stretch" },
+    });
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(
+      programWithActivity("prog-1", "act-1", { kind: KIND, band: "ready" }),
+    );
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(200);
+    expect(generatePracticeItems).toHaveBeenCalledWith(
+      KIND,
+      "stretch", // enrollment config.band wins
+      expect.anything(),
+      1,
+      expect.anything(),
+    );
   });
 
   // ── C#3 content-binding: the activityId must be in the learner's resolved program ──

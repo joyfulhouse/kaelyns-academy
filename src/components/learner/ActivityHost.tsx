@@ -11,7 +11,7 @@ import {
   SparkleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import type { Activity, ActivityScore, Unit, World } from "@/content";
-import { findActivity, getSkill, getUnit } from "@/content";
+import { findActivity, getUnit } from "@/content";
 import { outcomeOf } from "@/lib/tutor";
 import "@/activities"; // side-effect: registers every available activity-type plugin
 import { getActivityType } from "@/activities";
@@ -149,19 +149,17 @@ export function ActivityHost({
     router.push(backHref);
   }, [router, backHref]);
 
-  // Ask the bounded generator for one more item at this activity's level.
-  // `config.band` overrides the authored band when set (parent's difficulty pref).
-  // `learnerId` + `programSlug` are sent so the server can enforce the AI gate.
+  // Ask the bounded generator for one more item at this activity's level. The
+  // client sends only IDENTIFIERS; the server derives every generation input
+  // (kind/band/focus/skillHints) from the authored activity + the parent's
+  // enrollment config, so the model can't be steered off-curriculum from here.
+  // `learnerId` + `programSlug` are sent so the server can enforce the §8 AI gate
+  // and `activityId` binds generation to a real activity in the learner's
+  // resolved program (the stable authored key, matching the gate's findActivity).
   const handleMore = useCallback(async () => {
     if (!effectiveActivity) return;
     stopSpeaking();
     setPhase({ kind: "generating" });
-
-    const primarySkill = effectiveActivity.skillTags[0];
-    const focus =
-      (primarySkill ? getSkill(primarySkill)?.label : undefined) ?? effectiveActivity.title;
-    const band = config.band ?? effectiveActivity.band;
-    const learnerId = selectedLearnerId;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), PRACTICE_TIMEOUT_MS);
@@ -170,17 +168,10 @@ export function ActivityHost({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          kind: effectiveActivity.kind,
-          band,
-          focus,
-          n: 1,
-          skillHints: effectiveActivity.skillTags.slice(0, 8),
-          learnerId,
+          learnerId: selectedLearnerId,
           programSlug,
-          // Bind generation to this authored activity so the server can verify it
-          // belongs to the learner's resolved program (§8 content gate, C#3). The
-          // id is the stable authored key, matching the gate's findActivity.
           activityId: effectiveActivity.id,
+          n: 1,
         }),
         signal: controller.signal,
       });
@@ -206,7 +197,7 @@ export function ActivityHost({
     } finally {
       clearTimeout(timer);
     }
-  }, [effectiveActivity, config.band, selectedLearnerId, programSlug]);
+  }, [effectiveActivity, selectedLearnerId, programSlug]);
 
   // Account-mode curation gate (Fix-F A3), checked AFTER every hook above so hook
   // order stays stable. Enforced ONLY in account mode and ONLY once state has

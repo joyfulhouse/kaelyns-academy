@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
-import { findActivity } from "@/content";
+import { findActivity, getSkill } from "@/content";
 import { captureNonCritical } from "@/lib/capture";
 import { generatePracticeItems } from "@/lib/ai/practice";
 import { resolveLearnerProgram } from "@/lib/content/repository";
@@ -16,14 +15,12 @@ export const dynamic = "force-dynamic";
 // defense; the per-account limiter is a best-effort, per-instance secondary one.
 const RATE_LIMIT = { limit: 30, windowMs: 60_000 };
 
+// The client sends only IDENTIFIERS. Every generation input (kind/band/focus/
+// skillHints) is derived SERVER-side from the authored activity + the parent's
+// enrollment config below, so a client can't steer the model off-curriculum by
+// borrowing a valid enrolled activityId as a token (the §8 "bounded, server-
+// controlled" boundary). No ignored fields — an honest contract.
 const requestSchema = z.object({
-  kind: z.enum(Object.keys(ACTIVITY_CONFIG_SCHEMAS) as [keyof typeof ACTIVITY_CONFIG_SCHEMAS]),
-  band: z.enum(["ready", "stretch"]),
-  focus: z.string().min(1).max(200),
-  // Cap at 2 (the sole caller sends 1; 2 leaves minimal headroom). A higher cap
-  // would let one request amplify token spend N× inside the per-minute limit.
-  n: z.number().int().min(1).max(2).default(1),
-  skillHints: z.array(z.string().min(1).max(60)).max(8).optional(),
   // Per-child AI gate (spec §8). Required so the server always enforces the
   // parental control — no client may bypass by omitting these fields.
   learnerId: z.string().min(1).max(100),
@@ -32,8 +29,11 @@ const requestSchema = z.object({
   // bind generation to a real activity in the learner's RESOLVED program (C#3):
   // it closes the slug-swap where a client borrows program A's AI-enabled
   // enrollment to generate program B's content (B's activityId won't be in A's
-  // resolved tree).
+  // resolved tree). It is ALSO the source of the generation inputs (#2).
   activityId: z.string().min(1).max(100),
+  // Cap at 2 (the sole caller sends 1; 2 leaves minimal headroom). A higher cap
+  // would let one request amplify token spend N× inside the per-minute limit.
+  n: z.number().int().min(1).max(2).default(1),
 });
 
 export async function POST(request: Request) {
@@ -72,7 +72,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { kind, band, focus, n, skillHints, learnerId, programSlug, activityId } = parsed.data;
+  const { learnerId, programSlug, activityId, n } = parsed.data;
 
   // Ownership check: a foreign or stale learnerId returns 404 rather than
   // silently generating generic practice. (The §8 aiPractice 403 below is a
@@ -91,7 +91,8 @@ export async function POST(request: Request) {
   // content, because B's activityId isn't in A's resolved tree). This is an
   // ADDITIONAL gate; the fail-closed enrollment/settings checks below still run.
   const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
-  if (!program || findActivity(program, activityId) === undefined) {
+  const found = program ? findActivity(program, activityId) : undefined;
+  if (!program || !found) {
     return NextResponse.json({ error: "ai_disabled" }, { status: 403 });
   }
 
@@ -118,6 +119,19 @@ export async function POST(request: Request) {
   if (aiOff) {
     return NextResponse.json({ error: "ai_disabled" }, { status: 403 });
   }
+
+  // Generation inputs are SERVER-derived from the authored activity (verified
+  // above to be in the learner's resolved tree) + the parent's enrollment config.
+  // The client supplies none of them, so it can't steer kind/focus/skillHints
+  // (mirrors what ActivityHost used to compute, now authoritative server-side).
+  const { activity } = found;
+  const kind = activity.kind;
+  const skillHints = activity.skillTags.slice(0, 8);
+  const focus =
+    (activity.skillTags[0] ? getSkill(activity.skillTags[0])?.label : undefined) ?? activity.title;
+  // Parent's difficulty preference for this enrollment wins; else the activity's
+  // authored band.
+  const band = enrollment.config.band ?? activity.band;
 
   try {
     const items = await generatePracticeItems(kind, band, focus, n, { skillHints });
