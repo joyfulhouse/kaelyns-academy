@@ -2,8 +2,8 @@
  * Tests for the enrollment-version-pin resolution (C#5).
  *
  *  - `resolveProgramByVersionPin` is pure: assert the dispatch decision directly
- *    (pinned → version tree; missing pinned version → published fallback; null
- *    pin / no-enrollment → published).
+ *    (pinned → version tree; set pin whose version can't resolve → undefined,
+ *    fail-closed with NO slug fallback; null pin / no-enrollment → published).
  *  - `resolveLearnerProgram` is exercised against a MOCKED store (no DB): a
  *    pinned enrollment resolves the version tree; an unowned/absent enrollment
  *    (store returns null) falls back to the current published/static tree.
@@ -39,13 +39,15 @@ describe("resolveProgramByVersionPin (pure dispatch)", () => {
     expect(bySlug).not.toHaveBeenCalled();
   });
 
-  it("falls back to the published tree when the pinned version row is gone", async () => {
+  it("fails closed (returns undefined, no slug fallback) when a set pin's version can't be resolved", async () => {
     const byVersion = vi.fn(async () => undefined);
     const bySlug = vi.fn(async () => PROG_PUBLISHED);
     const result = await resolveProgramByVersionPin({ programVersionId: "v-gone" }, byVersion, bySlug);
-    expect(result).toBe(PROG_PUBLISHED);
+    // A set pin resolves to THAT version or nothing — never the current published
+    // tree (that would silently move a pinned learner onto unassigned content).
+    expect(result).toBeUndefined();
     expect(byVersion).toHaveBeenCalledWith("v-gone");
-    expect(bySlug).toHaveBeenCalledOnce();
+    expect(bySlug).not.toHaveBeenCalled();
   });
 
   it("uses the published tree when the pin is null (lazy/default enrollment)", async () => {

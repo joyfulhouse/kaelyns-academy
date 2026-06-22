@@ -190,8 +190,14 @@ export const findProgramByActivityIdAsync: (
  * resolvers, pick which tree to serve. Factored out so the dispatch is unit
  * testable without a DB.
  *
- *   - pinned id set → resolve THAT version; if the version row is gone
- *     (`undefined`), fall back to the current published/static tree.
+ *   - pinned id set → resolve THAT version and serve it AS-IS, including
+ *     `undefined` when the version can't be resolved. A set pin FAILS CLOSED: it
+ *     never silently falls back to current published content (that would move a
+ *     pinned learner onto a tree the parent didn't assign, breaking the pin for
+ *     render + progress + the §8 gate). `undefined` surfaces the calm
+ *     "unavailable" state instead. Published versions are immutable + archived
+ *     (never hard-deleted), so an unresolved set pin is effectively unreachable
+ *     in normal operation — when it happens it signals data repair, not a swap.
  *   - no pin (null `programVersionId`, OR no/unowned enrollment → `null`) →
  *     resolve the current published/static tree by slug.
  *
@@ -204,12 +210,9 @@ export async function resolveProgramByVersionPin(
   bySlug: () => Promise<Program | undefined>,
 ): Promise<Program | undefined> {
   const versionId = pin?.programVersionId;
-  if (versionId) {
-    const pinned = await byVersion(versionId);
-    if (pinned !== undefined) return pinned;
-    // The pinned version row is gone (e.g. hard-deleted) — degrade to the
-    // current published/static tree rather than 404 the learner's whole world.
-  }
+  // A set pin resolves to THAT version or nothing — fail closed, no slug
+  // fallback. Only a genuinely-null pin uses the current published/static tree.
+  if (versionId) return byVersion(versionId);
   return bySlug();
 }
 
@@ -220,10 +223,14 @@ export async function resolveProgramByVersionPin(
  * the learner's version.
  *
  * Reads the learner's enrollment version (ownership-checked) and dispatches via
- * {@link resolveProgramByVersionPin}: a pinned version is served as-is (with a
- * fall-back to current published if that version row is gone); a null pin / no
+ * {@link resolveProgramByVersionPin}: a pinned version is served as-is and FAILS
+ * CLOSED if that version can't be resolved (`undefined` → the calm "unavailable"
+ * state, never a silent swap to current published content); a null pin / no
  * enrollment / unowned learner falls back to the current published (or static)
- * tree by slug — the guest-equivalent the picker + gate handle separately.
+ * tree by slug — the guest-equivalent the picker + gate handle separately. Note
+ * the try/catch below is on the pin READ only: a DB error reading the enrollment
+ * row degrades to the null-pin/`bySlug` path; a SET pin whose version doesn't
+ * resolve still fails closed.
  *
  * Build-safe: the tutor store is imported lazily (per-request), never at module
  * top level. `cache()`-wrapped for per-request memoization like the other
