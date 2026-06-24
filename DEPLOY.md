@@ -38,6 +38,31 @@ curl -fsS -o /dev/null -w '%{http_code}\n' https://kaelyns.academy/api/health   
 - spot-check key routes return 200;
 - check Sentry for new errors in the 5 minutes post-roll (`process-sentry` skill).
 
+### Service worker + Cloudflare edge cache
+
+The PWA service worker is served at `/serwist/sw.js`. Its `Cache-Control` is forced to
+`public, max-age=0, must-revalidate` (via `next.config.ts` → `src/lib/pwa/precache.ts`)
+so a bad SW can't stay pinned at the edge for a year. **That header only governs *future*
+edge fetches.** An entry already cached under the old 1-year `s-maxage` will keep being
+served until evicted, so:
+
+- **On any deploy that changes the SW**, purge the Cloudflare cache for `/serwist/sw.js`
+  and `/serwist/sw.js.map` (Cloudflare → Caching → Purge → *Custom URLs*, or the API).
+  Also ensure no Cloudflare "Cache Everything" / Edge-TTL-Override rule for `/serwist/*`
+  ignores origin headers.
+- **Verify at the edge** (not just origin):
+  ```bash
+  curl -sI https://kaelyns.academy/serwist/sw.js | grep -iE 'cache-control|cf-cache-status'
+  # expect: cache-control: public, max-age=0, must-revalidate   (NO long s-maxage)
+  #         cf-cache-status: MISS/EXPIRED/DYNAMIC (not a long-lived HIT)
+  ```
+- **Precache is lean** (`public/**` + `/~offline` only — no content-hashed `/_next`
+  chunks; see `src/lib/pwa/precache.ts`), so a missing chunk can never fail the SW
+  `install`. Trade-off: the `/~offline` page renders from precached HTML but its CSS/
+  fonts come from the **runtime** cache (`CacheFirst` in `sw.ts`), so it is styled
+  offline only if those assets were fetched on a prior online visit. Acceptable for a
+  fallback; a fully self-contained (inline-CSS) offline page is a possible follow-up.
+
 ## Rollback
 
 - **Preferred:** revert the SHA-pin commit in `k3s-infra` → ArgoCD rolls back to the previous image.
