@@ -348,6 +348,25 @@ export async function skillOutcomeCounts(
 // ── Enrollment lifecycle + config + settings ─────────────────────────────────
 
 /**
+ * Write-time validation for the enrollment `config` jsonb. The action layer
+ * already validates caller input, but this store fn is the actual persistence
+ * boundary and is exported for other server callers (seeds, future actions,
+ * tests). Validating here means malformed data can NEVER be persisted, mirroring
+ * the read-side defensive parse — and unlike the read (which fails CLOSED to
+ * `{ aiPractice: false }` because corrupt rows already exist), a write fails
+ * fast: a bad config must never reach the column. @throws {ZodError}.
+ */
+function validateEnrollmentConfig(config: EnrollmentConfig): EnrollmentConfig {
+  return enrollmentConfigSchema.parse(config);
+}
+
+/** Write-time validation for the per-learner `settings` jsonb. Same rationale as
+ *  {@link validateEnrollmentConfig}: reject malformed data before it persists. */
+function validateLearnerSettings(settings: LearnerSettings): LearnerSettings {
+  return learnerSettingsSchema.parse(settings);
+}
+
+/**
  * Upsert a program enrollment for the learner (owned-by-account check first).
  * Insert with status="active" and programVersionId when none exists; if one
  * already exists, restore to active and re-pin the version.
@@ -362,13 +381,16 @@ export async function assignProgram(
 ): Promise<boolean> {
   const owned = await getLearner(accountId, learnerId);
   if (!owned) return false;
+  // A fresh enrollment starts with an empty config; run it through the schema so
+  // every config write in this store goes through one validation gate.
+  const config = validateEnrollmentConfig({});
   await getDb()
     .insert(enrollment)
     .values({
       learnerId,
       programSlug: slug,
       status: "active",
-      config: {},
+      config,
       programVersionId,
       updatedAt: new Date(),
     })
@@ -417,6 +439,7 @@ export async function setEnrollmentStatus(
  * Update the enrollment config for a learner's program (owned-by-account).
  * Returns false when the learner is not owned or no matching enrollment row
  * exists (no write); true when the config is updated.
+ * @throws {ZodError} when `config` fails schema validation (never persisted).
  */
 export async function setEnrollmentConfig(
   accountId: string,
@@ -426,9 +449,12 @@ export async function setEnrollmentConfig(
 ): Promise<boolean> {
   const owned = await getLearner(accountId, learnerId);
   if (!owned) return false;
+  // Validate before persisting: a malformed config must never reach the column
+  // (defense-in-depth behind the action-layer parse). @throws {ZodError}.
+  const validated = validateEnrollmentConfig(config);
   const updated = await getDb()
     .update(enrollment)
-    .set({ config, updatedAt: new Date() })
+    .set({ config: validated, updatedAt: new Date() })
     .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
     .returning({ id: enrollment.id });
   return updated.length > 0;
@@ -584,15 +610,19 @@ export async function getLearnerSettings(
  * Returns false when the learner is not owned by the account (no write); true on
  * success. Scopes the write to (id, accountId) so the ownership check and the
  * update can't drift, and uses the affected-row count as the source of truth.
+ * @throws {ZodError} when `settings` fails schema validation (never persisted).
  */
 export async function saveLearnerSettings(
   accountId: string,
   learnerId: string,
   settings: LearnerSettings,
 ): Promise<boolean> {
+  // Validate before persisting: malformed settings must never reach the column
+  // (defense-in-depth behind the action-layer parse). @throws {ZodError}.
+  const validated = validateLearnerSettings(settings);
   const updated = await getDb()
     .update(learner)
-    .set({ settings, updatedAt: new Date() })
+    .set({ settings: validated, updatedAt: new Date() })
     .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
     .returning({ id: learner.id });
   return updated.length > 0;
