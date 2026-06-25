@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { captureNonCritical } from "@/lib/capture";
 import { REQUIRED_COLUMNS, liveColumns, missingColumns } from "@/lib/db/health";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,9 @@ export async function GET() {
     }
     return NextResponse.json({ status: "ok" }, { status: 200 });
   } catch (err) {
-    return NextResponse.json({ status: "down", reason: err instanceof Error ? err.message : "unknown" }, { status: 503 });
+    // This is a PUBLIC endpoint — never echo a raw error message (it can leak DB
+    // host/driver internals). Log non-critically and return an opaque reason.
+    captureNonCritical("health check failed", err);
+    return NextResponse.json({ status: "down", reason: "internal_error" }, { status: 503 });
   }
 }

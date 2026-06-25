@@ -13,6 +13,7 @@
  * the OpenAI-compatible base (".../v1"), so we strip a trailing `/v1` to get the
  * root and call `${root}/dev/phonemize`.
  */
+import { z } from "zod";
 import { getEnv } from "@/lib/env";
 
 const PHONEMIZE_TIMEOUT_MS = 10_000;
@@ -30,8 +31,8 @@ export async function phonemize(text: string): Promise<string | null> {
     });
     if (!res.ok) return null;
     const data: unknown = await res.json();
-    const phonemes = (data as { phonemes?: unknown }).phonemes;
-    return typeof phonemes === "string" ? phonemes : null;
+    const parsed = z.object({ phonemes: z.string() }).safeParse(data);
+    return parsed.success ? parsed.data.phonemes : null;
   } catch {
     return null;
   }

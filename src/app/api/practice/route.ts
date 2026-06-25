@@ -76,6 +76,14 @@ export async function POST(request: Request) {
     );
   }
 
+  // Best-effort request-size guard BEFORE buffering the body: this endpoint only
+  // ever receives small JSON identifier payloads, so a large content-length is
+  // abuse. Absent/chunked length → skip (can't cheaply know the size up front).
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > 16384) {
+    return NextResponse.json({ error: "payload_too_large" }, { status: 413 });
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -97,46 +105,63 @@ export async function POST(request: Request) {
   if (!parsed.success) return badRequest(parsed.error);
   const { learnerId, programSlug, activityId, n } = parsed.data;
 
-  // Ownership: a foreign/stale learnerId is a 404 (not silent generic practice).
-  const ownedLearner = await getLearner(accountId, learnerId);
-  if (!ownedLearner) {
-    return NextResponse.json({ error: "not_found" }, { status: 404 });
-  }
+  // The §8 gate reads (ownership, content-binding, enrollment + settings) all hit
+  // the DB. A transient read error must NOT surface as a raw 500 that bypasses the
+  // gate — fail CLOSED: log non-critically and deny AI (403). This wraps the whole
+  // gating decision; the bounded generate() below keeps its own try/catch.
+  let activityKind: Parameters<typeof generatePracticeItems>[0];
+  let band: Parameters<typeof generatePracticeItems>[1];
+  let focus: string;
+  let skillHints: string[];
+  try {
+    // Ownership: a foreign/stale learnerId is a 404 (not silent generic practice).
+    const ownedLearner = await getLearner(accountId, learnerId);
+    if (!ownedLearner) {
+      return NextResponse.json({ error: "not_found" }, { status: 404 });
+    }
 
-  // Content-binding precondition (C#3): resolve the learner's version-pinned
-  // program for the CLAIMED slug (the same seam getLearnerStateAction renders +
-  // scopes) and verify activityId is in THAT tree — else 403 with no model call.
-  const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
-  const found = program ? findActivity(program, activityId) : undefined;
-  if (!program || !found) {
+    // Content-binding precondition (C#3): resolve the learner's version-pinned
+    // program for the CLAIMED slug (the same seam getLearnerStateAction renders +
+    // scopes) and verify activityId is in THAT tree — else 403 with no model call.
+    const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
+    const found = program ? findActivity(program, activityId) : undefined;
+    if (!program || !found) {
+      return NextResponse.json({ error: "ai_disabled" }, { status: 403 });
+    }
+
+    // §8 gate — FAIL-CLOSED. AI is allowed ONLY when: owned (404 above) AND an
+    // ACTIVE enrollment exists for (learner, program) AND the per-learner Settings
+    // kill-switch isn't off AND this enrollment's config.aiPractice isn't off. Both
+    // jsonb reads are safeParsed in the store, so a malformed row fails closed.
+    const [settings, enrollment] = await Promise.all([
+      getLearnerSettings(accountId, learnerId),
+      getEnrollmentForGate(accountId, learnerId, programSlug),
+    ]);
+    const aiOff =
+      settings?.aiPractice === false ||
+      !enrollment ||
+      enrollment.status !== "active" ||
+      enrollment.config.aiPractice === false;
+    if (aiOff) {
+      return NextResponse.json({ error: "ai_disabled" }, { status: 403 });
+    }
+
+    // Generation inputs are SERVER-derived from the authored activity (verified
+    // above to be in the learner's resolved tree) + the parent's enrollment config.
+    const { activity } = found;
+    focus =
+      (activity.skillTags[0] ? getSkill(activity.skillTags[0])?.label : undefined) ?? activity.title;
+    // Parent's per-enrollment difficulty preference wins; else the authored band.
+    band = enrollment.config.band ?? activity.band;
+    activityKind = activity.kind;
+    skillHints = activity.skillTags.slice(0, 8);
+  } catch (error) {
+    // Any read failure in the gate path → fail closed (never serve AI on error).
+    captureNonCritical("practice gate read failed", error);
     return NextResponse.json({ error: "ai_disabled" }, { status: 403 });
   }
 
-  // §8 gate — FAIL-CLOSED. AI is allowed ONLY when: owned (404 above) AND an
-  // ACTIVE enrollment exists for (learner, program) AND the per-learner Settings
-  // kill-switch isn't off AND this enrollment's config.aiPractice isn't off. Both
-  // jsonb reads are safeParsed in the store, so a malformed row fails closed.
-  const [settings, enrollment] = await Promise.all([
-    getLearnerSettings(accountId, learnerId),
-    getEnrollmentForGate(accountId, learnerId, programSlug),
-  ]);
-  const aiOff =
-    settings?.aiPractice === false ||
-    !enrollment ||
-    enrollment.status !== "active" ||
-    enrollment.config.aiPractice === false;
-  if (aiOff) {
-    return NextResponse.json({ error: "ai_disabled" }, { status: 403 });
-  }
-
-  // Generation inputs are SERVER-derived from the authored activity (verified
-  // above to be in the learner's resolved tree) + the parent's enrollment config.
-  const { activity } = found;
-  const focus =
-    (activity.skillTags[0] ? getSkill(activity.skillTags[0])?.label : undefined) ?? activity.title;
-  // Parent's per-enrollment difficulty preference wins; else the authored band.
-  const band = enrollment.config.band ?? activity.band;
-  return generate(activity.kind, band, focus, n, activity.skillTags.slice(0, 8));
+  return generate(activityKind, band, focus, n, skillHints);
 }
 
 /** Shared bounded generation + uniform error envelope for both flows. */

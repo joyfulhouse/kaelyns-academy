@@ -62,15 +62,25 @@ export async function POST(req: Request): Promise<Response> {
     });
   }
 
+  // Best-effort request-size guard BEFORE buffering the body: a TTS payload is a
+  // short child-facing string, so a large content-length is abuse. Absent/chunked
+  // length → skip (can't cheaply know the size up front).
+  const contentLength = Number(req.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > 16384) {
+    return NextResponse.json({ error: "payload_too_large" }, { status: 413 });
+  }
+
   let body: Body;
   try {
     body = (await req.json()) as Body;
   } catch {
-    return new Response(null, { status: 400 });
+    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
   // A literal `null` (or any non-object) JSON body parses without throwing, but
   // would throw on field access below — treat it as a bad request, not a 500.
-  if (typeof body !== "object" || body === null) return new Response(null, { status: 400 });
+  if (typeof body !== "object" || body === null) {
+    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
+  }
   // Canonicalize the same way ttsKey hashes so the synth input, cache key, and
   // length check all agree (a whitespace-padded body can't bypass the cap).
   const text = typeof body.text === "string" ? normalizeText(body.text) : "";
@@ -81,7 +91,11 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ error: "invalid_text" }, { status: 400 });
   }
 
-  const voice = typeof body.voice === "string" && body.voice ? body.voice : enVoice();
+  const requestedVoice = typeof body.voice === "string" && body.voice ? body.voice : enVoice();
+  // Defense-in-depth: a voice id is a short identifier token. Anything outside the
+  // safe charset (e.g. control chars) is rejected back to the default — we do NOT
+  // enumerate valid voice ids here (Kokoro owns that), just strip obvious abuse.
+  const voice = /^[A-Za-z0-9_]{1,40}$/.test(requestedVoice) ? requestedVoice : enVoice();
   const speed = enSpeed();
   // On-demand synth always writes to the EPHEMERAL (auto-expiring) tier: the
   // durable tier is owned solely by the warm-pass / pre-synth path
