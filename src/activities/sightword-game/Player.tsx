@@ -109,7 +109,9 @@ export function SightwordGamePlayer({
                 "relative grid min-h-20 place-items-center rounded-2xl border-[3px] border-ink px-4 py-5",
                 "font-display text-2xl shadow-pop transition duration-200 ease-out",
                 "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
-                isFound ? "bg-success/25 text-ink" : "bg-paper-raised text-ink",
+                isFound
+                  ? "bg-success/25 text-ink opacity-75 cursor-not-allowed"
+                  : "bg-paper-raised text-ink",
               )}
             >
               {card.word}
