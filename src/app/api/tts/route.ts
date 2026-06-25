@@ -6,6 +6,7 @@
  * even without durable storage. Kokoro unreachable → 503 so the client falls back
  * to browser TTS. Build-safe: all env/network is per-request.
  */
+import { NextResponse } from "next/server";
 import {
   MAX_TTS_TEXT_LEN,
   type Persist,
@@ -73,8 +74,12 @@ export async function POST(req: Request): Promise<Response> {
   // Canonicalize the same way ttsKey hashes so the synth input, cache key, and
   // length check all agree (a whitespace-padded body can't bypass the cap).
   const text = typeof body.text === "string" ? normalizeText(body.text) : "";
-  if (!text) return new Response(null, { status: 400 });
-  if (text.length > MAX_TTS_TEXT_LEN) return new Response(null, { status: 400 });
+  // Empty/whitespace-only or over-long text is nothing to synthesize → a clear,
+  // JSON 400 (matching the api/practice error-response style) so callers can act
+  // on it rather than parse an empty body.
+  if (!text || text.length > MAX_TTS_TEXT_LEN) {
+    return NextResponse.json({ error: "invalid_text" }, { status: 400 });
+  }
 
   const voice = typeof body.voice === "string" && body.voice ? body.voice : enVoice();
   const speed = enSpeed();

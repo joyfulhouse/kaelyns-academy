@@ -8,6 +8,81 @@ import { SERWIST_CACHE_CONTROL, SERWIST_ROUTE_SOURCE } from "./src/lib/pwa/preca
 // once per build in Node, so Date.now() here is a build stamp, not a per-request value.
 const BUILD_REV = process.env.SOURCE_COMMIT || process.env.GIT_SHA || String(Date.now());
 
+// ── Content-Security-Policy ──────────────────────────────────────────────────
+// The browser Sentry SDK POSTs error/replay envelopes to its DSN's ingest host
+// (e.g. https://oXXX.ingest.us.sentry.io). NEXT_PUBLIC_SENTRY_DSN is inlined at
+// BUILD time, so we derive the ingest origin here and add it to connect-src.
+// NOTE: this only fires when the build is actually given the DSN. The homelab CI
+// image build (homelab/docker/kaelyns-academy/Dockerfile) does NOT currently pass
+// NEXT_PUBLIC_SENTRY_DSN as a build-arg, so in production this resolves to null and
+// connect-src stays 'self' — which is correct, because the browser Sentry SDK is
+// likewise un-inlined and inert there (it isn't POSTing, so nothing is blocked).
+// Wiring browser Sentry later (add the DSN build-arg) auto-widens connect-src to
+// match. If the DSN is unset we add nothing — keeping the policy tight rather than
+// blanket-allowing an ingest wildcard.
+function sentryIngestOrigin(): string | null {
+  const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+  if (!dsn) return null;
+  try {
+    return new URL(dsn).origin;
+  } catch {
+    return null; // malformed DSN → Sentry won't post anywhere useful; allow nothing
+  }
+}
+
+// Enforcing CSP (NOT Report-Only). Each source is the minimum the app needs:
+// - default-src 'self'          everything not otherwise listed stays same-origin
+// - base-uri 'self'             block <base> tag hijacking of relative URLs
+// - object-src 'none'           no <object>/<embed> (legacy plugin XSS surface)
+// - frame-ancestors 'none'      no embedding (clickjacking); pairs with X-Frame-Options
+// - form-action 'self'          forms (Better Auth sign-in) post same-origin only
+// - img-src 'self' data: blob:  app art + inlined data: icons + blob: (canvas/SW)
+// - font-src 'self' data:       next/font self-hosts the font files; data: for inlined glyphs
+// - style-src 'self' 'unsafe-inline'   Tailwind/Next inject inline <style>; no nonce middleware
+// - script-src 'self' 'unsafe-inline'  Next 16 hydration + serwist registration use inline
+//                                bootstrap; we accept 'unsafe-inline' over adding nonce middleware
+// - worker-src 'self' blob:     serwist registers the SW from the same-origin
+//                                /serwist/sw.js ('self'); blob: is a harmless extra
+//                                allowance for any blob-URL worker, not required by serwist
+// - manifest-src 'self'         the PWA manifest is same-origin
+// - connect-src 'self' <sentry> fetch/XHR/beacon: same-origin (incl. the /audio proxy &
+//                                on-demand /api/tts, both same-origin) plus the Sentry ingest host
+// - media-src 'self' blob:      authored clips play from the same-origin /audio proxy
+//                                (NEXT_PUBLIC_AUDIO_BASE_URL defaults to /audio; MinIO is reached
+//                                server-side, never by the browser). blob: is REQUIRED: synthesized
+//                                TTS (/api/tts) is played via URL.createObjectURL(blob) + new Audio,
+//                                and CSP does not treat blob: media URLs as 'self'.
+function contentSecurityPolicy(): string {
+  const sentry = sentryIngestOrigin();
+  const connect = ["'self'", sentry].filter(Boolean).join(" ");
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self' 'unsafe-inline'",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+    `connect-src ${connect}`,
+    "media-src 'self' blob:",
+  ].join("; ");
+}
+
+// Baseline security headers applied to every response. Kept separate from the
+// serwist Cache-Control entry below (which targets only the /serwist/* route).
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), browsing-topics=()" },
+  { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains; preload" },
+  { key: "Content-Security-Policy", value: contentSecurityPolicy() },
+];
+
 const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: import.meta.dirname,
@@ -19,6 +94,11 @@ const nextConfig: NextConfig = {
   // rationale live in src/lib/pwa/precache.ts so the route and config share one source.)
   async headers() {
     return [
+      // Security baseline + enforcing CSP on every route.
+      {
+        source: "/(.*)",
+        headers: securityHeaders,
+      },
       {
         source: SERWIST_ROUTE_SOURCE,
         headers: [{ key: "Cache-Control", value: SERWIST_CACHE_CONTROL }],

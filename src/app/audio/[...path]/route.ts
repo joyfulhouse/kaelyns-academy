@@ -1,3 +1,4 @@
+import { captureNonCritical } from "@/lib/capture";
 import { getEnv } from "@/lib/env";
 
 /**
@@ -18,12 +19,62 @@ export const dynamic = "force-dynamic";
 /** Clip paths are simple `<locale>/<key>.<ext>` segments — nothing else is proxied. */
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 
+/** Hostnames that may legitimately be served over plaintext http://. */
+function isPrivateHttpHost(host: string): boolean {
+  const h = host.toLowerCase();
+  return (
+    h === "localhost" ||
+    h === "127.0.0.1" ||
+    h === "::1" ||
+    h === "[::1]" ||
+    // Cluster-internal MinIO (homelab) + reserved test/dev TLDs — never public.
+    h.endsWith(".local") ||
+    h.endsWith(".internal") ||
+    h.endsWith(".svc") ||
+    h.endsWith(".cluster.local") ||
+    h.endsWith(".test") ||
+    // RFC 1918 private ranges (best-effort literal-IP match).
+    /^10\./.test(h) ||
+    /^192\.168\./.test(h) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(h)
+  );
+}
+
+/**
+ * Defense-in-depth SSRF guard on the configured object-store origin (atop the
+ * per-segment path guards below). The origin must be an absolute http(s) URL;
+ * plaintext http is accepted only for loopback/private/cluster-internal hosts
+ * (the homelab serves MinIO cluster-internally over http and dev uses
+ * localhost). A `file:`/`gopher:`/public-http origin is a misconfiguration we
+ * refuse to fetch from. Returns the normalized base, or `null` when invalid.
+ */
+function validatedOrigin(origin: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return null; // not an absolute URL
+  }
+  if (url.protocol === "https:") return origin;
+  if (url.protocol === "http:" && isPrivateHttpHost(url.hostname)) return origin;
+  return null; // wrong scheme, or plaintext http to a public host
+}
+
 export async function GET(
   _req: Request,
   context: { params: Promise<{ path: string[] }> },
 ): Promise<Response> {
   const origin = getEnv("AUDIO_ORIGIN", "").trim().replace(/\/$/, "");
+  // Unset is expected (dev / no object store) → 404 so the client falls back to TTS.
   if (!origin) return new Response(null, { status: 404 });
+  // Set-but-invalid is a real misconfiguration → fail closed (500), never fetch.
+  if (!validatedOrigin(origin)) {
+    captureNonCritical(
+      "/audio refusing to proxy: AUDIO_ORIGIN is not a valid http(s) origin",
+      new Error("invalid AUDIO_ORIGIN"),
+    );
+    return new Response("Audio origin misconfigured", { status: 500 });
+  }
 
   const { path } = await context.params;
   // Path-traversal / SSRF guard: a clip is at most `<locale>/<key>.<ext>`. Every
