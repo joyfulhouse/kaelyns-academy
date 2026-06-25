@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRightIcon, BookOpenIcon } from "@phosphor-icons/react/dist/ssr";
 import { Pill } from "@/components/ui/Pill";
@@ -11,6 +12,8 @@ import { PROGRAM_STATUS_TONE, PROGRAM_STATUS_LABEL } from "@/lib/status-display"
  * Calls the store directly (the layout has already enforced admin).
  */
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = { title: "Programs" };
 
 export default async function AdminProgramsPage() {
   const programs = await listAdminPrograms();
