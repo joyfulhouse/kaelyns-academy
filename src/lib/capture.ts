@@ -7,7 +7,10 @@ export function captureNonCritical(message: string, error: unknown): void {
       scope.setLevel("warning");
       Sentry.captureException(error instanceof Error ? error : new Error(`${message}: ${String(error)}`));
     });
-  } catch {
-    /* monitoring must never break the app */
+  } catch (err) {
+    // Monitoring must never break the app, but a swallowed Sentry-send failure
+    // makes monitoring-down invisible. Surface it on stderr (still non-throwing)
+    // so the original event and the send failure both leave a trace.
+    console.error("captureNonCritical failed:", err);
   }
 }
