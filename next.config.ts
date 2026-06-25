@@ -47,10 +47,11 @@ function sentryIngestOrigin(): string | null {
 // - manifest-src 'self'         the PWA manifest is same-origin
 // - connect-src 'self' <sentry> fetch/XHR/beacon: same-origin (incl. the /audio proxy &
 //                                on-demand /api/tts, both same-origin) plus the Sentry ingest host
-// - media-src 'self'            audio clips are played from the same-origin /audio proxy
-//                                (NEXT_PUBLIC_AUDIO_BASE_URL defaults to /audio); the MinIO
-//                                backend is reached server-side by the proxy, never by the browser,
-//                                so no object-store host is needed here
+// - media-src 'self' blob:      authored clips play from the same-origin /audio proxy
+//                                (NEXT_PUBLIC_AUDIO_BASE_URL defaults to /audio; MinIO is reached
+//                                server-side, never by the browser). blob: is REQUIRED: synthesized
+//                                TTS (/api/tts) is played via URL.createObjectURL(blob) + new Audio,
+//                                and CSP does not treat blob: media URLs as 'self'.
 function contentSecurityPolicy(): string {
   const sentry = sentryIngestOrigin();
   const connect = ["'self'", sentry].filter(Boolean).join(" ");
@@ -67,7 +68,7 @@ function contentSecurityPolicy(): string {
     "worker-src 'self' blob:",
     "manifest-src 'self'",
     `connect-src ${connect}`,
-    "media-src 'self'",
+    "media-src 'self' blob:",
   ].join("; ");
 }
 
