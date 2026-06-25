@@ -15,6 +15,7 @@ import { SiteHeader } from "@/components/shell/SiteHeader";
 import { SiteFooter } from "@/components/shell/SiteFooter";
 import { programStats } from "@/content";
 import { getProgramAsync } from "@/lib/content/repository";
+import { cn } from "@/lib/cn";
 
 const PILLARS = [
   {
@@ -120,14 +121,15 @@ export default async function Home() {
               return (
                 <div
                   key={pillar.title}
-                  className={`flex flex-col gap-6 md:items-center ${
-                    i % 2 === 1 ? "md:flex-row-reverse" : "md:flex-row"
-                  }`}
+                  className={cn(
+                    "flex flex-col gap-6 md:items-center",
+                    i % 2 === 1 ? "md:flex-row-reverse" : "md:flex-row",
+                  )}
                 >
                   <div className="grid size-20 shrink-0 place-items-center rounded-2xl border-[3px] border-ink bg-accent/15 shadow-pop">
                     <Icon weight="duotone" className="size-10 text-ink" />
                   </div>
-                  <div className={i % 2 === 1 ? "md:text-right" : ""}>
+                  <div className={cn(i % 2 === 1 && "md:text-right")}>
                     <div className="font-display text-sm font-semibold text-ink-faint">
                       0{i + 1}
                     </div>
