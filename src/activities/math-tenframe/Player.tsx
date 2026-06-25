@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { ArrowCounterClockwiseIcon } from "@phosphor-icons/react/dist/ssr";
 import type { MathTenframeConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
+import { captureNonCritical } from "@/lib/capture";
 import { Button } from "@/components/ui/Button";
 import { Prompt, SpeakerButton } from "../_shared/ActivityChrome";
 import { RewardOverlay } from "../_shared/RewardOverlay";
@@ -22,6 +23,21 @@ export function MathTenframePlayer({
   const parsed = useMemo(() => schema.parse(config), [config]);
   const speech = useSpeech();
   const reduced = useReducedMotion();
+
+  // Audio is an enhancement, never required: the prompt text is always on screen
+  // (see <Prompt>), so a TTS engine that throws (some browsers throw synchronously
+  // from speechSynthesis) must never break the activity. Swallow + report; the
+  // child still sees every instruction, count, and wrong-answer hint.
+  const safeSpeak = useCallback(
+    (text: string) => {
+      try {
+        speech.speak(text);
+      } catch (error) {
+        captureNonCritical("math-tenframe: speech.speak failed", error);
+      }
+    },
+    [speech],
+  );
 
   const goal = goalFor(parsed);
   const capacity = parsed.frames * CELLS_PER_FRAME;
@@ -40,8 +56,8 @@ export function MathTenframePlayer({
   useEffect(() => {
     if (spokenRef.current) return;
     spokenRef.current = true;
-    speech.speak(parsed.instruction);
-  }, [parsed.instruction, speech]);
+    safeSpeak(parsed.instruction);
+  }, [parsed.instruction, safeSpeak]);
 
   // Clear the wrong-state timer on unmount so a mid-shake navigation can't set
   // state after the component is gone.
@@ -73,7 +89,7 @@ export function MathTenframePlayer({
     } else {
       const next = Math.min(added + 1, capacity - preset);
       setAdded(next);
-      speech.speak(String(preset + next));
+      safeSpeak(String(preset + next));
     }
   }
 
@@ -88,7 +104,7 @@ export function MathTenframePlayer({
       setDone({ count: total, attempts: attemptCount });
     } else {
       setWrong(true);
-      speech.speak(total > goal ? "That's a little too many. Try again." : "A few more. Try again.");
+      safeSpeak(total > goal ? "That's a little too many. Try again." : "A few more. Try again.");
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
       timerRef.current = window.setTimeout(() => setWrong(false), 900);
     }

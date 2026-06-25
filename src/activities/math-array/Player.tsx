@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { ArrowCounterClockwiseIcon, MinusIcon, PlusIcon } from "@phosphor-icons/react/dist/ssr";
 import type { MathArrayConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
+import { captureNonCritical } from "@/lib/capture";
 import { Button } from "@/components/ui/Button";
 import { Prompt, SpeakerButton } from "../_shared/ActivityChrome";
 import { RewardOverlay } from "../_shared/RewardOverlay";
@@ -27,6 +28,21 @@ export function MathArrayPlayer({
   const speech = useSpeech();
   const reduced = useReducedMotion();
 
+  // Audio is an enhancement, never required: the prompt text is always on screen
+  // (see <Prompt>), so a TTS engine that throws (some browsers throw synchronously
+  // from speechSynthesis) must never break the activity. Swallow + report; the
+  // child still sees every instruction and the wrong-answer hints.
+  const safeSpeak = useCallback(
+    (text: string) => {
+      try {
+        speech.speak(text);
+      } catch (error) {
+        captureNonCritical("math-array: speech.speak failed", error);
+      }
+    },
+    [speech],
+  );
+
   const total = totalFor(parsed);
   const expected = expectedFor(parsed);
   const isBuild = parsed.mode === "build";
@@ -43,8 +59,8 @@ export function MathArrayPlayer({
   useEffect(() => {
     if (spokenRef.current) return;
     spokenRef.current = true;
-    speech.speak(parsed.instruction);
-  }, [parsed.instruction, speech]);
+    safeSpeak(parsed.instruction);
+  }, [parsed.instruction, safeSpeak]);
 
   // Clear the wrong-state timer on unmount so a mid-shake navigation can't set
   // state after the component is gone.
@@ -94,7 +110,7 @@ export function MathArrayPlayer({
       setDone({ entered: answer, attempts: attemptCount });
     } else {
       setWrong(true);
-      speech.speak(
+      safeSpeak(
         answer > expected ? "That's a little too many. Count again." : "A little more. Count again.",
       );
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
