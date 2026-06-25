@@ -102,19 +102,26 @@ export const skill = pgTable("skill", {
  * + birth month (spec §8). IDs are app-generated UUIDs (text).
  */
 
-export const learner = pgTable("learner", {
-  id: text("id").primaryKey().$defaultFn(uuid),
-  accountId: text("account_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
-  displayName: text("display_name").notNull(),
-  avatar: text("avatar"),
-  /** Birth MONTH only (e.g. "August"), never a full birth date. */
-  birthMonth: text("birth_month"),
-  settings: jsonb("settings").$type<LearnerSettings>().notNull().default({}),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const learner = pgTable(
+  "learner",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    displayName: text("display_name").notNull(),
+    avatar: text("avatar"),
+    /** Birth MONTH only (e.g. "August"), never a full birth date. */
+    birthMonth: text("birth_month"),
+    settings: jsonb("settings").$type<LearnerSettings>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  // Every learner lookup is account-scoped (listLearners, the tenancy checks in
+  // getLearner/saveLearnerSettings/deleteLearner). Index the FK so those scans
+  // don't fall back to a seq scan as accounts accumulate.
+  (t) => [index("learner_account_idx").on(t.accountId)],
+);
 
 export const enrollment = pgTable(
   "enrollment",
@@ -157,7 +164,13 @@ export const attempt = pgTable(
     day: date("day").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("attempt_learner_created_idx").on(t.learnerId, t.createdAt)],
+  (t) => [
+    index("attempt_learner_created_idx").on(t.learnerId, t.createdAt),
+    // getCompletedActivityIds filters attempts by (learnerId, generated=false);
+    // this composite lets that authored-only scan use an index instead of
+    // filtering every attempt row for the learner.
+    index("attempt_learner_generated_idx").on(t.learnerId, t.generated),
+  ],
 );
 
 export const skillState = pgTable(
@@ -177,7 +190,14 @@ export const skillState = pgTable(
       .default([]),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("skill_state_learner_skill_uq").on(t.learnerId, t.skill)],
+  (t) => [
+    uniqueIndex("skill_state_learner_skill_uq").on(t.learnerId, t.skill),
+    // getSkillState / buildLearnerExport read all of a learner's skill rows
+    // (no skill predicate), which the (learnerId, skill) unique index serves
+    // only by prefix; a dedicated learnerId index keeps that whole-learner read
+    // index-backed.
+    index("skill_state_learner_idx").on(t.learnerId),
+  ],
 );
 
 export * from "./auth-schema";
