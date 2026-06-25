@@ -18,15 +18,40 @@ const lexend = Lexend({
   display: "swap",
 });
 
+const SITE_URL = "https://kaelyns.academy";
+const SITE_DESCRIPTION =
+  "A warm, adaptive learning studio for young children. Every subject meets each child at her real level and teaches forward, one mastered skill at a time, with gentle AI tutoring.";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: {
     default: "Kaelyn's Academy",
     template: "%s · Kaelyn's Academy",
   },
-  description:
-    "A warm, adaptive learning studio for young children. Every subject meets each child at her real level and teaches forward, one mastered skill at a time, with gentle AI tutoring.",
+  description: SITE_DESCRIPTION,
   applicationName: "Kaelyn's Academy",
   appleWebApp: { capable: true, title: "Kaelyn's Academy", statusBarStyle: "default" },
+  openGraph: {
+    type: "website",
+    siteName: "Kaelyn's Academy",
+    title: "Kaelyn's Academy",
+    description: SITE_DESCRIPTION,
+    url: SITE_URL,
+    images: [
+      {
+        url: "/icons/icon-512.png",
+        width: 512,
+        height: 512,
+        alt: "Kaelyn's Academy",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary",
+    title: "Kaelyn's Academy",
+    description: SITE_DESCRIPTION,
+    images: ["/icons/icon-512.png"],
+  },
 };
 
 export const viewport: Viewport = {
