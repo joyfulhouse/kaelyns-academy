@@ -21,7 +21,16 @@ describe("captureNonCritical", () => {
       throw sendError;
     });
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(() => captureNonCritical("thing failed", new Error("x"))).not.toThrow();
-    expect(consoleError).toHaveBeenCalledWith("captureNonCritical failed:", sendError);
+    const original = new Error("x");
+    expect(() => captureNonCritical("thing failed", original)).not.toThrow();
+    // The send failure AND the original event (message + error) are surfaced, so
+    // monitoring-down isn't silent and the failed event's context isn't lost.
+    expect(consoleError).toHaveBeenCalledWith(
+      "captureNonCritical failed:",
+      sendError,
+      "| original:",
+      "thing failed",
+      original,
+    );
   });
 });
