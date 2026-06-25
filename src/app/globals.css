@@ -32,6 +32,11 @@
   --color-warn: oklch(0.7 0.15 76);
   --color-danger: oklch(0.57 0.17 25);
 
+  /* Stretch — the "reach" / challenge tone (violet), paired light + deep like
+     the brand tones above so Pill and friends can tint + carry readable text. */
+  --color-stretch: oklch(0.58 0.15 300);
+  --color-stretch-deep: oklch(0.49 0.16 300);
+
   /* Typography — variable fonts wired via next/font in layout.tsx */
   --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
   --font-body: var(--font-lexend), ui-sans-serif, system-ui, sans-serif;
