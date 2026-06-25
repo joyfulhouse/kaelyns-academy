@@ -10,12 +10,16 @@ const BUILD_REV = process.env.SOURCE_COMMIT || process.env.GIT_SHA || String(Dat
 
 // ── Content-Security-Policy ──────────────────────────────────────────────────
 // The browser Sentry SDK POSTs error/replay envelopes to its DSN's ingest host
-// (e.g. https://oXXX.ingest.us.sentry.io). The host is environment-specific and
-// only known at runtime via NEXT_PUBLIC_SENTRY_DSN, so we derive its origin here
-// (next.config runs in Node at build, where NEXT_PUBLIC_* env is already present)
-// and add it to connect-src. If the DSN is unset (e.g. dev), Sentry never inits,
-// so connect-src 'self' is sufficient and we add nothing — keeping the policy
-// tight rather than blanket-allowing an ingest wildcard.
+// (e.g. https://oXXX.ingest.us.sentry.io). NEXT_PUBLIC_SENTRY_DSN is inlined at
+// BUILD time, so we derive the ingest origin here and add it to connect-src.
+// NOTE: this only fires when the build is actually given the DSN. The homelab CI
+// image build (homelab/docker/kaelyns-academy/Dockerfile) does NOT currently pass
+// NEXT_PUBLIC_SENTRY_DSN as a build-arg, so in production this resolves to null and
+// connect-src stays 'self' — which is correct, because the browser Sentry SDK is
+// likewise un-inlined and inert there (it isn't POSTing, so nothing is blocked).
+// Wiring browser Sentry later (add the DSN build-arg) auto-widens connect-src to
+// match. If the DSN is unset we add nothing — keeping the policy tight rather than
+// blanket-allowing an ingest wildcard.
 function sentryIngestOrigin(): string | null {
   const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
   if (!dsn) return null;
@@ -37,7 +41,9 @@ function sentryIngestOrigin(): string | null {
 // - style-src 'self' 'unsafe-inline'   Tailwind/Next inject inline <style>; no nonce middleware
 // - script-src 'self' 'unsafe-inline'  Next 16 hydration + serwist registration use inline
 //                                bootstrap; we accept 'unsafe-inline' over adding nonce middleware
-// - worker-src 'self' blob:     the serwist service worker registers from a blob: URL
+// - worker-src 'self' blob:     serwist registers the SW from the same-origin
+//                                /serwist/sw.js ('self'); blob: is a harmless extra
+//                                allowance for any blob-URL worker, not required by serwist
 // - manifest-src 'self'         the PWA manifest is same-origin
 // - connect-src 'self' <sentry> fetch/XHR/beacon: same-origin (incl. the /audio proxy &
 //                                on-demand /api/tts, both same-origin) plus the Sentry ingest host
