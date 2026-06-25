@@ -5,10 +5,21 @@ import { CaretLeftIcon } from "@phosphor-icons/react/dist/ssr";
 import { Pill } from "@/components/ui/Pill";
 import { AssignProgramControl } from "@/components/parent/AssignProgramControl";
 import { getProgramDetail } from "@/app/(parent)/data";
+import { getProgramAsync } from "@/lib/content/repository";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = { title: "Program" };
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  // getProgramAsync is cache()-wrapped, so this shares its query with the page's
+  // own getProgramDetail -> getProgramAsync call below (no extra DB round-trip).
+  const program = await getProgramAsync(slug);
+  return { title: program?.title ?? "Program" };
+}
 
 export default async function ProgramDetailPage({
   params,

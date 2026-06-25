@@ -2,6 +2,7 @@
 // and must never be imported into a Client Component. (the `server-only`
 // package isn't installed; this comment is the guard, and only the parent
 // server components / actions import it.)
+import { cache } from "react";
 import { withAccount } from "@/lib/tenancy";
 import {
   getLearner,
@@ -220,6 +221,20 @@ function outcomeFor(state: SkillState, slug: SkillTag): SkillOutcome | undefined
   if (!record || record.history.length === 0) return undefined;
   return deriveOutcome(record);
 }
+
+/**
+ * Just a learner's display name, account-scoped. Used by the learner-detail
+ * page's `generateMetadata` to title the tab with the child's name (the route is
+ * auth-gated + robots-disallowed, so the name in the title is fine). `cache()`-
+ * wrapped for per-request memoization so concurrent metadata + page renders that
+ * call it share one query. Returns null when the learner is not this account's.
+ */
+export const getLearnerName = cache(async (learnerId: string): Promise<string | null> => {
+  return withAccount(async ({ accountId }) => {
+    const learner = await getLearner(accountId, learnerId);
+    return learner?.displayName ?? null;
+  });
+});
 
 /**
  * Resolve a learner the account owns plus their real skill map and recent

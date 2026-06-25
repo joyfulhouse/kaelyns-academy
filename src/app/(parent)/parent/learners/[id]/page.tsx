@@ -15,6 +15,7 @@ import {
   avatarInitial,
   getLearnerDetail,
   getLearnerCurriculum,
+  getLearnerName,
   type ActivityRow,
   type SkillStatus,
 } from "@/app/(parent)/data";
@@ -23,7 +24,17 @@ import { LearnerDataControls } from "@/components/parent/LearnerDataControls";
 import { programStats } from "@/content";
 import type { SkillDomain } from "@/content";
 
-export const metadata: Metadata = { title: "Learner" };
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  // Auth-gated + robots-disallowed route, so the child's display name in the tab
+  // title is fine. cache()-wrapped, so this shares its query with the page render.
+  const name = await getLearnerName(id);
+  return { title: name ?? "Learner" };
+}
 
 /**
  * Domains in the order the learner-detail page renders them, each with a
