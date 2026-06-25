@@ -18,7 +18,7 @@ All color is OKLCH. Never `#000`/`#fff`; every neutral is tinted toward the warm
 | `--paper-sunk` | `oklch(0.935 0.013 80)` | wells, insets, track backgrounds |
 | `--ink` | `oklch(0.26 0.020 60)` | primary text, storybook outlines |
 | `--ink-soft` | `oklch(0.44 0.020 62)` | secondary text |
-| `--ink-faint` | `oklch(0.60 0.016 65)` | tertiary / muted / placeholder |
+| `--ink-faint` | `oklch(0.52 0.017 64)` | tertiary / muted / placeholder (AA on paper for small text) |
 | `--line` | `oklch(0.90 0.012 78)` | hairline borders (1px) |
 | `--line-strong` | `oklch(0.83 0.015 74)` | stronger dividers |
 
