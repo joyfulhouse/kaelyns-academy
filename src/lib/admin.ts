@@ -2,8 +2,10 @@
  * Admin gate — allowlist-based email check + requireAdmin() per-request helper.
  * Build-safe: no top-level getAuth() or getDb() calls.
  */
+import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { getAuth } from "@/lib/auth";
+import { getDb, schema } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import { UnauthenticatedError } from "@/lib/tenancy";
 
@@ -57,6 +59,18 @@ export async function requireAdmin(): Promise<{ userId: string; email: string }>
   const email = session.user.email;
   const allowlist = getEnv("ADMIN_EMAILS", "");
   if (!isAdminEmail(email, allowlist)) throw new AdminForbiddenError();
+
+  // Stale-session defense-in-depth: a session can outlive its user row (the
+  // parent deleted their account, an admin pruned the user). Confirm the
+  // principal still exists before granting admin; if it's gone, treat the
+  // session as no-longer-valid — the SAME failure as "no session".
+  const db = getDb();
+  const [row] = await db
+    .select({ id: schema.user.id })
+    .from(schema.user)
+    .where(eq(schema.user.id, session.user.id))
+    .limit(1);
+  if (!row) throw new UnauthenticatedError();
 
   return { userId: session.user.id, email };
 }
