@@ -98,6 +98,27 @@ type SaveState =
   | { status: "error"; message: string };
 
 /**
+ * PURE. Walk the form tree and return the first activity whose `configJson`
+ * fails its per-kind schema, as a ready-to-show error message — or `null` when
+ * every config is valid. This is the config save-gate: it reads live form state
+ * (reorder-safe, unlike the positional invalidConfigsRef) and its message is what
+ * the editor surfaces when a save is blocked, so it's unit-tested in isolation.
+ */
+export function firstConfigError(units: EditorFormValues["units"]): string | null {
+  for (const unit of units) {
+    for (const lesson of unit.lessons) {
+      for (const activity of lesson.activities) {
+        const result = validateConfigJson(activity.kind, activity.configJson);
+        if (!result.ok) {
+          return `Activity "${activity.title || activity.activityKey}": ${result.message}`;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Root RHF form for the nested curriculum tree editor.
  * One `useForm` over `{ metadata, units }`. Save → `saveVersionTreeAction`.
  * Config validity is enforced by the explicit per-activity validateConfigJson
@@ -155,19 +176,10 @@ export function ProgramEditor({ version }: ProgramEditorProps) {
     // Validate all configJson values from current form state. This is the only
     // config gate — it's reorder-safe because it reads the live field array, not
     // the positional invalidConfigsRef keys.
-    for (const unit of data.units) {
-      for (const lesson of unit.lessons) {
-        for (const activity of lesson.activities) {
-          const result = validateConfigJson(activity.kind, activity.configJson);
-          if (!result.ok) {
-            setSaveState({
-              status: "error",
-              message: `Activity "${activity.title || activity.activityKey}": ${result.message}`,
-            });
-            return;
-          }
-        }
-      }
+    const configError = firstConfigError(data.units);
+    if (configError) {
+      setSaveState({ status: "error", message: configError });
+      return;
     }
 
     setSaveState({ status: "saving" });
