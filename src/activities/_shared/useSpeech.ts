@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { type NarrateHandle, narrate } from "@/components/learner/narrate";
+import { captureNonCritical } from "@/lib/capture";
 import { type SpeakOptions, routeSpeak } from "./speechRouting";
 import { pickVoice, speechParamsFor } from "./voiceUtils";
 
@@ -98,10 +99,20 @@ export function useSpeech(locale = "en-US"): SpeechController {
 
   const speak = useCallback(
     (text: string, opts?: SpeakOptions) => {
-      narrateRef.current?.cancel();
-      narrateRef.current = null;
-      (synthRef.current ?? getSynth())?.cancel();
-      narrateRef.current = routeSpeak(locale, text, { narrate, speakViaSynth }, opts);
+      // TTS is an enhancement, never required (PRODUCT.md §1). A synchronous throw
+      // anywhere in the synth/neural path (new SpeechSynthesisUtterance, routeSpeak,
+      // etc.) must never escape into a caller's render or click handler — guarding
+      // here keeps EVERY invocation safe (the speaker button, auto-read on mount,
+      // and activity callers alike). The prompt text stays visible regardless.
+      try {
+        narrateRef.current?.cancel();
+        narrateRef.current = null;
+        (synthRef.current ?? getSynth())?.cancel();
+        narrateRef.current = routeSpeak(locale, text, { narrate, speakViaSynth }, opts);
+      } catch (error) {
+        narrateRef.current = null;
+        captureNonCritical("Speech synthesis failed", error);
+      }
     },
     [locale, speakViaSynth],
   );
