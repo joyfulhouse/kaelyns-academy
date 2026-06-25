@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { captureNonCritical } from "@/lib/capture";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Last-resort error boundary: it replaces the *root* layout, so it must render
@@ -18,7 +18,12 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    captureNonCritical("Global error boundary", error);
+    // A root layout/app crash is the most severe boundary, so capture it at
+    // fatal level (which ALERTS) rather than the non-critical/warning path used
+    // for recoverable route-segment errors. captureNonCritical lives in
+    // @/lib/capture (owned by a separate change), so calling Sentry directly
+    // keeps this severity fix self-contained to the global boundary.
+    Sentry.captureException(error, { level: "fatal", tags: { boundary: "global-error" } });
   }, [error]);
 
   return (

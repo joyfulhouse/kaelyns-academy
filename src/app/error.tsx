@@ -25,10 +25,12 @@ export default function Error({
   }, [error]);
 
   // Keep a child who errors mid-activity inside the studio rather than dropping
-  // them on the marketing homepage (a dead-end for a non-reader); other surfaces
-  // fall back to the site root.
+  // them on the marketing homepage (a dead-end for a non-reader). Only NESTED
+  // learner routes (/learn/<program>/...) fall back to the studio picker; if
+  // /learn itself is the failing segment, "Go home" must not point back at the
+  // broken page, so it goes to the site root. Other surfaces use the root too.
   const pathname = usePathname();
-  const homeHref = pathname?.startsWith("/learn") ? "/learn" : "/";
+  const homeHref = pathname?.startsWith("/learn/") ? "/learn" : "/";
 
   return (
     <main className="grid min-h-dvh place-items-center bg-paper px-6 text-center">
