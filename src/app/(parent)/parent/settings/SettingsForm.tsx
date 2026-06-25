@@ -3,11 +3,9 @@
 import { useState, useTransition } from "react";
 import {
   CheckCircleIcon,
-  DownloadSimpleIcon,
   ListChecksIcon,
   RobotIcon,
   SpeakerHighIcon,
-  TrashIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
@@ -222,47 +220,7 @@ export function SettingsForm({
           We keep only a display name and birth month for each learner, plus your account email.
           No ads, no third-party tracking. Your child&rsquo;s data is yours.
         </p>
-
-        <div className="mt-5 flex flex-col gap-4 rounded-xl border border-line p-6 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <DownloadSimpleIcon weight="regular" className="mt-0.5 size-5 shrink-0 text-ink-soft" />
-            <div>
-              <h3 className="font-display text-base font-semibold">Export your data</h3>
-              <p className="mt-0.5 max-w-md text-sm text-ink-soft">
-                Download everything we hold for your account and learners as a single file.
-              </p>
-            </div>
-          </div>
-          {/* TODO(P6): wire to a server action that assembles a per-account export
-              (account + learners + attempts), scoped via withAccount(). */}
-          <Button variant="soft" size="md" disabled title="Data export arrives with account settings">
-            Request export
-          </Button>
-        </div>
-
-        <div className="mt-4 flex flex-col gap-4 rounded-xl border border-danger/30 bg-danger/5 p-6 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <TrashIcon weight="regular" className="mt-0.5 size-5 shrink-0 text-danger" />
-            <div>
-              <h3 className="font-display text-base font-semibold text-ink">Delete your data</h3>
-              <p className="mt-0.5 max-w-md text-sm text-ink-soft">
-                Permanently remove your account and every learner&rsquo;s records. This cannot be
-                undone.
-              </p>
-            </div>
-          </div>
-          {/* TODO(P6): wire to a confirmed server action that deletes the account
-              and cascades to learners/attempts, scoped via withAccount(). */}
-          <Button
-            variant="soft"
-            size="md"
-            disabled
-            title="Account deletion arrives with account settings"
-            className="border-danger/30 text-danger"
-          >
-            Delete account
-          </Button>
-        </div>
+        {/* P6: data export + account deletion land with account settings */}
       </section>
     </div>
   );

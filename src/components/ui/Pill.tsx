@@ -6,7 +6,7 @@ export type PillTone = "neutral" | "ready" | "stretch" | "accent" | "success";
 const TONE: Record<PillTone, string> = {
   neutral: "bg-paper-sunk text-ink-soft",
   ready: "bg-honey/20 text-ink",
-  stretch: "bg-[oklch(0.58_0.15_300_/_0.16)] text-ink",
+  stretch: "bg-stretch/15 text-ink",
   accent: "bg-accent/15 text-ink",
   success: "bg-success/15 text-ink",
 };
