@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { usePathname } from "next/navigation";
 import { ArrowClockwiseIcon, HouseIcon } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Mascot } from "@/components/art/Mascot";
@@ -23,6 +24,12 @@ export default function Error({
     captureNonCritical("Route error boundary", error);
   }, [error]);
 
+  // Keep a child who errors mid-activity inside the studio rather than dropping
+  // them on the marketing homepage (a dead-end for a non-reader); other surfaces
+  // fall back to the site root.
+  const pathname = usePathname();
+  const homeHref = pathname?.startsWith("/learn") ? "/learn" : "/";
+
   return (
     <main className="grid min-h-dvh place-items-center bg-paper px-6 text-center">
       <div className="max-w-md">
@@ -38,7 +45,7 @@ export default function Error({
             <ArrowClockwiseIcon weight="bold" />
             Try again
           </Button>
-          <Button href="/" variant="soft" size="lg">
+          <Button href={homeHref} variant="soft" size="lg">
             <HouseIcon weight="bold" />
             Go home
           </Button>

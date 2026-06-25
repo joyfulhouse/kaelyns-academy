@@ -38,6 +38,9 @@ export default function GlobalError({
           lineHeight: 1.6,
         }}
       >
+        {/* globals.css (and its :focus-visible rule) is presumed unloaded here,
+            so the only interactive control inlines its own keyboard focus ring. */}
+        <style>{`.ge-retry:focus-visible{outline:3px solid #2b2118;outline-offset:3px;}`}</style>
         <div style={{ maxWidth: "28rem" }}>
           <div aria-hidden style={{ fontSize: "3.5rem", lineHeight: 1 }}>
             ⭐
@@ -58,6 +61,7 @@ export default function GlobalError({
           <button
             type="button"
             onClick={() => reset()}
+            className="ge-retry"
             style={{
               marginTop: "2rem",
               cursor: "pointer",
