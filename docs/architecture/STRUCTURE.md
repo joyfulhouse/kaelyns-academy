@@ -27,7 +27,8 @@ kaelyns-academy/
 │
 ├── drizzle/                          # generated migrations (0000 health_check, 0001 auth tables)
 ├── scripts/
-│   └── db.sh                         # psql wrapper → CNPG -rw in-cluster, else $DATABASE_URL
+│   ├── db.sh                         # psql wrapper → CNPG -rw in-cluster, else $DATABASE_URL
+│   └── migrate.ts                    # `bun scripts/migrate.ts` — programmatic drizzle migrate() for the deploy Job (standalone CLI, not in the Next build); `db:migrate:deploy`
 │
 ├── instrumentation.ts                # Sentry register() + onRequestError
 ├── instrumentation-client.ts         # Sentry client init + onRouterTransitionStart

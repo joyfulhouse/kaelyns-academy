@@ -9,6 +9,15 @@
  * deterministic exit code and an explicit connection close, so it is safe to gate a
  * rollout on. Idempotent: already-applied migrations (tracked in
  * drizzle.__drizzle_migrations) are skipped.
+ *
+ * PREREQUISITE before wiring this into the PreSync Job (NOT done in this change —
+ * the Job lives in k3s-infra and migrations are still applied manually per
+ * DEPLOY.md): the live `kaelyns-academy-db` was bootstrapped with `drizzle-kit
+ * push`, so `drizzle.__drizzle_migrations` is EMPTY. Running this against it
+ * unbaselined would treat 0000+ as pending and fail recreating existing tables.
+ * The journal MUST first be backfilled with the already-applied tags
+ * (0000..0006) as a one-time ops step. Until then, apply new expand-only
+ * migrations the current way: `scripts/db.sh < drizzle/<file>.sql`.
  */
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
