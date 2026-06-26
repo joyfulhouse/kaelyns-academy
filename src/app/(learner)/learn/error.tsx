@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
-import { ArrowClockwiseIcon, CompassIcon } from "@phosphor-icons/react/dist/ssr";
+import { usePathname } from "next/navigation";
+import { ArrowClockwiseIcon, CompassIcon, HouseIcon } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Mascot } from "@/components/art/Mascot";
 import { captureNonCritical } from "@/lib/capture";
@@ -25,8 +26,16 @@ export default function LearnerError({
     captureNonCritical("Learner route error", error);
   }, [error]);
 
+  // This boundary catches the picker (/learn) AND nested activity pages
+  // (/learn/<program>/...). A nested failure can escape to the picker, but if
+  // /learn itself is the failing segment the secondary action must NOT point
+  // back at the broken page (a retry-only trap), so it goes to the site root —
+  // mirroring the global boundary's pathname-based routing.
+  const pathname = usePathname();
+  const isNested = pathname?.startsWith("/learn/") ?? false;
+
   return (
-    <div className="surface-kid grid min-h-dvh place-items-center bg-paper px-6 text-center">
+    <main className="surface-kid grid min-h-dvh place-items-center bg-paper px-6 text-center">
       <div className="max-w-md">
         <Mascot mood="think" size={140} className="mx-auto motion-safe:animate-float" />
         <h1 className="mt-6 font-display text-3xl font-semibold tracking-tight text-ink">
@@ -40,15 +49,22 @@ export default function LearnerError({
             <ArrowClockwiseIcon weight="bold" aria-hidden="true" />
             Try again
           </Button>
-          <Button href="/learn" variant="soft" size="kid">
-            <CompassIcon weight="bold" aria-hidden="true" />
-            Go to my worlds
-          </Button>
+          {isNested ? (
+            <Button href="/learn" variant="soft" size="kid">
+              <CompassIcon weight="bold" aria-hidden="true" />
+              Go to my worlds
+            </Button>
+          ) : (
+            <Button href="/" variant="soft" size="kid">
+              <HouseIcon weight="bold" aria-hidden="true" />
+              Take me home
+            </Button>
+          )}
         </div>
         {error.digest && (
           <p className="mt-6 text-sm text-ink-faint">Reference: {error.digest}</p>
         )}
       </div>
-    </div>
+    </main>
   );
 }
