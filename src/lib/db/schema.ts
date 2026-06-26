@@ -20,7 +20,7 @@ export const publisher = pgTable("publisher", {
   kind: text("kind").notNull().default("builtin"), // builtin | admin | third_party
   ownerUserId: text("owner_user_id").references(() => user.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [index("publisher_owner_user_idx").on(t.ownerUserId)]);
 
 export const program = pgTable("program", {
   id: text("id").primaryKey().$defaultFn(uuid),
@@ -30,7 +30,7 @@ export const program = pgTable("program", {
   publishedVersionId: text("published_version_id"), // loose ref (no FK) → program_version.id; avoids a circular constraint
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [index("program_publisher_idx").on(t.publisherId)]);
 
 export const programVersion = pgTable("program_version", {
   id: text("id").primaryKey().$defaultFn(uuid),

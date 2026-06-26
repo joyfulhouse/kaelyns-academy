@@ -43,6 +43,13 @@
       "when": 1782387554791,
       "tag": "0005_luxuriant_stepford_cuckoos",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1782503921314,
+      "tag": "0006_fancy_ma_gnuci",
+      "breakpoints": true
     }
   ]
 }
