@@ -15,7 +15,6 @@ import {
   avatarInitial,
   getLearnerDetail,
   getLearnerCurriculum,
-  getLearnerName,
   type ActivityRow,
   type SkillStatus,
 } from "@/app/(parent)/data";
@@ -24,17 +23,13 @@ import { LearnerDataControls } from "@/components/parent/LearnerDataControls";
 import { programStats } from "@/content";
 import type { SkillDomain } from "@/content";
 
-export async function generateMetadata({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}): Promise<Metadata> {
-  const { id } = await params;
-  // Auth-gated + robots-disallowed route, so the child's display name in the tab
-  // title is fine. cache()-wrapped, so this shares its query with the page render.
-  const name = await getLearnerName(id);
-  return { title: name ?? "Learner" };
-}
+// Deliberately a static, non-identifying title. The child's display name is
+// child PII (spec §8) and is shown only inside the authenticated page body —
+// never in `document.title`, which leaks into browser history, OS window/tab
+// previews, and client telemetry (e.g. Sentry breadcrumbs capture document
+// titles). Auth-gating + robots-disallow stop indexing/access, not those
+// metadata surfaces, so the name stays out of the title entirely.
+export const metadata: Metadata = { title: "Learner" };
 
 /**
  * Domains in the order the learner-detail page renders them, each with a
