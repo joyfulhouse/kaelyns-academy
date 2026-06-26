@@ -10,18 +10,55 @@
  * rollout on. Idempotent: already-applied migrations (tracked in
  * drizzle.__drizzle_migrations) are skipped.
  *
- * PREREQUISITE before wiring this into the PreSync Job (NOT done in this change —
- * the Job lives in k3s-infra and migrations are still applied manually per
- * DEPLOY.md): the live `kaelyns-academy-db` was bootstrapped with `drizzle-kit
- * push`, so `drizzle.__drizzle_migrations` is EMPTY. Running this against it
- * unbaselined would treat 0000+ as pending and fail recreating existing tables.
- * The journal MUST first be backfilled with the already-applied tags
- * (0000..0006) as a one-time ops step. Until then, apply new expand-only
+ * Fails CLOSED on an unbaselined database (see assertBaselined): the live
+ * `kaelyns-academy-db` was bootstrapped with `drizzle-kit push`, so its
+ * `drizzle.__drizzle_migrations` journal is EMPTY while the tables already
+ * exist. Running migrate() blindly there would treat 0000+ as pending and abort
+ * recreating existing tables — bricking the deploy. The preflight refuses that
+ * state with an actionable error instead, so this runner is safe to wire into
+ * the k3s-infra PreSync Job. The journal must first be backfilled with the
+ * already-applied tags (one-time ops step); until then, apply new expand-only
  * migrations the current way: `scripts/db.sh < drizzle/<file>.sql`.
  */
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
+
+type Sql = ReturnType<typeof postgres>;
+
+/**
+ * Refuse to run against a database whose schema already exists but whose Drizzle
+ * journal is empty/absent (a `drizzle-kit push` bootstrap). In that state every
+ * migration looks pending and migrate() would fail recreating existing objects;
+ * a duplicate-object abort would block — and keep retrying — the rollout. Bail
+ * with a clear baseline instruction instead. (A genuinely empty database — no
+ * app tables, no journal — is the normal first-run case and is allowed.)
+ */
+async function assertBaselined(sql: Sql): Promise<void> {
+  // Both reads are existence-safe: information_schema and to_regclass never error
+  // on a missing object (to_regclass returns NULL), so referencing the journal
+  // table indirectly avoids a parse-time failure when it doesn't exist yet.
+  const [{ app_tables, journal_exists }] = await sql<
+    { app_tables: number; journal_exists: boolean }[]
+  >`
+    SELECT
+      (SELECT count(*) FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_type = 'BASE TABLE')::int AS app_tables,
+      (to_regclass('drizzle.__drizzle_migrations') IS NOT NULL) AS journal_exists
+  `;
+  if (app_tables === 0) return; // fresh database → normal first run, nothing to baseline
+
+  const journalRows = journal_exists
+    ? Number((await sql`SELECT count(*)::int AS n FROM drizzle.__drizzle_migrations`)[0].n)
+    : 0;
+  if (journalRows === 0) {
+    throw new Error(
+      `database has ${app_tables} table(s) in "public" but an empty drizzle.__drizzle_migrations journal ` +
+        `(a drizzle-kit push bootstrap). Refusing to run migrate() — it would treat 0000+ as pending and ` +
+        `fail recreating existing tables. Backfill the journal with the already-applied migration tags first.`,
+    );
+  }
+}
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -31,6 +68,7 @@ if (!url) {
 
 const sql = postgres(url, { max: 1 });
 try {
+  await assertBaselined(sql);
   await migrate(drizzle(sql), { migrationsFolder: "drizzle" });
   console.log("[migrate] schema is up to date");
   await sql.end();
