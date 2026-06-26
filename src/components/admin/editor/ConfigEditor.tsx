@@ -41,7 +41,9 @@ export function ConfigEditor({
         className={cn(
           "min-h-40 w-full rounded-md border bg-paper-sunk font-mono text-xs text-ink",
           "px-3 py-2 transition-colors duration-200 ease-out-quart",
-          "focus:border-accent focus:outline-none focus-visible:outline-none",
+          // Keyboard focus uses the global 3px `:focus-visible` ring (globals.css); no
+          // `outline-none` here or it suppresses that ring for keyboard users (see TextInput).
+          "focus:border-accent",
           localError
             ? "border-danger focus:border-danger"
             : "border-line hover:border-line-strong",
