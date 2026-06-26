@@ -116,4 +116,49 @@ describe("POST /api/tts", () => {
     expect(res.status).toBe(400);
     expect(synthesizeMp3).not.toHaveBeenCalled();
   });
+
+  it("rejects invalid JSON with a 400 {error:invalid_json} envelope", async () => {
+    const req = new Request("http://test/api/tts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{ not json",
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid_json" });
+    expect(synthesizeMp3).not.toHaveBeenCalled();
+  });
+
+  it("413s when content-length exceeds the cap, before any synth", async () => {
+    const res = await POST(post({ text: "x" }, { "content-length": "20000" }));
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: "payload_too_large" });
+    expect(synthesizeMp3).not.toHaveBeenCalled();
+  });
+
+  it("does not block a request whose content-length is at/under the cap", async () => {
+    vi.mocked(clipExists).mockResolvedValue(true); // cache hit → 303
+    const res = await POST(post({ text: "Find the word" }, { "content-length": "16384" }));
+    expect(res.status).toBe(303);
+  });
+
+  it("falls back to the default voice when the requested voice has illegal chars", async () => {
+    // A control char / unsafe token must NOT reach the synth as-is; it falls back
+    // to enVoice(). We assert via the cache key: the redirect URL is keyed off the
+    // voice, so a hit proves the canonical (default) voice was used for the key.
+    vi.mocked(clipExists).mockResolvedValue(true);
+    const res = await POST(post({ text: "Find the word", voice: "af_bella\n; rm -rf" }));
+    expect(res.status).toBe(303);
+    // Same location as the default-voice request (voice was normalized away).
+    const def = await POST(post({ text: "Find the word" }));
+    expect(res.headers.get("location")).toBe(def.headers.get("location"));
+  });
+
+  it("honors a valid voice id (safe charset) as the synth/cache key", async () => {
+    vi.mocked(clipExists).mockResolvedValue(false);
+    vi.mocked(synthesizeMp3).mockResolvedValue(new Uint8Array([9]));
+    vi.mocked(putClip).mockResolvedValue(true);
+    await POST(post({ text: "brand new line", voice: "af_sky" }));
+    expect(synthesizeMp3).toHaveBeenCalledWith("brand new line", "af_sky", expect.any(Number));
+  });
 });

@@ -199,7 +199,11 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
       .where(
         and(eq(enrollment.learnerId, input.learnerId), eq(enrollment.programSlug, input.programSlug)),
       )
-      .limit(1);
+      .limit(1)
+      // Lock the enrollment row for the tx's lifetime so a concurrent pause/remove
+      // can't commit between this active-check and the attempt insert below (the
+      // skill_state folds already lock FOR UPDATE; this closes the same race here).
+      .for("update");
     if (enrolled[0]?.status !== "active") {
       throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
     }

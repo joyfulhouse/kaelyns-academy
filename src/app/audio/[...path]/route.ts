@@ -19,12 +19,44 @@ export const dynamic = "force-dynamic";
 /** Clip paths are simple `<locale>/<key>.<ext>` segments — nothing else is proxied. */
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 
+/**
+ * Parse a dotted-quad IPv4 literal into its four octets, or `null` if `host` is
+ * not a valid IPv4 literal (wrong shape, non-numeric, or any octet > 255). Used
+ * so the private-range check below range-checks real octets instead of matching
+ * string prefixes (e.g. "172.16." would otherwise also match "172.160.0.1").
+ */
+function parseIpv4(host: string): [number, number, number, number] | null {
+  const parts = host.split(".");
+  if (parts.length !== 4) return null;
+  const octets: number[] = [];
+  for (const part of parts) {
+    // Reject empty, non-digit, or leading-zero-padded junk; only plain 0-255.
+    if (!/^\d{1,3}$/.test(part)) return null;
+    const n = Number(part);
+    if (n > 255) return null;
+    octets.push(n);
+  }
+  return octets as [number, number, number, number];
+}
+
+/** True if `octets` fall in a loopback/RFC-1918 private IPv4 range. */
+function isPrivateIpv4([a, b]: [number, number, number, number]): boolean {
+  if (a === 127) return true; // 127.0.0.0/8 loopback
+  if (a === 10) return true; // 10.0.0.0/8
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+  return false;
+}
+
 /** Hostnames that may legitimately be served over plaintext http://. */
 function isPrivateHttpHost(host: string): boolean {
   const h = host.toLowerCase();
+  // IPv4 literals: parse into octets and range-check (rejects octets > 255 and
+  // avoids prefix false-positives like "172.160.0.1" matching the 172.16/12 range).
+  const ipv4 = parseIpv4(h);
+  if (ipv4) return isPrivateIpv4(ipv4);
   return (
     h === "localhost" ||
-    h === "127.0.0.1" ||
     h === "::1" ||
     h === "[::1]" ||
     // Cluster-internal MinIO (homelab) + reserved test/dev TLDs — never public.
@@ -32,11 +64,7 @@ function isPrivateHttpHost(host: string): boolean {
     h.endsWith(".internal") ||
     h.endsWith(".svc") ||
     h.endsWith(".cluster.local") ||
-    h.endsWith(".test") ||
-    // RFC 1918 private ranges (best-effort literal-IP match).
-    /^10\./.test(h) ||
-    /^192\.168\./.test(h) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(h)
+    h.endsWith(".test")
   );
 }
 

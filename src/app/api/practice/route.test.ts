@@ -355,4 +355,73 @@ describe("POST /api/practice", () => {
     expect(res.status).toBe(200);
     expect(generatePracticeItems).toHaveBeenCalledOnce();
   });
+
+  // ── Fail-closed on a gate read error (§8): a transient DB error in the gate
+  //    path must DENY AI (403), never surface a raw 500 that bypasses the gate. ──
+
+  it("403s (fail-closed) when an ownership read throws, never a 500", async () => {
+    vi.mocked(getLearner).mockRejectedValue(new Error("db down"));
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: "ai_disabled" });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("403s (fail-closed) when the content-binding resolve throws, never a 500", async () => {
+    vi.mocked(resolveLearnerProgram).mockRejectedValue(new Error("resolve failed"));
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: "ai_disabled" });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("403s (fail-closed) when an enrollment/settings gate read throws, never a 500", async () => {
+    vi.mocked(getEnrollmentForGate).mockRejectedValue(new Error("enrollment read failed"));
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: "ai_disabled" });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("does NOT mask a generation failure as ai_disabled (generate() is outside the gate try)", async () => {
+    // The gate opens, but generation throws. This must surface as the generation
+    // envelope (502), proving the bounded generate() call is OUTSIDE the gate's
+    // fail-closed catch — a gate read error is 403, a model error is 502.
+    vi.mocked(generatePracticeItems).mockRejectedValue(new Error("model exploded"));
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ error: "generation_failed" });
+  });
+
+  // ── Request-size guard: an oversized content-length is abuse → 413 before any
+  //    body buffering or model work. Absent/chunked length must NOT block. ──
+
+  it("413s when content-length exceeds the cap, before any model call", async () => {
+    const res = await POST(post({ ...VALID_BASE }, { "content-length": "20000" }));
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: "payload_too_large" });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("allows a request whose content-length is at/under the cap", async () => {
+    vi.mocked(generatePracticeItems).mockResolvedValue([]);
+    const res = await POST(post({ ...VALID_BASE }, { "content-length": "16384" }));
+    expect(res.status).toBe(200);
+  });
+
+  it("does not 413 when content-length is absent/non-numeric (best-effort guard skips it)", async () => {
+    // The size guard intentionally skips a chunked/absent/non-numeric length
+    // (Number(...) → NaN → not finite). The request must then proceed normally to
+    // the schema-validated gate, NOT be wrongly rejected — the schema (focus max
+    // 200, n cap, etc.) is the real bound on what reaches the model.
+    vi.mocked(generatePracticeItems).mockResolvedValue([]);
+    const reqNonNumericLen = new Request("http://test/api/practice", {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": "not-a-number" },
+      body: JSON.stringify({ ...VALID_BASE }),
+    });
+    const res = await POST(reqNonNumericLen);
+    expect(res.status).not.toBe(413);
+    expect(res.status).toBe(200);
+  });
 });
