@@ -186,7 +186,7 @@ export function JournalPromptPlayer({
           value={text}
           onChange={(event) => setText(event.target.value)}
           autoComplete="off"
-          className="min-h-16 rounded-xl border-[3px] border-ink bg-paper px-4 font-display text-2xl text-ink shadow-pop outline-none"
+          className="min-h-16 rounded-xl border-[3px] border-ink bg-paper px-4 font-display text-2xl text-ink shadow-pop"
         />
       </div>
 
@@ -305,7 +305,7 @@ function ComposeView({
             rows={5}
             autoComplete="off"
             placeholder="Start with one idea. Then add more."
-            className="min-h-40 resize-y rounded-2xl border-[3px] border-ink bg-paper px-4 py-3 font-body text-xl leading-relaxed text-ink shadow-pop outline-none placeholder:text-ink-faint"
+            className="min-h-40 resize-y rounded-2xl border-[3px] border-ink bg-paper px-4 py-3 font-body text-xl leading-relaxed text-ink shadow-pop placeholder:text-ink-faint"
           />
         </div>
       )}

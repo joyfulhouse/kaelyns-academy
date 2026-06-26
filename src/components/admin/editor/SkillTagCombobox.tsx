@@ -71,7 +71,9 @@ export function SkillTagCombobox({ value, onChange }: SkillTagComboboxProps) {
               "inline-flex min-h-9 items-center gap-2 rounded-md border bg-paper-raised",
               "px-3.5 py-1.5 text-sm text-ink-faint transition-colors",
               "hover:border-line-strong hover:text-ink",
-              "focus:border-accent focus:outline-none focus-visible:outline-none",
+              // Keyboard focus uses the global 3px `:focus-visible` ring (globals.css); no
+              // `outline-none` here or it suppresses that ring for keyboard users (see TextInput).
+              "focus:border-accent",
               open ? "border-accent text-ink" : "border-line",
             )}
           >
@@ -92,7 +94,7 @@ export function SkillTagCombobox({ value, onChange }: SkillTagComboboxProps) {
                   value={search}
                   onValueChange={setSearch}
                   placeholder="Search skills…"
-                  className="w-full bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-none"
+                  className="w-full bg-transparent text-sm text-ink placeholder:text-ink-faint"
                 />
               </div>
               <Command.List className="max-h-72 overflow-y-auto py-1">
