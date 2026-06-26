@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeftIcon } from "@phosphor-icons/react/dist/ssr";
@@ -15,6 +16,8 @@ import { CloneToDraftButton } from "./CloneToDraftButton";
  * program has no versions at all, redirects back to the detail page.
  */
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = { title: "Edit program" };
 
 export default async function EditProgramPage({
   params,
