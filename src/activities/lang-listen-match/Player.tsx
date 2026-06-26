@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SpeakerHighIcon } from "@phosphor-icons/react/dist/ssr";
+import { CheckCircleIcon, SpeakerHighIcon } from "@phosphor-icons/react/dist/ssr";
 import type { LangListenMatchConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
@@ -109,7 +109,7 @@ export function LangListenMatchPlayer({
               disabled={reveal}
               aria-label={label ? `${c}, ${label}` : c}
               className={cn(
-                "grid min-h-28 place-items-center gap-1 rounded-2xl border-[3px] border-ink px-4 py-5 text-ink shadow-pop transition duration-200 ease-out",
+                "relative grid min-h-28 place-items-center gap-1 rounded-2xl border-[3px] border-ink px-4 py-5 text-ink shadow-pop transition duration-200 ease-out",
                 !reveal && "bg-paper-raised hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
                 reveal && isAnswer && "bg-success/30",
                 reveal && !isAnswer && "bg-paper-raised opacity-60",
@@ -118,6 +118,14 @@ export function LangListenMatchPlayer({
             >
               <span className="font-display text-4xl">{c}</span>
               {label ? <span className="text-sm text-ink-soft">{label}</span> : null}
+              {reveal && isAnswer && (
+                <CheckCircleIcon
+                  size={26}
+                  weight="fill"
+                  aria-hidden="true"
+                  className="absolute right-2 top-2 text-success"
+                />
+              )}
             </button>
           );
         })}
