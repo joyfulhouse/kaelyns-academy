@@ -68,6 +68,17 @@ export function EnrollmentConfigForm({
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
   const [isPending, startTransition] = useTransition();
 
+  // Validate the daily goal inline. Empty keeps the "use the default" behavior;
+  // anything present must be a whole number in [0, 50] or we block the save and
+  // surface the reason instead of silently reverting to the default.
+  const trimmedGoal = dailyGoal.trim();
+  const parsedGoalNum = Number(trimmedGoal);
+  const goalError =
+    trimmedGoal !== "" &&
+    (!Number.isInteger(parsedGoalNum) || parsedGoalNum < 0 || parsedGoalNum > 50)
+      ? "Enter a whole number from 0 to 50."
+      : undefined;
+
   // Auto-dismiss the "Saved" confirmation after a few seconds. Errors are left
   // sticky so the parent always sees what failed.
   useEffect(() => {
@@ -91,6 +102,7 @@ export function EnrollmentConfigForm({
 
   function handleSave() {
     if (isPending) return;
+    if (goalError) return;
 
     // Build the config: when every unit is active, omit activeUnitKeys entirely.
     const allOn = units.every((u) => activeKeys.has(u.key));
@@ -185,6 +197,7 @@ export function EnrollmentConfigForm({
         id={dailyGoalId}
         label="Daily activity goal"
         hint="Number of activities per day for this program (0–50)."
+        error={goalError}
       >
         {(field) => (
           <TextInput
@@ -211,7 +224,7 @@ export function EnrollmentConfigForm({
           variant="soft"
           size="sm"
           onClick={handleSave}
-          disabled={isPending}
+          disabled={isPending || Boolean(goalError)}
         >
           {isPending ? "Saving…" : "Save config"}
         </Button>
