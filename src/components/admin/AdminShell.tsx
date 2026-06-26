@@ -8,6 +8,7 @@ import {
   HouseIcon,
   PencilRulerIcon,
 } from "@phosphor-icons/react/dist/ssr";
+import { SkipLink, MAIN_CONTENT_ID } from "@/components/a11y/SkipLink";
 import { cn } from "@/lib/cn";
 
 interface NavItem {
@@ -37,7 +38,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
   return (
-    <div className="surface-parent min-h-dvh bg-paper">
+    <div className="surface-parent relative min-h-dvh bg-paper">
+      <SkipLink />
       {/* Mobile top bar */}
       <header className="sticky top-0 z-40 border-b border-line bg-paper/95 backdrop-blur-[2px] lg:hidden">
         <div className="flex h-14 items-center gap-3 px-4">
@@ -125,7 +127,13 @@ export function AdminShell({ children }: { children: ReactNode }) {
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 px-4 py-8 sm:px-6 lg:px-10 lg:py-12">{children}</main>
+        <main
+          id={MAIN_CONTENT_ID}
+          tabIndex={-1}
+          className="min-w-0 flex-1 px-4 py-8 sm:px-6 lg:px-10 lg:py-12"
+        >
+          {children}
+        </main>
       </div>
     </div>
   );

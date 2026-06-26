@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { ArrowLeftIcon, SpeakerHighIcon } from "@phosphor-icons/react/dist/ssr";
 import { cn } from "@/lib/cn";
+import { SkipLink, MAIN_CONTENT_ID } from "@/components/a11y/SkipLink";
 import { Mascot } from "@/components/art/Mascot";
 import { canSpeak, speak, stopSpeaking } from "./speak";
 
@@ -44,7 +45,10 @@ export function AppShellKid({
   const showSpeaker = typeof readAloud === "string" && readAloud.trim().length > 0;
 
   return (
-    <div className={cn("surface-kid flex min-h-dvh flex-col bg-paper", className)}>
+    <div
+      className={cn("surface-kid relative flex min-h-dvh flex-col bg-paper", className)}
+    >
+      <SkipLink />
       <header className="sticky top-0 z-50 border-b-2 border-line bg-paper/95 backdrop-blur-[2px]">
         <div className="mx-auto flex h-20 w-full max-w-5xl items-center gap-3 px-4">
           <button
@@ -90,7 +94,11 @@ export function AppShellKid({
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:px-6 sm:py-8">
+      <main
+        id={MAIN_CONTENT_ID}
+        tabIndex={-1}
+        className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:px-6 sm:py-8"
+      >
         {children}
       </main>
     </div>
