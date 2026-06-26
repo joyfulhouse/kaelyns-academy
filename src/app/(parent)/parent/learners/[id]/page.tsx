@@ -23,6 +23,12 @@ import { LearnerDataControls } from "@/components/parent/LearnerDataControls";
 import { programStats } from "@/content";
 import type { SkillDomain } from "@/content";
 
+// Deliberately a static, non-identifying title. The child's display name is
+// child PII (spec §8) and is shown only inside the authenticated page body —
+// never in `document.title`, which leaks into browser history, OS window/tab
+// previews, and client telemetry (e.g. Sentry breadcrumbs capture document
+// titles). Auth-gating + robots-disallow stop indexing/access, not those
+// metadata surfaces, so the name stays out of the title entirely.
 export const metadata: Metadata = { title: "Learner" };
 
 /**

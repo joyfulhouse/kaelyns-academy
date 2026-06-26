@@ -13,8 +13,8 @@ import { PROGRAM_STATUS_TONE, PROGRAM_STATUS_LABEL } from "@/lib/status-display"
 
 /**
  * Program detail page — RSC, already gated by the admin layout.
- * Shows program metadata, lifecycle controls, and a placeholder editor entry
- * point (the full nested tree editor lands in Task 5.3).
+ * Shows program metadata, lifecycle controls, and the entry point into the
+ * nested tree editor (units/lessons/activities).
  */
 export const dynamic = "force-dynamic";
 
