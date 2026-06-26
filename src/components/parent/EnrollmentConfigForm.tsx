@@ -29,6 +29,26 @@ const BAND_OPTIONS = [
   { value: "stretch", label: "Stretch — a little ahead" },
 ];
 
+/**
+ * Parse the daily-goal text field into the value we both validate against and
+ * persist, so the two can never disagree. Empty = "use the default" (returns
+ * `value: undefined`, `valid: true`). A non-empty entry is valid only as a plain
+ * whole number in [0, 50]: we match digits only (`/^\d+$/`) so browser-accepted
+ * number syntax like `1e1` or `5.5` is rejected rather than silently coerced to
+ * a different saved value (e.g. `parseInt("1e1") === 1`).
+ */
+export function parseDailyGoal(raw: string): {
+  value: number | undefined;
+  valid: boolean;
+} {
+  const trimmed = raw.trim();
+  if (trimmed === "") return { value: undefined, valid: true };
+  if (!/^\d+$/.test(trimmed)) return { value: undefined, valid: false };
+  const value = Number(trimmed);
+  if (value > 50) return { value: undefined, valid: false };
+  return { value, valid: true };
+}
+
 type SaveState =
   | { status: "idle" }
   | { status: "saving" }
@@ -68,6 +88,11 @@ export function EnrollmentConfigForm({
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
   const [isPending, startTransition] = useTransition();
 
+  // Parse + validate the daily goal once (see parseDailyGoal) so the value we
+  // surface and the value we save can never disagree.
+  const { value: parsedGoal, valid: goalValid } = parseDailyGoal(dailyGoal);
+  const goalError = goalValid ? undefined : "Enter a whole number from 0 to 50.";
+
   // Auto-dismiss the "Saved" confirmation after a few seconds. Errors are left
   // sticky so the parent always sees what failed.
   useEffect(() => {
@@ -91,14 +116,10 @@ export function EnrollmentConfigForm({
 
   function handleSave() {
     if (isPending) return;
+    if (goalError) return;
 
     // Build the config: when every unit is active, omit activeUnitKeys entirely.
     const allOn = units.every((u) => activeKeys.has(u.key));
-    const parsedGoal = parseInt(dailyGoal, 10);
-    const goalValue =
-      Number.isFinite(parsedGoal) && parsedGoal >= 0 && parsedGoal <= 50
-        ? parsedGoal
-        : undefined;
 
     // Narrow `band` (a plain string from the <select>) against the allowed
     // literals instead of casting — an out-of-range value becomes undefined and
@@ -109,7 +130,7 @@ export function EnrollmentConfigForm({
       band: bandValue,
       activeUnitKeys: allOn ? undefined : [...activeKeys],
       aiPractice,
-      dailyGoal: goalValue,
+      dailyGoal: parsedGoal,
     };
 
     startTransition(async () => {
@@ -185,6 +206,7 @@ export function EnrollmentConfigForm({
         id={dailyGoalId}
         label="Daily activity goal"
         hint="Number of activities per day for this program (0–50)."
+        error={goalError}
       >
         {(field) => (
           <TextInput
@@ -193,6 +215,7 @@ export function EnrollmentConfigForm({
             min={0}
             max={50}
             step={1}
+            invalid={Boolean(goalError)}
             value={dailyGoal}
             onChange={(e) => {
               setDailyGoal(e.target.value);
@@ -211,7 +234,7 @@ export function EnrollmentConfigForm({
           variant="soft"
           size="sm"
           onClick={handleSave}
-          disabled={isPending}
+          disabled={isPending || Boolean(goalError)}
         >
           {isPending ? "Saving…" : "Save config"}
         </Button>
