@@ -270,7 +270,7 @@ function AnswerStepper({
       >
         {value}
       </span>
-      <StepButton label="One more" disabled={disabled} onClick={() => onBump(1)}>
+      <StepButton label="One more" disabled={disabled || value === 200} onClick={() => onBump(1)}>
         <PlusIcon size={28} weight="bold" aria-hidden="true" />
       </StepButton>
     </div>
