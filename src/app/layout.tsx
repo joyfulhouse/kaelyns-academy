@@ -37,20 +37,13 @@ export const metadata: Metadata = {
     title: "Kaelyn's Academy",
     description: SITE_DESCRIPTION,
     url: SITE_URL,
-    images: [
-      {
-        url: "/icons/icon-512.png",
-        width: 512,
-        height: 512,
-        alt: "Kaelyn's Academy",
-      },
-    ],
+    // og:image is provided by the file convention (src/app/opengraph-image.tsx).
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: "Kaelyn's Academy",
     description: SITE_DESCRIPTION,
-    images: ["/icons/icon-512.png"],
+    // twitter:image falls back to the opengraph-image card.
   },
 };
 

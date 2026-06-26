@@ -9,6 +9,9 @@ kaelyns-academy/
 │   │   ├── layout.tsx                # root layout (metadata)
 │   │   ├── page.tsx                  # placeholder home (replaced in P3)
 │   │   ├── globals.css               # @import "tailwindcss"
+│   │   ├── opengraph-image.tsx       # branded 1200×630 social card (next/og, build-time)
+│   │   │                             #   …alongside the other metadata file-conventions
+│   │   │                             #   (sitemap/robots/manifest/icon) co-located in app/
 │   │   └── api/
 │   │       ├── health/route.ts       # schema-drift canary — 200 ok / 503 drift|down
 │   │       └── auth/[...all]/route.ts# Better Auth handler (lazy, per-request — build-safe)
