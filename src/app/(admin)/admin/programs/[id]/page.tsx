@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
@@ -17,6 +18,8 @@ import { PROGRAM_STATUS_TONE, PROGRAM_STATUS_LABEL } from "@/lib/status-display"
  * nested tree editor (units/lessons/activities).
  */
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = { title: "Program details" };
 
 export default async function ProgramDetailPage({
   params,
