@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import {
   ArrowRightIcon,
   BookOpenTextIcon,
@@ -42,12 +43,42 @@ const FAMILY_POINTS = [
   { icon: SparkleIcon, label: "Progress you can hold", text: "Stars, a filling path, a finished portfolio. Concrete wins, never a manipulative streak." },
 ];
 
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
+
+const STRUCTURED_DATA = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "EducationalOrganization",
+      "@id": "https://kaelyns.academy/#org",
+      name: "Kaelyn's Academy",
+      url: "https://kaelyns.academy",
+      description:
+        "A warm, adaptive learning studio for young children. Every subject meets each child at her real level and teaches forward, one mastered skill at a time, with gentle AI tutoring.",
+      logo: "https://kaelyns.academy/icons/icon-512.png",
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://kaelyns.academy/#website",
+      name: "Kaelyn's Academy",
+      url: "https://kaelyns.academy",
+      publisher: { "@id": "https://kaelyns.academy/#org" },
+    },
+  ],
+};
+
 export default async function Home() {
   const program = await getProgramAsync("kaelyn-adaptive");
   const stats = program ? programStats(program) : { units: 0, lessons: 0, activities: 0 };
 
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }}
+      />
       <SiteHeader />
       <main>
         {/* ── Hero ── */}
