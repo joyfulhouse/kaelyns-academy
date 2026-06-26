@@ -59,8 +59,13 @@ describe("audio clip proxy route", () => {
       ["https public", "https://cdn.example.com/bucket"],
       ["http localhost", "http://localhost:9000/bucket"],
       ["http loopback ip", "http://127.0.0.1:9000/bucket"],
+      ["http loopback /8 (not just .0.1)", "http://127.5.5.5:9000/bucket"],
       ["http cluster-internal svc", "http://minio.audio.svc.cluster.local:9000/bucket"],
-      ["http RFC1918", "http://10.1.2.3:9000/bucket"],
+      ["http RFC1918 10/8", "http://10.1.2.3:9000/bucket"],
+      ["http RFC1918 192.168/16", "http://192.168.1.50:9000/bucket"],
+      ["http RFC1918 172.16 low boundary", "http://172.16.0.1:9000/bucket"],
+      ["http RFC1918 172.31 high boundary", "http://172.31.255.254:9000/bucket"],
+      ["http IPv6 loopback", "http://[::1]:9000/bucket"],
     ])("accepts a valid origin (%s) and fetches", async (_label, origin) => {
       process.env.AUDIO_ORIGIN = origin;
       const fetchMock = vi.fn().mockResolvedValue(
@@ -74,6 +79,16 @@ describe("audio clip proxy route", () => {
 
     it.each([
       ["plaintext http to a public host", "http://evil.example.com/bucket"],
+      ["http 172.15 just below the private block", "http://172.15.0.1:9000/bucket"],
+      ["http 172.32 just above the private block", "http://172.32.0.1:9000/bucket"],
+      ["http 11/8 (adjacent to 10/8)", "http://11.0.0.1:9000/bucket"],
+      ["http 192.169 (adjacent to 192.168)", "http://192.169.0.1:9000/bucket"],
+      // Prefix false-positive the old regex/string match could have allowed:
+      // "172.160.x" is a PUBLIC host that must NOT match the 172.16/12 range.
+      ["http 172.160 prefix false-positive", "http://172.160.0.1:9000/bucket"],
+      // Octet out of range: rejected as a malformed URL (Node) — and even if it
+      // parsed, parseIpv4's >255 guard would reject it → not private → refuse.
+      ["http octet > 255", "http://10.0.0.256:9000/bucket"],
       ["non-http scheme (file:)", "file:///etc/passwd"],
       ["non-http scheme (gopher:)", "gopher://attacker.test/x"],
       ["not an absolute URL", "minio.test/bucket"],
