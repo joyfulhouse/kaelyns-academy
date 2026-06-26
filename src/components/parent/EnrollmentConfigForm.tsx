@@ -215,6 +215,7 @@ export function EnrollmentConfigForm({
             min={0}
             max={50}
             step={1}
+            invalid={Boolean(goalError)}
             value={dailyGoal}
             onChange={(e) => {
               setDailyGoal(e.target.value);
