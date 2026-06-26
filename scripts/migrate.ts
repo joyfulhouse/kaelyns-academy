@@ -16,7 +16,7 @@
  * backfilled) while the tables already exist. Running migrate() blindly there
  * would treat the bootstrap migrations as pending and abort recreating existing
  * tables — bricking the deploy. The preflight refuses any journal not baselined
- * through the fixed push-bootstrap boundary (BOOTSTRAP_THROUGH_MILLIS) with an
+ * through the fixed push-bootstrap boundary (BOOTSTRAP_BOUNDARY_TAG) with an
  * actionable error, so this runner is safe to wire into the k3s-infra PreSync
  * Job. The journal must first be backfilled with ALL already-applied tags
  * (one-time ops step); until then, apply new expand-only migrations the current
@@ -27,6 +27,7 @@
  * session-level pg_advisory_lock serializes overlapping runners (e.g. a PreSync
  * retry firing mid-run) so they queue instead of racing DDL/journal inserts.
  */
+import { readFileSync } from "node:fs";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
@@ -56,32 +57,51 @@ const STATEMENT_TIMEOUT_MS = 120_000;
 const MIGRATION_LOCK_KEY = 728_041_006_073; // "ka-migrate" namespace, fixed
 
 /**
- * High-water mark of the migrations applied to the live DB OUTSIDE the Drizzle
- * journal (via `drizzle-kit push`): the `when` (folderMillis) of 0006, the last
- * migration that existed when this runner landed. This is the one-time
- * push-bootstrap boundary, NOT "the latest bare CREATE": it is a FIXED point in
- * history on purpose. Migrations authored after this runner are applied BY the
- * runner and journaled normally, so they must NOT raise the required baseline —
- * deriving the cutoff from "any bare CREATE migration" would wrongly refuse a
- * legitimate future additive CREATE TABLE on a DB correctly journaled to here.
- * When the prod journal is backfilled through 0006, bump this to the new last
- * tag's `when` in the SAME commit (or drop the guard once the journal is the
- * source of truth).
+ * The push-bootstrap boundary: the LAST migration that was already applied to the
+ * live DB before this runner existed (the 0000–0005 set was applied via
+ * `drizzle-kit push`; this branch adds 0006, which the runner itself applies).
+ * It is anchored to a FIXED tag on purpose — the runner must NOT treat its own
+ * newer migrations as part of the baseline, or it would refuse to apply a
+ * legitimate pending migration on a correctly-journaled DB. When the prod journal
+ * is backfilled through this tag and the runner takes over, advance the anchor to
+ * the then-last manually-applied tag in the SAME commit (or drop the guard once
+ * the journal is the source of truth).
  */
-const BOOTSTRAP_THROUGH_MILLIS = 1_782_503_921_314; // drizzle/meta/_journal.json → 0006_fancy_ma_gnuci
+const BOOTSTRAP_BOUNDARY_TAG = "0005_luxuriant_stepford_cuckoos";
+
+/** `when` (folderMillis) of the boundary tag + how many entries fall at/before it. */
+function bootstrapBoundary(): { millis: number; count: number } {
+  const journal = JSON.parse(
+    readFileSync(`${MIGRATIONS_FOLDER}/meta/_journal.json`, "utf8"),
+  ) as { entries: { tag: string; when: number }[] };
+  const boundary = journal.entries.find((e) => e.tag === BOOTSTRAP_BOUNDARY_TAG);
+  if (!boundary) {
+    throw new Error(`[migrate] bootstrap boundary tag ${BOOTSTRAP_BOUNDARY_TAG} not found in journal`);
+  }
+  return {
+    millis: boundary.when,
+    count: journal.entries.filter((e) => e.when <= boundary.when).length,
+  };
+}
 
 /**
  * Refuse to run against a database whose schema already exists but whose Drizzle
  * journal is not baselined through the push-bootstrap boundary. The live
  * `kaelyns-academy-db` was bootstrapped with `drizzle-kit push`, so its journal
- * is EMPTY while the tables already exist; a blind migrate() would treat 0000+
- * as pending and abort recreating existing objects — a duplicate-object error
- * that blocks (and retry-loops) the rollout. A *partial* manual baseline (only
- * some bootstrap rows inserted) hits the same trap, so the guard compares the
- * journal's latest timestamp against the boundary, not merely that it is
- * non-empty. A genuinely empty database (no app tables) is the normal first-run
- * case and is allowed; a DB journaled at/after the boundary is also allowed (so
- * future pending migrations apply normally).
+ * is EMPTY while the tables already exist; a blind migrate() would treat 0000+ as
+ * pending and abort recreating existing objects — a duplicate-object error that
+ * blocks (and retry-loops) the rollout. Two failure modes are caught: a partial
+ * backfill whose latest row is BELOW the boundary (checked via max(created_at)),
+ * and a degenerate backfill of only a high row (checked via row count ≥ the
+ * boundary entry count, so inserting just the boundary row can't make Drizzle
+ * skip 0000–boundary). A genuinely empty database (no app tables) is the normal
+ * first-run case and is allowed; a DB journaled at/through the boundary is allowed
+ * so the runner applies the remaining pending migrations.
+ *
+ * NOTE: this is a structural sanity check, not full integrity verification. The
+ * one-time journal-backfill ops procedure (in k3s-infra, with the PreSync wiring)
+ * is responsible for inserting the correct per-tag hashes; once the journal is
+ * the source of truth this guard can be dropped.
  */
 async function assertBaselined(sql: Sql): Promise<void> {
   // Both reads are existence-safe: information_schema and to_regclass never error
@@ -97,22 +117,21 @@ async function assertBaselined(sql: Sql): Promise<void> {
   `;
   if (app_tables === 0) return; // fresh database → normal first run, nothing to baseline
 
-  const latestApplied = journal_exists
-    ? Number(
-        (
-          await sql<{ created_at: string | null }[]>`
-            SELECT max(created_at)::text AS created_at FROM drizzle.__drizzle_migrations
-          `
-        )[0].created_at ?? 0,
-      )
-    : 0;
-  if (latestApplied < BOOTSTRAP_THROUGH_MILLIS) {
+  const boundary = bootstrapBoundary();
+  const [applied] = journal_exists
+    ? await sql<{ latest: string | null; rows: number }[]>`
+        SELECT max(created_at)::text AS latest, count(*)::int AS rows FROM drizzle.__drizzle_migrations
+      `
+    : [{ latest: null, rows: 0 }];
+  const latestApplied = Number(applied.latest ?? 0);
+  if (latestApplied < boundary.millis || applied.rows < boundary.count) {
     throw new Error(
       `database has ${app_tables} table(s) in "public" but its drizzle.__drizzle_migrations journal is not ` +
-        `baselined through the push-bootstrap boundary (latest applied ${latestApplied || "none"} < required ` +
-        `${BOOTSTRAP_THROUGH_MILLIS}). This looks like a drizzle-kit push bootstrap (or a partial backfill). ` +
-        `Refusing to run migrate() — it would treat the bootstrap migrations as pending and fail recreating ` +
-        `existing objects. Backfill the journal with ALL already-applied migration tags first.`,
+        `baselined through the push-bootstrap boundary ${BOOTSTRAP_BOUNDARY_TAG} (have ${applied.rows} row(s), ` +
+        `latest ${latestApplied || "none"}; need ≥ ${boundary.count} rows through ${boundary.millis}). This looks ` +
+        `like a drizzle-kit push bootstrap (or a partial/incomplete backfill). Refusing to run migrate() — it would ` +
+        `treat the bootstrap migrations as pending and fail recreating existing objects. Backfill the journal with ` +
+        `ALL already-applied migration tags first.`,
     );
   }
 }
