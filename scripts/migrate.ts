@@ -23,7 +23,9 @@
  * `scripts/db.sh < drizzle/<file>.sql`.
  *
  * Bounded lock_timeout/statement_timeout (below) ensure a contended lock or a
- * runaway statement fails the gate fast rather than hanging the rollout.
+ * runaway statement fails the gate fast rather than hanging the rollout. A
+ * session-level pg_advisory_lock serializes overlapping runners (e.g. a PreSync
+ * retry firing mid-run) so they queue instead of racing DDL/journal inserts.
  */
 import { readFileSync } from "node:fs";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -43,6 +45,16 @@ const MIGRATIONS_FOLDER = "drizzle";
 // future migration legitimately needs longer.
 const LOCK_TIMEOUT_MS = 10_000;
 const STATEMENT_TIMEOUT_MS = 120_000;
+
+// Fixed key for a session-level pg_advisory_lock that serializes migration runs,
+// so an overlapping invocation (e.g. an ArgoCD PreSync retry firing while a slow
+// run is still in flight) waits its turn instead of racing DDL/journal inserts.
+// The wait is bounded by statement_timeout above (pg_advisory_lock is a regular
+// statement), so a stuck holder fails the gate fast rather than hanging it.
+// Arbitrary but stable across runs; the value only has to be shared by all
+// runners of THIS app (and stay within a JS-safe integer so it round-trips to
+// postgres bigint without precision loss).
+const MIGRATION_LOCK_KEY = 728_041_006_073; // "ka-migrate" namespace, fixed
 
 interface JournalEntry {
   tag: string;
@@ -139,8 +151,16 @@ const sql = postgres(url, {
   connection: { lock_timeout: LOCK_TIMEOUT_MS, statement_timeout: STATEMENT_TIMEOUT_MS },
 });
 try {
-  await assertBaselined(sql);
-  await migrate(drizzle(sql), { migrationsFolder: MIGRATIONS_FOLDER });
+  // Serialize concurrent runners (see MIGRATION_LOCK_KEY). Blocking acquire,
+  // bounded by statement_timeout; a retry waits for the in-flight run and then
+  // finds the journal already caught up.
+  await sql`SELECT pg_advisory_lock(${MIGRATION_LOCK_KEY})`;
+  try {
+    await assertBaselined(sql);
+    await migrate(drizzle(sql), { migrationsFolder: MIGRATIONS_FOLDER });
+  } finally {
+    await sql`SELECT pg_advisory_unlock(${MIGRATION_LOCK_KEY})`.catch(() => {});
+  }
   console.log("[migrate] schema is up to date");
   await sql.end();
   process.exit(0);
