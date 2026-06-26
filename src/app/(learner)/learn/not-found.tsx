@@ -14,7 +14,7 @@ export const metadata: Metadata = { title: "Page not found" };
  */
 export default function LearnerNotFound() {
   return (
-    <div className="surface-kid grid min-h-dvh place-items-center bg-paper px-6 text-center">
+    <main className="surface-kid grid min-h-dvh place-items-center bg-paper px-6 text-center">
       <div className="max-w-md">
         <Mascot mood="wave" size={140} className="mx-auto motion-safe:animate-float" />
         <h1 className="mt-6 font-display text-3xl font-semibold tracking-tight text-ink">
@@ -35,6 +35,6 @@ export default function LearnerNotFound() {
           </Button>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
