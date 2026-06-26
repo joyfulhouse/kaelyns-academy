@@ -21,6 +21,9 @@
  * be backfilled with ALL already-applied tags (one-time ops step); until then,
  * apply new expand-only migrations the current way:
  * `scripts/db.sh < drizzle/<file>.sql`.
+ *
+ * Bounded lock_timeout/statement_timeout (below) ensure a contended lock or a
+ * runaway statement fails the gate fast rather than hanging the rollout.
  */
 import { readFileSync } from "node:fs";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -30,6 +33,16 @@ import postgres from "postgres";
 type Sql = ReturnType<typeof postgres>;
 
 const MIGRATIONS_FOLDER = "drizzle";
+
+// Bound how long the migration may wait on locks / run a single statement, so a
+// stuck or conflicting transaction makes the PreSync gate FAIL (and let ArgoCD
+// surface/rollback) instead of hanging the rollout indefinitely. Plain (non-
+// CONCURRENT) CREATE INDEX takes a brief SHARE lock on the table; at the current
+// data volume it completes in well under a second, so these ceilings only ever
+// trip on genuine contention. Tune up here (not by removing the bound) if a
+// future migration legitimately needs longer.
+const LOCK_TIMEOUT_MS = 10_000;
+const STATEMENT_TIMEOUT_MS = 120_000;
 
 interface JournalEntry {
   tag: string;
@@ -120,10 +133,14 @@ if (!url) {
   process.exit(1);
 }
 
-const sql = postgres(url, { max: 1 });
+const sql = postgres(url, {
+  max: 1,
+  // Sent as session GUCs on connect, so they bound every statement migrate() runs.
+  connection: { lock_timeout: LOCK_TIMEOUT_MS, statement_timeout: STATEMENT_TIMEOUT_MS },
+});
 try {
   await assertBaselined(sql);
-  await migrate(drizzle(sql), { migrationsFolder: "drizzle" });
+  await migrate(drizzle(sql), { migrationsFolder: MIGRATIONS_FOLDER });
   console.log("[migrate] schema is up to date");
   await sql.end();
   process.exit(0);
