@@ -14,6 +14,7 @@ import { Mascot } from "@/components/art/Mascot";
 import { Hills, Sparkle, Sun } from "@/components/art/Decorations";
 import { SiteHeader } from "@/components/shell/SiteHeader";
 import { SiteFooter } from "@/components/shell/SiteFooter";
+import { SkipLink, MAIN_CONTENT_ID } from "@/components/a11y/SkipLink";
 import { programStats } from "@/content";
 import { getProgramAsync } from "@/lib/content/repository";
 import { cn } from "@/lib/cn";
@@ -75,12 +76,13 @@ export default async function Home() {
 
   return (
     <>
+      <SkipLink />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }}
       />
       <SiteHeader />
-      <main>
+      <main id={MAIN_CONTENT_ID} tabIndex={-1}>
         {/* ── Hero ── */}
         <section className="relative overflow-hidden">
           <div
