@@ -90,11 +90,11 @@ function bootstrapBoundary(): { millis: number; count: number } {
  * `kaelyns-academy-db` was bootstrapped with `drizzle-kit push`, so its journal
  * is EMPTY while the tables already exist; a blind migrate() would treat 0000+ as
  * pending and abort recreating existing objects — a duplicate-object error that
- * blocks (and retry-loops) the rollout. Two failure modes are caught: a partial
- * backfill whose latest row is BELOW the boundary (checked via max(created_at)),
- * and a degenerate backfill of only a high row (checked via row count ≥ the
- * boundary entry count, so inserting just the boundary row can't make Drizzle
- * skip 0000–boundary). A genuinely empty database (no app tables) is the normal
+ * blocks (and retry-loops) the rollout. It requires BOTH max(created_at) ≥ the
+ * boundary AND boundary.count DISTINCT created_at values at/before the boundary,
+ * which rejects: a partial backfill below the boundary, a degenerate single
+ * high-water row, a duplicate-padded backfill, and a missing bootstrap row masked
+ * by newer rows. A genuinely empty database (no app tables) is the normal
  * first-run case and is allowed; a DB journaled at/through the boundary is allowed
  * so the runner applies the remaining pending migrations.
  *
