@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:deploy": "bun scripts/migrate.ts",
     "gen:icons": "bun scripts/gen-icons.ts"
   },
   "dependencies": {
