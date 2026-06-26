@@ -118,20 +118,25 @@ async function assertBaselined(sql: Sql): Promise<void> {
   if (app_tables === 0) return; // fresh database → normal first run, nothing to baseline
 
   const boundary = bootstrapBoundary();
+  // DISTINCT created_at, so a backfill padded with duplicate rows can't mask a
+  // missing early bootstrap migration (drizzle keys "pending" off the newest
+  // created_at, so a missing 0000-row behind a duplicated boundary-row would
+  // otherwise silently skip that DDL).
   const [applied] = journal_exists
-    ? await sql<{ latest: string | null; rows: number }[]>`
-        SELECT max(created_at)::text AS latest, count(*)::int AS rows FROM drizzle.__drizzle_migrations
+    ? await sql<{ latest: string | null; distinct_rows: number }[]>`
+        SELECT max(created_at)::text AS latest, count(DISTINCT created_at)::int AS distinct_rows
+        FROM drizzle.__drizzle_migrations
       `
-    : [{ latest: null, rows: 0 }];
+    : [{ latest: null, distinct_rows: 0 }];
   const latestApplied = Number(applied.latest ?? 0);
-  if (latestApplied < boundary.millis || applied.rows < boundary.count) {
+  if (latestApplied < boundary.millis || applied.distinct_rows < boundary.count) {
     throw new Error(
       `database has ${app_tables} table(s) in "public" but its drizzle.__drizzle_migrations journal is not ` +
-        `baselined through the push-bootstrap boundary ${BOOTSTRAP_BOUNDARY_TAG} (have ${applied.rows} row(s), ` +
-        `latest ${latestApplied || "none"}; need ≥ ${boundary.count} rows through ${boundary.millis}). This looks ` +
-        `like a drizzle-kit push bootstrap (or a partial/incomplete backfill). Refusing to run migrate() — it would ` +
-        `treat the bootstrap migrations as pending and fail recreating existing objects. Backfill the journal with ` +
-        `ALL already-applied migration tags first.`,
+        `baselined through the push-bootstrap boundary ${BOOTSTRAP_BOUNDARY_TAG} (have ${applied.distinct_rows} ` +
+        `distinct row(s), latest ${latestApplied || "none"}; need ≥ ${boundary.count} through ${boundary.millis}). ` +
+        `This looks like a drizzle-kit push bootstrap (or a partial/incomplete backfill). Refusing to run migrate() ` +
+        `— it would treat the bootstrap migrations as pending and fail recreating existing objects. Backfill the ` +
+        `journal with ALL already-applied migration tags first.`,
     );
   }
 }
