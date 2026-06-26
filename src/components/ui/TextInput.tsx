@@ -31,7 +31,12 @@ export function TextInput({
           "min-h-11 w-full rounded-md border bg-paper-raised text-base text-ink",
           "px-3.5 py-2.5 transition-colors duration-200 ease-out-quart",
           "placeholder:text-ink-faint",
-          "focus:border-accent focus:outline-none focus-visible:outline-none",
+          // Focus: accent border + the global 3px `:focus-visible` ring (globals.css,
+          // @layer base) for keyboard a11y (WCAG 2.4.7). Do NOT add `outline-none`
+          // here: Tailwind utilities sit in a later cascade layer than @layer base,
+          // so `focus:outline-none` would override the global ring and suppress it
+          // for keyboard users (verified). `:focus-visible` already gates the ring.
+          "focus:border-accent",
           invalid
             ? "border-danger focus:border-danger"
             : "border-line hover:border-line-strong",

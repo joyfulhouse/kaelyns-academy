@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, useTransition } from "react";
+import { useEffect, useId, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   CheckCircleIcon,
@@ -67,6 +67,14 @@ export function EnrollmentConfigForm({
   );
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
   const [isPending, startTransition] = useTransition();
+
+  // Auto-dismiss the "Saved" confirmation after a few seconds. Errors are left
+  // sticky so the parent always sees what failed.
+  useEffect(() => {
+    if (saveState.status !== "saved") return;
+    const timer = setTimeout(() => setSaveState({ status: "idle" }), 3000);
+    return () => clearTimeout(timer);
+  }, [saveState.status]);
 
   function toggleUnit(key: string, checked: boolean) {
     setActiveKeys((prev) => {
