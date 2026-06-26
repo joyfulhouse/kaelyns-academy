@@ -79,11 +79,19 @@ return clean 307s) — a transient cold-start auth event on a protected route, n
 
 **None this pass** — no schema changes (B's `.for("update")` is a query-level lock).
 
+## Follow-ups shipped after the run
+
+- **PR #19 — keyboard focus ring restored everywhere (a11y, WCAG 2.4.7); deployed `ad42c41`, canary green.**
+  Removed the `outline-none` ring-suppression from `Select.tsx`,
+  `components/admin/editor/ConfigEditor.tsx`, and `SkillTagCombobox.tsx` (trigger **and** popover
+  search input) — plus, beyond the original Select/editor scope, the `activities/journal-prompt`
+  kid input + textarea, which carried the identical bare-`outline-none` gap. A repo-wide grep now
+  shows **zero** actual `outline-none` suppressions (only explanatory comments), closing the
+  WCAG 2.4.7 keyboard-focus gap that began with `TextInput`. Gate green (typecheck/lint/498 tests/
+  build; codex approve, no findings).
+
 ## Deferred (out of scope — recorded, not built)
 
-- **Same focus-suppression a11y gap** as TextInput still in `Select.tsx`,
-  `components/admin/editor/ConfigEditor.tsx`, `SkillTagCombobox.tsx` — a clean follow-up PR (fixing in
-  #16 would have exceeded its file set).
 - Auth gate logs `UnauthenticatedError` at error level on cold-start/unauth protected access →
   Sentry noise; pre-existing, non-reproducing on warm pods (observability tidy-up).
 - content-length streaming byte-cap (codex's declined item).
