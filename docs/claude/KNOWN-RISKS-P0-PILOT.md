@@ -36,11 +36,14 @@ small and operator-controlled.
 
 **Fix — Stage 1 (SHIPPED).** `requireAdmin()` now authorizes by a server-side
 **`role` column** on the user row (`role === "admin"`), read authoritatively from
-the DB; the `ADMIN_EMAILS` allowlist is demoted to a **seed** that grants the role
-to already-registered, operator-controlled emails (`scripts/seed-admin-roles.ts`),
-never the per-request authority. A self-registered allowlisted email now defaults
-to `role = "user"` and is rejected — the "unclaimed allowlisted email → instant
-admin" vector is closed. The role is surfaced to Better Auth via
+the DB; the `ADMIN_EMAILS` allowlist is demoted to a **seed**, never the per-request
+authority. A self-registered allowlisted email now defaults to `role = "user"` and
+is rejected — the "unclaimed allowlisted email → instant admin" vector is closed.
+The seed (`scripts/seed-admin-roles.ts`) grants admin **only to email-verified**
+allowlisted rows, so it can't re-open the vector by promoting a pre-registered,
+unverified allowlisted address; while verification is off the operator is
+bootstrapped out of band by **confirmed user id** (an email isn't proof of
+ownership) — see DEPLOY.md → "Granting admin access". The role is surfaced to Better Auth via
 `additionalFields.role` with `input: false` (a sign-up payload cannot set it), and
 `user.role` is in the `/api/health` REQUIRED_COLUMNS so a deploy that skipped the
 0007 migration fails closed.

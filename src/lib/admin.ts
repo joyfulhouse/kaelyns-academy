@@ -92,11 +92,14 @@ export async function resolveAdminAccess(): Promise<AdminAccess> {
  * @throws {AdminForbiddenError} authenticated but the user's `role !== 'admin'`.
  *
  * SECURITY (P4): authority is the per-user `role` column, NOT the `ADMIN_EMAILS`
- * allowlist. The allowlist only **seeds** the role (scripts/seed-admin-roles.ts),
- * so a self-registered allowlisted email defaults to `role='user'` and is rejected —
- * this closes the "unclaimed allowlisted email → instant admin" vector documented
- * in docs/claude/KNOWN-RISKS-P0-PILOT.md. (Stage 2, deferred until an email
- * transport exists: additionally require `emailVerified === true` to prove identity.)
+ * allowlist. The allowlist only **seeds** the role, and the seed
+ * (scripts/seed-admin-roles.ts) grants admin ONLY to *email-verified* allowlisted
+ * rows — so a self-registered allowlisted email both defaults to `role='user'` AND
+ * cannot be promoted while unverified. This closes the "unclaimed allowlisted email
+ * → instant admin" vector (docs/claude/KNOWN-RISKS-P0-PILOT.md); while verification
+ * is off, the operator is bootstrapped out of band by confirmed user id (DEPLOY.md).
+ * (Stage 2, deferred until an email transport exists: additionally require
+ * `emailVerified === true` in this gate to prove identity on every request.)
  * Build-safe: only invoked per-request, never at module top-level.
  */
 export async function requireAdmin(): Promise<{ userId: string; email: string }> {

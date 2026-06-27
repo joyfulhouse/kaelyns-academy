@@ -79,22 +79,34 @@ served until evicted, so:
 ## Granting admin access (P4 role gate)
 
 Admin access is authorized by the user row's `role` column (`role = 'admin'`), **not**
-the `ADMIN_EMAILS` allowlist — the allowlist is only the seed list. So a freshly
-registered parent (even one whose email is allowlisted) is `role = 'user'` and is
-denied `/admin` until granted. To grant it, seed from the allowlist after the user
-has registered:
+the `ADMIN_EMAILS` allowlist — the allowlist is only a seed. A freshly registered
+parent (even one whose email is allowlisted) is `role = 'user'` and is denied
+`/admin` until granted.
+
+**Bootstrap the operator (while email verification is OFF) — grant by confirmed user id.**
+An email string is **not proof of ownership** when verification is off, so do not
+grant admin by email-matching here (a pre-registered allowlisted address could be an
+attacker's). After the operator registers, confirm the row is theirs and grant by id:
 
 ```bash
-# In-cluster (DATABASE_URL + ADMIN_EMAILS from the app secret/env), idempotent:
-DATABASE_URL=… ADMIN_EMAILS=… bun run db:seed:admin
-# …or directly against the CNPG primary:
 kubectl -n kaelyns-academy exec kaelyns-academy-db-1 -c postgres -- \
-  psql -U postgres -d kaelyns_academy -c \
-  "UPDATE \"user\" SET role='admin' WHERE lower(email) = ANY(SELECT lower(trim(x)) FROM unnest(string_to_array('<ADMIN_EMAILS>',',')) AS x);"
+  psql -U postgres -d kaelyns_academy -c "SELECT id, email, email_verified, role FROM \"user\";"
+# verify the id is the operator's own freshly-registered row, THEN:
+kubectl -n kaelyns-academy exec kaelyns-academy-db-1 -c postgres -- \
+  psql -U postgres -d kaelyns_academy -c "UPDATE \"user\" SET role='admin' WHERE id = '<operator-user-id>';"
 ```
 
-Re-running is safe (no-op when already granted). The `role` column is in the health
-canary's `REQUIRED_COLUMNS`, so a deploy that skipped the `0007` migration 503s.
+**Reconcile from the allowlist (once email verification is ON — P4 Stage 2).**
+`bun run db:seed:admin` grants admin to allowlisted users **only when their email is
+verified**, and refuses (warns) on unverified rows — so it can never re-open the
+self-register vector. Idempotent; safe to re-run:
+
+```bash
+DATABASE_URL=… ADMIN_EMAILS=… bun run db:seed:admin   # verified allowlisted users → admin
+```
+
+The `role` column is in the health canary's `REQUIRED_COLUMNS`, so a deploy that
+skipped the `0007` migration 503s rather than 500-ing on a missing column.
 
 ## Interim manual deploy (until P0 tasks T8–T12 land)
 
