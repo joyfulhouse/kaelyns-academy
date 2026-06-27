@@ -97,10 +97,13 @@ request at once.
   `ON DELETE CASCADE`.
 - **Delete the whole account** — `deleteAccountAction` → `deleteAccount`. A single
   `DELETE FROM "user"` cascades the entire child-data graph **plus** the Better
-  Auth `session` and `account` (credential/oauth) rows. `publisher.ownerUserId`
-  is `ON DELETE SET NULL` (a published program does **not** vanish because its
-  author closed their account — ownership nulls out). The FK cascade map is
-  guarded by `src/lib/db/schema.test.ts`.
+  Auth `session` and `account` (credential/oauth) rows. The Better Auth
+  `verification` table has **no** FK to `user`, so the same transaction also
+  explicitly deletes this parent's `verification` rows (email-verify / reset
+  tokens, keyed by email) — nothing auth-related is left behind.
+  `publisher.ownerUserId` is `ON DELETE SET NULL` (a published program does **not**
+  vanish because its author closed their account — ownership nulls out). The FK
+  cascade map is guarded by `src/lib/db/schema.test.ts`.
 
 **Re-authentication (account delete).** Because account delete is irreversible,
 it is gated by **two** checks, both verified server-side *before* anything is
@@ -141,6 +144,14 @@ server-side at generation and surfaced to the parent at
 `/parent/learners/[id]/activity`. We never store the raw prompt or model output
 (it can embed the child's display name). Old generated rows (pre-P6) show "model
 not recorded" rather than fabricating provenance.
+
+**Trust level (v1).** This metadata is computed server-side when the item is
+generated, but in v1 it is relayed through the client back onto the attempt record.
+So it is a *transparency record*, not a tamper-evident audit: a parent could forge
+the label on their **own** child's attempts via a direct call. It never feeds a
+security decision — the §8 "is AI allowed?" gate (`/api/practice`) is separately
+server-authoritative and unforgeable. A tamper-evident, server-owned generation
+record (an `ai_generation` table) is deferred future work.
 
 ---
 

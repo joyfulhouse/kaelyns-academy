@@ -3,7 +3,7 @@
 // is the guard, and only server actions / route handlers import it.)
 import { and, count, desc, eq, inArray, lt } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { attempt, deletionAudit, enrollment, learner, skillState, user } from "@/lib/db/schema";
+import { attempt, deletionAudit, enrollment, learner, skillState, user, verification } from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
 import { captureNonCritical } from "@/lib/capture";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
@@ -931,6 +931,21 @@ export async function deleteAccount(accountId: string): Promise<DeleteAccountRes
       attemptCount,
       requestedBy: "parent",
     });
+
+    // Better Auth's `verification` table has NO FK to user, so the user-delete
+    // cascade below MISSES it. Delete this parent's verification rows (keyed by the
+    // email identifier — Better Auth's email-verify/password-reset tokens are keyed
+    // by email) so account deletion truly removes ALL auth artifacts (COPPA "delete
+    // … all its data"). Usually empty today (email verification is off, P4 Stage 2),
+    // but correct + future-proof once reset/verify flows populate it.
+    const [u] = await tx
+      .select({ email: user.email })
+      .from(user)
+      .where(eq(user.id, accountId))
+      .limit(1);
+    if (u?.email) {
+      await tx.delete(verification).where(eq(verification.identifier, u.email));
+    }
 
     // The single delete the whole cascade hangs off.
     const deletedUsers = await tx

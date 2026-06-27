@@ -89,6 +89,12 @@ const tx = {
             ops.push({ op: "delete.returning", table: tableName(t), where: w });
             return Promise.resolve(deleteReturning.value);
           },
+          // A `.where()`-terminated delete (no `.returning()`) is awaited directly;
+          // record it as a plain delete so the verification cleanup is observable.
+          then<T>(resolve: (r: unknown) => T) {
+            ops.push({ op: "delete", table: tableName(t), where: w });
+            return Promise.resolve({ count: 0 }).then(resolve);
+          },
         };
       },
     };
@@ -108,6 +114,7 @@ vi.mock("@/lib/db/schema", () => ({
   skillState: { _name: "skill_state", learnerId: {} },
   attempt: { _name: "attempt", learnerId: {} },
   deletionAudit: { _name: "deletion_audit" },
+  verification: { _name: "verification", identifier: {} },
 }));
 vi.mock("drizzle-orm", () => ({
   and: (...a: unknown[]) => a,
@@ -171,6 +178,8 @@ describe("deleteAccount (cascade + audit)", () => {
     // Default: 2 learners, 5 attempts; the user delete affects 1 row.
     // deleteAccount issues: count(learner)=2, then select learner ids (2 rows),
     // then count(attempt)=5 — so seed both the learner id-rows and the counts.
+    // The email select (for verification cleanup) reads rows.user.
+    rows.user = [{ id: "U1", email: "p@example.com" }];
     rows.learner = [{ id: "L1" }, { id: "L2" }];
     counts.push(2, 5);
     deleteReturning.value = [{ id: "U1" }];
@@ -207,6 +216,19 @@ describe("deleteAccount (cascade + audit)", () => {
     const result = await deleteAccount("U1");
     expect(db.transaction).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ deleted: true, deletedLearners: 2, deletedAttempts: 5 });
+  });
+
+  it("deletes the parent's Better Auth verification rows (no FK → cascade misses them)", async () => {
+    await deleteAccount("U1");
+    const vDel = ops.find((o) => o.op === "delete" && o.table === "verification");
+    expect(vDel).toBeDefined();
+    // keyed by the parent's email identifier (Better Auth email-verify/reset tokens)
+    expect(JSON.stringify(vDel!.where)).toContain("p@example.com");
+    // …and in the same transaction, before the user delete the cascade hangs off.
+    const vIdx = ops.findIndex((o) => o.op === "delete" && o.table === "verification");
+    const uIdx = ops.findIndex((o) => o.op === "delete.returning" && o.table === "user");
+    expect(vIdx).toBeGreaterThanOrEqual(0);
+    expect(vIdx).toBeLessThan(uIdx);
   });
 
   it("returns deleted:false when no user row matched (already gone)", async () => {
