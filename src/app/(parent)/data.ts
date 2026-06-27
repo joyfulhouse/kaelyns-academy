@@ -194,6 +194,33 @@ export async function getPrimaryLearnerSettings(): Promise<PrimaryLearnerSetting
   });
 }
 
+/** The per-learner settings page read: the requested learner + their persisted
+ *  settings. */
+export interface LearnerSettingsForParent {
+  learner: LearnerRow;
+  settings: LearnerSettings | null;
+}
+
+/**
+ * The per-learner Settings page read (P6): the REQUESTED learner (not the
+ * primary) plus their persisted `LearnerSettings`, account-scoped. This is the
+ * per-learner analog of {@link getPrimaryLearnerSettings} that closes the
+ * multi-child gap — a parent with 2+ children can now see/edit each child's
+ * §8 AI kill-switch, daily goal, and read-aloud default. Returns null when the
+ * learner does not exist or is not this account's (the page turns that into a
+ * 404), so the form is never bound to an unowned learner.
+ */
+export async function getLearnerSettingsForParent(
+  learnerId: string,
+): Promise<LearnerSettingsForParent | null> {
+  return withAccount(async ({ accountId }) => {
+    const learner = await getLearner(accountId, learnerId);
+    if (!learner) return null;
+    const settings = await getLearnerSettings(accountId, learner.id);
+    return { learner, settings };
+  });
+}
+
 /** A single labelled skill_state row, in domain order, for the learner detail. */
 export interface SkillStatus {
   slug: SkillTag;

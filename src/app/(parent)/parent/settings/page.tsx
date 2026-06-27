@@ -8,8 +8,9 @@ export default async function SettingsPage() {
   // Resolve the primary (first) learner AND their persisted settings so the form
   // can initialize its toggles from what's actually stored (not hardcoded
   // defaults) — a parent who turned the §8 AI switch OFF must see it stay OFF
-  // across reloads. Settings are scoped to the primary learner for now;
-  // per-learner settings UI lands in a later phase.
+  // across reloads. This page is the account-wide entry point; each learner also
+  // has their own settings page (/parent/learners/[id]/settings) reached from
+  // their detail page, which is where multi-child families manage each child.
   const { primaryLearnerId, settings } = await getPrimaryLearnerSettings();
 
   return (
@@ -23,7 +24,7 @@ export default async function SettingsPage() {
       </header>
 
       <div className="mt-8">
-        <SettingsForm primaryLearnerId={primaryLearnerId} initialSettings={settings} />
+        <SettingsForm learnerId={primaryLearnerId} initialSettings={settings} />
       </div>
     </div>
   );

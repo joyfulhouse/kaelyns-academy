@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import {
   ArrowLeftIcon,
   CakeIcon,
+  GearSixIcon,
   SparkleIcon,
   StarIcon,
 } from "@phosphor-icons/react/dist/ssr";
@@ -112,6 +113,26 @@ export default async function LearnerDetailPage({
           </div>
         )}
       </header>
+
+      {/* Quiet per-learner management links (settings + the "what the AI made"
+          provenance trail). Each is its own focused page; clustered here so a
+          multi-child family reaches the right child's controls from their card. */}
+      <nav aria-label={`Manage ${name}`} className="mt-5 flex flex-wrap gap-2">
+        <Link
+          href={`/parent/learners/${id}/settings`}
+          className="inline-flex items-center gap-1.5 rounded-pill border border-line px-3.5 py-1.5 text-sm font-medium text-ink-soft transition-colors hover:border-line-strong hover:text-ink"
+        >
+          <GearSixIcon weight="regular" className="size-4" />
+          Settings
+        </Link>
+        <Link
+          href={`/parent/learners/${id}/activity`}
+          className="inline-flex items-center gap-1.5 rounded-pill border border-line px-3.5 py-1.5 text-sm font-medium text-ink-soft transition-colors hover:border-line-strong hover:text-ink"
+        >
+          <SparkleIcon weight="regular" className="size-4" />
+          What the AI made
+        </Link>
+      </nav>
 
       {!hasActivity ? (
         <EmptyState name={name} />

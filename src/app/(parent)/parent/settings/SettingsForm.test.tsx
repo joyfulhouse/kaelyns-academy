@@ -49,4 +49,16 @@ describe("settingsToFormState", () => {
       readAloudDefault: true,
     });
   });
+
+  // P6 per-learner settings: the SAME pure mapper now initializes the per-learner
+  // settings page (/parent/learners/[id]/settings), so the §8 kill-switch
+  // stickiness invariant holds for EVERY child's stored settings — not just the
+  // primary learner's. A non-primary child whose parent stored aiPractice:false
+  // must render OFF (and a subsequent save can't silently flip it back on).
+  it("keeps a non-primary learner's stored aiPractice:false OFF (per-learner §8 stickiness)", () => {
+    const secondChild = settingsToFormState({ dailyGoal: 10, aiPractice: false, readAloud: true });
+    expect(secondChild.aiFeatures).toBe(false);
+    expect(secondChild.dailyGoal).toBe("10");
+    expect(secondChild.readAloudDefault).toBe(true);
+  });
 });
