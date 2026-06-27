@@ -113,7 +113,7 @@ export function LearnerDataControls({
         Export or permanently delete {learnerName}&rsquo;s learning data.
       </p>
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+      <div className="mt-5 grid items-start gap-4 sm:grid-cols-2">
         {/* Export card */}
         <Surface tone="raised" className="border border-line p-5">
           <div className="flex flex-col gap-3">
@@ -150,8 +150,11 @@ export function LearnerDataControls({
           </div>
         </Surface>
 
-        {/* Delete card */}
-        <Surface tone="raised" className="border border-line p-5">
+        {/* Delete card — set apart at rest with a full danger-tinted border (never
+            a side-stripe) so the eye registers gravity before the click; on plain
+            paper (not paper-raised) so the danger warning/confirm copy stays at AA
+            contrast (danger-on-raised is ~4.4:1). Mirrors AccountDataControls. */}
+        <div className="rounded-xl border border-danger/30 bg-paper p-5">
           <div className="flex flex-col gap-3">
             <div>
               <p className="font-display text-base font-semibold text-ink">Delete profile</p>
@@ -219,7 +222,7 @@ export function LearnerDataControls({
               </p>
             )}
           </div>
-        </Surface>
+        </div>
       </div>
     </section>
   );
