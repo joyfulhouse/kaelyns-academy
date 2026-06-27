@@ -117,7 +117,7 @@ vi.mock("drizzle-orm", () => ({
   count: () => ["count"],
 }));
 
-import { buildAccountExport, deleteAccount } from "./store";
+import { buildAccountExport, deleteAccount, listGeneratedAttempts } from "./store";
 
 beforeEach(() => {
   ops.length = 0;
@@ -213,5 +213,73 @@ describe("deleteAccount (cascade + audit)", () => {
     deleteReturning.value = [];
     const result = await deleteAccount("U1");
     expect(result.deleted).toBe(false);
+  });
+});
+
+describe("listGeneratedAttempts (provenance read)", () => {
+  // The ownership check (getLearner) reads rows.learner; an owned learner row
+  // must carry the columns toRow maps.
+  const owned = { id: "L1", accountId: "U1", displayName: "Kaelyn", avatar: null, birthMonth: null };
+
+  function genRow(over: Partial<Record<string, unknown>> = {}) {
+    return {
+      activityId: "gen-a",
+      kind: "math-tenframe",
+      score: { stars: 2, correct: 2, total: 3, skillEvidence: [] },
+      genModel: "ha-assist",
+      genRoute: "ready",
+      genAt: new Date("2026-06-26T08:00:00.000Z"),
+      createdAt: new Date("2026-06-26T08:00:01.000Z"),
+      ...over,
+    };
+  }
+
+  it("returns an empty page when the learner is not owned by the account", async () => {
+    rows.learner = []; // ownership fails
+    const page = await listGeneratedAttempts("U1", "L1");
+    expect(page).toEqual({ items: [], nextCursor: null });
+  });
+
+  it("maps generated rows to provenance items (model/route/generatedAt/stars)", async () => {
+    rows.learner = [owned];
+    rows.attempt = [genRow()];
+    const page = await listGeneratedAttempts("U1", "L1");
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({
+      activityId: "gen-a",
+      kind: "math-tenframe",
+      stars: 2,
+      model: "ha-assist",
+      route: "ready",
+      generatedAt: "2026-06-26T08:00:00.000Z",
+      createdAt: "2026-06-26T08:00:01.000Z",
+    });
+  });
+
+  it("paginates with a nextCursor when more than `limit` rows exist (limit+1 probe)", async () => {
+    rows.learner = [owned];
+    // limit=2, provide 3 rows → store slices to 2 and sets nextCursor to row 2's createdAt.
+    rows.attempt = [
+      genRow({ createdAt: new Date("2026-06-26T03:00:00.000Z") }),
+      genRow({ createdAt: new Date("2026-06-26T02:00:00.000Z") }),
+      genRow({ createdAt: new Date("2026-06-26T01:00:00.000Z") }),
+    ];
+    const page = await listGeneratedAttempts("U1", "L1", { limit: 2 });
+    expect(page.items).toHaveLength(2);
+    expect(page.nextCursor).toBe("2026-06-26T02:00:00.000Z");
+  });
+
+  it("has a null nextCursor when the page is not full (no further page)", async () => {
+    rows.learner = [owned];
+    rows.attempt = [genRow()];
+    const page = await listGeneratedAttempts("U1", "L1", { limit: 20 });
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it("carries null model/route/generatedAt through for a pre-provenance generated row", async () => {
+    rows.learner = [owned];
+    rows.attempt = [genRow({ genModel: null, genRoute: null, genAt: null })];
+    const page = await listGeneratedAttempts("U1", "L1");
+    expect(page.items[0]).toMatchObject({ model: null, route: null, generatedAt: null });
   });
 });

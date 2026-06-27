@@ -1,7 +1,7 @@
 // server-only: this module opens DB connections and must never be imported into
 // a Client Component. (the `server-only` package isn't installed; this comment
 // is the guard, and only server actions / route handlers import it.)
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, inArray, lt } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { attempt, deletionAudit, enrollment, learner, skillState, user } from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
@@ -296,6 +296,84 @@ export async function getRecentAttempts(
     .orderBy(desc(attempt.createdAt))
     .limit(limit);
   return rows.map((r) => ({ activityId: r.activityId, kind: r.kind, stars: r.score.stars, day: r.day }));
+}
+
+/** One AI-generated attempt for the parent-visible provenance trail (P6 / §8). */
+export interface GeneratedAttempt {
+  activityId: string;
+  kind: string;
+  stars: number;
+  /** Logical model route; null for pre-provenance generated rows. */
+  model: string | null;
+  /** Generation path tag (band or language id); null for pre-provenance rows. */
+  route: string | null;
+  /** ISO generation time; null when not recorded. */
+  generatedAt: string | null;
+  /** ISO time the attempt was recorded (always present); the keyset cursor key. */
+  createdAt: string;
+}
+
+export interface GeneratedAttemptsPage {
+  items: GeneratedAttempt[];
+  /** Opaque cursor for the next page (ISO createdAt of the last row), or null at the end. */
+  nextCursor: string | null;
+}
+
+/** Default + hard cap on the provenance page size (keeps the read bounded). */
+const PROVENANCE_PAGE_DEFAULT = 20;
+const PROVENANCE_PAGE_MAX = 50;
+
+/**
+ * The parent-visible "what the AI made" trail (P6 / spec §8): a learner's
+ * AI-GENERATED attempts only (generated=true), account-scoped, newest-first,
+ * keyset-paginated by createdAt. Reuses the `attempt_learner_generated_idx`
+ * (learnerId, generated). Returns an empty page when the learner is not owned by
+ * the account (tenancy boundary) — never another account's data.
+ *
+ * Keyset (not OFFSET) pagination: `cursor` is the ISO createdAt of the last row
+ * seen; the next page is the generated attempts strictly older than it. We fetch
+ * limit+1 to know whether a further page exists without a second count query.
+ */
+export async function listGeneratedAttempts(
+  accountId: string,
+  learnerId: string,
+  opts: { limit?: number; cursor?: string | null } = {},
+): Promise<GeneratedAttemptsPage> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return { items: [], nextCursor: null };
+
+  const limit = Math.max(1, Math.min(PROVENANCE_PAGE_MAX, opts.limit ?? PROVENANCE_PAGE_DEFAULT));
+  const cursorDate = opts.cursor ? new Date(opts.cursor) : null;
+  const cursorValid = cursorDate && !Number.isNaN(cursorDate.getTime()) ? cursorDate : null;
+
+  const predicate = cursorValid
+    ? and(
+        eq(attempt.learnerId, learnerId),
+        eq(attempt.generated, true),
+        lt(attempt.createdAt, cursorValid),
+      )
+    : and(eq(attempt.learnerId, learnerId), eq(attempt.generated, true));
+
+  const rows = await getDb()
+    .select()
+    .from(attempt)
+    .where(predicate)
+    .orderBy(desc(attempt.createdAt))
+    .limit(limit + 1); // +1 to detect a further page
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const items: GeneratedAttempt[] = page.map((r) => ({
+    activityId: r.activityId,
+    kind: r.kind,
+    stars: clampStars(r.score.stars),
+    model: r.genModel,
+    route: r.genRoute,
+    generatedAt: r.genAt ? r.genAt.toISOString() : null,
+    createdAt: r.createdAt.toISOString(),
+  }));
+  const nextCursor = hasMore ? items[items.length - 1]!.createdAt : null;
+  return { items, nextCursor };
 }
 
 export interface CompletedActivity {
