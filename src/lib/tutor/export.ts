@@ -44,6 +44,8 @@ export interface LearnerExport {
     activityId: string;
     kind: string;
     score: { stars: number; correct: number; total: number };
+    /** The child's own response payload (answers, journal text, drawing data). */
+    response: unknown;
     day: string;
     createdAt: string;
   }[];
@@ -77,6 +79,7 @@ export interface ShapeInput {
     activityId: string;
     kind: string;
     score: { stars: number; correct: number; total: number; skillEvidence: unknown[] };
+    response?: unknown;
     day: string;
     createdAt: Date | string;
     /** True for AI-generated practice — the only attempts that contribute provenance. */
@@ -126,6 +129,9 @@ export function shapeLearnerExport(input: ShapeInput): LearnerExport {
         correct: a.score.correct,
         total: a.score.total,
       },
+      // The child's own work (journal text, drawings, answers). Exported in full
+      // for COPPA "export … all its data" — it is the child's created content.
+      response: a.response ?? null,
       day: a.day,
       createdAt:
         typeof a.createdAt === "string"

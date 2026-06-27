@@ -68,7 +68,7 @@ The **manifest** is the self-describing data inventory (`schemaVersion`,
 | `learners` | `learner` rows | display name + birth month only |
 | `enrollments` | `enrollment` | program slug, status, config |
 | `skillState` | `skill_state` | derived outcomes + per-day evidence |
-| `attempts` | `attempt` | score (stars/correct/total), day, createdAt |
+| `attempts` | `attempt` | score (stars/correct/total), **the child's full `response`** (answers, journal text, drawing data), day, createdAt |
 | `aiProvenance` | `attempt` (generated rows) | model, route, generatedAt — metadata only |
 
 **Deliberately not exported** (`manifest.notExported`), and why:

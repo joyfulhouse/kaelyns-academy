@@ -797,6 +797,9 @@ async function gatherLearnerExport(
       activityId: a.activityId,
       kind: a.kind,
       score: a.score as { stars: number; correct: number; total: number; skillEvidence: unknown[] },
+      // The child's own response (journal text, drawings, answers) — exported in
+      // full for COPPA "export … all its data" (shaped in export.ts).
+      response: a.response,
       day: a.day,
       createdAt: a.createdAt,
       // Provenance (P6): carried for generated rows so the export includes the
