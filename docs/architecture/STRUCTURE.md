@@ -36,7 +36,7 @@ kaelyns-academy/
 │   ├── lib/                              # framework-agnostic logic (lazy service factories only)
 │   │   ├── env.ts / capture.ts / cn.ts / concurrency.ts / request-ip.ts   # primitives
 │   │   ├── auth.ts / auth-client.ts      # lazy getAuth() (Better Auth) + browser client
-│   │   ├── tenancy.ts                    # withAccount/getAccountOrNull/getLearner — account scoping seam
+│   │   ├── tenancy.ts                    # withAccount/requireAccount/getAccountOrNull — account scoping seam
 │   │   ├── admin.ts                      # requireAdmin() allowlist gate (+ stale-session defense)
 │   │   ├── rate-limit.ts                 # per-instance fixed-window limiter (denial-of-wallet defense)
 │   │   ├── parent-views.ts / status-display.ts   # view-model helpers
@@ -44,8 +44,8 @@ kaelyns-academy/
 │   │   │                                 #   validate); practice.ts (bounded gen), report.ts, world-language-config
 │   │   ├── audio/                        # Kokoro TTS: kokoro/phonemes/phonemize/narration/spokenFields/
 │   │   │                                 #   store/ttsKey/config (pronunciation pipeline)
-│   │   ├── content/                      # repository.ts (assemble/resolve programs), store.ts, config.ts,
-│   │   │                                 #   lifecycle-store (draft/publish/archive) — version-pin resolution
+│   │   ├── content/                      # repository.ts (assemble/resolve programs), store.ts (CRUD +
+│   │   │                                 #   draft/publish/archive lifecycle), config.ts — version-pin resolution
 │   │   ├── tutor/                        # store.ts (enrollment/attempt/skill_state DB + §8 gate reads),
 │   │   │                                 #   enrollment, mastery, recommend, export (learner export/delete)
 │   │   ├── pwa/                          # cacheRules, precache, iosHint (service-worker config + predicates)
@@ -72,9 +72,11 @@ kaelyns-academy/
 │       ├── ui/                           # Button, Field, TextInput, Select, Switch, Pill, ProgressRing,
 │       │                                 #   Stars, Surface (token-pure primitives; Field wires ARIA)
 │       ├── a11y/SkipLink.tsx             # skip-to-content (sr-only → focus reveal)
-│       ├── art/                          # Mascot, Decorations (SVG, aria-hidden)
+│       ├── art/                          # Mascot (SVG, role=img + aria-label), Decorations (SVG, aria-hidden)
 │       ├── shell/                        # SiteHeader, SiteFooter (marketing)
 │       ├── learner/                      # ActivityHost, AppShellKid, StudioHome, UnitView, ProgramPicker
+│       │                                 #   + state/narration helpers (useLearnerState/useProgress/
+│       │                                 #   useSkillState, localStore, narrate, speak)
 │       ├── parent/                       # DashboardShellParent, AddChildForm, EnrollmentConfigForm,
 │       │                                 #   MarketplaceGrid, ProgramCard, CurriculumPanel,
 │       │                                 #   AssignProgramControl, LearnerDataControls, ProgressReportCard
