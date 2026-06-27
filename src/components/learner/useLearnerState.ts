@@ -76,13 +76,15 @@ export interface UseLearnerState {
   /**
    * Record one completed activity: DB in account mode, localStorage in guest.
    * Pass `{ generated: true }` for AI practice items — they fold skill evidence
-   * but are not tracked as authored star progress / completion.
+   * but are not tracked as authored star progress / completion. For a generated
+   * item, pass `gen` (the provenance echoed by /api/practice) so the attempt
+   * records which model/route/when produced it (P6 / §8). Ignored in guest mode.
    */
   record: (
     activity: Activity,
     response: unknown,
     score: ActivityScore,
-    opts?: { generated?: boolean },
+    opts?: { generated?: boolean; gen?: { model: string; route: string; at: string } },
   ) => void;
   /**
    * The parent-set per-child, per-program enrollment config. Empty object in
@@ -306,6 +308,9 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
               stars: score.stars,
               skillEvidence: score.skillEvidence,
             },
+            // Relay generation provenance (P6 / §8). Only present for generated
+            // items; the action ignores it for authored ones.
+            ...(generated && opts?.gen ? { gen: opts.gen } : undefined),
           });
           if (mountedRef.current) await loadAccountState(selectedLearnerId, programSlug);
         })();

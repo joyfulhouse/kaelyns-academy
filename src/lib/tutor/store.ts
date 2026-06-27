@@ -162,6 +162,12 @@ export interface RecordAttemptInput {
   score: ActivityScore;
   /** YYYY-MM-DD; defaults to today (caller's clock). */
   day: DayKey;
+  /**
+   * AI provenance for a generated attempt (P6 / §8). Persisted ONLY when
+   * `generated` is true; metadata only (model/route/at), never a raw prompt.
+   * Absent for authored attempts → the gen_* columns stay null.
+   */
+  provenance?: { model: string; route: string; at: Date };
 }
 
 /**
@@ -208,14 +214,21 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
       throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
     }
 
+    // Provenance is written ONLY for a generated attempt (and only when supplied),
+    // so an authored row can never carry gen_* metadata even if a caller passes it.
+    const generated = input.generated ?? false;
+    const provenance = generated ? input.provenance : undefined;
     await tx.insert(attempt).values({
       learnerId: input.learnerId,
       activityId: input.activityId,
       kind: input.kind,
-      generated: input.generated ?? false,
+      generated,
       score: input.score,
       response: input.response ?? null,
       day: input.day,
+      genModel: provenance?.model ?? null,
+      genRoute: provenance?.route ?? null,
+      genAt: provenance?.at ?? null,
     });
 
     // Acquire the per-skill row locks in a deterministic (skill-sorted) order:

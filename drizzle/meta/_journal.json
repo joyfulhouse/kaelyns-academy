@@ -57,6 +57,13 @@
       "when": 1782565430109,
       "tag": "0007_bright_tyrannus",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1782568557584,
+      "tag": "0008_ambitious_maddog",
+      "breakpoints": true
     }
   ]
 }

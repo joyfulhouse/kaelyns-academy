@@ -366,6 +366,44 @@ export interface GeneratePracticeOptions {
 }
 
 /**
+ * Bound metadata describing which model/route produced a generated item (P6 /
+ * spec §8 provenance). This is the ONLY thing we persist about generation — never
+ * the raw prompt (a prompt can embed the child's display name → PII; plan §3.3).
+ */
+export interface GenerationProvenance {
+  /** The logical tutor route name from models.ts (e.g. "ha-assist"). NOT a raw provider id. */
+  model: TutorModel;
+  /** Audit tag for the path taken: a language id for lang kinds, else the band. */
+  route: string;
+}
+
+/**
+ * Derive the provenance (model + route) a generation WOULD use, from the same
+ * deterministic inputs the generator routes on — `kind`, `band`, and
+ * `skillHints`. Kept as a tiny pure mirror of the model selection inside
+ * {@link generatePracticeItems} so the provenance recorded on an attempt reflects
+ * what actually produced it, derived SERVER-side (not echoed by the client). For
+ * a World-Languages kind the route is the resolved language id (and the model its
+ * per-language route, falling back to the band model); otherwise the route is the
+ * band and the model is the band model.
+ */
+export function provenanceForGeneration(
+  kind: ActivityKind,
+  band: Band,
+  skillHints: SkillTag[],
+): GenerationProvenance {
+  if (isLangKind(kind)) {
+    const lang = languageForSkillHints(skillHints);
+    if (lang) {
+      return { model: MODEL_FOR_LANGUAGE[lang.id] ?? MODEL_FOR_BAND[band], route: lang.id };
+    }
+    // No language resolved → generation itself throws; keep provenance honest.
+    return { model: MODEL_FOR_BAND[band], route: band };
+  }
+  return { model: MODEL_FOR_BAND[band], route: band };
+}
+
+/**
  * Generate `n` validated config items for `kind`. The return type is the array
  * of validated configs for that kind. Throws on any validation failure.
  */

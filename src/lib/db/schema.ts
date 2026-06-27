@@ -151,6 +151,17 @@ export const attempt = pgTable(
     kind: text("kind").notNull(),
     /** true when the activity was AI-generated practice (not authored content). */
     generated: boolean("generated").notNull().default(false),
+    // ── AI provenance (P6 / spec §8 "what the AI made" trail) ────────────────
+    // Populated only for generated=true rows; authored rows leave these null.
+    // Metadata ONLY — never the raw prompt (a prompt can embed the child's
+    // display name → PII; see plan §3.3 / open question Q3). All nullable +
+    // expand-only, so old generated rows simply show "model not recorded".
+    /** Logical tutor route name from models.ts (e.g. "ha-assist") — NOT a raw provider model id. */
+    genModel: text("gen_model"),
+    /** Audit tag for the generation path (band like "ready"/"stretch", or a language id). */
+    genRoute: text("gen_route"),
+    /** When generation happened (may differ from createdAt, which is when the attempt was recorded). */
+    genAt: timestamp("gen_at", { withTimezone: true }),
     score: jsonb("score")
       .$type<{
         correct: number;
@@ -198,6 +209,31 @@ export const skillState = pgTable(
     // index-backed.
     index("skill_state_learner_idx").on(t.learnerId),
   ],
+);
+
+/**
+ * Account-deletion audit (P6 / spec §8 retention). One row is written
+ * immediately BEFORE an account's hard delete cascades, recording who/when and
+ * the counts that were removed.
+ *
+ * Deliberately has NO foreign key to `user`: the row it records is the deletion
+ * of that very user, so an FK with cascade would delete the audit along with it.
+ * `userId` is therefore a plain text column (the id of the now-deleted account),
+ * letting the audit survive the cascade. Holds no child PII — only counts.
+ */
+export const deletionAudit = pgTable(
+  "deletion_audit",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    /** The deleted account's user id. NOT an FK (must outlive the user it records). */
+    userId: text("user_id").notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }).notNull().defaultNow(),
+    learnerCount: integer("learner_count").notNull().default(0),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    /** Who requested the deletion (e.g. "parent"); future: "admin"/"automation". */
+    requestedBy: text("requested_by").notNull().default("parent"),
+  },
+  (t) => [index("deletion_audit_user_idx").on(t.userId)],
 );
 
 export * from "./auth-schema";

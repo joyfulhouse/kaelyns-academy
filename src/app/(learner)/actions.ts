@@ -187,6 +187,21 @@ const skillEvidenceSchema = z.object({
   outcome: z.enum(["not_yet", "emerging", "solid"]),
 });
 
+/**
+ * AI provenance echoed back from /api/practice for a generated item (P6 / §8).
+ * Bound metadata only (model/route names + a generation timestamp); the route
+ * derives these server-side, the client just relays them onto the attempt. The
+ * model/route are short audit tags (bounded like `kind`); `at` is an ISO string.
+ * Only honored when `generated` is true (see below) — never persisted on authored
+ * rows. Light bounds because this is non-authoritative display metadata, not a
+ * gate; the §8 enforcement lives in /api/practice + the active-enrollment check.
+ */
+const provenanceSchema = z.object({
+  model: z.string().min(1).max(60),
+  route: z.string().min(1).max(60),
+  at: z.string().datetime(),
+});
+
 const recordAttemptSchema = z.object({
   learnerId: z.string().min(1),
   programSlug: z.string().min(1),
@@ -200,6 +215,8 @@ const recordAttemptSchema = z.object({
     stars: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]),
     skillEvidence: z.array(skillEvidenceSchema),
   }),
+  /** Provenance for a generated attempt; ignored unless `generated` is true. */
+  gen: provenanceSchema.optional(),
 });
 
 export type RecordAttemptInput = z.infer<typeof recordAttemptSchema>;
@@ -225,6 +242,15 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
   if (!parsed.success) return { ok: false, reason: "invalid" };
   const data = parsed.data;
 
+  const generated = data.generated ?? false;
+  // Provenance is honored only for a generated attempt: parse the echoed ISO
+  // timestamp into a Date here (the store column is timestamptz). recordAttempt
+  // additionally drops it for non-generated rows as defense-in-depth.
+  const provenance =
+    generated && data.gen
+      ? { model: data.gen.model, route: data.gen.route, at: new Date(data.gen.at) }
+      : undefined;
+
   try {
     await withAccount(({ accountId }) =>
       recordAttempt(accountId, {
@@ -232,10 +258,11 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
         programSlug: data.programSlug,
         activityId: data.activityId,
         kind: data.kind,
-        generated: data.generated ?? false,
+        generated,
         response: data.response,
         score: data.score,
         day: new Date().toISOString().slice(0, 10),
+        provenance,
       }),
     );
     return { ok: true };
