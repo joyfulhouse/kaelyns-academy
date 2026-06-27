@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { getPrimaryLearnerSettings } from "@/app/(parent)/data";
+import { AccountDataControls } from "@/components/parent/AccountDataControls";
 import { SettingsForm } from "./SettingsForm";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -26,6 +27,9 @@ export default async function SettingsPage() {
       <div className="mt-8">
         <SettingsForm learnerId={primaryLearnerId} initialSettings={settings} />
       </div>
+
+      {/* Account-level export (and, in P6.5, delete) — spec §8 COPPA controls. */}
+      <AccountDataControls />
     </div>
   );
 }

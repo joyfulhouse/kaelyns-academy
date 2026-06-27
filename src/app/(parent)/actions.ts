@@ -9,6 +9,7 @@ import { getProgramAsync, listProgramsAsync } from "@/lib/content/repository";
 import { getPublishedVersionId } from "@/lib/content/store";
 import {
   assignProgram,
+  buildAccountExport,
   buildLearnerExport,
   createLearner,
   deleteLearner,
@@ -22,6 +23,7 @@ import {
   type LearnerRow,
 } from "@/lib/tutor/store";
 import type { LearnerExport } from "@/lib/tutor/export";
+import type { AccountExport } from "@/lib/tutor/account-export";
 import { deriveOutcome, type SkillState } from "@/lib/tutor/mastery";
 import {
   generateProgressReport,
@@ -482,6 +484,40 @@ export async function exportLearnerAction(learnerId: string): Promise<ExportLear
       return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
     }
     captureNonCritical("exportLearnerAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not export data. Please try again." };
+  }
+}
+
+/** Discriminated result for exportAccountAction. */
+export type ExportAccountResult =
+  | { ok: true; data: AccountExport }
+  | { ok: false; reason: "unauthenticated" | "unavailable"; message?: string };
+
+/**
+ * Build and return the WHOLE-ACCOUNT data export (P6 / spec §8 COPPA "export …
+ * all its data"): the minimized parent record + every learner + a self-describing
+ * data-inventory manifest. No args — the scope is the session. Like the per-child
+ * export, the JSON is returned to the client, which triggers the browser download
+ * (no server temp files). Account-scoped via withAccount; build-safe.
+ */
+export async function exportAccountAction(): Promise<ExportAccountResult> {
+  try {
+    const data = await withAccount(async ({ accountId }) => {
+      // Stamp exportedAt here so the pure shaper stays free of new Date().
+      return buildAccountExport(accountId, new Date().toISOString());
+    });
+
+    // null only if the parent user row vanished mid-request (e.g. concurrent
+    // delete) — surface as a calm "unavailable", not a thrown stack.
+    if (!data) {
+      return { ok: false, reason: "unavailable", message: "Could not export data. Please try again." };
+    }
+    return { ok: true, data };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("exportAccountAction failed", error);
     return { ok: false, reason: "unavailable", message: "Could not export data. Please try again." };
   }
 }

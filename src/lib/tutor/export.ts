@@ -5,6 +5,22 @@
  */
 import type { LearnerSettings, EnrollmentConfig } from "@/lib/content/config";
 
+/**
+ * One "what the AI made" provenance entry in the export (P6 / spec §8), derived
+ * from a generated attempt. Metadata only — model/route/when — never a raw
+ * prompt (which could embed the child's display name → PII).
+ */
+export interface AiProvenanceEntry {
+  activityId: string;
+  kind: string;
+  /** Logical model route (e.g. "ha-assist"); null for pre-provenance generated rows. */
+  model: string | null;
+  /** Generation path tag (band or language id); null for pre-provenance rows. */
+  route: string | null;
+  /** ISO timestamp of generation; null when not recorded (old rows). */
+  generatedAt: string | null;
+}
+
 /** Minimized per-child export (spec §8 child-data posture). */
 export interface LearnerExport {
   exportedAt: string;
@@ -31,6 +47,12 @@ export interface LearnerExport {
     day: string;
     createdAt: string;
   }[];
+  /**
+   * The AI provenance trail (P6): one entry per AI-GENERATED attempt, so an
+   * export honestly shows "what the AI made" for this child. Empty when the
+   * child has no generated practice.
+   */
+  aiProvenance: AiProvenanceEntry[];
 }
 
 export interface ShapeInput {
@@ -57,7 +79,19 @@ export interface ShapeInput {
     score: { stars: number; correct: number; total: number; skillEvidence: unknown[] };
     day: string;
     createdAt: Date | string;
+    /** True for AI-generated practice — the only attempts that contribute provenance. */
+    generated?: boolean;
+    /** Provenance columns (populated only on generated rows). */
+    genModel?: string | null;
+    genRoute?: string | null;
+    genAt?: Date | string | null;
   }[];
+}
+
+/** Normalize a Date|string|null timestamp to an ISO string (or null). */
+function toIsoOrNull(value: Date | string | null | undefined): string | null {
+  if (value == null) return null;
+  return typeof value === "string" ? value : value.toISOString();
 }
 
 /**
@@ -98,5 +132,15 @@ export function shapeLearnerExport(input: ShapeInput): LearnerExport {
           ? a.createdAt
           : (a.createdAt as Date).toISOString(),
     })),
+    // Provenance trail (P6): one entry per generated attempt, metadata only.
+    aiProvenance: input.attempts
+      .filter((a) => a.generated)
+      .map((a) => ({
+        activityId: a.activityId,
+        kind: a.kind,
+        model: a.genModel ?? null,
+        route: a.genRoute ?? null,
+        generatedAt: toIsoOrNull(a.genAt),
+      })),
   };
 }

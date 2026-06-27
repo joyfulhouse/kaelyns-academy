@@ -1,9 +1,9 @@
 // server-only: this module opens DB connections and must never be imported into
 // a Client Component. (the `server-only` package isn't installed; this comment
 // is the guard, and only server actions / route handlers import it.)
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { attempt, enrollment, learner, skillState } from "@/lib/db/schema";
+import { attempt, deletionAudit, enrollment, learner, skillState, user } from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
 import { captureNonCritical } from "@/lib/capture";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
@@ -16,6 +16,7 @@ import {
 import { getPublishedVersionId } from "@/lib/content/store";
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
 import { shapeLearnerExport, type LearnerExport } from "./export";
+import { shapeAccountExport, type AccountExport } from "./account-export";
 
 /**
  * The DB-backed tutor store: the server equivalent of the client's
@@ -667,8 +668,22 @@ export async function buildLearnerExport(
     .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
     .limit(1);
   if (!rows[0]) return null;
-  const learnerRow = rows[0];
+  return gatherLearnerExport(rows[0], exportedAt);
+}
 
+/**
+ * Gather one OWNED learner row's full data and shape it into the minimized
+ * export. Factored out so {@link buildLearnerExport} (single child) and
+ * {@link buildAccountExport} (all children) share one gather + shape with no
+ * duplicate ownership logic: the caller has ALREADY established the row belongs
+ * to the account (via the scoped select / listLearners), so this takes the row
+ * directly. Reads only; injects `exportedAt` so the pure shaper stays mock-free.
+ */
+async function gatherLearnerExport(
+  learnerRow: typeof learner.$inferSelect,
+  exportedAt: string,
+): Promise<LearnerExport> {
+  const learnerId = learnerRow.id;
   // Gather all related data in parallel (no write, just reads).
   const [enrollmentRows, skillStateRows, attemptRows] = await Promise.all([
     getDb().select().from(enrollment).where(eq(enrollment.learnerId, learnerId)),
@@ -706,8 +721,58 @@ export async function buildLearnerExport(
       score: a.score as { stars: number; correct: number; total: number; skillEvidence: unknown[] },
       day: a.day,
       createdAt: a.createdAt,
+      // Provenance (P6): carried for generated rows so the export includes the
+      // "what the AI made" trail. The shaper filters to generated attempts.
+      generated: a.generated,
+      genModel: a.genModel,
+      genRoute: a.genRoute,
+      genAt: a.genAt,
     })),
   });
+}
+
+/**
+ * Build the WHOLE-ACCOUNT export (P6 / spec §8 "export … all its data"): the
+ * parent record (minimized — id/email/createdAt, NEVER password/tokens) plus
+ * every learner the account owns, each shaped by the same per-child gatherer
+ * (so provenance + minimization land once). Account-scoped: only this account's
+ * learners are included. The caller (action) injects `exportedAt`.
+ *
+ * Returns null when the parent `user` row can't be found (e.g. the account was
+ * deleted mid-request) — the action turns that into a calm "unavailable".
+ */
+export async function buildAccountExport(
+  accountId: string,
+  exportedAt: string,
+): Promise<AccountExport | null> {
+  // The parent record — minimized. Read ONLY the non-sensitive columns; the
+  // password/token columns live on the Better Auth `account` table, never here,
+  // but we still select explicitly so a future `user` column can't leak by
+  // default into the export.
+  const userRows = await getDb()
+    .select({ id: user.id, email: user.email, createdAt: user.createdAt })
+    .from(user)
+    .where(eq(user.id, accountId))
+    .limit(1);
+  if (!userRows[0]) return null;
+  const account = {
+    id: userRows[0].id,
+    email: userRows[0].email,
+    createdAt: userRows[0].createdAt.toISOString(),
+  };
+
+  // Every learner the account owns (listLearners is already account-scoped, so
+  // this is the per-account ownership check — no second check per learner).
+  const learnerRows = await getDb()
+    .select()
+    .from(learner)
+    .where(eq(learner.accountId, accountId))
+    .orderBy(learner.createdAt);
+  const learners = await Promise.all(
+    learnerRows.map((row) => gatherLearnerExport(row, exportedAt)),
+  );
+
+  return shapeAccountExport({ exportedAt, account, learners });
 }
 
 /**
@@ -727,4 +792,78 @@ export async function deleteLearner(
     .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
     .returning({ id: learner.id });
   return deleted.length > 0;
+}
+
+/** What {@link deleteAccount} did, for the confirmation screen / action result. */
+export interface DeleteAccountResultData {
+  /** False when no `user` row matched the id (already gone) — nothing deleted. */
+  deleted: boolean;
+  deletedLearners: number;
+  deletedAttempts: number;
+}
+
+/**
+ * Hard-delete the WHOLE account: the parent `user` row and everything that
+ * cascades off it (P6 / spec §8 "delete … all its data"). One
+ * `DELETE FROM "user" WHERE id = ?` does the work via Postgres FKs:
+ *
+ *   user ─┬─ learner          (cascade) ─→ enrollment, attempt, skill_state (cascade)
+ *         ├─ session          (cascade, auth-schema)
+ *         └─ account          (cascade, auth-schema — Better Auth credentials/oauth)
+ *   publisher.ownerUserId      (set null) — a published program does NOT vanish when
+ *                                           its author closes their account; ownership nulls
+ *
+ * A {@link deletionAudit} row is written FIRST, inside the same transaction, so
+ * the audit (which has NO FK to `user`) survives the cascade it records. Counts
+ * are snapshot before the delete for that record + the confirmation screen.
+ *
+ * Hard delete by design (consistent with deleteLearner + the "delete … always"
+ * promise; a soft-delete would leave child data after a parent asked to remove
+ * it — arguably worse for COPPA). Audio is intentionally untouched: clips are
+ * shared + content-addressed + reference no learner/account (no PII).
+ */
+export async function deleteAccount(accountId: string): Promise<DeleteAccountResultData> {
+  return getDb().transaction(async (tx) => {
+    // Snapshot counts for the audit + confirmation (cheap; before the cascade).
+    const [learnerCountRow] = await tx
+      .select({ value: count() })
+      .from(learner)
+      .where(eq(learner.accountId, accountId));
+    const learnerCount = learnerCountRow?.value ?? 0;
+
+    // attempt has no account_id; scope its count through the account's learners.
+    const learnerIdRows = await tx
+      .select({ id: learner.id })
+      .from(learner)
+      .where(eq(learner.accountId, accountId));
+    const learnerIds = learnerIdRows.map((r) => r.id);
+    let attemptCount = 0;
+    if (learnerIds.length > 0) {
+      const [attemptCountRow] = await tx
+        .select({ value: count() })
+        .from(attempt)
+        .where(inArray(attempt.learnerId, learnerIds));
+      attemptCount = attemptCountRow?.value ?? 0;
+    }
+
+    // Audit FIRST (no FK to user → survives the cascade below).
+    await tx.insert(deletionAudit).values({
+      userId: accountId,
+      learnerCount,
+      attemptCount,
+      requestedBy: "parent",
+    });
+
+    // The single delete the whole cascade hangs off.
+    const deletedUsers = await tx
+      .delete(user)
+      .where(eq(user.id, accountId))
+      .returning({ id: user.id });
+
+    return {
+      deleted: deletedUsers.length > 0,
+      deletedLearners: learnerCount,
+      deletedAttempts: attemptCount,
+    };
+  });
 }
