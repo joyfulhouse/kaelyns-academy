@@ -81,9 +81,11 @@ export async function resolveAdminAccess(): Promise<AdminAccess> {
     .where(eq(schema.user.id, session.user.id))
     .limit(1);
 
+  // `row` is truthy exactly when the verdict is "ok" (adminVerdict maps a missing
+  // row to "unauthenticated"); the `&& row` re-checks it only to narrow the type.
   const verdict = adminVerdict(true, row);
   if (verdict === "ok" && row) return { ok: true, userId: row.id, email: row.email };
-  return { ok: false, reason: verdict === "ok" ? "unauthenticated" : verdict };
+  return { ok: false, reason: verdict === "forbidden" ? "forbidden" : "unauthenticated" };
 }
 
 /**
