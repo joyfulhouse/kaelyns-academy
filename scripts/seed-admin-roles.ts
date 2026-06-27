@@ -47,10 +47,13 @@ try {
   }
 
   // Warn loudly about allowlisted rows that EXIST but are UNVERIFIED: these are the
-  // dangerous ones (email unproven), so we never grant them admin here.
+  // dangerous ones (email unproven), so we never grant them admin here. `IN ${sql(arr)}`
+  // is postgres.js's canonical list form — it expands to IN ($1,$2,…) (one bound param
+  // per entry), unambiguous where a bare `= ANY(${arr})` array param is not. `allowlist`
+  // is guaranteed non-empty here (guarded above), so the IN list is never empty.
   const unverified = await sql<{ email: string }[]>`
     SELECT email FROM "user"
-    WHERE lower(email) = ANY(${allowlist}) AND email_verified = false
+    WHERE lower(email) IN ${sql(allowlist)} AND email_verified = false
   `;
   if (unverified.length > 0) {
     console.warn(
@@ -65,7 +68,7 @@ try {
   // a no-op and makes the RETURNING set exactly the newly-granted rows.
   const granted = await sql<{ email: string }[]>`
     UPDATE "user" SET role = 'admin'
-    WHERE lower(email) = ANY(${allowlist}) AND email_verified = true AND role <> 'admin'
+    WHERE lower(email) IN ${sql(allowlist)} AND email_verified = true AND role <> 'admin'
     RETURNING email
   `;
 
