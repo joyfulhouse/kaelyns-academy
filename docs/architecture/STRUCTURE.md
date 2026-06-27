@@ -91,8 +91,10 @@ kaelyns-academy/
 │   │                                     #   run by the Deployment `migrate` initContainer (db:migrate:deploy);
 │   │                                     #   fail-closed baseline guard + pg_advisory_lock (NOT a Job — Flannel
 │   │                                     #   blocks short-lived Job pods from the DB; see deploy memory)
-│   └── seed-admin-roles.ts               # `bun run db:seed:admin` — grant role='admin' to ADMIN_EMAILS users
-│                                         #   (P4 seed; requireAdmin trusts the role column, not the allowlist)
+│   ├── seed-admin-roles.ts               # `bun run db:seed:admin` — grant role='admin' to VERIFIED ADMIN_EMAILS
+│   │                                     #   users (P4 reconcile; requireAdmin trusts the role column, not the allowlist)
+│   └── grant-admin.ts                    # `bun run db:grant:admin <user-id> [--revoke]` — out-of-band admin
+│                                         #   bootstrap by confirmed user id (used while email verification is off)
 │
 ├── instrumentation.ts                    # Sentry register() + onRequestError
 ├── instrumentation-client.ts             # Sentry client init + onRouterTransitionStart

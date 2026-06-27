@@ -86,15 +86,21 @@ parent (even one whose email is allowlisted) is `role = 'user'` and is denied
 **Bootstrap the operator (while email verification is OFF) — grant by confirmed user id.**
 An email string is **not proof of ownership** when verification is off, so do not
 grant admin by email-matching here (a pre-registered allowlisted address could be an
-attacker's). After the operator registers, confirm the row is theirs and grant by id:
+attacker's). After the operator registers, confirm the row is theirs, then grant by id
+with the idempotent helper:
 
 ```bash
+# 1. List users; confirm the id is the operator's own freshly-registered row:
 kubectl -n kaelyns-academy exec kaelyns-academy-db-1 -c postgres -- \
   psql -U postgres -d kaelyns_academy -c "SELECT id, email, email_verified, role FROM \"user\";"
-# verify the id is the operator's own freshly-registered row, THEN:
-kubectl -n kaelyns-academy exec kaelyns-academy-db-1 -c postgres -- \
-  psql -U postgres -d kaelyns_academy -c "UPDATE \"user\" SET role='admin' WHERE id = '<operator-user-id>';"
+# 2. Grant (DATABASE_URL from the app secret/env); --revoke demotes back to 'user':
+DATABASE_URL=… bun run db:grant:admin <operator-user-id>
 ```
+
+Note: a fresh deploy onto an **empty** user table (or any table with no allowlisted
+verified user) intentionally has **zero admins** — that is the correct state until the
+operator registers and is granted by id above; it is not a lockout (there is no
+existing operator account to lock out).
 
 **Reconcile from the allowlist (once email verification is ON — P4 Stage 2).**
 `bun run db:seed:admin` grants admin to allowlisted users **only when their email is
