@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/Button";
 import { Surface } from "@/components/ui/Surface";
 import { exportLearnerAction, deleteLearnerAction } from "@/app/(parent)/actions";
+import { downloadJson } from "@/components/parent/downloadJson";
 
 /**
  * Per-child data export + profile delete controls (spec §8 COPPA controls).
@@ -56,17 +57,7 @@ export function LearnerDataControls({
       try {
         const result = await exportLearnerAction(learnerId);
         if (result.ok) {
-          // Trigger client-side download — no server temp file needed.
-          const json = JSON.stringify(result.data, null, 2);
-          const blob = new Blob([json], { type: "application/json" });
-          const url = URL.createObjectURL(blob);
-          const anchor = document.createElement("a");
-          anchor.href = url;
-          anchor.download = `${learnerName}-export.json`;
-          document.body.appendChild(anchor);
-          anchor.click();
-          document.body.removeChild(anchor);
-          URL.revokeObjectURL(url);
+          downloadJson(result.data, `${learnerName}-export.json`);
         } else {
           setExportState({
             status: "error",

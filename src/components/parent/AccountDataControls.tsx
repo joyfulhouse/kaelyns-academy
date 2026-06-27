@@ -14,6 +14,7 @@ import { Surface } from "@/components/ui/Surface";
 import { Field } from "@/components/ui/Field";
 import { TextInput } from "@/components/ui/TextInput";
 import { deleteAccountAction, exportAccountAction } from "@/app/(parent)/actions";
+import { downloadJson } from "@/components/parent/downloadJson";
 
 /**
  * Account-level data controls (spec §8 COPPA: "export/delete … all its data").
@@ -96,17 +97,9 @@ export function AccountDataControls({ accountEmail }: { accountEmail: string | n
       try {
         const result = await exportAccountAction();
         if (result.ok) {
-          // Trigger client-side download — no server temp file needed.
-          const json = JSON.stringify(result.data, null, 2);
-          const blob = new Blob([json], { type: "application/json" });
-          const url = URL.createObjectURL(blob);
-          const anchor = document.createElement("a");
-          anchor.href = url;
-          anchor.download = "kaelyns-academy-export.json";
-          document.body.appendChild(anchor);
-          anchor.click();
-          document.body.removeChild(anchor);
-          URL.revokeObjectURL(url);
+          // The account bundle filename carries NO child name so it can't leak one
+          // via the download / browser history (spec §8).
+          downloadJson(result.data, "kaelyns-academy-export.json");
         } else {
           setExportState({
             status: "error",
