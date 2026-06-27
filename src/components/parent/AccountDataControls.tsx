@@ -123,8 +123,8 @@ export function AccountDataControls({ accountEmail }: { accountEmail: string | n
         ads, no third-party tracking. Your child&rsquo;s data is yours.
       </p>
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2">
-        {/* Export card */}
+      <div className="mt-5 grid items-start gap-4 sm:grid-cols-2">
+        {/* Export card — the calm action: a normal raised card. */}
         <Surface tone="raised" className="border border-line p-5">
           <div className="flex flex-col gap-3">
             <div>
@@ -160,8 +160,12 @@ export function AccountDataControls({ accountEmail }: { accountEmail: string | n
           </div>
         </Surface>
 
-        {/* Delete card — irreversible, re-auth gated */}
-        <Surface tone="raised" className="border border-line p-5">
+        {/* Delete card — irreversible, re-auth gated. Set apart at rest with a
+            full danger-tinted border (never a side-stripe) so the eye registers
+            gravity before the click; not a raised peer of the calm export card.
+            Sitting on plain paper (not paper-raised) also keeps the danger
+            warning/error copy at AA contrast (danger-on-raised is ~4.4:1). */}
+        <div className="rounded-xl border border-danger/30 bg-paper p-5">
           <div className="flex flex-col gap-3">
             <div>
               <p className="font-display text-base font-semibold text-ink">Delete account</p>
@@ -255,7 +259,7 @@ export function AccountDataControls({ accountEmail }: { accountEmail: string | n
               </div>
             )}
           </div>
-        </Surface>
+        </div>
       </div>
     </section>
   );
