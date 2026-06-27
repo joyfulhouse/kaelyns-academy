@@ -32,7 +32,9 @@ export const REQUIRED_COLUMNS: ColumnMap = {
   ],
   skill_state: ["id", "learner_id", "skill", "outcome", "evidence", "updated_at"],
   // Better Auth tables (auth-schema.ts) — drift here breaks login silently.
-  user: ["id", "email", "email_verified"],
+  // `role` (P4) gates admin access; a deploy that skipped the 0007 migration must
+  // 503 rather than let requireAdmin() read a non-existent column and 500.
+  user: ["id", "email", "email_verified", "role"],
   session: ["id", "user_id", "token", "expires_at"],
   account: ["id", "user_id", "provider_id", "account_id"],
   verification: ["id", "identifier", "value", "expires_at"],

@@ -1,12 +1,11 @@
 /**
- * Admin gate — allowlist-based email check + requireAdmin() per-request helper.
+ * Admin gate — server-side `role` authority + requireAdmin() per-request helper.
  * Build-safe: no top-level getAuth() or getDb() calls.
  */
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { getAuth } from "@/lib/auth";
 import { getDb, schema } from "@/lib/db";
-import { getEnv } from "@/lib/env";
 import { UnauthenticatedError } from "@/lib/tenancy";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -23,6 +22,11 @@ export class AdminForbiddenError extends Error {
 /**
  * PURE. Return true when `email` is present in the comma-separated `allowlist`.
  * Comparison is case-insensitive; entries are trimmed. Empty/no-match → false.
+ *
+ * SCOPE (P4): this is the **seed** list for the admin role
+ * (scripts/seed-admin-roles.ts grants `role='admin'` to matching EXISTING users),
+ * NOT the live authority. requireAdmin() trusts the user row's `role`, never this —
+ * so a self-registered allowlisted email does not become admin on its own.
  */
 export function isAdminEmail(
   email: string | null | undefined,
@@ -34,43 +38,75 @@ export function isAdminEmail(
   return entries.includes(normalized);
 }
 
-// ── Per-request auth gate ────────────────────────────────────────────────────
+export type AdminVerdict = "ok" | "unauthenticated" | "forbidden";
 
 /**
- * Resolve the current request session and assert admin access.
- * @throws {UnauthenticatedError} when there is no valid session.
- * @throws {AdminForbiddenError} when the session user is not in ADMIN_EMAILS.
- * Build-safe: only invoked per-request, never at module top-level.
- *
- * SECURITY (P4): This gate authorizes purely by `email ∈ ADMIN_EMAILS`. With
- * self-serve signup enabled and email verification OFF, an attacker could
- * self-register an *unclaimed* allowlisted email and be admitted as admin
- * (the session's email is whatever they signed up with — it isn't proven to be
- * theirs). Accepted for the P0 homelab pilot: a single trusted operator, no
- * public traffic, and no durable third-party data behind the studio. The proper
- * fix lands in P4 — require a VERIFIED email (and/or a server-side role on the
- * user row) before this check, so an unverified address can never satisfy the
- * allowlist. Tracked in docs/claude/KNOWN-RISKS-P0-PILOT.md.
+ * PURE. The admin-access decision given whether a session exists and the resolved
+ * user row. Extracted so the core regression — a session whose row is `role:'user'`
+ * is REJECTED even if its email is in ADMIN_EMAILS — is unit-testable without
+ * mocking auth/DB.
  */
-export async function requireAdmin(): Promise<{ userId: string; email: string }> {
+export function adminVerdict(
+  hasSession: boolean,
+  row: { role: string } | null | undefined,
+): AdminVerdict {
+  if (!hasSession) return "unauthenticated";
+  if (!row) return "unauthenticated"; // session outlived its user row (stale)
+  if (row.role !== "admin") return "forbidden";
+  return "ok";
+}
+
+// ── Per-request resolver ─────────────────────────────────────────────────────
+
+export type AdminAccess =
+  | { ok: true; userId: string; email: string }
+  | { ok: false; reason: "unauthenticated" | "forbidden" };
+
+/**
+ * Resolve the current request's admin access from the AUTHORITATIVE user row:
+ * `role` is read from the DB (not the session blob, not the allowlist), so a
+ * revoked admin loses access on the next request even with a live cookie, and a
+ * self-registered allowlisted email (default `role='user'`) is rejected. The same
+ * `select` doubles as the stale-session check (a session can outlive its user row).
+ * Build-safe: only invoked per-request, never at module top-level.
+ */
+export async function resolveAdminAccess(): Promise<AdminAccess> {
   const session = await getAuth().api.getSession({ headers: await headers() });
-  if (!session?.user) throw new UnauthenticatedError();
+  if (!session?.user) return { ok: false, reason: "unauthenticated" };
 
-  const email = session.user.email;
-  const allowlist = getEnv("ADMIN_EMAILS", "");
-  if (!isAdminEmail(email, allowlist)) throw new AdminForbiddenError();
-
-  // Stale-session defense-in-depth: a session can outlive its user row (the
-  // parent deleted their account, an admin pruned the user). Confirm the
-  // principal still exists before granting admin; if it's gone, treat the
-  // session as no-longer-valid — the SAME failure as "no session".
   const db = getDb();
   const [row] = await db
-    .select({ id: schema.user.id })
+    .select({ id: schema.user.id, email: schema.user.email, role: schema.user.role })
     .from(schema.user)
     .where(eq(schema.user.id, session.user.id))
     .limit(1);
-  if (!row) throw new UnauthenticatedError();
 
-  return { userId: session.user.id, email };
+  // `row` is truthy exactly when the verdict is "ok" (adminVerdict maps a missing
+  // row to "unauthenticated"); the `&& row` re-checks it only to narrow the type.
+  const verdict = adminVerdict(true, row);
+  if (verdict === "ok" && row) return { ok: true, userId: row.id, email: row.email };
+  return { ok: false, reason: verdict === "forbidden" ? "forbidden" : "unauthenticated" };
+}
+
+/**
+ * Assert admin access for the current request.
+ * @throws {UnauthenticatedError} no valid session, or the session's user row is gone.
+ * @throws {AdminForbiddenError} authenticated but the user's `role !== 'admin'`.
+ *
+ * SECURITY (P4): authority is the per-user `role` column, NOT the `ADMIN_EMAILS`
+ * allowlist. The allowlist only **seeds** the role, and the seed
+ * (scripts/seed-admin-roles.ts) grants admin ONLY to *email-verified* allowlisted
+ * rows — so a self-registered allowlisted email both defaults to `role='user'` AND
+ * cannot be promoted while unverified. This closes the "unclaimed allowlisted email
+ * → instant admin" vector (docs/claude/KNOWN-RISKS-P0-PILOT.md); while verification
+ * is off, the operator is bootstrapped out of band by confirmed user id (DEPLOY.md).
+ * (Stage 2, deferred until an email transport exists: additionally require
+ * `emailVerified === true` in this gate to prove identity on every request.)
+ * Build-safe: only invoked per-request, never at module top-level.
+ */
+export async function requireAdmin(): Promise<{ userId: string; email: string }> {
+  const access = await resolveAdminAccess();
+  if (access.ok) return { userId: access.userId, email: access.email };
+  if (access.reason === "unauthenticated") throw new UnauthenticatedError();
+  throw new AdminForbiddenError();
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isAdminEmail } from "./admin";
+import { isAdminEmail, adminVerdict } from "./admin";
 
 describe("isAdminEmail", () => {
   it("returns true for an exact match", () => {
@@ -52,5 +52,34 @@ describe("isAdminEmail", () => {
 
   it("handles allowlist with only whitespace entries after split", () => {
     expect(isAdminEmail("admin@example.com", "  ,  ")).toBe(false);
+  });
+});
+
+describe("adminVerdict (P4 role gate)", () => {
+  it("returns 'unauthenticated' when there is no session", () => {
+    expect(adminVerdict(false, null)).toBe("unauthenticated");
+    // Even if a row were somehow present, no session wins.
+    expect(adminVerdict(false, { role: "admin" })).toBe("unauthenticated");
+  });
+
+  it("returns 'unauthenticated' for a session whose user row is gone (stale)", () => {
+    expect(adminVerdict(true, null)).toBe("unauthenticated");
+    expect(adminVerdict(true, undefined)).toBe("unauthenticated");
+  });
+
+  it("returns 'forbidden' for an authenticated non-admin", () => {
+    // THE core regression: a self-registered (even allowlisted) email defaults to
+    // role 'user' and must be rejected — the allowlist is not the authority anymore.
+    expect(adminVerdict(true, { role: "user" })).toBe("forbidden");
+  });
+
+  it("returns 'forbidden' for any non-'admin' role value", () => {
+    expect(adminVerdict(true, { role: "parent" })).toBe("forbidden");
+    expect(adminVerdict(true, { role: "" })).toBe("forbidden");
+    expect(adminVerdict(true, { role: "ADMIN" })).toBe("forbidden"); // exact match only
+  });
+
+  it("returns 'ok' only for an authenticated user whose row is role 'admin'", () => {
+    expect(adminVerdict(true, { role: "admin" })).toBe("ok");
   });
 });

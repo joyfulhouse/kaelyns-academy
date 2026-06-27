@@ -14,6 +14,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:migrate:deploy": "bun scripts/migrate.ts",
+    "db:seed:admin": "bun scripts/seed-admin-roles.ts",
+    "db:grant:admin": "bun scripts/grant-admin.ts",
     "gen:icons": "bun scripts/gen-icons.ts"
   },
   "dependencies": {

@@ -76,6 +76,44 @@ served until evicted, so:
 - Keep every migration expand-only across one deploy (add columns/tables; remove only in a later deploy after the code no longer references them).
 - Grow `REQUIRED_COLUMNS` in `src/lib/db/health.ts` whenever a newly-required column must gate the canary.
 
+## Granting admin access (P4 role gate)
+
+Admin access is authorized by the user row's `role` column (`role = 'admin'`), **not**
+the `ADMIN_EMAILS` allowlist — the allowlist is only a seed. A freshly registered
+parent (even one whose email is allowlisted) is `role = 'user'` and is denied
+`/admin` until granted.
+
+**Bootstrap the operator (while email verification is OFF) — grant by confirmed user id.**
+An email string is **not proof of ownership** when verification is off, so do not
+grant admin by email-matching here (a pre-registered allowlisted address could be an
+attacker's). After the operator registers, confirm the row is theirs, then grant by id
+with the idempotent helper:
+
+```bash
+# 1. List users; confirm the id is the operator's own freshly-registered row:
+kubectl -n kaelyns-academy exec kaelyns-academy-db-1 -c postgres -- \
+  psql -U postgres -d kaelyns_academy -c "SELECT id, email, email_verified, role FROM \"user\";"
+# 2. Grant (DATABASE_URL from the app secret/env); --revoke demotes back to 'user':
+DATABASE_URL=… bun run db:grant:admin <operator-user-id>
+```
+
+Note: a fresh deploy onto an **empty** user table (or any table with no allowlisted
+verified user) intentionally has **zero admins** — that is the correct state until the
+operator registers and is granted by id above; it is not a lockout (there is no
+existing operator account to lock out).
+
+**Reconcile from the allowlist (once email verification is ON — P4 Stage 2).**
+`bun run db:seed:admin` grants admin to allowlisted users **only when their email is
+verified**, and refuses (warns) on unverified rows — so it can never re-open the
+self-register vector. Idempotent; safe to re-run:
+
+```bash
+DATABASE_URL=… ADMIN_EMAILS=… bun run db:seed:admin   # verified allowlisted users → admin
+```
+
+The `role` column is in the health canary's `REQUIRED_COLUMNS`, so a deploy that
+skipped the `0007` migration 503s rather than 500-ing on a missing column.
+
 ## Interim manual deploy (until P0 tasks T8–T12 land)
 
 The Dockerfile, Forgejo workflow, k3s-infra manifests, sealed secrets, ArgoCD app, and Cloudflare tunnel entry are created in P0 tasks T8–T12. Until those exist, deploy manually:

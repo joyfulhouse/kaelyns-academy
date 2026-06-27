@@ -13,7 +13,7 @@ Pilot context (why these are acceptable today):
 
 ---
 
-## Admin authorization (P4)
+## Admin authorization (P4) — Stage 1 SHIPPED (role gate); Stage 2 (verified email) deferred
 
 **Where:** `src/lib/admin.ts` — `requireAdmin()`.
 
@@ -34,10 +34,26 @@ controlled by the operator, and the only asset behind the gate is the operator's
 own curriculum content. The window (an allowlisted-but-unregistered email) is
 small and operator-controlled.
 
-**Planned fix (P4).** Require a **verified** email before the allowlist check
-(and/or a server-side `role` column on the user row that the allowlist seeds
-rather than trusts at request time), so an unverified/unproven address can never
-satisfy `requireAdmin`. Tie this to turning on Better Auth email verification.
+**Fix — Stage 1 (SHIPPED).** `requireAdmin()` now authorizes by a server-side
+**`role` column** on the user row (`role === "admin"`), read authoritatively from
+the DB; the `ADMIN_EMAILS` allowlist is demoted to a **seed**, never the per-request
+authority. A self-registered allowlisted email now defaults to `role = "user"` and
+is rejected — the "unclaimed allowlisted email → instant admin" vector is closed.
+The seed (`scripts/seed-admin-roles.ts`) grants admin **only to email-verified**
+allowlisted rows, so it can't re-open the vector by promoting a pre-registered,
+unverified allowlisted address; while verification is off the operator is
+bootstrapped out of band by **confirmed user id** (an email isn't proof of
+ownership) — see DEPLOY.md → "Granting admin access". The role is surfaced to Better Auth via
+`additionalFields.role` with `input: false` (a sign-up payload cannot set it), and
+`user.role` is in the `/api/health` REQUIRED_COLUMNS so a deploy that skipped the
+0007 migration fails closed.
+
+**Fix — Stage 2 (DEFERRED, needs an email transport).** Additionally require
+`emailVerified === true` so the session's email is *proven* to belong to the user
+(belt-and-suspenders, e.g. against an operator listing an address they don't
+control). Blocked on choosing/configuring an email sender (none exists; LiteLLM
+cannot send mail) — see
+`docs/superpowers/plans/2026-06-26-plan-p4-admin-email-verification.md`.
 
 ---
 
