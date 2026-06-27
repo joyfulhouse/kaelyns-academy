@@ -76,6 +76,26 @@ served until evicted, so:
 - Keep every migration expand-only across one deploy (add columns/tables; remove only in a later deploy after the code no longer references them).
 - Grow `REQUIRED_COLUMNS` in `src/lib/db/health.ts` whenever a newly-required column must gate the canary.
 
+## Granting admin access (P4 role gate)
+
+Admin access is authorized by the user row's `role` column (`role = 'admin'`), **not**
+the `ADMIN_EMAILS` allowlist — the allowlist is only the seed list. So a freshly
+registered parent (even one whose email is allowlisted) is `role = 'user'` and is
+denied `/admin` until granted. To grant it, seed from the allowlist after the user
+has registered:
+
+```bash
+# In-cluster (DATABASE_URL + ADMIN_EMAILS from the app secret/env), idempotent:
+DATABASE_URL=… ADMIN_EMAILS=… bun run db:seed:admin
+# …or directly against the CNPG primary:
+kubectl -n kaelyns-academy exec kaelyns-academy-db-1 -c postgres -- \
+  psql -U postgres -d kaelyns_academy -c \
+  "UPDATE \"user\" SET role='admin' WHERE lower(email) = ANY(SELECT lower(trim(x)) FROM unnest(string_to_array('<ADMIN_EMAILS>',',')) AS x);"
+```
+
+Re-running is safe (no-op when already granted). The `role` column is in the health
+canary's `REQUIRED_COLUMNS`, so a deploy that skipped the `0007` migration 503s.
+
 ## Interim manual deploy (until P0 tasks T8–T12 land)
 
 The Dockerfile, Forgejo workflow, k3s-infra manifests, sealed secrets, ArgoCD app, and Cloudflare tunnel entry are created in P0 tasks T8–T12. Until those exist, deploy manually:

@@ -13,6 +13,13 @@ export const user = pgTable("user", {
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   emailVerified: boolean("email_verified").notNull().default(false),
+  // Authorization role (P4). 'user' = ordinary parent account (default); 'admin'
+  // = curriculum studio access. This is the per-principal authority requireAdmin()
+  // checks — the ADMIN_EMAILS allowlist only *seeds* it (scripts/seed-admin-roles.ts),
+  // it is never trusted at request time. Surfaced to Better Auth via
+  // user.additionalFields.role with input:false so a sign-up payload can never set
+  // it (privilege-escalation guard); the DB DEFAULT 'user' is the backstop.
+  role: text("role").notNull().default("user"),
   image: text("image"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()

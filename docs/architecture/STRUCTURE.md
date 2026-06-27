@@ -87,10 +87,12 @@ kaelyns-academy/
 ├── drizzle/                              # generated migrations 0000…0006 (append-only, expand-only)
 ├── scripts/
 │   ├── db.sh                             # psql wrapper → CNPG -rw in-cluster, else $DATABASE_URL
-│   └── migrate.ts                        # `bun scripts/migrate.ts` — programmatic drizzle-orm migrate()
-│                                         #   run by the Deployment `migrate` initContainer (db:migrate:deploy);
-│                                         #   fail-closed baseline guard + pg_advisory_lock (NOT a Job — Flannel
-│                                         #   blocks short-lived Job pods from the DB; see deploy memory)
+│   ├── migrate.ts                        # `bun scripts/migrate.ts` — programmatic drizzle-orm migrate()
+│   │                                     #   run by the Deployment `migrate` initContainer (db:migrate:deploy);
+│   │                                     #   fail-closed baseline guard + pg_advisory_lock (NOT a Job — Flannel
+│   │                                     #   blocks short-lived Job pods from the DB; see deploy memory)
+│   └── seed-admin-roles.ts               # `bun run db:seed:admin` — grant role='admin' to ADMIN_EMAILS users
+│                                         #   (P4 seed; requireAdmin trusts the role column, not the allowlist)
 │
 ├── instrumentation.ts                    # Sentry register() + onRequestError
 ├── instrumentation-client.ts             # Sentry client init + onRouterTransitionStart
