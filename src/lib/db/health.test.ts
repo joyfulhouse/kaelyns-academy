@@ -77,4 +77,54 @@ describe("REQUIRED_COLUMNS coverage (schema-drift canary)", () => {
       expect.arrayContaining(["config", "status", "program_version_id", "updated_at"]),
     );
   });
+
+  it("covers the P6 write-dependent schema (migration 0008): attempt provenance + deletion_audit", () => {
+    // recordAttempt writes gen_* on every insert; deleteAccount writes deletion_audit.
+    // A skipped 0008 must 503, not fail those writes at runtime.
+    expect(REQUIRED_COLUMNS.attempt).toEqual(
+      expect.arrayContaining(["gen_model", "gen_route", "gen_at"]),
+    );
+    expect(REQUIRED_COLUMNS.deletion_audit).toEqual(
+      expect.arrayContaining([
+        "id",
+        "user_id",
+        "deleted_at",
+        "learner_count",
+        "attempt_count",
+        "requested_by",
+      ]),
+    );
+  });
+
+  it("flags a 0008-skipped database as drifted (provenance cols + deletion_audit missing)", () => {
+    // Prod after 0007 but before 0008: attempt lacks gen_*, no deletion_audit table.
+    // missingColumns must report them so /api/health returns 503 before traffic.
+    const live = {
+      attempt: [
+        "id",
+        "learner_id",
+        "activity_id",
+        "kind",
+        "generated",
+        "score",
+        "response",
+        "day",
+        "created_at",
+      ],
+      // deletion_audit absent entirely (the `live[table] ?? []` branch)
+    };
+    const missing = missingColumns(
+      { attempt: REQUIRED_COLUMNS.attempt, deletion_audit: REQUIRED_COLUMNS.deletion_audit },
+      live,
+    );
+    expect(missing).toEqual(
+      expect.arrayContaining([
+        "attempt.gen_model",
+        "attempt.gen_route",
+        "attempt.gen_at",
+        "deletion_audit.id",
+        "deletion_audit.user_id",
+      ]),
+    );
+  });
 });

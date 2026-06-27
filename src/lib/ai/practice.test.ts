@@ -20,10 +20,13 @@ vi.mock("@/lib/audio/phonemize", () => ({ phonemize }));
 import {
   generatePracticeItems,
   KIND_BRIEF,
+  provenanceForGeneration,
   repairPhonicsBatch,
   repairPhonicsSay,
   sanitizeGeneratedPhonics,
 } from "./practice";
+import type { SkillTag } from "@/content/types";
+import { TUTOR_FAST, TUTOR_RICH } from "./models";
 
 /** Build a fake OpenAI-compatible chat-completions response. */
 function completion(content: string, ok = true, status = 200): Response {
@@ -407,5 +410,41 @@ describe("sanitizeGeneratedPhonics (generated audio can't drop below bare)", () 
     expect(config.say).toEqual({ c: "k" }); // hallucinated say dropped
     expect(config.silent).toBeUndefined(); // unvalidatable control stripped
     expect(config.words[0]!.ipa).toBeUndefined(); // bad whole-word override stripped
+  });
+});
+
+// provenanceForGeneration mirrors the generator's deterministic model routing so
+// the metadata recorded on a generated attempt (P6 / §8) reflects what produced
+// it — derived server-side, never echoed by the client. Pure: no gateway call.
+describe("provenanceForGeneration (P6 provenance)", () => {
+  it("routes a ready-band English kind to the fast model, tagged by band", () => {
+    expect(provenanceForGeneration("phonics-wordbuild", "ready", [])).toEqual({
+      model: TUTOR_FAST,
+      route: "ready",
+    });
+  });
+
+  it("routes a stretch-band English kind to the rich model, tagged by band", () => {
+    expect(provenanceForGeneration("math-tenframe", "stretch", [])).toEqual({
+      model: TUTOR_RICH,
+      route: "stretch",
+    });
+  });
+
+  it("routes a World-Languages kind by resolved language id (route = language)", () => {
+    const prov = provenanceForGeneration("lang-symbol-intro", "ready", [
+      "zhuyin.symbols.initials" as SkillTag,
+    ]);
+    expect(prov.route).toBe("zhuyin");
+    expect(typeof prov.model).toBe("string");
+  });
+
+  it("falls back to the band tag for a lang kind whose hints name no language", () => {
+    // No language resolves → generation itself throws, but provenance stays
+    // honest (band-tagged) rather than guessing a language.
+    expect(provenanceForGeneration("lang-listen-match", "ready", [])).toEqual({
+      model: TUTOR_FAST,
+      route: "ready",
+    });
   });
 });

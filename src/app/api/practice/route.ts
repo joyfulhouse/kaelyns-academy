@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
 import { findActivity, getSkill } from "@/content";
 import { captureNonCritical } from "@/lib/capture";
-import { generatePracticeItems } from "@/lib/ai/practice";
+import { generatePracticeItems, provenanceForGeneration } from "@/lib/ai/practice";
 import { resolveLearnerProgram } from "@/lib/content/repository";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/request-ip";
@@ -174,7 +174,13 @@ async function generate(
 ): Promise<NextResponse> {
   try {
     const items = await generatePracticeItems(kind, band, focus, n, { skillHints });
-    return NextResponse.json({ kind, band, items }, { status: 200 });
+    // Provenance (P6 / §8): bound metadata describing what produced these items,
+    // derived SERVER-side from the same routing inputs the generator used, and
+    // stamped now. The client echoes this back on the resulting attempt so the
+    // parent's "what the AI made" trail and the export show model/route/when.
+    const { model, route } = provenanceForGeneration(kind, band, skillHints ?? []);
+    const gen = { model, route, at: new Date().toISOString() };
+    return NextResponse.json({ kind, band, items, gen }, { status: 200 });
   } catch (error) {
     // Generation/validation failed: log non-critically; caller falls back to
     // authored content. We never leak raw model output or a stack to the client.

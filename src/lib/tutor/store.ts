@@ -1,9 +1,9 @@
 // server-only: this module opens DB connections and must never be imported into
 // a Client Component. (the `server-only` package isn't installed; this comment
 // is the guard, and only server actions / route handlers import it.)
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, inArray, lt, or } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { attempt, enrollment, learner, skillState } from "@/lib/db/schema";
+import { attempt, deletionAudit, enrollment, learner, skillState, user, verification } from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
 import { captureNonCritical } from "@/lib/capture";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
@@ -16,6 +16,7 @@ import {
 import { getPublishedVersionId } from "@/lib/content/store";
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
 import { shapeLearnerExport, type LearnerExport } from "./export";
+import { shapeAccountExport, type AccountExport } from "./account-export";
 
 /**
  * The DB-backed tutor store: the server equivalent of the client's
@@ -162,6 +163,12 @@ export interface RecordAttemptInput {
   score: ActivityScore;
   /** YYYY-MM-DD; defaults to today (caller's clock). */
   day: DayKey;
+  /**
+   * AI provenance for a generated attempt (P6 / §8). Persisted ONLY when
+   * `generated` is true; metadata only (model/route/at), never a raw prompt.
+   * Absent for authored attempts → the gen_* columns stay null.
+   */
+  provenance?: { model: string; route: string; at: Date };
 }
 
 /**
@@ -208,14 +215,21 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
       throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
     }
 
+    // Provenance is written ONLY for a generated attempt (and only when supplied),
+    // so an authored row can never carry gen_* metadata even if a caller passes it.
+    const generated = input.generated ?? false;
+    const provenance = generated ? input.provenance : undefined;
     await tx.insert(attempt).values({
       learnerId: input.learnerId,
       activityId: input.activityId,
       kind: input.kind,
-      generated: input.generated ?? false,
+      generated,
       score: input.score,
       response: input.response ?? null,
       day: input.day,
+      genModel: provenance?.model ?? null,
+      genRoute: provenance?.route ?? null,
+      genAt: provenance?.at ?? null,
     });
 
     // Acquire the per-skill row locks in a deterministic (skill-sorted) order:
@@ -282,6 +296,84 @@ export async function getRecentAttempts(
     .orderBy(desc(attempt.createdAt))
     .limit(limit);
   return rows.map((r) => ({ activityId: r.activityId, kind: r.kind, stars: r.score.stars, day: r.day }));
+}
+
+/** One AI-generated attempt for the parent-visible provenance trail (P6 / §8). */
+export interface GeneratedAttempt {
+  activityId: string;
+  kind: string;
+  stars: number;
+  /** Logical model route; null for pre-provenance generated rows. */
+  model: string | null;
+  /** Generation path tag (band or language id); null for pre-provenance rows. */
+  route: string | null;
+  /** ISO generation time; null when not recorded. */
+  generatedAt: string | null;
+  /** ISO time the attempt was recorded (always present); the keyset cursor key. */
+  createdAt: string;
+}
+
+export interface GeneratedAttemptsPage {
+  items: GeneratedAttempt[];
+  /** Opaque cursor for the next page (ISO createdAt of the last row), or null at the end. */
+  nextCursor: string | null;
+}
+
+/** Default + hard cap on the provenance page size (keeps the read bounded). */
+const PROVENANCE_PAGE_DEFAULT = 20;
+const PROVENANCE_PAGE_MAX = 50;
+
+/**
+ * The parent-visible "what the AI made" trail (P6 / spec §8): a learner's
+ * AI-GENERATED attempts only (generated=true), account-scoped, newest-first,
+ * keyset-paginated by createdAt. Reuses the `attempt_learner_generated_idx`
+ * (learnerId, generated). Returns an empty page when the learner is not owned by
+ * the account (tenancy boundary) — never another account's data.
+ *
+ * Keyset (not OFFSET) pagination: `cursor` is the ISO createdAt of the last row
+ * seen; the next page is the generated attempts strictly older than it. We fetch
+ * limit+1 to know whether a further page exists without a second count query.
+ */
+export async function listGeneratedAttempts(
+  accountId: string,
+  learnerId: string,
+  opts: { limit?: number; cursor?: string | null } = {},
+): Promise<GeneratedAttemptsPage> {
+  const owned = await getLearner(accountId, learnerId);
+  if (!owned) return { items: [], nextCursor: null };
+
+  const limit = Math.max(1, Math.min(PROVENANCE_PAGE_MAX, opts.limit ?? PROVENANCE_PAGE_DEFAULT));
+  const cursorDate = opts.cursor ? new Date(opts.cursor) : null;
+  const cursorValid = cursorDate && !Number.isNaN(cursorDate.getTime()) ? cursorDate : null;
+
+  const predicate = cursorValid
+    ? and(
+        eq(attempt.learnerId, learnerId),
+        eq(attempt.generated, true),
+        lt(attempt.createdAt, cursorValid),
+      )
+    : and(eq(attempt.learnerId, learnerId), eq(attempt.generated, true));
+
+  const rows = await getDb()
+    .select()
+    .from(attempt)
+    .where(predicate)
+    .orderBy(desc(attempt.createdAt))
+    .limit(limit + 1); // +1 to detect a further page
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const items: GeneratedAttempt[] = page.map((r) => ({
+    activityId: r.activityId,
+    kind: r.kind,
+    stars: clampStars(r.score.stars),
+    model: r.genModel,
+    route: r.genRoute,
+    generatedAt: r.genAt ? r.genAt.toISOString() : null,
+    createdAt: r.createdAt.toISOString(),
+  }));
+  const nextCursor = hasMore ? items[items.length - 1]!.createdAt : null;
+  return { items, nextCursor };
 }
 
 export interface CompletedActivity {
@@ -654,8 +746,22 @@ export async function buildLearnerExport(
     .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
     .limit(1);
   if (!rows[0]) return null;
-  const learnerRow = rows[0];
+  return gatherLearnerExport(rows[0], exportedAt);
+}
 
+/**
+ * Gather one OWNED learner row's full data and shape it into the minimized
+ * export. Factored out so {@link buildLearnerExport} (single child) and
+ * {@link buildAccountExport} (all children) share one gather + shape with no
+ * duplicate ownership logic: the caller has ALREADY established the row belongs
+ * to the account (via the scoped select / listLearners), so this takes the row
+ * directly. Reads only; injects `exportedAt` so the pure shaper stays mock-free.
+ */
+async function gatherLearnerExport(
+  learnerRow: typeof learner.$inferSelect,
+  exportedAt: string,
+): Promise<LearnerExport> {
+  const learnerId = learnerRow.id;
   // Gather all related data in parallel (no write, just reads).
   const [enrollmentRows, skillStateRows, attemptRows] = await Promise.all([
     getDb().select().from(enrollment).where(eq(enrollment.learnerId, learnerId)),
@@ -691,10 +797,63 @@ export async function buildLearnerExport(
       activityId: a.activityId,
       kind: a.kind,
       score: a.score as { stars: number; correct: number; total: number; skillEvidence: unknown[] },
+      // The child's own response (journal text, drawings, answers) — exported in
+      // full for COPPA "export … all its data" (shaped in export.ts).
+      response: a.response,
       day: a.day,
       createdAt: a.createdAt,
+      // Provenance (P6): carried for generated rows so the export includes the
+      // "what the AI made" trail. The shaper filters to generated attempts.
+      generated: a.generated,
+      genModel: a.genModel,
+      genRoute: a.genRoute,
+      genAt: a.genAt,
     })),
   });
+}
+
+/**
+ * Build the WHOLE-ACCOUNT export (P6 / spec §8 "export … all its data"): the
+ * parent record (minimized — id/email/createdAt, NEVER password/tokens) plus
+ * every learner the account owns, each shaped by the same per-child gatherer
+ * (so provenance + minimization land once). Account-scoped: only this account's
+ * learners are included. The caller (action) injects `exportedAt`.
+ *
+ * Returns null when the parent `user` row can't be found (e.g. the account was
+ * deleted mid-request) — the action turns that into a calm "unavailable".
+ */
+export async function buildAccountExport(
+  accountId: string,
+  exportedAt: string,
+): Promise<AccountExport | null> {
+  // The parent record — minimized. Read ONLY the non-sensitive columns; the
+  // password/token columns live on the Better Auth `account` table, never here,
+  // but we still select explicitly so a future `user` column can't leak by
+  // default into the export.
+  const userRows = await getDb()
+    .select({ id: user.id, email: user.email, createdAt: user.createdAt })
+    .from(user)
+    .where(eq(user.id, accountId))
+    .limit(1);
+  if (!userRows[0]) return null;
+  const account = {
+    id: userRows[0].id,
+    email: userRows[0].email,
+    createdAt: userRows[0].createdAt.toISOString(),
+  };
+
+  // Every learner the account owns (listLearners is already account-scoped, so
+  // this is the per-account ownership check — no second check per learner).
+  const learnerRows = await getDb()
+    .select()
+    .from(learner)
+    .where(eq(learner.accountId, accountId))
+    .orderBy(learner.createdAt);
+  const learners = await Promise.all(
+    learnerRows.map((row) => gatherLearnerExport(row, exportedAt)),
+  );
+
+  return shapeAccountExport({ exportedAt, account, learners });
 }
 
 /**
@@ -714,4 +873,99 @@ export async function deleteLearner(
     .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
     .returning({ id: learner.id });
   return deleted.length > 0;
+}
+
+/** What {@link deleteAccount} did, for the confirmation screen / action result. */
+export interface DeleteAccountResultData {
+  /** False when no `user` row matched the id (already gone) — nothing deleted. */
+  deleted: boolean;
+  deletedLearners: number;
+  deletedAttempts: number;
+}
+
+/**
+ * Hard-delete the WHOLE account: the parent `user` row and everything that
+ * cascades off it (P6 / spec §8 "delete … all its data"). One
+ * `DELETE FROM "user" WHERE id = ?` does the work via Postgres FKs:
+ *
+ *   user ─┬─ learner          (cascade) ─→ enrollment, attempt, skill_state (cascade)
+ *         ├─ session          (cascade, auth-schema)
+ *         └─ account          (cascade, auth-schema — Better Auth credentials/oauth)
+ *   publisher.ownerUserId      (set null) — a published program does NOT vanish when
+ *                                           its author closes their account; ownership nulls
+ *
+ * A {@link deletionAudit} row is written FIRST, inside the same transaction, so
+ * the audit (which has NO FK to `user`) survives the cascade it records. Counts
+ * are snapshot before the delete for that record + the confirmation screen.
+ *
+ * Hard delete by design (consistent with deleteLearner + the "delete … always"
+ * promise; a soft-delete would leave child data after a parent asked to remove
+ * it — arguably worse for COPPA). Audio is intentionally untouched: clips are
+ * shared + content-addressed + reference no learner/account (no PII).
+ */
+export async function deleteAccount(accountId: string): Promise<DeleteAccountResultData> {
+  return getDb().transaction(async (tx) => {
+    // Snapshot counts for the audit + confirmation (cheap; before the cascade).
+    const [learnerCountRow] = await tx
+      .select({ value: count() })
+      .from(learner)
+      .where(eq(learner.accountId, accountId));
+    const learnerCount = learnerCountRow?.value ?? 0;
+
+    // attempt has no account_id; scope its count through the account's learners.
+    const learnerIdRows = await tx
+      .select({ id: learner.id })
+      .from(learner)
+      .where(eq(learner.accountId, accountId));
+    const learnerIds = learnerIdRows.map((r) => r.id);
+    let attemptCount = 0;
+    if (learnerIds.length > 0) {
+      const [attemptCountRow] = await tx
+        .select({ value: count() })
+        .from(attempt)
+        .where(inArray(attempt.learnerId, learnerIds));
+      attemptCount = attemptCountRow?.value ?? 0;
+    }
+
+    // Audit FIRST (no FK to user → survives the cascade below).
+    await tx.insert(deletionAudit).values({
+      userId: accountId,
+      learnerCount,
+      attemptCount,
+      requestedBy: "parent",
+    });
+
+    // Better Auth's `verification` table has NO FK to user, so the user-delete
+    // cascade below MISSES it. Delete this parent's verification rows (keyed by the
+    // email identifier — Better Auth's email-verify/password-reset tokens are keyed
+    // by email) so account deletion truly removes ALL auth artifacts (COPPA "delete
+    // … all its data"). Usually empty today (email verification is off, P4 Stage 2),
+    // but correct + future-proof once reset/verify flows populate it.
+    const [u] = await tx
+      .select({ email: user.email })
+      .from(user)
+      .where(eq(user.id, accountId))
+      .limit(1);
+    if (u?.email) {
+      // Cover BOTH key shapes Better Auth uses: email-verification rows keyed by
+      // `identifier = email`, AND password-reset / delete-account tokens keyed by
+      // `identifier = "<flow>:<token>"` with `value = user.id`. Match either so no
+      // auth artifact survives.
+      await tx
+        .delete(verification)
+        .where(or(eq(verification.identifier, u.email), eq(verification.value, accountId)));
+    }
+
+    // The single delete the whole cascade hangs off.
+    const deletedUsers = await tx
+      .delete(user)
+      .where(eq(user.id, accountId))
+      .returning({ id: user.id });
+
+    return {
+      deleted: deletedUsers.length > 0,
+      deletedLearners: learnerCount,
+      deletedAttempts: attemptCount,
+    };
+  });
 }

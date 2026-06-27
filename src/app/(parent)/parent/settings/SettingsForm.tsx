@@ -17,15 +17,18 @@ import { saveLearnerSettingsAction } from "@/app/(parent)/actions";
 import type { LearnerSettings } from "@/lib/content/config";
 
 /**
- * Parent settings form. Controls map directly to `LearnerSettings`
- * (dailyGoal, aiPractice, readAloud) and persist via `saveLearnerSettingsAction`
- * when a `primaryLearnerId` is available. Settings are scoped to the primary
- * (first) learner for now; per-learner settings UI lands in a later phase.
+ * Parent settings form for ONE learner. Controls map directly to
+ * `LearnerSettings` (dailyGoal, aiPractice, readAloud) and persist via
+ * `saveLearnerSettingsAction(learnerId, …)`. It serves two surfaces: the
+ * account-wide Settings page (passing the primary learner, or null when the
+ * account has no child yet) and the per-learner Settings page
+ * (`/parent/learners/[id]/settings`, always a real learner).
  *
  * The form is initialized from the learner's *persisted* settings (passed as
  * `initialSettings` by the server page), not hardcoded defaults — so a stored
  * `aiPractice:false` (the §8 AI kill-switch) renders OFF and stays OFF across
- * reloads instead of silently re-enabling on the next save.
+ * reloads instead of silently re-enabling on the next save. This stickiness now
+ * holds per-learner, for every child, not just the primary.
  */
 
 const DAILY_GOAL_OPTIONS = [
@@ -71,10 +74,16 @@ type SaveState =
   | { status: "error"; message: string };
 
 export function SettingsForm({
-  primaryLearnerId,
+  learnerId,
   initialSettings,
 }: {
-  primaryLearnerId: string | null;
+  /**
+   * The learner these settings persist to. `null` only on the account-wide
+   * Settings page when the account has no learner yet (Save is disabled + a
+   * "add a child first" note shows). The per-learner Settings page always
+   * passes a real id (it 404s for an unowned learner), so its Save is live.
+   */
+  learnerId: string | null;
   initialSettings: LearnerSettings | null;
 }) {
   const [settings, setSettings] = useState<SettingsState>(() =>
@@ -93,13 +102,13 @@ export function SettingsForm({
 
     // With no learner there is nothing to persist — Save is disabled in that
     // state, so we never reach here and never claim a save that didn't happen.
-    if (!primaryLearnerId) return;
+    if (!learnerId) return;
 
     const dailyGoal = parseInt(settings.dailyGoal, 10);
 
     startTransition(async () => {
       try {
-        const result = await saveLearnerSettingsAction(primaryLearnerId, {
+        const result = await saveLearnerSettingsAction(learnerId, {
           dailyGoal: Number.isFinite(dailyGoal) ? dailyGoal : undefined,
           aiPractice: settings.aiFeatures,
           readAloud: settings.readAloudDefault,
@@ -124,9 +133,9 @@ export function SettingsForm({
       <section>
         <div className="flex items-center justify-between gap-3">
           <h2 className="font-display text-xl font-semibold tracking-tight">Learning &amp; AI</h2>
-          {!primaryLearnerId && <SampleBadge />}
+          {!learnerId && <SampleBadge />}
         </div>
-        {!primaryLearnerId && (
+        {!learnerId && (
           <p className="mt-1 max-w-prose text-sm text-ink-soft">
             These controls are not saved yet. Add a child first to persist settings to their profile.
           </p>
@@ -185,8 +194,8 @@ export function SettingsForm({
             variant="primary"
             size="md"
             onClick={handleSave}
-            disabled={isPending || !primaryLearnerId}
-            title={primaryLearnerId ? undefined : "Add a child to save settings"}
+            disabled={isPending || !learnerId}
+            title={learnerId ? undefined : "Add a child to save settings"}
           >
             {isPending ? "Saving…" : "Save changes"}
           </Button>
@@ -211,16 +220,6 @@ export function SettingsForm({
             </span>
           )}
         </div>
-      </section>
-
-      {/* Your data */}
-      <section>
-        <h2 className="font-display text-xl font-semibold tracking-tight">Your data</h2>
-        <p className="mt-1 max-w-prose text-sm text-ink-soft">
-          We keep only a display name and birth month for each learner, plus your account email.
-          No ads, no third-party tracking. Your child&rsquo;s data is yours.
-        </p>
-        {/* P6: data export + account deletion land with account settings */}
       </section>
     </div>
   );

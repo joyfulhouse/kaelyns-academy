@@ -2,15 +2,19 @@
 // and must never be imported into a Client Component. (the `server-only`
 // package isn't installed; this comment is the guard, and only the parent
 // server components / actions import it.)
+import { headers } from "next/headers";
+import { getAuth } from "@/lib/auth";
 import { withAccount } from "@/lib/tenancy";
 import {
   getLearner,
   getLearnerSettings,
   getRecentAttempts,
   getSkillState,
+  listGeneratedAttempts,
   listLearners,
   listEnrollmentsDetailed,
   skillOutcomeCounts,
+  type GeneratedAttempt,
   type LearnerRow,
   type RecentAttempt,
 } from "@/lib/tutor/store";
@@ -191,6 +195,101 @@ export async function getPrimaryLearnerSettings(): Promise<PrimaryLearnerSetting
     if (!primary) return { primaryLearnerId: null, settings: null };
     const settings = await getLearnerSettings(accountId, primary.id);
     return { primaryLearnerId: primary.id, settings };
+  });
+}
+
+/**
+ * The signed-in parent's email, for the account-delete typed-confirmation prompt
+ * (P6) — the parent must type their own email to confirm. Resolved from the
+ * Better Auth session per-request (lazy getAuth(), build-safe). Returns null
+ * when there is no session (the gated page won't render in that case anyway).
+ */
+export async function getAccountEmail(): Promise<string | null> {
+  const session = await getAuth().api.getSession({ headers: await headers() });
+  return session?.user?.email ?? null;
+}
+
+/** The per-learner settings page read: the requested learner + their persisted
+ *  settings. */
+export interface LearnerSettingsForParent {
+  learner: LearnerRow;
+  settings: LearnerSettings | null;
+}
+
+/**
+ * The per-learner Settings page read (P6): the REQUESTED learner (not the
+ * primary) plus their persisted `LearnerSettings`, account-scoped. This is the
+ * per-learner analog of {@link getPrimaryLearnerSettings} that closes the
+ * multi-child gap — a parent with 2+ children can now see/edit each child's
+ * §8 AI kill-switch, daily goal, and read-aloud default. Returns null when the
+ * learner does not exist or is not this account's (the page turns that into a
+ * 404), so the form is never bound to an unowned learner.
+ */
+export async function getLearnerSettingsForParent(
+  learnerId: string,
+): Promise<LearnerSettingsForParent | null> {
+  return withAccount(async ({ accountId }) => {
+    const learner = await getLearner(accountId, learnerId);
+    if (!learner) return null;
+    const settings = await getLearnerSettings(accountId, learner.id);
+    return { learner, settings };
+  });
+}
+
+/** One provenance row the "what the AI made" page renders. */
+export interface ProvenanceRow {
+  activityId: string;
+  /** Resolved activity title (falls back to the readable kind label). */
+  title: string;
+  kindLabel: string;
+  stars: number;
+  model: string | null;
+  route: string | null;
+  /** Friendly "made on" date, or null when generatedAt wasn't recorded. */
+  madeOn: string | null;
+}
+
+/** The provenance trail view for one learner (page + cursor for "load more"). */
+export interface LearnerActivityTrail {
+  learner: LearnerRow;
+  rows: ProvenanceRow[];
+  nextCursor: string | null;
+}
+
+/** Resolve a generated attempt's activity title across programs (mirrors toActivityRow). */
+async function provenanceTitle(a: GeneratedAttempt): Promise<string> {
+  const owner = await findProgramByActivityIdAsync(a.activityId);
+  const found = owner ? findActivity(owner, a.activityId) : undefined;
+  return found?.activity.title ?? kindLabel(a.kind);
+}
+
+/**
+ * The per-learner provenance page read (P6 / spec §8 "parent-visible 'what the
+ * AI made' trail"): the requested learner + a page of their AI-generated
+ * attempts, each enriched with a readable activity title + a friendly date.
+ * Account-scoped (withAccount); returns null when the learner isn't this
+ * account's (the page 404s). Keyset-paginated via `cursor`.
+ */
+export async function getLearnerActivityTrail(
+  learnerId: string,
+  cursor?: string | null,
+): Promise<LearnerActivityTrail | null> {
+  return withAccount(async ({ accountId }) => {
+    const learner = await getLearner(accountId, learnerId);
+    if (!learner) return null;
+    const page = await listGeneratedAttempts(accountId, learnerId, { cursor });
+    const rows: ProvenanceRow[] = await Promise.all(
+      page.items.map(async (a) => ({
+        activityId: a.activityId,
+        title: await provenanceTitle(a),
+        kindLabel: kindLabel(a.kind),
+        stars: a.stars,
+        model: a.model,
+        route: a.route,
+        madeOn: a.generatedAt ? relativeDay(a.generatedAt.slice(0, 10)) : null,
+      })),
+    );
+    return { learner, rows, nextCursor: page.nextCursor };
   });
 }
 

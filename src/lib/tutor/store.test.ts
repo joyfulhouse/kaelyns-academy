@@ -9,6 +9,9 @@ const ops: { op: string; table: string }[] = [];
 // The skill of each skill_state insert, in call order — lets a test assert the
 // per-skill FOR UPDATE locks are acquired in a deterministic (sorted) order.
 const lockedSkills: string[] = [];
+// The values() payload of each `attempt` insert — lets a test assert provenance
+// (gen_model/gen_route/gen_at) is persisted for generated rows and null otherwise.
+const attemptInserts: Record<string, unknown>[] = [];
 // Mutable canned rows the fake `tx` returns for each select target.
 const learnerRows = { value: [{ id: "L1" }] as Record<string, unknown>[] };
 const skillRows = { value: [] as Record<string, unknown>[] };
@@ -36,9 +39,12 @@ function builder(op: string, table: string) {
     set() {
       return chain;
     },
-    values(v?: { skill?: unknown }) {
+    values(v?: Record<string, unknown>) {
       if (chain.table === "skill_state" && v && typeof v.skill === "string") {
         lockedSkills.push(v.skill);
+      }
+      if (chain.op === "insert" && chain.table === "attempt" && v) {
+        attemptInserts.push(v);
       }
       return chain;
     },
@@ -118,6 +124,7 @@ describe("recordAttempt (atomic persistence)", () => {
   beforeEach(() => {
     ops.length = 0;
     lockedSkills.length = 0;
+    attemptInserts.length = 0;
     transaction.mockClear();
     learnerRows.value = [{ id: "L1" }];
     skillRows.value = [];
@@ -172,6 +179,47 @@ describe("recordAttempt (atomic persistence)", () => {
     learnerRows.value = [];
     await expect(recordAttempt("acct-1", input)).rejects.toThrow("learner not found");
     expect(ops.some((o) => o.op === "insert" && o.table === "attempt")).toBe(false);
+  });
+
+  // ── P6 provenance: gen_model/gen_route/gen_at on generated attempts ──────────
+
+  it("persists provenance (gen_model/gen_route/gen_at) on a generated attempt", async () => {
+    skillRows.value = [{ id: "S1", evidence: [] }];
+    const at = new Date("2026-06-26T12:00:00.000Z");
+    await recordAttempt("acct-1", {
+      ...input,
+      generated: true,
+      provenance: { model: "ha-assist", route: "ready", at },
+    });
+    expect(attemptInserts).toHaveLength(1);
+    expect(attemptInserts[0]).toMatchObject({
+      generated: true,
+      genModel: "ha-assist",
+      genRoute: "ready",
+      genAt: at,
+    });
+  });
+
+  it("leaves provenance columns null for an authored attempt", async () => {
+    skillRows.value = [{ id: "S1", evidence: [] }];
+    await recordAttempt("acct-1", input); // no generated flag, no provenance
+    expect(attemptInserts).toHaveLength(1);
+    expect(attemptInserts[0]).toMatchObject({
+      generated: false,
+      genModel: null,
+      genRoute: null,
+      genAt: null,
+    });
+  });
+
+  it("drops provenance even if passed on a non-generated attempt (defense-in-depth)", async () => {
+    skillRows.value = [{ id: "S1", evidence: [] }];
+    await recordAttempt("acct-1", {
+      ...input,
+      generated: false,
+      provenance: { model: "ha-assist", route: "ready", at: new Date() },
+    });
+    expect(attemptInserts[0]).toMatchObject({ genModel: null, genRoute: null, genAt: null });
   });
 
   // ── Fix-F A4: server-authoritative curation gate (active enrollment required) ──

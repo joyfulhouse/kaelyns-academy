@@ -23,7 +23,9 @@ kaelyns-academy/
 │   │   │                                 #   + loading/error/not-found shells in the kid voice
 │   │   ├── (parent)/parent/…             # parent dashboard: learners, curriculum, settings, actions.ts
 │   │   │                                 #   (force-dynamic; withAccount-scoped; +error/not-found/loading)
+│   │   │                                 #   learners/[id]/{settings,activity}: per-learner §8 settings + AI provenance trail (P6)
 │   │   ├── (admin)/admin/…               # authoring studio: programs/[id]/edit (requireAdmin allowlist)
+│   │   ├── goodbye/                      # public post-account-deletion confirmation (no session; P6)
 │   │   ├── ~offline/                     # PWA offline fallback page
 │   │   ├── audio/[...path]/route.ts      # audio proxy to object storage (SSRF-guarded, IPv4-parsed)
 │   │   ├── serwist/[path]/route.ts       # serves the built service-worker assets
@@ -46,8 +48,9 @@ kaelyns-academy/
 │   │   │                                 #   store/ttsKey/config (pronunciation pipeline)
 │   │   ├── content/                      # repository.ts (assemble/resolve programs), store.ts (CRUD +
 │   │   │                                 #   draft/publish/archive lifecycle), config.ts — version-pin resolution
-│   │   ├── tutor/                        # store.ts (enrollment/attempt/skill_state DB + §8 gate reads),
-│   │   │                                 #   enrollment, mastery, recommend, export (learner export/delete)
+│   │   ├── tutor/                        # store.ts (enrollment/attempt/skill_state DB + §8 gate reads +
+│   │   │                                 #   buildAccountExport/deleteAccount/listGeneratedAttempts), enrollment,
+│   │   │                                 #   mastery, recommend, export + account-export (COPPA export/delete shapers)
 │   │   ├── pwa/                          # cacheRules, precache, iosHint (service-worker config + predicates)
 │   │   └── db/
 │   │       ├── index.ts                  # lazy getDb() + schema re-export (NO top-level connection)

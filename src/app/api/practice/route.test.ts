@@ -1,7 +1,15 @@
 // src/app/api/practice/route.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/ai/practice", () => ({ generatePracticeItems: vi.fn() }));
+vi.mock("@/lib/ai/practice", () => ({
+  generatePracticeItems: vi.fn(),
+  // The route calls this for the 200 response's `gen` provenance (P6). Stub it
+  // deterministically; the real routing logic is unit-tested in practice.test.ts.
+  provenanceForGeneration: (_kind: unknown, band: unknown) => ({
+    model: "ha-assist",
+    route: String(band),
+  }),
+}));
 vi.mock("@/lib/tenancy", () => ({ getAccountOrNull: vi.fn() }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: vi.fn() }));
 // Stub the store so tests don't need a real DB. Default (set in beforeEach):
@@ -152,7 +160,11 @@ describe("POST /api/practice", () => {
     const res = await POST(post({ ...VALID_BASE }));
     expect(res.status).toBe(200);
     expect(generatePracticeItems).toHaveBeenCalledOnce();
-    expect(await res.json()).toMatchObject({ kind: KIND, band: "ready", items: [] });
+    const body = await res.json();
+    expect(body).toMatchObject({ kind: KIND, band: "ready", items: [] });
+    // P6: the 200 envelope carries provenance the client relays onto the attempt.
+    expect(body.gen).toMatchObject({ model: "ha-assist", route: "ready" });
+    expect(typeof body.gen.at).toBe("string");
   });
 
   it("derives generation inputs from the AUTHORED activity (kind/skillHints/focus), not the client", async () => {

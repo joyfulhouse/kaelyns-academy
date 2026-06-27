@@ -30,6 +30,7 @@ function baseInput(overrides: Partial<ShapeInput> = {}): ShapeInput {
         activityId: "u1l1a1",
         kind: "reading",
         score: { stars: 3, correct: 5, total: 5, skillEvidence: [{ skill: "rs.a", outcome: "solid" }] },
+        response: { text: "the cat sat on the mat", picks: [1, 0] },
         day: "2026-06-20",
         createdAt: new Date("2026-06-20T10:00:00.000Z"),
       },
@@ -84,16 +85,30 @@ describe("shapeLearnerExport (pure shaper)", () => {
     expect(s.evidence).toEqual([{ day: "2026-06-20", outcome: "solid" }]);
   });
 
-  it("includes attempts with activityId, kind, score (stars/correct/total only), day, createdAt", () => {
+  it("includes attempts with activityId, kind, score (stars/correct/total only), response, day, createdAt", () => {
     const result = shapeLearnerExport(baseInput());
     expect(result.attempts).toHaveLength(1);
     const a = result.attempts[0];
-    expect(Object.keys(a)).toEqual(["activityId", "kind", "score", "day", "createdAt"]);
+    expect(Object.keys(a)).toEqual(["activityId", "kind", "score", "response", "day", "createdAt"]);
     expect(a.activityId).toBe("u1l1a1");
     expect(a.kind).toBe("reading");
     expect(a.score).toEqual({ stars: 3, correct: 5, total: 5 });
     expect(a.day).toBe("2026-06-20");
     expect(a.createdAt).toBe("2026-06-20T10:00:00.000Z");
+  });
+
+  it("exports the child's full response payload verbatim (COPPA 'all its data')", () => {
+    // The child's own work — journal text, answer picks, drawing data — must be in
+    // the export, not silently dropped. Stored verbatim from the attempt row.
+    const result = shapeLearnerExport(baseInput());
+    expect(result.attempts[0].response).toEqual({ text: "the cat sat on the mat", picks: [1, 0] });
+  });
+
+  it("exports response as null when the attempt has none (authored/no-response rows)", () => {
+    const input = baseInput();
+    delete input.attempts[0].response;
+    const result = shapeLearnerExport(input);
+    expect(result.attempts[0].response).toBeNull();
   });
 
   it("strips skillEvidence from score (no raw model outputs in export)", () => {
@@ -130,5 +145,100 @@ describe("shapeLearnerExport (pure shaper)", () => {
     const t2 = shapeLearnerExport(baseInput({ exportedAt: "2026-12-31T23:59:59.999Z" }));
     expect(t1.exportedAt).toBe("2026-01-01T00:00:00.000Z");
     expect(t2.exportedAt).toBe("2026-12-31T23:59:59.999Z");
+  });
+});
+
+// ── aiProvenance (P6 "what the AI made" trail in the export) ──────────────────
+describe("shapeLearnerExport — aiProvenance", () => {
+  it("is empty when there are no generated attempts (authored only)", () => {
+    // The base attempt has no `generated` flag → authored → no provenance.
+    const result = shapeLearnerExport(baseInput());
+    expect(result.aiProvenance).toEqual([]);
+  });
+
+  it("includes one entry per generated attempt with model/route/generatedAt", () => {
+    const result = shapeLearnerExport(
+      baseInput({
+        attempts: [
+          {
+            activityId: "gen-1",
+            kind: "math-tenframe",
+            score: { stars: 2, correct: 2, total: 3, skillEvidence: [] },
+            day: "2026-06-21",
+            createdAt: new Date("2026-06-21T09:00:00.000Z"),
+            generated: true,
+            genModel: "ha-assist",
+            genRoute: "ready",
+            genAt: new Date("2026-06-21T08:59:50.000Z"),
+          },
+        ],
+      }),
+    );
+    expect(result.aiProvenance).toEqual([
+      {
+        activityId: "gen-1",
+        kind: "math-tenframe",
+        model: "ha-assist",
+        route: "ready",
+        generatedAt: "2026-06-21T08:59:50.000Z",
+      },
+    ]);
+  });
+
+  it("excludes authored attempts from provenance even when generated ones exist", () => {
+    const result = shapeLearnerExport(
+      baseInput({
+        attempts: [
+          {
+            activityId: "authored-1",
+            kind: "reading",
+            score: { stars: 3, correct: 5, total: 5, skillEvidence: [] },
+            day: "2026-06-21",
+            createdAt: "2026-06-21T10:00:00.000Z",
+            // no generated flag
+          },
+          {
+            activityId: "gen-2",
+            kind: "phonics-wordbuild",
+            score: { stars: 1, correct: 1, total: 2, skillEvidence: [] },
+            day: "2026-06-21",
+            createdAt: "2026-06-21T10:05:00.000Z",
+            generated: true,
+            genModel: "ha-assist",
+            genRoute: "stretch",
+            genAt: "2026-06-21T10:04:00.000Z",
+          },
+        ],
+      }),
+    );
+    // Both attempts are exported, but only the generated one yields provenance.
+    expect(result.attempts).toHaveLength(2);
+    expect(result.aiProvenance).toHaveLength(1);
+    expect(result.aiProvenance[0].activityId).toBe("gen-2");
+  });
+
+  it("records null model/route/generatedAt for a pre-provenance generated row", () => {
+    // Old generated attempts (before migration 0008) have null gen_* columns —
+    // the export stays honest ("model not recorded") rather than fabricating.
+    const result = shapeLearnerExport(
+      baseInput({
+        attempts: [
+          {
+            activityId: "old-gen",
+            kind: "sightword-game",
+            score: { stars: 0, correct: 0, total: 1, skillEvidence: [] },
+            day: "2026-05-01",
+            createdAt: "2026-05-01T10:00:00.000Z",
+            generated: true,
+            genModel: null,
+            genRoute: null,
+            genAt: null,
+          },
+        ],
+      }),
+    );
+    expect(result.aiProvenance).toEqual([
+      { activityId: "old-gen", kind: "sightword-game", model: null, route: null, generatedAt: null },
+    ]);
   });
 });

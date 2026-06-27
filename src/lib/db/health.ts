@@ -29,8 +29,17 @@ export const REQUIRED_COLUMNS: ColumnMap = {
     "response",
     "day",
     "created_at",
+    // AI-provenance (P6, migration 0008). Nullable, but `recordAttempt` now writes
+    // them on EVERY insert, so a deploy that skipped 0008 must 503 here rather than
+    // fail every attempt-record at runtime.
+    "gen_model",
+    "gen_route",
+    "gen_at",
   ],
   skill_state: ["id", "learner_id", "skill", "outcome", "evidence", "updated_at"],
+  // Account-deletion audit (P6, migration 0008). Written by deleteAccount before the
+  // cascade; gate it so a skipped 0008 fails closed rather than 500-ing a delete.
+  deletion_audit: ["id", "user_id", "deleted_at", "learner_count", "attempt_count", "requested_by"],
   // Better Auth tables (auth-schema.ts) — drift here breaks login silently.
   // `role` (P4) gates admin access; a deploy that skipped the 0007 migration must
   // 503 rather than let requireAdmin() read a non-existent column and 500.

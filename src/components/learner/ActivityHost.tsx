@@ -47,11 +47,34 @@ function nextActivityHref(programSlug: string, unit: Unit, activityKey: string):
   return `/learn/${programSlug}/${unit.id}/${ids[idx + 1]}`;
 }
 
+/** Provenance echoed by /api/practice for a generated item (P6 / §8). Relayed
+ *  onto the recorded attempt so the parent's "what the AI made" trail + export
+ *  show which model/route/when produced it. Carried on the active practice phase. */
+interface GenProvenance {
+  model: string;
+  route: string;
+  at: string;
+}
+
+/** Pull a well-formed `gen` provenance object off the /api/practice response, or
+ *  null when absent/malformed. The server validates the attempt write, so this is
+ *  just a defensive shape-check on the client relay (never throws on bad data). */
+function parseGen(data: unknown): GenProvenance | null {
+  if (!data || typeof data !== "object") return null;
+  const gen = (data as { gen?: unknown }).gen;
+  if (!gen || typeof gen !== "object") return null;
+  const { model, route, at } = gen as Record<string, unknown>;
+  if (typeof model !== "string" || typeof route !== "string" || typeof at !== "string") {
+    return null;
+  }
+  return { model, route, at };
+}
+
 type Phase =
   | { kind: "play" }
   | { kind: "reward"; stars: 0 | 1 | 2 | 3 }
   | { kind: "generating" }
-  | { kind: "practice"; config: unknown }
+  | { kind: "practice"; config: unknown; gen: GenProvenance | null }
   | { kind: "practice-failed" };
 
 /**
@@ -133,12 +156,17 @@ export function ActivityHost({
   );
 
   // A generated practice item records skill evidence too (it exercises the same
-  // skills), but not star progress: it isn't an authored, trackable activity.
+  // skills), but not star progress: it isn't an authored, trackable activity. The
+  // `gen` provenance (from /api/practice) is relayed so the attempt records which
+  // model/route/when made it (P6 / §8); null when generation returned none.
   const handlePracticeComplete = useCallback(
-    (response: unknown, score: ActivityScore) => {
+    (response: unknown, score: ActivityScore, gen: GenProvenance | null) => {
       if (!effectiveActivity) return;
       stopSpeaking();
-      record(effectiveActivity, response, score, { generated: true });
+      record(effectiveActivity, response, score, {
+        generated: true,
+        ...(gen ? { gen } : undefined),
+      });
       setPhase({ kind: "reward", stars: score.stars });
     },
     [effectiveActivity, record],
@@ -208,7 +236,9 @@ export function ActivityHost({
         return;
       }
       setGeneratedCount((n) => n + 1);
-      setPhase({ kind: "practice", config: first });
+      // Carry the server's provenance (model/route/at) onto the practice phase so
+      // the recorded attempt can log what made it (P6 / §8). null if absent/malformed.
+      setPhase({ kind: "practice", config: first, gen: parseGen(data) });
     } catch {
       // Timeout/abort/network: never a scary error, just "another time".
       setPhase({ kind: "practice-failed" });
@@ -279,7 +309,10 @@ export function ActivityHost({
             <PlayerFrame key={`practice-${generatedCount}`}>
               <activityType.Player
                 config={phase.config}
-                onComplete={handlePracticeComplete}
+                // Relay this generated item's provenance to the recorder (P6 / §8).
+                onComplete={(response, score) =>
+                  handlePracticeComplete(response, score, phase.gen)
+                }
                 onExit={handleExit}
               />
             </PlayerFrame>
