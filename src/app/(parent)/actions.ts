@@ -1,8 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { z } from "zod";
+import { isAPIError } from "better-auth/api";
 import { captureNonCritical } from "@/lib/capture";
+import { getAuth } from "@/lib/auth";
 import { UnauthenticatedError, withAccount } from "@/lib/tenancy";
 import { findActivity, getSkill, type SkillTag } from "@/content";
 import { getProgramAsync, listProgramsAsync } from "@/lib/content/repository";
@@ -12,6 +15,7 @@ import {
   buildAccountExport,
   buildLearnerExport,
   createLearner,
+  deleteAccount,
   deleteLearner,
   ensureEnrollment,
   getRecentAttempts,
@@ -554,5 +558,116 @@ export async function deleteLearnerAction(learnerId: string): Promise<DeleteLear
     }
     captureNonCritical("deleteLearnerAction failed", error);
     return { ok: false, reason: "unavailable", message: "Could not delete the profile. Please try again." };
+  }
+}
+
+/* ── Account-level delete (irreversible; re-auth gated, spec §8) ──────────── */
+
+/** Discriminated result for deleteAccountAction. */
+export type DeleteAccountActionResult =
+  | { ok: true; summary: { deletedLearners: number; deletedAttempts: number } }
+  | { ok: false; reason: "unauthenticated" | "reauth-failed" | "invalid" | "unavailable"; message?: string };
+
+const deleteAccountSchema = z.object({
+  /** The account password, re-verified through Better Auth before any delete. */
+  password: z.string().min(1),
+  /** A typed confirmation the client must send: the parent's own email. */
+  confirmToken: z.string().min(1),
+});
+
+/**
+ * HARD-DELETE the whole account (spec §8 "delete … all its data"): the parent
+ * user + every learner (enrollment/attempt/skill_state) + sessions + Better Auth
+ * credential rows, via the FK cascade off `deleteAccount`. Irreversible.
+ *
+ * Re-auth gate (approved decision): BOTH must pass BEFORE anything is deleted, or
+ * the action returns `reason:"reauth-failed"` and NOTHING is touched:
+ *   1. The typed `confirmToken` must equal the signed-in parent's own email
+ *      (defense against fat-finger + CSRF-style replay; the action is already
+ *      same-origin via Better Auth).
+ *   2. The `password` is re-verified through Better Auth's `verifyPassword`
+ *      endpoint — a purpose-built, zero-side-effect check that compares against
+ *      the stored credential hash for THIS session's user and throws an APIError
+ *      on mismatch. We never hand-roll password comparison, and verifyPassword
+ *      creates/rotates NO session (unlike signIn).
+ *
+ * On success the session is invalidated (signOut clears the cookie; the session
+ * row itself already cascaded) and a summary is returned; the client redirects
+ * to the public /goodbye page.
+ */
+export async function deleteAccountAction(input: {
+  password: string;
+  confirmToken: string;
+}): Promise<DeleteAccountActionResult> {
+  const parsed = deleteAccountSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, reason: "invalid", message: "Please confirm your email and password." };
+  }
+  const { password, confirmToken } = parsed.data;
+
+  try {
+    const auth = getAuth();
+    const requestHeaders = await headers();
+
+    // Resolve the session FIRST — both the email check and the password
+    // re-verification are scoped to the signed-in user (verifyPassword reads the
+    // user from these headers; the email is checked against the session user).
+    const session = await auth.api.getSession({ headers: requestHeaders });
+    if (!session?.user) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+
+    // (1) Typed confirmation — the parent must type their OWN email. Compared
+    // trimmed + case-insensitively (emails are case-insensitive in practice).
+    const emailMatches =
+      confirmToken.trim().toLowerCase() === session.user.email.trim().toLowerCase();
+    if (!emailMatches) {
+      // Re-auth failed → NOTHING is deleted.
+      return {
+        ok: false,
+        reason: "reauth-failed",
+        message: "That didn't match. Type your account email and password to confirm.",
+      };
+    }
+
+    // (2) Re-verify the password via Better Auth (throws APIError on mismatch;
+    // no session is created/rotated). This runs BEFORE any delete.
+    try {
+      await auth.api.verifyPassword({ body: { password }, headers: requestHeaders });
+    } catch (error) {
+      if (isAPIError(error)) {
+        // Wrong password → re-auth failed, NOTHING is deleted.
+        return {
+          ok: false,
+          reason: "reauth-failed",
+          message: "That didn't match. Type your account email and password to confirm.",
+        };
+      }
+      throw error; // unexpected — fall through to the generic handler
+    }
+
+    // Both gates passed → perform the irreversible delete (audit row written
+    // first, inside the same transaction; see deleteAccount).
+    const result = await withAccount(({ accountId }) => deleteAccount(accountId));
+
+    // Invalidate the session cookie. The session ROW already cascaded with the
+    // user delete; this clears the client cookie so the redirect lands signed-out.
+    // Best-effort: a failure here must not turn a successful delete into an error.
+    try {
+      await auth.api.signOut({ headers: requestHeaders });
+    } catch (error) {
+      captureNonCritical("signOut after account delete failed (non-fatal)", error);
+    }
+
+    return {
+      ok: true,
+      summary: { deletedLearners: result.deletedLearners, deletedAttempts: result.deletedAttempts },
+    };
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+    }
+    captureNonCritical("deleteAccountAction failed", error);
+    return { ok: false, reason: "unavailable", message: "Could not delete your account. Please try again." };
   }
 }

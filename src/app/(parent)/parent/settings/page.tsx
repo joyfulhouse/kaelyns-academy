@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { getPrimaryLearnerSettings } from "@/app/(parent)/data";
+import { getAccountEmail, getPrimaryLearnerSettings } from "@/app/(parent)/data";
 import { AccountDataControls } from "@/components/parent/AccountDataControls";
 import { SettingsForm } from "./SettingsForm";
 
@@ -12,7 +12,11 @@ export default async function SettingsPage() {
   // across reloads. This page is the account-wide entry point; each learner also
   // has their own settings page (/parent/learners/[id]/settings) reached from
   // their detail page, which is where multi-child families manage each child.
-  const { primaryLearnerId, settings } = await getPrimaryLearnerSettings();
+  // accountEmail seeds the delete-account typed confirmation (type your email).
+  const [{ primaryLearnerId, settings }, accountEmail] = await Promise.all([
+    getPrimaryLearnerSettings(),
+    getAccountEmail(),
+  ]);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -28,8 +32,8 @@ export default async function SettingsPage() {
         <SettingsForm learnerId={primaryLearnerId} initialSettings={settings} />
       </div>
 
-      {/* Account-level export (and, in P6.5, delete) — spec §8 COPPA controls. */}
-      <AccountDataControls />
+      {/* Account-level export + delete (re-auth gated) — spec §8 COPPA controls. */}
+      <AccountDataControls accountEmail={accountEmail} />
     </div>
   );
 }

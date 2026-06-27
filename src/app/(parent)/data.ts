@@ -2,6 +2,8 @@
 // and must never be imported into a Client Component. (the `server-only`
 // package isn't installed; this comment is the guard, and only the parent
 // server components / actions import it.)
+import { headers } from "next/headers";
+import { getAuth } from "@/lib/auth";
 import { withAccount } from "@/lib/tenancy";
 import {
   getLearner,
@@ -194,6 +196,17 @@ export async function getPrimaryLearnerSettings(): Promise<PrimaryLearnerSetting
     const settings = await getLearnerSettings(accountId, primary.id);
     return { primaryLearnerId: primary.id, settings };
   });
+}
+
+/**
+ * The signed-in parent's email, for the account-delete typed-confirmation prompt
+ * (P6) — the parent must type their own email to confirm. Resolved from the
+ * Better Auth session per-request (lazy getAuth(), build-safe). Returns null
+ * when there is no session (the gated page won't render in that case anyway).
+ */
+export async function getAccountEmail(): Promise<string | null> {
+  const session = await getAuth().api.getSession({ headers: await headers() });
+  return session?.user?.email ?? null;
 }
 
 /** The per-learner settings page read: the requested learner + their persisted
