@@ -5,8 +5,9 @@
 --
 -- 1) attempt.gen_model/gen_route/gen_at — all NULLABLE, no default, no backfill.
 --    Authored + pre-existing generated rows stay null (UI shows "model not
---    recorded"). NOT added to REQUIRED_COLUMNS: they're nullable provenance, so
---    they must NOT trip the schema-drift 503 canary.
+--    recorded"). ADDED to REQUIRED_COLUMNS (src/lib/db/health.ts): recordAttempt
+--    writes these on EVERY insert, so a deploy that skipped 0008 must 503 at the
+--    canary rather than 500 every attempt-record at runtime.
 -- 2) deletion_audit — NO foreign key to "user" (it records the deletion of that
 --    very user, so an FK+cascade would erase the audit it just wrote). user_id
 --    is a plain column; the row survives the cascade.
