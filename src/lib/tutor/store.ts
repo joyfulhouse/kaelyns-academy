@@ -1,7 +1,7 @@
 // server-only: this module opens DB connections and must never be imported into
 // a Client Component. (the `server-only` package isn't installed; this comment
 // is the guard, and only server actions / route handlers import it.)
-import { and, count, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, count, desc, eq, inArray, lt, or } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { attempt, deletionAudit, enrollment, learner, skillState, user, verification } from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
@@ -947,7 +947,13 @@ export async function deleteAccount(accountId: string): Promise<DeleteAccountRes
       .where(eq(user.id, accountId))
       .limit(1);
     if (u?.email) {
-      await tx.delete(verification).where(eq(verification.identifier, u.email));
+      // Cover BOTH key shapes Better Auth uses: email-verification rows keyed by
+      // `identifier = email`, AND password-reset / delete-account tokens keyed by
+      // `identifier = "<flow>:<token>"` with `value = user.id`. Match either so no
+      // auth artifact survives.
+      await tx
+        .delete(verification)
+        .where(or(eq(verification.identifier, u.email), eq(verification.value, accountId)));
     }
 
     // The single delete the whole cascade hangs off.

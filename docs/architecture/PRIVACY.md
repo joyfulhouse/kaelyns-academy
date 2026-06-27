@@ -99,8 +99,9 @@ request at once.
   `DELETE FROM "user"` cascades the entire child-data graph **plus** the Better
   Auth `session` and `account` (credential/oauth) rows. The Better Auth
   `verification` table has **no** FK to `user`, so the same transaction also
-  explicitly deletes this parent's `verification` rows (email-verify / reset
-  tokens, keyed by email) — nothing auth-related is left behind.
+  explicitly deletes this parent's `verification` rows — matching both Better Auth
+  key shapes (`identifier = email` for email-verification, and `value = user.id`
+  for reset / delete-account tokens) so nothing auth-related is left behind.
   `publisher.ownerUserId` is `ON DELETE SET NULL` (a published program does **not**
   vanish because its author closed their account — ownership nulls out). The FK
   cascade map is guarded by `src/lib/db/schema.test.ts`.

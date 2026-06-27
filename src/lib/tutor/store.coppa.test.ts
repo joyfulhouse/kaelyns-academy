@@ -114,10 +114,11 @@ vi.mock("@/lib/db/schema", () => ({
   skillState: { _name: "skill_state", learnerId: {} },
   attempt: { _name: "attempt", learnerId: {} },
   deletionAudit: { _name: "deletion_audit" },
-  verification: { _name: "verification", identifier: {} },
+  verification: { _name: "verification", identifier: {}, value: {} },
 }));
 vi.mock("drizzle-orm", () => ({
   and: (...a: unknown[]) => a,
+  or: (...a: unknown[]) => ["or", ...a],
   eq: (...a: unknown[]) => ["eq", ...a],
   desc: (a: unknown) => a,
   inArray: (...a: unknown[]) => a,
@@ -222,8 +223,11 @@ describe("deleteAccount (cascade + audit)", () => {
     await deleteAccount("U1");
     const vDel = ops.find((o) => o.op === "delete" && o.table === "verification");
     expect(vDel).toBeDefined();
-    // keyed by the parent's email identifier (Better Auth email-verify/reset tokens)
-    expect(JSON.stringify(vDel!.where)).toContain("p@example.com");
+    // Matches BOTH Better Auth key shapes: identifier=email (email-verification)
+    // AND value=accountId (reset/delete tokens store the user id in `value`).
+    const whereJson = JSON.stringify(vDel!.where);
+    expect(whereJson).toContain("p@example.com");
+    expect(whereJson).toContain("U1");
     // …and in the same transaction, before the user delete the cascade hangs off.
     const vIdx = ops.findIndex((o) => o.op === "delete" && o.table === "verification");
     const uIdx = ops.findIndex((o) => o.op === "delete.returning" && o.table === "user");
