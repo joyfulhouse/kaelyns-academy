@@ -105,6 +105,10 @@ kaelyns-academy/
 │   └── grant-admin.ts                    # `bun run db:grant:admin <user-id> [--revoke]` — out-of-band admin
 │                                         #   bootstrap by confirmed user id (used while email verification is off)
 │
+├── e2e/                                  # Playwright E2E suite (smoke/auth/parent/learner/admin) — drives a
+│                                         #   real browser; targets live prod by default behind the E2E_ALLOW_PROD
+│                                         #   gate. `bun run test:e2e`; see e2e/README.md + scripts/e2e-cleanup.sh.
+├── playwright.config.ts                  # E2E projects (setup→public/parent/admin), prod-target guards
 ├── instrumentation.ts                    # Sentry register() + onRequestError
 ├── instrumentation-client.ts             # Sentry client init + onRouterTransitionStart
 ├── sentry.{server,edge}.config.ts        # env-gated Sentry.init (no-op without DSN)
