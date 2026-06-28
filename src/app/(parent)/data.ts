@@ -2,8 +2,7 @@
 // and must never be imported into a Client Component. (the `server-only`
 // package isn't installed; this comment is the guard, and only the parent
 // server components / actions import it.)
-import { headers } from "next/headers";
-import { getAuth } from "@/lib/auth";
+import { getSessionOrNull } from "@/lib/auth";
 import { withAccount } from "@/lib/tenancy";
 import {
   getLearner,
@@ -205,7 +204,7 @@ export async function getPrimaryLearnerSettings(): Promise<PrimaryLearnerSetting
  * when there is no session (the gated page won't render in that case anyway).
  */
 export async function getAccountEmail(): Promise<string | null> {
-  const session = await getAuth().api.getSession({ headers: await headers() });
+  const session = await getSessionOrNull();
   return session?.user?.email ?? null;
 }
 

@@ -1,5 +1,4 @@
-import { headers } from "next/headers";
-import { getAuth } from "@/lib/auth";
+import { getSessionOrNull } from "@/lib/auth";
 
 /**
  * The tenancy seam. Every learner-scoped read/write should run inside
@@ -10,8 +9,8 @@ import { getAuth } from "@/lib/auth";
  * real `account` table lands (multiple guardians per account, see spec §8) the
  * call sites do not change, only the resolution below.
  *
- * Build-safe: `getAuth()` is lazy and only invoked per-request here, never at
- * module-evaluation time.
+ * Build-safe: session resolution (`getSessionOrNull` → lazy `getAuth()`) only
+ * runs per-request here, never at module-evaluation time.
  */
 
 export interface AccountContext {
@@ -33,7 +32,7 @@ export class UnauthenticatedError extends Error {
  * @throws {UnauthenticatedError} when there is no valid session.
  */
 export async function requireAccount(): Promise<AccountContext> {
-  const session = await getAuth().api.getSession({ headers: await headers() });
+  const session = await getSessionOrNull();
   if (!session?.user) throw new UnauthenticatedError();
 
   // TODO(P6): resolve the real account id once an `account` table (and

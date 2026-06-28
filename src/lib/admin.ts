@@ -3,8 +3,7 @@
  * Build-safe: no top-level getAuth() or getDb() calls.
  */
 import { eq } from "drizzle-orm";
-import { headers } from "next/headers";
-import { getAuth } from "@/lib/auth";
+import { getSessionOrNull } from "@/lib/auth";
 import { getDb, schema } from "@/lib/db";
 import { UnauthenticatedError } from "@/lib/tenancy";
 
@@ -71,7 +70,7 @@ export type AdminAccess =
  * Build-safe: only invoked per-request, never at module top-level.
  */
 export async function resolveAdminAccess(): Promise<AdminAccess> {
-  const session = await getAuth().api.getSession({ headers: await headers() });
+  const session = await getSessionOrNull();
   if (!session?.user) return { ok: false, reason: "unauthenticated" };
 
   const db = getDb();

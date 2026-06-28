@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { headers } from "next/headers";
 import { getDb, schema } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 
@@ -52,4 +53,12 @@ let _auth: ReturnType<typeof createAuth> | null = null;
 export function getAuth(): ReturnType<typeof createAuth> {
   if (!_auth) _auth = createAuth();
   return _auth;
+}
+
+/**
+ * Resolve the current Better Auth session, or null when unauthenticated. Lazy/
+ * build-safe: getAuth() runs only when this is called, never at module top level.
+ */
+export async function getSessionOrNull() {
+  return getAuth().api.getSession({ headers: await headers() });
 }
