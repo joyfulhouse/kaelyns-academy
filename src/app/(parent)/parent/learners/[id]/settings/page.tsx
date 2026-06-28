@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeftIcon } from "@phosphor-icons/react/dist/ssr";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { getLearnerSettingsForParent } from "@/app/(parent)/data";
 import { SettingsForm } from "@/app/(parent)/parent/settings/SettingsForm";
 
@@ -41,15 +42,12 @@ export default async function LearnerSettingsPage({
         Back to {learner.displayName}
       </Link>
 
-      <header className="mt-4">
-        <p className="font-display text-sm font-semibold text-ink-faint">Learner settings</p>
-        <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight">
-          {learner.displayName}&rsquo;s settings
-        </h1>
-        <p className="mt-2 max-w-prose text-ink-soft">
-          Safety, time, and the AI tutor for {learner.displayName}. These apply to this child only.
-        </p>
-      </header>
+      <PageHeader
+        className="mt-4"
+        eyebrow="Learner settings"
+        title={`${learner.displayName}’s settings`}
+        description={`Safety, time, and the AI tutor for ${learner.displayName}. These apply to this child only.`}
+      />
 
       <div className="mt-8">
         <SettingsForm learnerId={learner.id} initialSettings={settings} />

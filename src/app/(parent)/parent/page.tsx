@@ -12,6 +12,7 @@ import { Pill } from "@/components/ui/Pill";
 import { Surface } from "@/components/ui/Surface";
 import { Stars } from "@/components/ui/Stars";
 import { Button } from "@/components/ui/Button";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { ProgressReportCard } from "@/components/parent/ProgressReportCard";
 import { outcomeDisplay } from "@/components/parent/skill-display";
 import {
@@ -36,23 +37,21 @@ export default async function ParentHomePage() {
   return (
     <div className="mx-auto max-w-5xl">
       {/* Greeting */}
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="font-display text-sm font-semibold text-ink-faint">Parent home</p>
-          <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight">
-            How {learner.displayName} is doing
-          </h1>
-        </div>
-        {overview.learners.length > 1 && (
-          <Link
-            href="/parent/learners"
-            className="inline-flex items-center gap-1 text-sm font-medium text-accent-deep underline-offset-2 hover:underline"
-          >
-            All {overview.learners.length} learners
-            <ArrowRightIcon weight="bold" className="size-4" />
-          </Link>
-        )}
-      </header>
+      <PageHeader
+        eyebrow="Parent home"
+        title={`How ${learner.displayName} is doing`}
+        action={
+          overview.learners.length > 1 && (
+            <Link
+              href="/parent/learners"
+              className="inline-flex items-center gap-1 text-sm font-medium text-accent-deep underline-offset-2 hover:underline"
+            >
+              All {overview.learners.length} learners
+              <ArrowRightIcon weight="bold" className="size-4" />
+            </Link>
+          )
+        }
+      />
 
       {/* Learner profile + program: two unlike columns, not a card grid */}
       <section className="mt-8 grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
@@ -77,10 +76,7 @@ export default async function ParentHomePage() {
 function NoLearners() {
   return (
     <div className="mx-auto max-w-3xl">
-      <header>
-        <p className="font-display text-sm font-semibold text-ink-faint">Parent home</p>
-        <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight">Welcome</h1>
-      </header>
+      <PageHeader eyebrow="Parent home" title="Welcome" />
 
       <Surface as="section" tone="raised" className="mt-8 grid place-items-center p-12 text-center">
         <span

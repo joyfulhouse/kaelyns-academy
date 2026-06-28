@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CaretRightIcon } from "@phosphor-icons/react/dist/ssr";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { getAccountEmail, getPrimaryLearnerSettings, listLearnerCards } from "@/app/(parent)/data";
 import { AccountDataControls } from "@/components/parent/AccountDataControls";
 import { SettingsForm } from "./SettingsForm";
@@ -22,13 +23,11 @@ export default async function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-3xl">
-      <header>
-        <p className="font-display text-sm font-semibold text-ink-faint">Parent home</p>
-        <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight">Settings</h1>
-        <p className="mt-2 max-w-prose text-ink-soft">
-          Safety, time, and the AI tutor are yours to control — for each child. Calm by default.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Parent home"
+        title="Settings"
+        description="Safety, time, and the AI tutor are yours to control — for each child. Calm by default."
+      />
 
       {single && primary ? (
         <section className="mt-8">

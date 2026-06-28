@@ -3,6 +3,8 @@ import Link from "next/link";
 import { CaretRightIcon, UsersThreeIcon } from "@phosphor-icons/react/dist/ssr";
 import { Pill } from "@/components/ui/Pill";
 import { Surface } from "@/components/ui/Surface";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { AddChildForm } from "@/components/parent/AddChildForm";
 import { outcomeDisplay } from "@/components/parent/skill-display";
 import { avatarInitial, listLearnerCards, type LearnerCard } from "@/app/(parent)/data";
@@ -15,14 +17,11 @@ export default async function LearnersPage() {
 
   return (
     <div className="mx-auto max-w-4xl">
-      <header>
-        <p className="font-display text-sm font-semibold text-ink-faint">Parent home</p>
-        <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight">Learners</h1>
-        <p className="mt-2 max-w-prose text-ink-soft">
-          Each learner keeps only a display name and birth month. Open one to see skills by
-          subject and recent activity.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Parent home"
+        title="Learners"
+        description="Each learner keeps only a display name and birth month. Open one to see skills by subject and recent activity."
+      />
 
       {learners.length > 0 ? (
         <ul className="mt-8 flex flex-col gap-3">
@@ -33,13 +32,12 @@ export default async function LearnersPage() {
           ))}
         </ul>
       ) : (
-        <div className="mt-8 grid place-items-center rounded-xl border border-dashed border-line-strong p-12 text-center">
-          <UsersThreeIcon weight="regular" className="size-10 text-ink-faint" />
-          <p className="mt-3 font-display text-lg font-semibold">No learners yet</p>
-          <p className="mt-1 max-w-sm text-ink-soft">
-            Add your child below to enroll them and start following their progress.
-          </p>
-        </div>
+        <EmptyState
+          className="mt-8 p-12"
+          icon={<UsersThreeIcon weight="regular" className="size-10 text-ink-faint" />}
+          title="No learners yet"
+          description="Add your child below to enroll them and start following their progress."
+        />
       )}
 
       {/* Add a child */}
