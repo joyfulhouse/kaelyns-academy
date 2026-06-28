@@ -47,6 +47,12 @@ const BASE_URL = process.env.E2E_BASE_URL ?? "https://kaelyns.academy";
 // CI job: targeting kaelyns.academy requires an explicit E2E_ALLOW_PROD=1.
 const targetHost = new URL(BASE_URL).hostname;
 const isProd = /(^|\.)kaelyns\.academy$/i.test(targetHost);
+if (isProd && process.env.CI) {
+  // Fail closed in CI: an automated job must never write to the pilot prod DB,
+  // even if E2E_ALLOW_PROD leaked into the environment. Point CI at a disposable
+  // target via E2E_BASE_URL.
+  throw new Error(`Refusing to run E2E against production (${BASE_URL}) in CI.`);
+}
 if (isProd && process.env.E2E_ALLOW_PROD !== "1") {
   throw new Error(
     `E2E target is PRODUCTION (${BASE_URL}) and these specs mutate the database ` +
@@ -54,6 +60,10 @@ if (isProd && process.env.E2E_ALLOW_PROD !== "1") {
       `server, or set E2E_ALLOW_PROD=1 to confirm you intend to write to prod.`,
   );
 }
+
+// Artifacts that may capture typed credentials are OFF for the setup project (it
+// signs in the long-lived seeded accounts) and for any prod run — see `use` below.
+const credSafeArtifacts = { trace: "off", screenshot: "off", video: "off" } as const;
 
 export default defineConfig({
   testDir: "e2e",
@@ -79,7 +89,7 @@ export default defineConfig({
     navigationTimeout: 30_000,
   },
   projects: [
-    { name: "setup", testMatch: /.*\.setup\.ts/ },
+    { name: "setup", testMatch: /.*\.setup\.ts/, use: { ...credSafeArtifacts } },
     {
       name: "public",
       testMatch: /specs\/(smoke|auth|learner)\.spec\.ts/,

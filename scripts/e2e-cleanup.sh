@@ -33,12 +33,13 @@ if [[ ! "$E2E_PARENT" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]+$ ]]; then
   exit 2
 fi
 
-# Predicates scope each delete to uniquely-tagged E2E artifacts ONLY. The seeded
-# email is passed as a psql variable (:'parent') and rendered with SQL literal
-# quoting — never string-concatenated into the statement (no injection). Learner
+# Predicates scope each delete to uniquely-tagged E2E artifacts ONLY. $E2E_PARENT
+# is safe to inline: the regex above admits only [A-Za-z0-9._%+-@.] — no quote,
+# semicolon, backslash, or space — so it cannot break out of the SQL literal (the
+# injection vector is closed at validation, before any SQL is built). Learner
 # delete is double-scoped (seeded account AND name prefix); throwaway-email and
 # draft-slug prefixes are test-only by construction. None match the seeded accounts.
-W_LEARNER="display_name LIKE 'E2E Kid%' AND account_id = (SELECT id FROM \"user\" WHERE email = :'parent')"
+W_LEARNER="display_name LIKE 'E2E Kid%' AND account_id = (SELECT id FROM \"user\" WHERE email = '$E2E_PARENT')"
 W_USER="email LIKE 'e2e-throwaway+%@kaelyns.test'"
 W_PROGRAM="slug LIKE 'e2e-draft-%'"
 
@@ -51,7 +52,7 @@ pod="${primary#pod/}"
 
 run() {
   kubectl -n "$NS" exec -i "$pod" -c postgres -- \
-    psql -U postgres -d "$DB" -v ON_ERROR_STOP=1 -v parent="$E2E_PARENT" "$@"
+    psql -U postgres -d "$DB" -v ON_ERROR_STOP=1 "$@"
 }
 
 echo "[e2e-cleanup] ns=$NS db=$DB pod=$pod parent=$E2E_PARENT"
