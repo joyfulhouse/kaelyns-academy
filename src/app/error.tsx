@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { ArrowClockwiseIcon, HouseIcon } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Mascot } from "@/components/art/Mascot";
-import { captureNonCritical } from "@/lib/capture";
+import { useRouteError } from "@/lib/hooks/useRouteError";
 
 /**
  * Route-segment error boundary (App Router). Renders inside the root layout, so
@@ -20,9 +19,7 @@ export default function Error({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  useEffect(() => {
-    captureNonCritical("Route error boundary", error);
-  }, [error]);
+  useRouteError("Route error boundary", error);
 
   // Keep a child who errors mid-activity inside the studio rather than dropping
   // them on the marketing homepage (a dead-end for a non-reader). Only NESTED

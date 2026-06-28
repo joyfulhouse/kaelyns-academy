@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
 import { ArrowClockwiseIcon } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
-import { captureNonCritical } from "@/lib/capture";
+import { useRouteError } from "@/lib/hooks/useRouteError";
 
 /**
  * Parent-segment error boundary. Renders inside the (parent) layout, so the
@@ -20,9 +19,7 @@ export default function ParentError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  useEffect(() => {
-    captureNonCritical("Parent route error", error);
-  }, [error]);
+  useRouteError("Parent route error", error);
 
   return (
     <div className="mx-auto grid max-w-md place-items-center py-16 text-center">

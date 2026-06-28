@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { ArrowClockwiseIcon, CompassIcon, HouseIcon } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Mascot } from "@/components/art/Mascot";
-import { captureNonCritical } from "@/lib/capture";
+import { useRouteError } from "@/lib/hooks/useRouteError";
 
 /**
  * Kid-surface error boundary for the learner route group. Without it, an error
@@ -22,9 +21,7 @@ export default function LearnerError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  useEffect(() => {
-    captureNonCritical("Learner route error", error);
-  }, [error]);
+  useRouteError("Learner route error", error);
 
   // This boundary catches the picker (/learn) AND nested activity pages
   // (/learn/<program>/...). A nested failure can escape to the picker, but if
