@@ -22,10 +22,16 @@ DB="${E2E_DB_NAME:-kaelyns_academy}"
 CONFIRM="${E2E_CLEANUP_CONFIRM:-}"
 [[ "${1:-}" == "--confirm" ]] && CONFIRM=1
 
-# WHERE clauses scoping each delete to uniquely-tagged E2E artifacts ONLY. These
-# never match the two seeded accounts (e2e-parent@/e2e-admin@ — not throwaway+),
-# nor any real learner/program (the tags are test-only by construction).
-W_LEARNER="display_name LIKE 'E2E Kid%'"
+# Seeded E2E parent account email — learner cleanup is scoped to it so a real
+# child profile that happens to be named "E2E Kid…" (display names are parent-
+# supplied) can NEVER be matched: real learners belong to other accounts.
+E2E_PARENT="${E2E_PARENT_EMAIL:-e2e-parent@kaelyns.test}"
+
+# WHERE clauses scoping each delete to uniquely-tagged E2E artifacts ONLY. Learner
+# delete is double-scoped (seeded account AND name prefix); the throwaway-email
+# and draft-slug prefixes are test-only by construction. None match the two seeded
+# accounts (e2e-parent@/e2e-admin@ — not throwaway+).
+W_LEARNER="display_name LIKE 'E2E Kid%' AND account_id = (SELECT id FROM \"user\" WHERE email = '$E2E_PARENT')"
 W_USER="email LIKE 'e2e-throwaway+%@kaelyns.test'"
 W_PROGRAM="slug LIKE 'e2e-draft-%'"
 
