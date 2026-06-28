@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeftIcon } from "@phosphor-icons/react/dist/ssr";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { getLearnerActivityTrail } from "@/app/(parent)/data";
 import { AiProvenanceList } from "@/components/parent/AiProvenanceList";
 
@@ -46,16 +47,12 @@ export default async function LearnerActivityPage({
         Back to {learner.displayName}
       </Link>
 
-      <header className="mt-4">
-        <p className="font-display text-sm font-semibold text-ink-faint">Provenance</p>
-        <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight">
-          What the AI made for {learner.displayName}
-        </h1>
-        <p className="mt-2 max-w-prose text-ink-soft">
-          Every practice item the bounded tutor generated for {learner.displayName}, with what made
-          it and when. We log the model and route for audit, never the prompt.
-        </p>
-      </header>
+      <PageHeader
+        className="mt-4"
+        eyebrow="Provenance"
+        title={`What the AI made for ${learner.displayName}`}
+        description={`Every practice item the bounded tutor generated for ${learner.displayName}, with what made it and when. We log the model and route for audit, never the prompt.`}
+      />
 
       <AiProvenanceList rows={rows} olderHref={olderHref} learnerName={learner.displayName} />
     </div>

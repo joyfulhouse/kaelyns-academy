@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { MarketplaceGrid } from "@/components/parent/MarketplaceGrid";
 import { getCatalog } from "@/app/(parent)/data";
 
@@ -11,14 +12,11 @@ export default async function CurriculumPage() {
 
   return (
     <div className="mx-auto max-w-4xl">
-      <header>
-        <p className="font-display text-sm font-semibold text-ink-faint">Parent home</p>
-        <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight">Curriculum</h1>
-        <p className="mt-2 max-w-prose text-ink-soft">
-          Browse published programs and assign them to your learners. Each program covers a set
-          of skills with guided lessons and activities.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Parent home"
+        title="Curriculum"
+        description="Browse published programs and assign them to your learners. Each program covers a set of skills with guided lessons and activities."
+      />
 
       <MarketplaceGrid programs={programs} />
     </div>
