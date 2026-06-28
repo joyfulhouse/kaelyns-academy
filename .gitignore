@@ -51,3 +51,10 @@ next-env.d.ts
 
 # Subagent-driven development scratch (briefs, review packages, ledger)
 .superpowers/
+
+# Playwright e2e (browsers, run artifacts, saved auth state — never commit sessions)
+/test-results/
+/playwright-report/
+/blob-report/
+/.playwright/
+/e2e/.auth/
