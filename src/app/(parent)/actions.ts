@@ -7,6 +7,7 @@ import { isAPIError } from "better-auth/api";
 import { captureNonCritical } from "@/lib/capture";
 import { getAuth } from "@/lib/auth";
 import { UnauthenticatedError, withAccount } from "@/lib/tenancy";
+import { mapActionError, parseInput } from "@/lib/actions/results";
 import { findActivity, getSkill, type SkillTag } from "@/content";
 import { getProgramAsync, listProgramsAsync } from "@/lib/content/repository";
 import { getPublishedVersionId } from "@/lib/content/store";
@@ -92,11 +93,8 @@ export async function createLearnerAction(input: {
   displayName: string;
   birthMonth?: string;
 }): Promise<CreateLearnerResult> {
-  const parsed = createLearnerSchema.safeParse(input);
-  if (!parsed.success) {
-    const message = parsed.error.issues[0]?.message ?? "Please check the form and try again.";
-    return { ok: false, reason: "invalid", message };
-  }
+  const parsed = parseInput(createLearnerSchema, input, "Please check the form and try again.");
+  if (!parsed.ok) return parsed;
 
   try {
     const learner = await withAccount(async ({ accountId }) => {
@@ -112,15 +110,11 @@ export async function createLearnerAction(input: {
     revalidatePath("/parent/learners");
     return { ok: true, learner };
   } catch (error) {
-    if (error instanceof UnauthenticatedError) {
-      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
-    }
-    captureNonCritical("create learner failed", error);
-    return {
-      ok: false,
-      reason: "unavailable",
-      message: "We could not add the learner right now. Please try again in a moment.",
-    };
+    return mapActionError(
+      error,
+      "create learner failed",
+      "We could not add the learner right now. Please try again in a moment.",
+    );
   }
 }
 
@@ -275,11 +269,7 @@ export async function assignProgramAction(
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
   } catch (error) {
-    if (error instanceof UnauthenticatedError) {
-      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
-    }
-    captureNonCritical("assignProgramAction failed", error);
-    return { ok: false, reason: "unavailable", message: "Could not assign the program. Please try again." };
+    return mapActionError(error, "assignProgramAction failed", "Could not assign the program. Please try again.");
   }
 }
 
@@ -312,11 +302,7 @@ export async function removeProgramAction(
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
   } catch (error) {
-    if (error instanceof UnauthenticatedError) {
-      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
-    }
-    captureNonCritical("removeProgramAction failed", error);
-    return { ok: false, reason: "unavailable", message: "Could not remove the program. Please try again." };
+    return mapActionError(error, "removeProgramAction failed", "Could not remove the program. Please try again.");
   }
 }
 
@@ -349,11 +335,7 @@ export async function restoreProgramAction(
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
   } catch (error) {
-    if (error instanceof UnauthenticatedError) {
-      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
-    }
-    captureNonCritical("restoreProgramAction failed", error);
-    return { ok: false, reason: "unavailable", message: "Could not restore the program. Please try again." };
+    return mapActionError(error, "restoreProgramAction failed", "Could not restore the program. Please try again.");
   }
 }
 
@@ -372,11 +354,8 @@ export async function updateEnrollmentConfigAction(
     return { ok: false, reason: "invalid", message: "Invalid learner or program." };
   }
 
-  const configParsed = enrollmentConfigSchema.safeParse(config);
-  if (!configParsed.success) {
-    const message = configParsed.error.issues[0]?.message ?? "Invalid enrollment config.";
-    return { ok: false, reason: "invalid", message };
-  }
+  const configParsed = parseInput(enrollmentConfigSchema, config, "Invalid enrollment config.");
+  if (!configParsed.ok) return configParsed;
 
   // Normalize: an empty activeUnitKeys array means "all units active", which is
   // the same as the field being absent. Store it as omitted so the DB never drifts
@@ -404,11 +383,7 @@ export async function updateEnrollmentConfigAction(
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
   } catch (error) {
-    if (error instanceof UnauthenticatedError) {
-      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
-    }
-    captureNonCritical("updateEnrollmentConfigAction failed", error);
-    return { ok: false, reason: "unavailable", message: "Could not update the config. Please try again." };
+    return mapActionError(error, "updateEnrollmentConfigAction failed", "Could not update the config. Please try again.");
   }
 }
 
@@ -425,11 +400,8 @@ export async function saveLearnerSettingsAction(
     return { ok: false, reason: "invalid", message: "Invalid learner." };
   }
 
-  const settingsParsed = learnerSettingsSchema.safeParse(settings);
-  if (!settingsParsed.success) {
-    const message = settingsParsed.error.issues[0]?.message ?? "Invalid learner settings.";
-    return { ok: false, reason: "invalid", message };
-  }
+  const settingsParsed = parseInput(learnerSettingsSchema, settings, "Invalid learner settings.");
+  if (!settingsParsed.ok) return settingsParsed;
 
   try {
     // settingsParsed.data is already LearnerSettings (inferred from the Zod
@@ -449,11 +421,7 @@ export async function saveLearnerSettingsAction(
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
   } catch (error) {
-    if (error instanceof UnauthenticatedError) {
-      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
-    }
-    captureNonCritical("saveLearnerSettingsAction failed", error);
-    return { ok: false, reason: "unavailable", message: "Could not save settings. Please try again." };
+    return mapActionError(error, "saveLearnerSettingsAction failed", "Could not save settings. Please try again.");
   }
 }
 
@@ -484,11 +452,7 @@ export async function exportLearnerAction(learnerId: string): Promise<ExportLear
     if (!data) return { ok: false, reason: "not-found", message: "Learner not found." };
     return { ok: true, data };
   } catch (error) {
-    if (error instanceof UnauthenticatedError) {
-      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
-    }
-    captureNonCritical("exportLearnerAction failed", error);
-    return { ok: false, reason: "unavailable", message: "Could not export data. Please try again." };
+    return mapActionError(error, "exportLearnerAction failed", "Could not export data. Please try again.");
   }
 }
 
@@ -518,11 +482,7 @@ export async function exportAccountAction(): Promise<ExportAccountResult> {
     }
     return { ok: true, data };
   } catch (error) {
-    if (error instanceof UnauthenticatedError) {
-      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
-    }
-    captureNonCritical("exportAccountAction failed", error);
-    return { ok: false, reason: "unavailable", message: "Could not export data. Please try again." };
+    return mapActionError(error, "exportAccountAction failed", "Could not export data. Please try again.");
   }
 }
 
@@ -553,11 +513,7 @@ export async function deleteLearnerAction(learnerId: string): Promise<DeleteLear
     revalidatePath("/parent/learners");
     return { ok: true };
   } catch (error) {
-    if (error instanceof UnauthenticatedError) {
-      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
-    }
-    captureNonCritical("deleteLearnerAction failed", error);
-    return { ok: false, reason: "unavailable", message: "Could not delete the profile. Please try again." };
+    return mapActionError(error, "deleteLearnerAction failed", "Could not delete the profile. Please try again.");
   }
 }
 
@@ -664,10 +620,6 @@ export async function deleteAccountAction(input: {
       summary: { deletedLearners: result.deletedLearners, deletedAttempts: result.deletedAttempts },
     };
   } catch (error) {
-    if (error instanceof UnauthenticatedError) {
-      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
-    }
-    captureNonCritical("deleteAccountAction failed", error);
-    return { ok: false, reason: "unavailable", message: "Could not delete your account. Please try again." };
+    return mapActionError(error, "deleteAccountAction failed", "Could not delete your account. Please try again.");
   }
 }
