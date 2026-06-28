@@ -41,12 +41,17 @@ test("create a draft program, open its editor, then archive it", async ({ page }
 
   // Back on the detail page, run the lifecycle. Publishing (live catalog) is
   // opt-in; archiving is always safe and removes the program from the catalog.
+  // The publish step is wrapped so that archive ALWAYS runs — a published test
+  // program must never be left live in the pilot marketplace on a failure.
   await page.goto(programUrl);
-  if (process.env.E2E_ADMIN_PUBLISH === "1") {
-    await page.getByRole("button", { name: "Publish" }).click();
-    await expect(page.getByRole("status")).toContainText(/published/i);
+  try {
+    if (process.env.E2E_ADMIN_PUBLISH === "1") {
+      await page.getByRole("button", { name: "Publish" }).click();
+      await expect(page.getByRole("status")).toContainText(/published/i);
+    }
+  } finally {
+    await page.getByRole("button", { name: "Archive", exact: true }).click();
+    await page.getByRole("button", { name: "Confirm archive" }).click();
   }
-  await page.getByRole("button", { name: "Archive", exact: true }).click();
-  await page.getByRole("button", { name: "Confirm archive" }).click();
   await expect(page.getByRole("status")).toContainText(/archived/i);
 });

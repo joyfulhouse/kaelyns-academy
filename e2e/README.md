@@ -8,6 +8,11 @@ End-to-end tests that drive a real browser against the running app.
 > every spec creates per-run, uniquely-tagged data and tears it down; learner
 > tests use **authored** content only (never the paid `/api/practice` AI path);
 > the admin lifecycle never publishes to the live catalog unless you opt in.
+>
+> **Hitting prod is a deliberate act.** When the resolved target is
+> `kaelyns.academy`, the config refuses to run unless `E2E_ALLOW_PROD=1` is set
+> (kept in gitignored `.env.local`). Point `E2E_BASE_URL` at a local/staging
+> server to run without that flag.
 
 ## Running
 
@@ -68,10 +73,12 @@ Put the generated passwords in `.env.local`.
 
 ## Cleanup
 
-Specs self-clean, but a failed run can leave a tagged row behind. Sweep them:
+Specs self-clean, but a failed run can leave a tagged row behind. The sweep is
+**dry-run by default** (prints the counts it would delete, deletes nothing):
 
 ```bash
-KUBECONFIG=~/.kube/config-k3s bash scripts/e2e-cleanup.sh
+KUBECONFIG=~/.kube/config-k3s bash scripts/e2e-cleanup.sh            # dry run
+KUBECONFIG=~/.kube/config-k3s bash scripts/e2e-cleanup.sh --confirm  # delete
 ```
 
 It deletes only E2E-tagged artifacts: learners named `E2E Kid%`, accounts

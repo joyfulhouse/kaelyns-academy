@@ -42,6 +42,19 @@ try {
  */
 const BASE_URL = process.env.E2E_BASE_URL ?? "https://kaelyns.academy";
 
+// These specs WRITE to the target DB (sign-up, learner/program create+delete).
+// Hitting production must be a deliberate act, never an accidental bare run or a
+// CI job: targeting kaelyns.academy requires an explicit E2E_ALLOW_PROD=1.
+const targetHost = new URL(BASE_URL).hostname;
+const isProd = /(^|\.)kaelyns\.academy$/i.test(targetHost);
+if (isProd && process.env.E2E_ALLOW_PROD !== "1") {
+  throw new Error(
+    `E2E target is PRODUCTION (${BASE_URL}) and these specs mutate the database ` +
+      `(sign-up, learner/program create + delete). Point E2E_BASE_URL at a local/staging ` +
+      `server, or set E2E_ALLOW_PROD=1 to confirm you intend to write to prod.`,
+  );
+}
+
 export default defineConfig({
   testDir: "e2e",
   // Live prod is shared mutable state across seeded accounts — run serially so a

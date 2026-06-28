@@ -9,12 +9,25 @@
 # Targets the in-cluster CNPG primary via `kubectl exec ... psql -U postgres`
 # (db.sh peer-auths as kaelyns_academy and fails). Requires KUBECONFIG.
 #
-#   KUBECONFIG=~/.kube/config-k3s bash scripts/e2e-cleanup.sh
+# DRY RUN by default — prints the row counts it WOULD delete and exits without
+# touching anything. Pass --confirm (or E2E_CLEANUP_CONFIRM=1) to actually delete:
+#
+#   KUBECONFIG=~/.kube/config-k3s bash scripts/e2e-cleanup.sh            # dry run
+#   KUBECONFIG=~/.kube/config-k3s bash scripts/e2e-cleanup.sh --confirm  # delete
 #
 set -euo pipefail
 
 NS="${E2E_DB_NAMESPACE:-kaelyns-academy}"
 DB="${E2E_DB_NAME:-kaelyns_academy}"
+CONFIRM="${E2E_CLEANUP_CONFIRM:-}"
+[[ "${1:-}" == "--confirm" ]] && CONFIRM=1
+
+# WHERE clauses scoping each delete to uniquely-tagged E2E artifacts ONLY. These
+# never match the two seeded accounts (e2e-parent@/e2e-admin@ — not throwaway+),
+# nor any real learner/program (the tags are test-only by construction).
+W_LEARNER="display_name LIKE 'E2E Kid%'"
+W_USER="email LIKE 'e2e-throwaway+%@kaelyns.test'"
+W_PROGRAM="slug LIKE 'e2e-draft-%'"
 
 primary="$(kubectl -n "$NS" get pods -l cnpg.io/instanceRole=primary -o name | head -1)"
 if [[ -z "$primary" ]]; then
@@ -26,16 +39,19 @@ pod="${primary#pod/}"
 run() { kubectl -n "$NS" exec -i "$pod" -c postgres -- psql -U postgres -d "$DB" -v ON_ERROR_STOP=1 "$@"; }
 
 echo "[e2e-cleanup] ns=$NS db=$DB pod=$pod"
+echo "[e2e-cleanup] matching E2E-tagged rows:"
+run -tc "SELECT 'learners', count(*) FROM learner WHERE $W_LEARNER
+         UNION ALL SELECT 'throwaway-users', count(*) FROM \"user\" WHERE $W_USER
+         UNION ALL SELECT 'draft-programs', count(*) FROM program WHERE $W_PROGRAM;"
+
+if [[ "$CONFIRM" != "1" ]]; then
+  echo "[e2e-cleanup] DRY RUN — nothing deleted. Re-run with --confirm (or E2E_CLEANUP_CONFIRM=1) to delete the rows above."
+  exit 0
+fi
 
 # Order matters only where there is no ON DELETE CASCADE; learners cascade from
 # their account (user), so deleting throwaway users removes their learners too.
-run -c "DELETE FROM learner WHERE display_name LIKE 'E2E Kid%';"
-run -c "DELETE FROM \"user\" WHERE email LIKE 'e2e-throwaway+%@kaelyns.test';"
-# Draft programs the admin lifecycle test may create (slug is uniquely tagged).
-run -c "DELETE FROM program WHERE slug LIKE 'e2e-draft-%';"
-
-echo "[e2e-cleanup] remaining E2E-tagged rows (expect 0):"
-run -tc "SELECT 'learners', count(*) FROM learner WHERE display_name LIKE 'E2E Kid%'
-         UNION ALL SELECT 'throwaway-users', count(*) FROM \"user\" WHERE email LIKE 'e2e-throwaway+%@kaelyns.test'
-         UNION ALL SELECT 'draft-programs', count(*) FROM program WHERE slug LIKE 'e2e-draft-%';"
-echo "[e2e-cleanup] done."
+run -c "DELETE FROM learner WHERE $W_LEARNER;"
+run -c "DELETE FROM \"user\" WHERE $W_USER;"
+run -c "DELETE FROM program WHERE $W_PROGRAM;"
+echo "[e2e-cleanup] deleted. Done."
