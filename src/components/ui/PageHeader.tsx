@@ -20,24 +20,22 @@ export type PageHeaderProps = {
  * identical to the inline headers this replaces.
  */
 export function PageHeader({ eyebrow, title, description, action, className }: PageHeaderProps) {
+  const titleBlock = (
+    <>
+      <p className="font-display text-sm font-semibold text-ink-faint">{eyebrow}</p>
+      <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight">{title}</h1>
+      {description && <p className="mt-2 max-w-prose text-ink-soft">{description}</p>}
+    </>
+  );
+
   if (action !== undefined) {
     return (
       <header className={cn("flex flex-wrap items-end justify-between gap-3", className)}>
-        <div>
-          <p className="font-display text-sm font-semibold text-ink-faint">{eyebrow}</p>
-          <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight">{title}</h1>
-          {description && <p className="mt-2 max-w-prose text-ink-soft">{description}</p>}
-        </div>
+        <div>{titleBlock}</div>
         {action}
       </header>
     );
   }
 
-  return (
-    <header className={className}>
-      <p className="font-display text-sm font-semibold text-ink-faint">{eyebrow}</p>
-      <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight">{title}</h1>
-      {description && <p className="mt-2 max-w-prose text-ink-soft">{description}</p>}
-    </header>
-  );
+  return <header className={className}>{titleBlock}</header>;
 }
