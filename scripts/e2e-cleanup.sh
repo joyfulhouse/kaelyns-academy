@@ -26,12 +26,19 @@ CONFIRM="${E2E_CLEANUP_CONFIRM:-}"
 # child profile that happens to be named "E2E Kid…" (display names are parent-
 # supplied) can NEVER be matched: real learners belong to other accounts.
 E2E_PARENT="${E2E_PARENT_EMAIL:-e2e-parent@kaelyns.test}"
+# Validate before it goes anywhere near a destructive prod query (defense in depth
+# on top of the psql literal-quoting below).
+if [[ ! "$E2E_PARENT" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]+$ ]]; then
+  echo "[e2e-cleanup] refusing: E2E_PARENT_EMAIL '$E2E_PARENT' is not a plain email" >&2
+  exit 2
+fi
 
-# WHERE clauses scoping each delete to uniquely-tagged E2E artifacts ONLY. Learner
-# delete is double-scoped (seeded account AND name prefix); the throwaway-email
-# and draft-slug prefixes are test-only by construction. None match the two seeded
-# accounts (e2e-parent@/e2e-admin@ — not throwaway+).
-W_LEARNER="display_name LIKE 'E2E Kid%' AND account_id = (SELECT id FROM \"user\" WHERE email = '$E2E_PARENT')"
+# Predicates scope each delete to uniquely-tagged E2E artifacts ONLY. The seeded
+# email is passed as a psql variable (:'parent') and rendered with SQL literal
+# quoting — never string-concatenated into the statement (no injection). Learner
+# delete is double-scoped (seeded account AND name prefix); throwaway-email and
+# draft-slug prefixes are test-only by construction. None match the seeded accounts.
+W_LEARNER="display_name LIKE 'E2E Kid%' AND account_id = (SELECT id FROM \"user\" WHERE email = :'parent')"
 W_USER="email LIKE 'e2e-throwaway+%@kaelyns.test'"
 W_PROGRAM="slug LIKE 'e2e-draft-%'"
 
@@ -42,9 +49,12 @@ if [[ -z "$primary" ]]; then
 fi
 pod="${primary#pod/}"
 
-run() { kubectl -n "$NS" exec -i "$pod" -c postgres -- psql -U postgres -d "$DB" -v ON_ERROR_STOP=1 "$@"; }
+run() {
+  kubectl -n "$NS" exec -i "$pod" -c postgres -- \
+    psql -U postgres -d "$DB" -v ON_ERROR_STOP=1 -v parent="$E2E_PARENT" "$@"
+}
 
-echo "[e2e-cleanup] ns=$NS db=$DB pod=$pod"
+echo "[e2e-cleanup] ns=$NS db=$DB pod=$pod parent=$E2E_PARENT"
 echo "[e2e-cleanup] matching E2E-tagged rows:"
 run -tc "SELECT 'learners', count(*) FROM learner WHERE $W_LEARNER
          UNION ALL SELECT 'throwaway-users', count(*) FROM \"user\" WHERE $W_USER
@@ -55,9 +65,11 @@ if [[ "$CONFIRM" != "1" ]]; then
   exit 0
 fi
 
-# Order matters only where there is no ON DELETE CASCADE; learners cascade from
-# their account (user), so deleting throwaway users removes their learners too.
-run -c "DELETE FROM learner WHERE $W_LEARNER;"
-run -c "DELETE FROM \"user\" WHERE $W_USER;"
-run -c "DELETE FROM program WHERE $W_PROGRAM;"
-echo "[e2e-cleanup] deleted. Done."
+# All deletes in ONE transaction. Cascades: throwaway user → its learners/sessions;
+# program → versions/units/lessons/activities; learner → attempts/skill_state.
+run -c "BEGIN;
+        DELETE FROM learner WHERE $W_LEARNER;
+        DELETE FROM \"user\" WHERE $W_USER;
+        DELETE FROM program WHERE $W_PROGRAM;
+        COMMIT;"
+echo "[e2e-cleanup] deleted (single transaction). Done."

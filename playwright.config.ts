@@ -68,9 +68,13 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   use: {
     baseURL: BASE_URL,
-    trace: "on-first-retry",
-    screenshot: "only-on-failure",
-    video: "retain-on-failure",
+    // Against PROD, capture NO artifacts: the setup project types the long-lived
+    // seeded parent/admin passwords, and Playwright records fill values + page
+    // captures in traces/videos — which could leak those creds via test-results/
+    // or a CI upload. Local/staging targets keep full artifacts for debugging.
+    trace: isProd ? "off" : "on-first-retry",
+    screenshot: isProd ? "off" : "only-on-failure",
+    video: isProd ? "off" : "retain-on-failure",
     actionTimeout: 15_000,
     navigationTimeout: 30_000,
   },
