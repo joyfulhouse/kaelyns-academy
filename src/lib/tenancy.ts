@@ -1,5 +1,4 @@
-import { headers } from "next/headers";
-import { getAuth } from "@/lib/auth";
+import { getSessionOrNull } from "@/lib/auth";
 
 /**
  * The tenancy seam. Every learner-scoped read/write should run inside
@@ -33,7 +32,7 @@ export class UnauthenticatedError extends Error {
  * @throws {UnauthenticatedError} when there is no valid session.
  */
 export async function requireAccount(): Promise<AccountContext> {
-  const session = await getAuth().api.getSession({ headers: await headers() });
+  const session = await getSessionOrNull();
   if (!session?.user) throw new UnauthenticatedError();
 
   // TODO(P6): resolve the real account id once an `account` table (and
