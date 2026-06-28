@@ -13,6 +13,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { captureNonCritical } from "@/lib/capture";
+import { parseInput } from "@/lib/actions/results";
 import { AdminForbiddenError, requireAdmin } from "@/lib/admin";
 import { UnauthenticatedError } from "@/lib/tenancy";
 import {
@@ -154,11 +155,8 @@ export async function createProgramDraftAction(
     return mapError(error);
   }
 
-  const parsed = createProgramDraftSchema.safeParse(input);
-  if (!parsed.success) {
-    const message = parsed.error.issues[0]?.message ?? "Invalid input.";
-    return { ok: false, reason: "invalid", message };
-  }
+  const parsed = parseInput(createProgramDraftSchema, input, "Invalid input.");
+  if (!parsed.ok) return parsed;
 
   try {
     const result = await createProgramDraft(parsed.data);
@@ -190,11 +188,8 @@ export async function saveVersionTreeAction(
     return { ok: false, reason: "invalid", message: "Invalid version id." };
   }
 
-  const parsed = saveVersionTreeInputSchema.safeParse(tree);
-  if (!parsed.success) {
-    const message = parsed.error.issues[0]?.message ?? "Invalid tree shape.";
-    return { ok: false, reason: "invalid", message };
-  }
+  const parsed = parseInput(saveVersionTreeInputSchema, tree, "Invalid tree shape.");
+  if (!parsed.ok) return parsed;
 
   try {
     // No casts: parsed.data is already the validated shape, so any drift between
