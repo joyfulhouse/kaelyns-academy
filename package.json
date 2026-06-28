@@ -16,7 +16,10 @@
     "db:migrate:deploy": "bun scripts/migrate.ts",
     "db:seed:admin": "bun scripts/seed-admin-roles.ts",
     "db:grant:admin": "bun scripts/grant-admin.ts",
-    "gen:icons": "bun scripts/gen-icons.ts"
+    "gen:icons": "bun scripts/gen-icons.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:report": "playwright show-report"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -40,6 +43,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@serwist/turbopack": "^9.5.11",
     "@tailwindcss/postcss": "^4.3.1",
     "@types/node": "^25.9.3",

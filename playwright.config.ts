@@ -1,0 +1,84 @@
+import { readFileSync } from "node:fs";
+import { defineConfig, devices } from "@playwright/test";
+
+// Load .env.local into process.env (Bun's auto-load doesn't reliably reach
+// Playwright's worker processes, and this config module re-runs in each worker).
+// Existing env wins, so CI can inject E2E_* directly without a file.
+try {
+  for (const line of readFileSync(".env.local", "utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (key && process.env[key] === undefined) process.env[key] = value;
+  }
+} catch {
+  // .env.local is optional — env may be provided directly (e.g. in CI).
+}
+
+/**
+ * E2E config for Kaelyn's Academy.
+ *
+ * TARGET: live production by default (`E2E_BASE_URL` overrides, e.g. a local
+ * dev server). The suite is written to be a responsible citizen of the pilot
+ * DB — specs create per-run, uniquely-tagged data and tear it down, never call
+ * the paid AI gateway, and gate any live-catalog mutation behind an env flag.
+ *
+ * Auth model (Playwright project dependencies):
+ *   - `setup` signs in the two SEEDED accounts (parent + admin) once and saves
+ *     their storageState under e2e/.auth/ (gitignored — never commit sessions).
+ *   - `parent` / `admin` projects reuse that state; `public` runs signed-out.
+ *
+ * Seeded creds come from env (Bun auto-loads .env.local): E2E_PARENT_EMAIL,
+ * E2E_PARENT_PASSWORD, E2E_ADMIN_EMAIL, E2E_ADMIN_PASSWORD. See e2e/README.md.
+ */
+const BASE_URL = process.env.E2E_BASE_URL ?? "https://kaelyns.academy";
+
+export default defineConfig({
+  testDir: "e2e",
+  // Live prod is shared mutable state across seeded accounts — run serially so a
+  // learner created in one spec can't race a teardown in another.
+  fullyParallel: false,
+  workers: 1,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 1,
+  reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : [["list"], ["html", { open: "never" }]],
+  timeout: 60_000,
+  expect: { timeout: 15_000 },
+  use: {
+    baseURL: BASE_URL,
+    trace: "on-first-retry",
+    screenshot: "only-on-failure",
+    video: "retain-on-failure",
+    actionTimeout: 15_000,
+    navigationTimeout: 30_000,
+  },
+  projects: [
+    { name: "setup", testMatch: /.*\.setup\.ts/ },
+    {
+      name: "public",
+      testMatch: /specs\/(smoke|auth|learner)\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "parent",
+      testMatch: /specs\/parent\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: "e2e/.auth/parent.json" },
+    },
+    {
+      name: "admin",
+      testMatch: /specs\/admin\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: "e2e/.auth/admin.json" },
+    },
+  ],
+});
