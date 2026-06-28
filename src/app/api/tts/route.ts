@@ -16,12 +16,14 @@ import {
   enVoice,
   prefixFor,
 } from "@/lib/audio/config";
+import { readJsonBody } from "@/lib/api/http";
+import { resolveRateLimit } from "@/lib/api/rate";
+import { jsonError } from "@/lib/api/respond";
 import { synthesizeMp3 } from "@/lib/audio/kokoro";
 import { normalizeText, ttsKey } from "@/lib/audio/ttsKey";
 import { clipExists, putClip } from "@/lib/audio/store";
 import { captureNonCritical } from "@/lib/capture";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { clientIp } from "@/lib/request-ip";
 import { getAccountOrNull } from "@/lib/tenancy";
 
 export const dynamic = "force-dynamic";
@@ -50,9 +52,10 @@ export async function POST(req: Request): Promise<Response> {
   // flow) are allowed but keyed + capped by client IP; signed-in accounts get a
   // generous per-account window.
   const account = await getAccountOrNull();
-  const { limitKey, policy } = account
-    ? { limitKey: `tts:acct:${account.accountId}`, policy: RATE_LIMIT_ACCOUNT }
-    : { limitKey: `tts:ip:${clientIp(req.headers) ?? "noip"}`, policy: RATE_LIMIT_ANON };
+  const { key: limitKey, policy } = resolveRateLimit(account, req, "tts", {
+    account: RATE_LIMIT_ACCOUNT,
+    anon: RATE_LIMIT_ANON,
+  });
 
   const limit = checkRateLimit(limitKey, policy);
   if (!limit.ok) {
@@ -62,24 +65,16 @@ export async function POST(req: Request): Promise<Response> {
     });
   }
 
-  // Best-effort request-size guard BEFORE buffering the body: a TTS payload is a
-  // short child-facing string, so a large content-length is abuse. Absent/chunked
-  // length → skip (can't cheaply know the size up front).
-  const contentLength = Number(req.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > 16384) {
-    return NextResponse.json({ error: "payload_too_large" }, { status: 413 });
-  }
-
-  let body: Body;
-  try {
-    body = (await req.json()) as Body;
-  } catch {
-    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
-  }
+  // Best-effort request-size guard BEFORE buffering the body (a TTS payload is a
+  // short child-facing string, so a large content-length is abuse), then parse the
+  // JSON body. Absent/chunked length → skip the size check.
+  const parsedBody = await readJsonBody(req, 16384);
+  if (!parsedBody.ok) return jsonError(parsedBody.error, parsedBody.status);
+  const body = parsedBody.body as Body;
   // A literal `null` (or any non-object) JSON body parses without throwing, but
   // would throw on field access below — treat it as a bad request, not a 500.
   if (typeof body !== "object" || body === null) {
-    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
+    return jsonError("invalid_json", 400);
   }
   // Canonicalize the same way ttsKey hashes so the synth input, cache key, and
   // length check all agree (a whitespace-padded body can't bypass the cap).

@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
 import { findActivity, getSkill } from "@/content";
+import { readJsonBody } from "@/lib/api/http";
+import { resolveRateLimit } from "@/lib/api/rate";
+import { jsonError } from "@/lib/api/respond";
 import { captureNonCritical } from "@/lib/capture";
 import { generatePracticeItems, provenanceForGeneration } from "@/lib/ai/practice";
 import { resolveLearnerProgram } from "@/lib/content/repository";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { clientIp } from "@/lib/request-ip";
 import { getAccountOrNull } from "@/lib/tenancy";
 import { getLearner, getEnrollmentForGate, getLearnerSettings } from "@/lib/tutor/store";
 
@@ -52,9 +54,6 @@ const accountSchema = z.object({
   n: z.number().int().min(1).max(2).default(1),
 });
 
-function badJson(): NextResponse {
-  return NextResponse.json({ error: "invalid_json" }, { status: 400 });
-}
 function badRequest(error: z.ZodError): NextResponse {
   return NextResponse.json({ error: "invalid_request", issues: z.flattenError(error) }, { status: 400 });
 }
@@ -64,11 +63,12 @@ export async function POST(request: Request) {
   // allowed but keyed + capped by client IP; signed-in accounts get a generous
   // per-account window.
   const account = await getAccountOrNull();
-  const { limitKey, policy } = account
-    ? { limitKey: `practice:acct:${account.accountId}`, policy: RATE_LIMIT_ACCOUNT }
-    : { limitKey: `practice:ip:${clientIp(request.headers) ?? "noip"}`, policy: RATE_LIMIT_ANON };
+  const { key, policy } = resolveRateLimit(account, request, "practice", {
+    account: RATE_LIMIT_ACCOUNT,
+    anon: RATE_LIMIT_ANON,
+  });
 
-  const limit = checkRateLimit(limitKey, policy);
+  const limit = checkRateLimit(key, policy);
   if (!limit.ok) {
     return NextResponse.json(
       { error: "rate_limited" },
@@ -76,20 +76,12 @@ export async function POST(request: Request) {
     );
   }
 
-  // Best-effort request-size guard BEFORE buffering the body: this endpoint only
+  // Best-effort request-size guard BEFORE buffering the body (this endpoint only
   // ever receives small JSON identifier payloads, so a large content-length is
-  // abuse. Absent/chunked length → skip (can't cheaply know the size up front).
-  const contentLength = Number(request.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > 16384) {
-    return NextResponse.json({ error: "payload_too_large" }, { status: 413 });
-  }
-
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return badJson();
-  }
+  // abuse), then parse the JSON body. Absent/chunked length → skip the size check.
+  const parsedBody = await readJsonBody(request, 16384);
+  if (!parsedBody.ok) return jsonError(parsedBody.error, parsedBody.status);
+  const body = parsedBody.body;
 
   // ── Anonymous explore flow (no account → no per-child §8 gate) ──────────────
   if (!account) {
