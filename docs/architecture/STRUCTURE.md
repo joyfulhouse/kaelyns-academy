@@ -42,6 +42,11 @@ kaelyns-academy/
 │   │   ├── admin.ts                      # requireAdmin() allowlist gate (+ stale-session defense)
 │   │   ├── rate-limit.ts                 # per-instance fixed-window limiter (denial-of-wallet defense)
 │   │   ├── parent-views.ts / status-display.ts   # view-model helpers
+│   │   ├── actions/results.ts            # shared server-action result helpers: parseInput (zod→{reason:invalid})
+│   │   │                                 #   + mapActionError (UnauthenticatedError→unauthenticated, else capture+unavailable)
+│   │   ├── api/                          # shared route-handler helpers: respond.ts (jsonError envelope),
+│   │   │                                 #   http.ts (readJsonBody: content-length guard + parse), rate.ts (resolveRateLimit key/policy)
+│   │   ├── hooks/useRouteError.ts        # shared error-boundary effect (captureNonCritical once per error)
 │   │   ├── ai/                           # ALL model access — models.ts = LiteLLM gateway (timeout/abort/
 │   │   │                                 #   validate); practice.ts (bounded gen), report.ts, world-language-config
 │   │   ├── audio/                        # Kokoro TTS: kokoro/phonemes/phonemize/narration/spokenFields/
@@ -73,7 +78,8 @@ kaelyns-academy/
 │   │
 │   └── components/                       # Wonder Studio component vocabulary
 │       ├── ui/                           # Button, Field, TextInput, Select, Switch, Pill, ProgressRing,
-│       │                                 #   Stars, Surface (token-pure primitives; Field wires ARIA)
+│       │                                 #   Stars, Surface, EmptyState, PageHeader (token-pure primitives;
+│       │                                 #   Field wires ARIA; EmptyState/PageHeader hoist repeated page markup)
 │       ├── a11y/SkipLink.tsx             # skip-to-content (sr-only → focus reveal)
 │       ├── art/                          # Mascot (SVG, role=img + aria-label), Decorations (SVG, aria-hidden)
 │       ├── shell/                        # SiteHeader, SiteFooter (marketing)
