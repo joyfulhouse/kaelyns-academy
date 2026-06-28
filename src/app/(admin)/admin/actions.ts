@@ -28,16 +28,17 @@ import {
   VersionNotDraftError,
   ActivityConfigValidationError,
   DuplicateKeyError,
-  type EditableUnit,
-  type EditableLesson,
-  type EditableActivity,
   type EditableVersion,
   type AdminProgramRow,
 } from "@/lib/content/store";
 
-// ── Re-exports so Task 5.2/5.3 can import types from here ────────────────────
-
-export type { EditableVersion, EditableUnit, EditableLesson, EditableActivity, AdminProgramRow };
+// NOTE: do NOT re-export types from this "use server" file. Next.js's server-action
+// transform registers every export name as a server reference (ensureServerEntryExports
+// / registerServerReference); a `export type { … }` re-export of imported bindings is
+// erased at runtime, so the generated reference throws `ReferenceError: <Type> is not
+// defined` and breaks EVERY action in the module. Import these types directly from
+// @/lib/content/store (all consumers already do). Inline `export type X = …` is fine —
+// only re-exports of imported type bindings hit this. (Caught by e2e/specs/admin.spec.ts.)
 
 // ── Shared error-to-result mapper ────────────────────────────────────────────
 
