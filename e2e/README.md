@@ -91,9 +91,9 @@ app container (not `kaelyns.academy`), the prod guard and the CI-fail-closed che
 (`isProd && process.env.CI` → refuse) never trigger, and no prod data is touched.
 The ephemeral env is torn down `always()`.
 
-> **Status:** on branch `ci/kaelyns-e2e-gate` (not yet on `master`). Validate it
-> with one `workflow_dispatch` run before merging, so it only starts gating the
-> `*/15` auto-deploy once it's proven green.
+> **Status:** live on `master`. Validated by a `workflow_dispatch` run on the
+> branch, then confirmed on the auto-deploy path by the first gated `*/15` push
+> build. The gate now runs on every build and only deploys on green.
 
 ## Cleanup
 
