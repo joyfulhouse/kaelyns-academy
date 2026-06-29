@@ -71,6 +71,30 @@ Put the generated passwords in `.env.local`.
   a test program in the LIVE marketplace). Off by default: the admin spec only
   creates/edits/archives an unpublished draft.
 
+## CI gate (Forgejo)
+
+A **pre-deploy E2E gate** runs in Forgejo CI, inside the build workflow
+`homelab/.forgejo/workflows/build-kaelyns-academy.yml`. It does **not** target
+prod — it stands up an ephemeral, prod-shaped environment from the freshly-built
+images and runs this whole suite against it before deploying:
+
+1. `postgres:16-alpine` on a throwaway docker network.
+2. Migrations via the `:<sha>-migrator` image (`db:migrate:deploy`) + the real
+   curriculum (`scripts/seed-content.ts`), so content-backed specs match prod.
+3. The just-built `:<sha>` runner image as the app under test; the two test
+   accounts are seeded (sign-up + role grant); `bun run test:e2e` runs against the
+   app container (`E2E_BASE_URL=http://<app-container>:3000`).
+
+The `<sha>` is pinned into `k3s-infra` (= deployed) **only if the suite passes** —
+a failing image is pushed to Harbor but never rolled. Because the CI target is the
+app container (not `kaelyns.academy`), the prod guard and the CI-fail-closed check
+(`isProd && process.env.CI` → refuse) never trigger, and no prod data is touched.
+The ephemeral env is torn down `always()`.
+
+> **Status:** on branch `ci/kaelyns-e2e-gate` (not yet on `master`). Validate it
+> with one `workflow_dispatch` run before merging, so it only starts gating the
+> `*/15` auto-deploy once it's proven green.
+
 ## Cleanup
 
 Specs self-clean, but a failed run can leave a tagged row behind. The sweep is
