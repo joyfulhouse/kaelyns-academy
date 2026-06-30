@@ -1,0 +1,36 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+
+const UNSEEN = Symbol("unseen");
+const ONCE = Symbol("once");
+
+/**
+ * Run `effect` on mount, then again only when `key` changes — the mount run
+ * always happens (the initial key is treated as unseen). The audio Players use
+ * this to auto-play a prompt exactly once per item, so a re-render (e.g. a choice
+ * tap that re-voices the tapped choice) can't replay the prompt. Omit `key` for a
+ * plain once-on-mount effect.
+ */
+export function useEffectOncePerKey(effect: () => void, key: unknown = ONCE): void {
+  const seen = useRef<unknown>(UNSEEN);
+  useEffect(() => {
+    if (seen.current === key) return;
+    seen.current = key;
+    effect();
+  }, [key, effect]);
+}
+
+/**
+ * Speak `text` once, on mount. Used by the Players that read their instruction
+ * aloud the first time the screen appears. TTS is an enhancement (the prompt text
+ * is always visible too), so a missing voice simply means nothing is spoken.
+ */
+export function useSpeakOnce(speak: (text: string) => void, text: string): void {
+  const spoken = useRef(false);
+  useEffect(() => {
+    if (spoken.current) return;
+    spoken.current = true;
+    speak(text);
+  }, [speak, text]);
+}
