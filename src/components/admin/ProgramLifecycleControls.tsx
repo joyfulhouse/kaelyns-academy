@@ -1,16 +1,17 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArchiveBoxIcon,
   CheckCircleIcon,
   CopyIcon,
   RocketLaunchIcon,
-  WarningCircleIcon,
   XCircleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
+import { StatusMessage } from "@/components/ui/StatusMessage";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import {
   publishProgramAction,
   cloneToDraftAction,
@@ -28,14 +29,9 @@ import {
  *   archived, no draft      — Clone to draft (restore path); no Publish.
  *
  * Archive uses a two-click inline confirm — NO window.confirm.
- * All calls use useTransition + discriminated result + router.refresh().
+ * All three actions share one useAsyncAction; each sets its own success message
+ * (the hook's `succeeded` flag gates the success badge).
  */
-
-type ActionState =
-  | { status: "idle" }
-  | { status: "error"; message: string }
-  | { status: "success"; message: string };
-
 export function ProgramLifecycleControls({
   programId,
   status,
@@ -46,82 +42,46 @@ export function ProgramLifecycleControls({
   draftVersionId: string | null;
 }) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-  const [actionState, setActionState] = useState<ActionState>({ status: "idle" });
+  const { run, pending, error, succeeded, reset } = useAsyncAction();
+  const [successMessage, setSuccessMessage] = useState("");
   const [archiveConfirming, setArchiveConfirming] = useState(false);
 
   function handlePublish() {
-    if (isPending || !draftVersionId) return;
+    if (pending || !draftVersionId) return;
     setArchiveConfirming(false);
 
-    startTransition(async () => {
-      try {
-        const result = await publishProgramAction(draftVersionId);
-        if (result.ok) {
-          setActionState({ status: "success", message: "Program published." });
-          router.refresh();
-        } else {
-          setActionState({
-            status: "error",
-            message: result.message ?? "Could not publish the program.",
-          });
-        }
-      } catch {
-        setActionState({
-          status: "error",
-          message: "Could not publish the program. Please try again.",
-        });
-      }
+    run(() => publishProgramAction(draftVersionId), {
+      onSuccess: () => {
+        setSuccessMessage("Program published.");
+        router.refresh();
+      },
+      fallbackMessage: "Could not publish the program. Please try again.",
     });
   }
 
   function handleClone() {
-    if (isPending) return;
+    if (pending) return;
     setArchiveConfirming(false);
 
-    startTransition(async () => {
-      try {
-        const result = await cloneToDraftAction(programId);
-        if (result.ok) {
-          setActionState({ status: "success", message: "Draft created." });
-          router.refresh();
-        } else {
-          setActionState({
-            status: "error",
-            message: result.message ?? "Could not create draft.",
-          });
-        }
-      } catch {
-        setActionState({
-          status: "error",
-          message: "Could not create draft. Please try again.",
-        });
-      }
+    run(() => cloneToDraftAction(programId), {
+      onSuccess: () => {
+        setSuccessMessage("Draft created.");
+        router.refresh();
+      },
+      fallbackMessage: "Could not create draft. Please try again.",
     });
   }
 
   function handleArchiveConfirm() {
-    if (isPending) return;
+    if (pending) return;
     setArchiveConfirming(false);
 
-    startTransition(async () => {
-      try {
-        const result = await archiveProgramAction(programId);
-        if (result.ok) {
-          setActionState({ status: "success", message: "Program archived." });
-          router.refresh();
-        } else {
-          setActionState({
-            status: "error",
-            message: result.message ?? "Could not archive the program.",
-          });
-        }
-      } catch {
-        setActionState({
-          status: "error",
-          message: "Could not archive the program. Please try again.",
-        });
-      }
+    run(() => archiveProgramAction(programId), {
+      onSuccess: () => {
+        setSuccessMessage("Program archived.");
+        router.refresh();
+      },
+      fallbackMessage: "Could not archive the program. Please try again.",
     });
   }
 
@@ -142,10 +102,10 @@ export function ProgramLifecycleControls({
             variant="accent"
             size="sm"
             onClick={handlePublish}
-            disabled={isPending}
+            disabled={pending}
           >
             <RocketLaunchIcon weight="regular" className="size-4" />
-            {isPending ? "Publishing…" : "Publish"}
+            {pending ? "Publishing…" : "Publish"}
           </Button>
         )}
 
@@ -155,10 +115,10 @@ export function ProgramLifecycleControls({
             variant="soft"
             size="sm"
             onClick={handleClone}
-            disabled={isPending}
+            disabled={pending}
           >
             <CopyIcon weight="regular" className="size-4" />
-            {isPending ? "Cloning…" : "Clone to draft"}
+            {pending ? "Cloning…" : "Clone to draft"}
           </Button>
         )}
 
@@ -167,8 +127,8 @@ export function ProgramLifecycleControls({
             type="button"
             variant="ghost"
             size="sm"
-            onClick={() => { setArchiveConfirming(true); setActionState({ status: "idle" }); }}
-            disabled={isPending}
+            onClick={() => { setArchiveConfirming(true); reset(); }}
+            disabled={pending}
           >
             <ArchiveBoxIcon weight="regular" className="size-4" />
             Archive
@@ -184,7 +144,7 @@ export function ProgramLifecycleControls({
               variant="soft"
               size="sm"
               onClick={handleArchiveConfirm}
-              disabled={isPending}
+              disabled={pending}
             >
               <CheckCircleIcon weight="regular" className="size-4" />
               Confirm archive
@@ -194,7 +154,7 @@ export function ProgramLifecycleControls({
               variant="ghost"
               size="sm"
               onClick={() => setArchiveConfirming(false)}
-              disabled={isPending}
+              disabled={pending}
             >
               <XCircleIcon weight="regular" className="size-4" />
               Cancel
@@ -203,19 +163,9 @@ export function ProgramLifecycleControls({
         )}
       </div>
 
-      {actionState.status === "success" && (
-        <p role="status" className="inline-flex items-center gap-1.5 text-sm font-medium text-success">
-          <CheckCircleIcon weight="fill" className="size-4" />
-          {actionState.message}
-        </p>
-      )}
+      {succeeded && <StatusMessage tone="success">{successMessage}</StatusMessage>}
 
-      {actionState.status === "error" && (
-        <p role="alert" className="inline-flex items-center gap-1.5 text-sm font-medium text-danger">
-          <WarningCircleIcon weight="regular" className="size-4" />
-          {actionState.message}
-        </p>
-      )}
+      {error !== null && <StatusMessage tone="error">{error}</StatusMessage>}
     </div>
   );
 }
