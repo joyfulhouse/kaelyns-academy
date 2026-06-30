@@ -36,26 +36,34 @@ kaelyns-academy/
 │   │       └── auth/[...all]/route.ts    # Better Auth handler (lazy, per-request — build-safe)
 │   │
 │   ├── lib/                              # framework-agnostic logic (lazy service factories only)
-│   │   ├── env.ts / capture.ts / cn.ts / concurrency.ts / request-ip.ts   # primitives
+│   │   ├── env.ts / capture.ts / cn.ts / concurrency.ts / request-ip.ts / site.ts   # primitives
+│   │   │                                 #   (concurrency: mapWithConcurrency + dedupeInflight;
+│   │   │                                 #    site: SITE_ORIGIN/SITE_DESCRIPTION/studioTitle — single metadata source)
 │   │   ├── auth.ts / auth-client.ts      # lazy getAuth() (Better Auth) + browser client
 │   │   ├── tenancy.ts                    # withAccount/requireAccount/getAccountOrNull — account scoping seam
-│   │   ├── admin.ts                      # requireAdmin() allowlist gate (+ stale-session defense)
+│   │   ├── admin.ts / admin/             # admin.ts: requireAdmin() allowlist gate (+ stale-session defense);
+│   │   │                                 #   admin/: editor-model.ts, action-helpers.ts (withAdminAction + idParam)
 │   │   ├── rate-limit.ts                 # per-instance fixed-window limiter (denial-of-wallet defense)
 │   │   ├── parent-views.ts / status-display.ts   # view-model helpers
 │   │   ├── actions/results.ts            # shared server-action result helpers: parseInput (zod→{reason:invalid})
 │   │   │                                 #   + mapActionError (UnauthenticatedError→unauthenticated, else capture+unavailable)
 │   │   ├── api/                          # shared route-handler helpers: respond.ts (jsonError envelope),
 │   │   │                                 #   http.ts (readJsonBody: content-length guard + parse), rate.ts (resolveRateLimit key/policy)
-│   │   ├── hooks/useRouteError.ts        # shared error-boundary effect (captureNonCritical once per error)
+│   │   ├── hooks/                        # useRouteError (error-boundary effect, captureNonCritical once),
+│   │   │                                 #   useAsyncAction (server-action run/pending/error/succeeded machine)
 │   │   ├── ai/                           # ALL model access — models.ts = LiteLLM gateway (timeout/abort/
-│   │   │                                 #   validate); practice.ts (bounded gen), report.ts, world-language-config
+│   │   │                                 #   validate); practice.ts (bounded gen), report.ts, world-language-config;
+│   │   │                                 #   prompt-rules.ts (single source for the §8 prompt safety rules)
 │   │   ├── audio/                        # Kokoro TTS: kokoro/phonemes/phonemize/narration/spokenFields/
-│   │   │                                 #   store/ttsKey/config (pronunciation pipeline)
+│   │   │                                 #   store/ttsKey/config (kokoro.ts: kokoroBase + timedFetch shared client)
 │   │   ├── content/                      # repository.ts (assemble/resolve programs), store.ts (CRUD +
-│   │   │                                 #   draft/publish/archive lifecycle), config.ts — version-pin resolution
+│   │   │                                 #   draft/publish/archive lifecycle; byOrderKey/loadVersionTreeRows/
+│   │   │                                 #   rowsToEditableUnits/versionColumns helpers), config.ts, validate.ts
+│   │   │                                 #   (validateActivityConfig) — version-pin resolution
 │   │   ├── tutor/                        # store.ts (enrollment/attempt/skill_state DB + §8 gate reads +
 │   │   │                                 #   buildAccountExport/deleteAccount/listGeneratedAttempts), enrollment,
-│   │   │                                 #   mastery, recommend, export + account-export (COPPA export/delete shapers)
+│   │   │                                 #   mastery, recommend, export + account-export (COPPA export/delete shapers);
+│   │   │                                 #   scope.ts (withOwnedLearner gate), jsonb.ts (parseJsonbFailClosed, §8 fail-closed)
 │   │   ├── pwa/                          # cacheRules, precache, iosHint (service-worker config + predicates)
 │   │   └── db/
 │   │       ├── index.ts                  # lazy getDb() + schema re-export (NO top-level connection)
@@ -70,16 +78,22 @@ kaelyns-academy/
 │   │
 │   ├── activities/                       # activity-type plugin registry (one dir per kind)
 │   │   ├── index.ts                      # getActivityType(kind) registry → graceful "coming soon" fallback
-│   │   ├── _shared/                      # ActivityChrome, RewardOverlay, scoring, speechRouting,
-│   │   │                                 #   useAudio/useSpeech/useReducedMotion, voiceUtils
+│   │   ├── _shared/                      # ActivityChrome (SpeakerButton/Prompt/PlayerControls/ProgressHint),
+│   │   │                                 #   RewardOverlay, ChoiceGrid, scoring, speechRouting, shuffle,
+│   │   │                                 #   useAudio/useSpeech/useReducedMotion/useSpeakOnce/useManagedTimeout/
+│   │   │                                 #   useWrongShake/useActivity/useMultipleChoice, voiceUtils (Player DRY kit)
 │   │   └── <kind>/{index,logic,Player}.tsx   # math-array, math-tenframe, phonics-wordbuild,
 │   │                                     #   sightword-game, reading-comprehension, journal-prompt,
 │   │                                     #   lang-listen-match, lang-symbol-intro
 │   │
 │   └── components/                       # Wonder Studio component vocabulary
 │       ├── ui/                           # Button, Field, TextInput, Select, Switch, Pill, ProgressRing,
-│       │                                 #   Stars, Surface, EmptyState, PageHeader (token-pure primitives;
-│       │                                 #   Field wires ARIA; EmptyState/PageHeader hoist repeated page markup)
+│       │                                 #   Stars, Surface, EmptyState, PageHeader, StatusMessage (success/error
+│       │                                 #   badge), BackLink, AvatarBadge (token-pure primitives; Field wires ARIA;
+│       │                                 #   EmptyState/PageHeader hoist repeated page markup)
+│       ├── boundaries/                   # shared route-boundary scaffolds: RouteErrorPanel, NotFoundPanel
+│       │                                 #   (adult voice), KidMessagePanel, KidLoadingShell, Skeleton
+│       │                                 #   (SkeletonBar/SkeletonCardGrid) — consumed by error/not-found/loading shells
 │       ├── a11y/SkipLink.tsx             # skip-to-content (sr-only → focus reveal)
 │       ├── art/                          # Mascot (SVG, role=img + aria-label), Decorations (SVG, aria-hidden)
 │       ├── shell/                        # SiteHeader, SiteFooter (marketing)
@@ -87,7 +101,7 @@ kaelyns-academy/
 │       │                                 #   + state/narration helpers (useLearnerState/useProgress/
 │       │                                 #   useSkillState, localStore, narrate, speak)
 │       ├── parent/                       # DashboardShellParent, AddChildForm, EnrollmentConfigForm,
-│       │                                 #   MarketplaceGrid, ProgramCard, CurriculumPanel,
+│       │                                 #   MarketplaceGrid, ProgramCard, CurriculumPanel, ActivityRowItem,
 │       │                                 #   AssignProgramControl, LearnerDataControls, ProgressReportCard
 │       ├── admin/                        # AdminShell, CreateProgramForm, ProgramLifecycleControls,
 │       │                                 #   editor/ (ProgramEditor + Unit/Lesson/Activity/Config fields)
@@ -95,6 +109,7 @@ kaelyns-academy/
 │
 ├── drizzle/                              # generated migrations 0000…0006 (append-only, expand-only)
 ├── scripts/
+│   ├── lib/cli-db.ts                     # openCliDb()/runCli() — shared raw-postgres CLI bootstrap (migrate/seed/grant)
 │   ├── db.sh                             # psql wrapper → CNPG -rw in-cluster, else $DATABASE_URL
 │   ├── migrate.ts                        # `bun scripts/migrate.ts` — programmatic drizzle-orm migrate()
 │   │                                     #   run by the Deployment `migrate` initContainer (db:migrate:deploy);
