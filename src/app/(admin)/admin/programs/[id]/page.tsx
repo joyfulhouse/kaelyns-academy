@@ -33,7 +33,7 @@ export default async function ProgramDetailPage({
   return (
     <div className="flex flex-col gap-8">
       {/* Back nav */}
-      <BackLink href="/admin" label="All programs" />
+      <BackLink href="/admin" label="All programs" variant="transition" />
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">

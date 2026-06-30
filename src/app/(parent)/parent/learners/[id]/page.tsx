@@ -10,7 +10,6 @@ import { Pill } from "@/components/ui/Pill";
 import { ProgressRing } from "@/components/ui/ProgressRing";
 import { BackLink } from "@/components/ui/BackLink";
 import { AvatarBadge } from "@/components/ui/AvatarBadge";
-import { EmptyState } from "@/components/ui/EmptyState";
 import { outcomeDisplay, outcomeWeight } from "@/components/parent/skill-display";
 import { ActivityRowItem } from "@/components/parent/ActivityRowItem";
 import {
@@ -125,19 +124,7 @@ export default async function LearnerDetailPage({
       </nav>
 
       {!hasActivity ? (
-        <EmptyState
-          className="mt-10 p-12"
-          icon={
-            <span
-              aria-hidden
-              className="grid size-12 place-items-center rounded-md border border-line bg-accent/12 text-accent-deep"
-            >
-              <SparkleIcon weight="regular" className="size-6" />
-            </span>
-          }
-          title="No activities yet"
-          description={`When ${name} starts, her progress shows here: skills by subject, recent activity, and an honest read on how things are going.`}
-        />
+        <EmptyState name={name} />
       ) : (
         <>
           <SkillsByDomain skills={skills} />
@@ -149,6 +136,25 @@ export default async function LearnerDetailPage({
 
       <LearnerDataControls learnerId={id} learnerName={learner.displayName} />
     </div>
+  );
+}
+
+/** Honest empty state: nothing measured yet, so we invite rather than fabricate. */
+function EmptyState({ name }: { name: string }) {
+  return (
+    <section className="mt-10 grid place-items-center rounded-xl border border-dashed border-line-strong p-12 text-center">
+      <span
+        aria-hidden
+        className="grid size-12 place-items-center rounded-md border border-line bg-accent/12 text-accent-deep"
+      >
+        <SparkleIcon weight="regular" className="size-6" />
+      </span>
+      <p className="mt-4 font-display text-lg font-semibold">No activities yet</p>
+      <p className="mt-1 max-w-md text-ink-soft">
+        When {name} starts, her progress shows here: skills by subject, recent activity, and an
+        honest read on how things are going.
+      </p>
+    </section>
   );
 }
 

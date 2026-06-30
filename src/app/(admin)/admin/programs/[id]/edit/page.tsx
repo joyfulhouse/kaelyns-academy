@@ -88,5 +88,5 @@ export default async function EditProgramPage({
 }
 
 function BackNav({ id }: { id: string }) {
-  return <BackLink href={`/admin/programs/${id}`} label="Program detail" />;
+  return <BackLink href={`/admin/programs/${id}`} label="Program detail" variant="transition" />;
 }

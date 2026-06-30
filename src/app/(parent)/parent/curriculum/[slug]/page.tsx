@@ -47,6 +47,7 @@ export default async function ProgramDetailPage({
       <BackLink
         href="/parent/curriculum"
         label="Curriculum"
+        variant="plain"
         icon={<CaretLeftIcon weight="bold" className="size-4" />}
       />
 
