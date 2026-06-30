@@ -1,21 +1,23 @@
 "use server";
 
 /**
- * Admin authoring server actions. Every action:
+ * Admin authoring server actions. Every action runs behind `withAdminAction`,
+ * which:
  *   1. Calls requireAdmin() first — throws UnauthenticatedError or AdminForbiddenError.
- *   2. Zod-validates the input shape.
- *   3. Calls the relevant store mutation.
- *   4. Returns a discriminated { ok: true, ... } | { ok: false, reason, message }.
- *   5. Calls captureNonCritical on unexpected errors.
- *   6. Revalidates /admin and (where catalog changes) /parent/curriculum.
+ *   2. Runs the body: Zod-validates the input, calls the store mutation, and
+ *      revalidates /admin (and /parent/curriculum where the catalog changes).
+ *   3. Maps any thrown error to the discriminated { ok: false, reason, message }
+ *      result via mapError (admin-specific branches + the shared
+ *      unauthenticated/unavailable tail), logging unexpected errors under the
+ *      action's context key.
+ * Bodies return { ok: true, ... } on success, or an inline `reason:"invalid"`/
+ * `reason:"unavailable"` result for expected validation/not-found cases.
  * Build-safe: no top-level getAuth() or getDb().
  */
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { captureNonCritical } from "@/lib/capture";
 import { parseInput } from "@/lib/actions/results";
-import { AdminForbiddenError, requireAdmin } from "@/lib/admin";
-import { UnauthenticatedError } from "@/lib/tenancy";
+import { idParam, withAdminAction, type AdminErrorResult } from "@/lib/admin/action-helpers";
 import {
   createProgramDraft,
   loadVersionForEdit,
@@ -24,10 +26,6 @@ import {
   cloneVersionToDraft,
   archiveProgram,
   listAdminPrograms,
-  DuplicateSlugError,
-  VersionNotDraftError,
-  ActivityConfigValidationError,
-  DuplicateKeyError,
   type EditableVersion,
   type AdminProgramRow,
 } from "@/lib/content/store";
@@ -37,40 +35,9 @@ import {
 // / registerServerReference); a `export type { … }` re-export of imported bindings is
 // erased at runtime, so the generated reference throws `ReferenceError: <Type> is not
 // defined` and breaks EVERY action in the module. Import these types directly from
-// @/lib/content/store (all consumers already do). Inline `export type X = …` is fine —
-// only re-exports of imported type bindings hit this. (Caught by e2e/specs/admin.spec.ts.)
-
-// ── Shared error-to-result mapper ────────────────────────────────────────────
-
-type AdminActionReason =
-  | "unauthenticated"
-  | "forbidden"
-  | "invalid"
-  | "unavailable";
-
-type AdminErrorResult = { ok: false; reason: AdminActionReason; message: string };
-
-function mapError(error: unknown): AdminErrorResult {
-  if (error instanceof UnauthenticatedError) {
-    return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
-  }
-  if (error instanceof AdminForbiddenError) {
-    return { ok: false, reason: "forbidden", message: "Admin access required." };
-  }
-  if (error instanceof DuplicateSlugError) {
-    return { ok: false, reason: "invalid", message: error.message };
-  }
-  if (error instanceof VersionNotDraftError) {
-    return { ok: false, reason: "invalid", message: error.message };
-  }
-  if (error instanceof ActivityConfigValidationError) {
-    return { ok: false, reason: "invalid", message: error.message };
-  }
-  if (error instanceof DuplicateKeyError) {
-    return { ok: false, reason: "invalid", message: error.message };
-  }
-  return { ok: false, reason: "unavailable", message: "An unexpected error occurred. Please try again." };
-}
+// @/lib/content/store / @/lib/admin/action-helpers (all consumers already do). Inline
+// `export type X = …` is fine — only re-exports of imported type bindings hit this.
+// (Caught by e2e/specs/admin.spec.ts.)
 
 // ── Revalidation helpers ──────────────────────────────────────────────────────
 
@@ -150,24 +117,14 @@ const createProgramDraftSchema = z.object({
 export async function createProgramDraftAction(
   input: unknown,
 ): Promise<{ ok: true; programId: string; versionId: string } | AdminErrorResult> {
-  try {
-    await requireAdmin();
-  } catch (error) {
-    return mapError(error);
-  }
+  return withAdminAction("createProgramDraftAction", async () => {
+    const parsed = parseInput(createProgramDraftSchema, input, "Invalid input.");
+    if (!parsed.ok) return parsed;
 
-  const parsed = parseInput(createProgramDraftSchema, input, "Invalid input.");
-  if (!parsed.ok) return parsed;
-
-  try {
     const result = await createProgramDraft(parsed.data);
     revalidateAdmin();
     return { ok: true, ...result };
-  } catch (error) {
-    if (error instanceof DuplicateSlugError) return mapError(error);
-    captureNonCritical("createProgramDraftAction failed", error);
-    return mapError(error);
-  }
+  });
 }
 
 /**
@@ -178,21 +135,13 @@ export async function saveVersionTreeAction(
   versionId: string,
   tree: unknown,
 ): Promise<{ ok: true } | AdminErrorResult> {
-  try {
-    await requireAdmin();
-  } catch (error) {
-    return mapError(error);
-  }
+  return withAdminAction("saveVersionTreeAction", async () => {
+    const id = idParam(versionId, "Invalid version id.");
+    if (!id.ok) return id;
 
-  const versionIdParsed = z.string().min(1).safeParse(versionId);
-  if (!versionIdParsed.success) {
-    return { ok: false, reason: "invalid", message: "Invalid version id." };
-  }
+    const parsed = parseInput(saveVersionTreeInputSchema, tree, "Invalid tree shape.");
+    if (!parsed.ok) return parsed;
 
-  const parsed = parseInput(saveVersionTreeInputSchema, tree, "Invalid tree shape.");
-  if (!parsed.ok) return parsed;
-
-  try {
     // No casts: parsed.data is already the validated shape, so any drift between
     // the Zod schema and the store's VersionMetadata/EditableUnit types surfaces
     // here as a type error rather than being silently papered over.
@@ -202,134 +151,71 @@ export async function saveVersionTreeAction(
     });
     revalidateAdmin();
     return { ok: true };
-  } catch (error) {
-    if (
-      error instanceof VersionNotDraftError ||
-      error instanceof ActivityConfigValidationError ||
-      error instanceof DuplicateKeyError
-    ) {
-      return mapError(error);
-    }
-    captureNonCritical("saveVersionTreeAction failed", error);
-    return mapError(error);
-  }
+  });
 }
 
 /** Publish a draft version (archives any previously-published version). */
 export async function publishProgramAction(
   versionId: string,
 ): Promise<{ ok: true } | AdminErrorResult> {
-  try {
-    await requireAdmin();
-  } catch (error) {
-    return mapError(error);
-  }
+  return withAdminAction("publishProgramAction", async () => {
+    const id = idParam(versionId, "Invalid version id.");
+    if (!id.ok) return id;
 
-  const versionIdParsed = z.string().min(1).safeParse(versionId);
-  if (!versionIdParsed.success) {
-    return { ok: false, reason: "invalid", message: "Invalid version id." };
-  }
-
-  try {
     await publishVersion(versionId);
     revalidateCatalog();
     return { ok: true };
-  } catch (error) {
-    captureNonCritical("publishProgramAction failed", error);
-    return mapError(error);
-  }
+  });
 }
 
 /** Clone a program's published (or latest) version to a new draft. */
 export async function cloneToDraftAction(
   programId: string,
 ): Promise<{ ok: true; versionId: string } | AdminErrorResult> {
-  try {
-    await requireAdmin();
-  } catch (error) {
-    return mapError(error);
-  }
+  return withAdminAction("cloneToDraftAction", async () => {
+    const id = idParam(programId, "Invalid program id.");
+    if (!id.ok) return id;
 
-  const programIdParsed = z.string().min(1).safeParse(programId);
-  if (!programIdParsed.success) {
-    return { ok: false, reason: "invalid", message: "Invalid program id." };
-  }
-
-  try {
     const result = await cloneVersionToDraft(programId);
     revalidateAdmin();
     return { ok: true, versionId: result.versionId };
-  } catch (error) {
-    captureNonCritical("cloneToDraftAction failed", error);
-    return mapError(error);
-  }
+  });
 }
 
 /** Archive a program (and its published version). Removes it from the catalog. */
 export async function archiveProgramAction(
   programId: string,
 ): Promise<{ ok: true } | AdminErrorResult> {
-  try {
-    await requireAdmin();
-  } catch (error) {
-    return mapError(error);
-  }
+  return withAdminAction("archiveProgramAction", async () => {
+    const id = idParam(programId, "Invalid program id.");
+    if (!id.ok) return id;
 
-  const programIdParsed = z.string().min(1).safeParse(programId);
-  if (!programIdParsed.success) {
-    return { ok: false, reason: "invalid", message: "Invalid program id." };
-  }
-
-  try {
     await archiveProgram(programId);
     revalidateCatalog();
     return { ok: true };
-  } catch (error) {
-    captureNonCritical("archiveProgramAction failed", error);
-    return mapError(error);
-  }
+  });
 }
 
 /** Load a version's full tree for editing (any status). */
 export async function loadVersionForEditAction(
   versionId: string,
 ): Promise<{ ok: true; version: EditableVersion } | AdminErrorResult> {
-  try {
-    await requireAdmin();
-  } catch (error) {
-    return mapError(error);
-  }
+  return withAdminAction("loadVersionForEditAction", async () => {
+    const id = idParam(versionId, "Invalid version id.");
+    if (!id.ok) return id;
 
-  const versionIdParsed = z.string().min(1).safeParse(versionId);
-  if (!versionIdParsed.success) {
-    return { ok: false, reason: "invalid", message: "Invalid version id." };
-  }
-
-  try {
     const version = await loadVersionForEdit(versionId);
     if (!version) return { ok: false, reason: "unavailable", message: "Version not found." };
     return { ok: true, version };
-  } catch (error) {
-    captureNonCritical("loadVersionForEditAction failed", error);
-    return mapError(error);
-  }
+  });
 }
 
 /** List all programs (any status) for the admin program list. */
 export async function listAdminProgramsAction(): Promise<
   { ok: true; programs: AdminProgramRow[] } | AdminErrorResult
 > {
-  try {
-    await requireAdmin();
-  } catch (error) {
-    return mapError(error);
-  }
-
-  try {
+  return withAdminAction("listAdminProgramsAction", async () => {
     const programs = await listAdminPrograms();
     return { ok: true, programs };
-  } catch (error) {
-    captureNonCritical("listAdminProgramsAction failed", error);
-    return mapError(error);
-  }
+  });
 }
