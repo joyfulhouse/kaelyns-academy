@@ -1,3 +1,5 @@
+import { SkeletonBar, SkeletonCardGrid } from "@/components/boundaries/Skeleton";
+
 /**
  * Default parent loading skeleton. Renders inside DashboardShellParent's main
  * column for parent routes without their own loader (`/parent`, `/parent/learners`,
@@ -9,19 +11,12 @@ export default function ParentLoading() {
   return (
     <div className="mx-auto max-w-5xl" role="status" aria-label="Loading">
       <header className="motion-safe:animate-pulse">
-        <div className="h-4 w-24 rounded bg-paper-sunk" />
-        <div className="mt-2 h-9 w-56 rounded bg-paper-sunk" />
-        <div className="mt-3 h-4 w-full max-w-prose rounded bg-paper-sunk" />
+        <SkeletonBar className="h-4 w-24" />
+        <SkeletonBar className="mt-2 h-9 w-56" />
+        <SkeletonBar className="mt-3 h-4 w-full max-w-prose" />
       </header>
 
-      <div
-        className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 motion-safe:animate-pulse"
-        aria-hidden
-      >
-        {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="h-40 rounded-xl border border-line bg-paper-sunk" />
-        ))}
-      </div>
+      <SkeletonCardGrid />
     </div>
   );
 }
