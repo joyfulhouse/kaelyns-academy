@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { ArrowCounterClockwiseIcon, BackspaceIcon } from "@phosphor-icons/react/dist/ssr";
 import type { PhonicsWordbuildConfig } from "@/content/activity-configs";
@@ -9,35 +9,28 @@ import type { ActivityPlayerProps } from "@/content/types";
 import { tilePhonemeText, wordPhonemeText } from "@/lib/audio/phonemes";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
-import { Prompt, SpeakerButton } from "../_shared/ActivityChrome";
+import { PlayerControls, Prompt, SpeakerButton } from "../_shared/ActivityChrome";
 import { RewardOverlay } from "../_shared/RewardOverlay";
+import { shuffle } from "../_shared/shuffle";
+import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
+import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
+import { useWrongShake } from "../_shared/useWrongShake";
 import { schema, score, type PhonicsWordbuildResponse } from "./logic";
-
-function shuffle<T>(items: T[], seed: number): T[] {
-  const out = [...items];
-  let s = seed || 1;
-  for (let i = out.length - 1; i > 0; i--) {
-    s = (s * 1103515245 + 12345) & 0x7fffffff;
-    const j = s % (i + 1);
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
 
 export function PhonicsWordbuildPlayer({
   config,
   onComplete,
 }: ActivityPlayerProps<PhonicsWordbuildConfig, PhonicsWordbuildResponse>) {
-  const parsed = useMemo(() => schema.parse(config), [config]);
+  const parsed = useActivity(schema, config);
   const speech = useSpeech();
   const reduced = useReducedMotion();
+  const shake = useWrongShake();
 
   const [wordIndex, setWordIndex] = useState(0);
   const [built, setBuilt] = useState<string[]>([]);
   const [tries, setTries] = useState(1);
-  const [wrong, setWrong] = useState(false);
   const [builds, setBuilds] = useState<PhonicsWordbuildResponse["builds"]>([]);
   const [done, setDone] = useState<PhonicsWordbuildResponse | null>(null);
 
@@ -51,23 +44,8 @@ export function PhonicsWordbuildPlayer({
     [parsed.tiles, wordIndex],
   );
 
-  // Speak the instruction once when the activity opens.
-  const spokenRef = useRef(false);
-  useEffect(() => {
-    if (spokenRef.current) return;
-    spokenRef.current = true;
-    speech.speak(parsed.instruction);
-  }, [parsed.instruction, speech]);
-
-  // Clear the retry timer on unmount so a mid-shake navigation can't set state
-  // after the component is gone.
-  const timerRef = useRef<number | null>(null);
-  useEffect(
-    () => () => {
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-    },
-    [],
-  );
+  // Read the instruction aloud once when the activity opens.
+  useSpeakOnce(speech.speak, parsed.instruction);
 
   if (done) {
     const result = score(parsed, done);
@@ -85,7 +63,7 @@ export function PhonicsWordbuildPlayer({
   const isComplete = built.length === targetSegments.length;
 
   function tapTile(tile: string) {
-    if (wrong || isComplete) return;
+    if (shake.wrong || isComplete) return;
     setBuilt((prev) => [...prev, tile]);
     // Silent letters (e.g. the magic-e) fill the slot but make no sound — cancel
     // any in-flight utterance so a quick tap can't leave the prior tile audible.
@@ -122,14 +100,11 @@ export function PhonicsWordbuildPlayer({
       }
     } else {
       // Forgiving: no red X. Gentle nudge, clear, and let them try again.
-      setWrong(true);
       setTries((t) => t + 1);
-      speech.speak("So close. Let's try that one again.");
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-      timerRef.current = window.setTimeout(() => {
-        setWrong(false);
-        setBuilt([]);
-      }, 900);
+      shake.trigger({
+        speak: () => speech.speak("So close. Let's try that one again."),
+        onClear: () => setBuilt([]),
+      });
     }
   }
 
@@ -166,8 +141,7 @@ export function PhonicsWordbuildPlayer({
       {/* Build slots */}
       <motion.div
         className="flex flex-wrap items-center justify-center gap-2"
-        animate={wrong && !reduced ? { x: [0, -8, 8, -6, 6, 0] } : { x: 0 }}
-        transition={{ duration: 0.4, ease: [0.25, 1, 0.5, 1] }}
+        {...shake.shakeProps(reduced)}
         aria-live="polite"
       >
         {targetSegments.map((_, slot) => {
@@ -195,7 +169,7 @@ export function PhonicsWordbuildPlayer({
             key={`${tile}-${i}`}
             type="button"
             onClick={() => tapTile(tile)}
-            disabled={wrong}
+            disabled={shake.wrong}
             aria-label={`Letter tile ${tile}`}
             className={cn(
               "grid h-16 min-w-16 place-items-center rounded-2xl border-[3px] border-ink bg-paper-raised px-4",
@@ -209,19 +183,19 @@ export function PhonicsWordbuildPlayer({
       </div>
 
       {/* Controls: undo / clear / done — forgiving, no scoring penalty */}
-      <div className="flex flex-wrap items-center justify-center gap-3">
-        <Button variant="soft" size="md" onClick={undo} disabled={built.length === 0 || wrong}>
+      <PlayerControls>
+        <Button variant="soft" size="md" onClick={undo} disabled={built.length === 0 || shake.wrong}>
           <BackspaceIcon weight="bold" aria-hidden="true" />
           Undo
         </Button>
-        <Button variant="soft" size="md" onClick={clearBuild} disabled={built.length === 0 || wrong}>
+        <Button variant="soft" size="md" onClick={clearBuild} disabled={built.length === 0 || shake.wrong}>
           <ArrowCounterClockwiseIcon weight="bold" aria-hidden="true" />
           Start over
         </Button>
-        <Button variant="primary" size="kid" onClick={check} disabled={!isComplete || wrong}>
+        <Button variant="primary" size="kid" onClick={check} disabled={!isComplete || shake.wrong}>
           Check it
         </Button>
-      </div>
+      </PlayerControls>
     </div>
   );
 }

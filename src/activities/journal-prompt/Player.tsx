@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { EraserIcon, MicrophoneIcon, StopIcon } from "@phosphor-icons/react/dist/ssr";
 import type { JournalPromptConfig } from "@/content/activity-configs";
@@ -9,7 +9,9 @@ import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { Prompt, SpeakerButton } from "../_shared/ActivityChrome";
 import { RewardOverlay } from "../_shared/RewardOverlay";
+import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
+import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useDictation } from "./useDictation";
 import { schema, score, type JournalPromptResponse } from "./logic";
@@ -26,7 +28,7 @@ export function JournalPromptPlayer({
   config,
   onComplete,
 }: ActivityPlayerProps<JournalPromptConfig, JournalPromptResponse>) {
-  const parsed = useMemo(() => schema.parse(config), [config]);
+  const parsed = useActivity(schema, config);
   const speech = useSpeech();
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -36,12 +38,8 @@ export function JournalPromptPlayer({
   const [text, setText] = useState(parsed.sentenceStarter ?? "");
   const [done, setDone] = useState<JournalPromptResponse | null>(null);
 
-  const spokenRef = useRef(false);
-  useEffect(() => {
-    if (spokenRef.current) return;
-    spokenRef.current = true;
-    speech.speak(parsed.prompt);
-  }, [parsed.prompt, speech]);
+  // Read the prompt aloud once when the activity opens.
+  useSpeakOnce(speech.speak, parsed.prompt);
 
   const setupCanvas = useCallback(() => {
     const canvas = canvasRef.current;

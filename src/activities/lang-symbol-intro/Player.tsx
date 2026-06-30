@@ -1,13 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircleIcon, SpeakerHighIcon } from "@phosphor-icons/react/dist/ssr";
+import { useCallback, useState } from "react";
 import type { LangSymbolIntroConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
-import { cn } from "@/lib/cn";
-import { localeForRole } from "../_shared/speechRouting";
+import { ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
+import { ChoiceGrid } from "../_shared/ChoiceGrid";
 import { RewardOverlay } from "../_shared/RewardOverlay";
+import { localeForRole } from "../_shared/speechRouting";
+import { useActivity } from "../_shared/useActivity";
 import { useAudio } from "../_shared/useAudio";
+import { useMultipleChoice } from "../_shared/useMultipleChoice";
+import { useEffectOncePerKey } from "../_shared/useSpeakOnce";
 import { schema, score, type LangSymbolIntroResponse } from "./logic";
 
 /**
@@ -20,7 +23,7 @@ export function LangSymbolIntroPlayer({
   config,
   onComplete,
 }: ActivityPlayerProps<LangSymbolIntroConfig, LangSymbolIntroResponse>) {
-  const parsed = useMemo(() => schema.parse(config), [config]);
+  const parsed = useActivity(schema, config);
   // Two voices: the target language for content (symbols, choices) and the
   // learner's base language for instructions — which are authored in English and
   // would be mangled if read with the target-language TTS voice.
@@ -28,9 +31,6 @@ export function LangSymbolIntroPlayer({
   const base = useAudio(localeForRole(parsed.locale, "instruction"));
 
   const [phase, setPhase] = useState<"learn" | "quiz">("learn");
-  const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState<number[]>([]);
-  const [picked, setPicked] = useState<number | null>(null);
   const [done, setDone] = useState<LangSymbolIntroResponse | null>(null);
 
   // Each helper cancels the other engine first so the two voices never overlap.
@@ -50,22 +50,14 @@ export function LangSymbolIntroPlayer({
     target.cancel();
   }, [base, target]);
 
-  const introRef = useRef(false);
-  useEffect(() => {
-    if (introRef.current) return;
-    introRef.current = true;
-    sayInstruction();
-  }, [sayInstruction]);
+  // Say the (base-language) instruction once when the activity opens.
+  useEffectOncePerKey(sayInstruction);
 
-  // Clear the answer-reveal timer on unmount so a mid-reveal navigation can't
-  // set state (or stall) after the component is gone.
-  const timerRef = useRef<number | null>(null);
-  useEffect(
-    () => () => {
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-    },
-    [],
-  );
+  const { step, picked, choose } = useMultipleChoice({
+    count: parsed.verify.length,
+    voiceChoice: (i, itemIndex) => playContent({ text: parsed.verify[itemIndex].choices[i] }),
+    onFinish: (answers) => setDone({ verifyAnswers: answers }),
+  });
 
   if (done) {
     const result = score(parsed, done);
@@ -82,14 +74,14 @@ export function LangSymbolIntroPlayer({
     return (
       <div className="grid gap-8">
         <div className="flex items-center justify-center gap-3">
-          <button
-            type="button"
-            onClick={sayInstruction}
-            aria-label="Hear what to do"
-            className="grid size-12 shrink-0 place-items-center rounded-full border-[3px] border-ink bg-honey/30 text-ink shadow-pop transition active:translate-y-0.5 active:shadow-none"
-          >
-            <SpeakerHighIcon size={24} weight="fill" aria-hidden="true" />
-          </button>
+          <SpeakerButton
+            onSpeak={sayInstruction}
+            label="Hear what to do"
+            size="sm"
+            shape="round"
+            tone="honeySoft"
+            press="soft"
+          />
           <p className="text-center text-lg text-ink-soft">{parsed.instruction}</p>
         </div>
 
@@ -127,61 +119,13 @@ export function LangSymbolIntroPlayer({
 
   const q = parsed.verify[step];
 
-  function choose(i: number) {
-    if (picked !== null) return;
-    setPicked(i);
-    const nextAnswers = [...answers, i];
-    playContent({ text: q.choices[i] });
-    timerRef.current = window.setTimeout(() => {
-      if (step + 1 >= parsed.verify.length) {
-        setDone({ verifyAnswers: nextAnswers });
-      } else {
-        setAnswers(nextAnswers);
-        setStep(step + 1);
-        setPicked(null);
-      }
-    }, 650);
-  }
-
   return (
     <div className="grid gap-8">
       <p className="text-center font-display text-2xl text-ink">{q.prompt}</p>
-      <div className="mx-auto grid max-w-2xl grid-cols-2 gap-4 sm:grid-cols-4">
-        {q.choices.map((c, i) => {
-          const isPicked = picked === i;
-          const isAnswer = i === q.answerIndex;
-          const reveal = picked !== null;
-          return (
-            <button
-              key={`${c}-${i}`}
-              type="button"
-              onClick={() => choose(i)}
-              disabled={reveal}
-              aria-label={c}
-              className={cn(
-                "relative grid min-h-28 place-items-center rounded-2xl border-[3px] border-ink px-4 py-5 font-display text-4xl text-ink shadow-pop transition duration-200 ease-out",
-                !reveal && "bg-paper-raised hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
-                reveal && isAnswer && "bg-success/30",
-                reveal && !isAnswer && "bg-paper-raised opacity-60",
-                reveal && isPicked && !isAnswer && "opacity-100",
-              )}
-            >
-              {c}
-              {reveal && isAnswer && (
-                <CheckCircleIcon
-                  size={26}
-                  weight="fill"
-                  aria-hidden="true"
-                  className="absolute right-2 top-2 text-success"
-                />
-              )}
-            </button>
-          );
-        })}
-      </div>
-      <p className="text-center text-sm text-ink-soft" aria-live="polite">
+      <ChoiceGrid choices={q.choices} answerIndex={q.answerIndex} picked={picked} onChoose={choose} />
+      <ProgressHint>
         {step + 1} of {parsed.verify.length}
-      </p>
+      </ProgressHint>
     </div>
   );
 }

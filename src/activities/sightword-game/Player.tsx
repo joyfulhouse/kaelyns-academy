@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { CheckCircleIcon } from "@phosphor-icons/react/dist/ssr";
 import type { SightwordGameConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
-import { Prompt, SpeakerButton } from "../_shared/ActivityChrome";
+import { Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
 import { RewardOverlay } from "../_shared/RewardOverlay";
+import { shuffle } from "../_shared/shuffle";
+import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
+import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { schema, score, type SightwordGameResponse } from "./logic";
 
@@ -17,22 +20,11 @@ interface Card {
   isTarget: boolean;
 }
 
-function shuffle<T>(items: T[], seed: number): T[] {
-  const out = [...items];
-  let s = seed || 1;
-  for (let i = out.length - 1; i > 0; i--) {
-    s = (s * 1103515245 + 12345) & 0x7fffffff;
-    const j = s % (i + 1);
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
-
 export function SightwordGamePlayer({
   config,
   onComplete,
 }: ActivityPlayerProps<SightwordGameConfig, SightwordGameResponse>) {
-  const parsed = useMemo(() => schema.parse(config), [config]);
+  const parsed = useActivity(schema, config);
   const speech = useSpeech();
   const reduced = useReducedMotion();
 
@@ -47,12 +39,8 @@ export function SightwordGamePlayer({
   const [decoyTaps, setDecoyTaps] = useState(0);
   const [done, setDone] = useState<SightwordGameResponse | null>(null);
 
-  const spokenRef = useRef(false);
-  useEffect(() => {
-    if (spokenRef.current) return;
-    spokenRef.current = true;
-    speech.speak(parsed.instruction);
-  }, [parsed.instruction, speech]);
+  // Read the instruction aloud once when the activity opens.
+  useSpeakOnce(speech.speak, parsed.instruction);
 
   if (done) {
     const result = score(parsed, done);
@@ -87,9 +75,9 @@ export function SightwordGamePlayer({
     <div className="grid gap-8">
       <Prompt speech={speech} instruction={parsed.instruction} />
 
-      <p className="text-center text-sm text-ink-soft" aria-live="polite">
+      <ProgressHint>
         Found {found.length} of {parsed.words.length}
-      </p>
+      </ProgressHint>
 
       <div className="mx-auto grid max-w-2xl grid-cols-2 gap-4 sm:grid-cols-3">
         {cards.map((card) => {
