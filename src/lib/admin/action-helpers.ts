@@ -61,10 +61,6 @@ export async function withAdminAction<T>(
 ): Promise<T | AdminErrorResult> {
   try {
     await requireAdmin();
-  } catch (error) {
-    return mapError(error, context);
-  }
-  try {
     return await fn();
   } catch (error) {
     return mapError(error, context);
