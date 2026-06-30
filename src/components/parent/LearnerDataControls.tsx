@@ -1,16 +1,17 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CheckCircleIcon,
   DownloadSimpleIcon,
   TrashIcon,
-  WarningCircleIcon,
   XCircleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Surface } from "@/components/ui/Surface";
+import { StatusMessage } from "@/components/ui/StatusMessage";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { exportLearnerAction, deleteLearnerAction } from "@/app/(parent)/actions";
 import { downloadJson } from "@/components/parent/downloadJson";
 
@@ -23,19 +24,9 @@ import { downloadJson } from "@/components/parent/downloadJson";
  *   2. Delete — inline two-click confirm (no window.confirm). Confirm →
  *      deleteLearnerAction → on success router.push("/parent/learners").
  *
- * Follows the AddChildForm / ProgramLifecycleControls client pattern:
- * useTransition + call in startTransition(async () => …) + discriminated result.
+ * Export and delete each get their own useAsyncAction (independent pending +
+ * error); a local `confirming` flag drives the two-click confirm UI.
  */
-
-type ExportState =
-  | { status: "idle" }
-  | { status: "error"; message: string };
-
-type DeleteState =
-  | { status: "idle" }
-  | { status: "confirming" }
-  | { status: "error"; message: string };
-
 export function LearnerDataControls({
   learnerId,
   learnerName,
@@ -44,65 +35,39 @@ export function LearnerDataControls({
   learnerName: string;
 }) {
   const router = useRouter();
-  const [isPendingExport, startExportTransition] = useTransition();
-  const [isPendingDelete, startDeleteTransition] = useTransition();
-  const [exportState, setExportState] = useState<ExportState>({ status: "idle" });
-  const [deleteState, setDeleteState] = useState<DeleteState>({ status: "idle" });
+  const exportAction = useAsyncAction();
+  const deleteAction = useAsyncAction();
+  const [confirming, setConfirming] = useState(false);
 
   function handleExport() {
-    if (isPendingExport) return;
-    setExportState({ status: "idle" });
+    if (exportAction.pending) return;
 
-    startExportTransition(async () => {
-      try {
-        const result = await exportLearnerAction(learnerId);
-        if (result.ok) {
-          downloadJson(result.data, `${learnerName}-export.json`);
-        } else {
-          setExportState({
-            status: "error",
-            message: result.message ?? "Could not export data. Please try again.",
-          });
-        }
-      } catch {
-        setExportState({
-          status: "error",
-          message: "Could not export data. Please try again.",
-        });
-      }
+    exportAction.run(() => exportLearnerAction(learnerId), {
+      onSuccess: (result) => downloadJson(result.data, `${learnerName}-export.json`),
+      fallbackMessage: "Could not export data. Please try again.",
     });
   }
 
   function handleDeleteRequest() {
-    setDeleteState({ status: "confirming" });
-    setExportState({ status: "idle" });
+    setConfirming(true);
+    exportAction.reset();
+    deleteAction.reset();
   }
 
   function handleDeleteCancel() {
-    setDeleteState({ status: "idle" });
+    setConfirming(false);
+    deleteAction.reset();
   }
 
   function handleDeleteConfirm() {
-    if (isPendingDelete) return;
-    setDeleteState({ status: "idle" });
+    if (deleteAction.pending) return;
+    // Close the confirm UI immediately; the trigger button (disabled) shows the
+    // in-flight state, and any error surfaces below it.
+    setConfirming(false);
 
-    startDeleteTransition(async () => {
-      try {
-        const result = await deleteLearnerAction(learnerId);
-        if (result.ok) {
-          router.push("/parent/learners");
-        } else {
-          setDeleteState({
-            status: "error",
-            message: result.message ?? "Could not delete the profile. Please try again.",
-          });
-        }
-      } catch {
-        setDeleteState({
-          status: "error",
-          message: "Could not delete the profile. Please try again.",
-        });
-      }
+    deleteAction.run(() => deleteLearnerAction(learnerId), {
+      onSuccess: () => router.push("/parent/learners"),
+      fallbackMessage: "Could not delete the profile. Please try again.",
     });
   }
 
@@ -131,21 +96,15 @@ export function LearnerDataControls({
                 variant="soft"
                 size="sm"
                 onClick={handleExport}
-                disabled={isPendingExport}
+                disabled={exportAction.pending}
               >
                 <DownloadSimpleIcon weight="regular" className="size-4" />
-                {isPendingExport ? "Exporting…" : "Export JSON"}
+                {exportAction.pending ? "Exporting…" : "Export JSON"}
               </Button>
             </div>
 
-            {exportState.status === "error" && (
-              <p
-                role="alert"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-danger"
-              >
-                <WarningCircleIcon weight="regular" className="size-4" />
-                {exportState.message}
-              </p>
+            {exportAction.error !== null && (
+              <StatusMessage tone="error">{exportAction.error}</StatusMessage>
             )}
           </div>
         </Surface>
@@ -164,14 +123,14 @@ export function LearnerDataControls({
               </p>
             </div>
 
-            {deleteState.status !== "confirming" && (
+            {!confirming && (
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   onClick={handleDeleteRequest}
-                  disabled={isPendingDelete}
+                  disabled={deleteAction.pending}
                 >
                   <TrashIcon weight="regular" className="size-4" />
                   Delete {learnerName}&rsquo;s profile
@@ -180,7 +139,7 @@ export function LearnerDataControls({
             )}
 
             {/* Two-click inline confirm — no window.confirm */}
-            {deleteState.status === "confirming" && (
+            {confirming && (
               <div className="flex flex-col gap-2">
                 <p className="text-sm font-medium text-danger">
                   Delete {learnerName}&rsquo;s profile and all their data? This can&rsquo;t be
@@ -192,18 +151,18 @@ export function LearnerDataControls({
                     variant="soft"
                     size="sm"
                     onClick={handleDeleteConfirm}
-                    disabled={isPendingDelete}
+                    disabled={deleteAction.pending}
                     className="border-danger/40 text-danger hover:border-danger/60"
                   >
                     <CheckCircleIcon weight="regular" className="size-4" />
-                    {isPendingDelete ? "Deleting…" : "Confirm delete"}
+                    {deleteAction.pending ? "Deleting…" : "Confirm delete"}
                   </Button>
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     onClick={handleDeleteCancel}
-                    disabled={isPendingDelete}
+                    disabled={deleteAction.pending}
                   >
                     <XCircleIcon weight="regular" className="size-4" />
                     Cancel
@@ -212,14 +171,8 @@ export function LearnerDataControls({
               </div>
             )}
 
-            {deleteState.status === "error" && (
-              <p
-                role="alert"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-danger"
-              >
-                <WarningCircleIcon weight="regular" className="size-4" />
-                {deleteState.message}
-              </p>
+            {deleteAction.error !== null && (
+              <StatusMessage tone="error">{deleteAction.error}</StatusMessage>
             )}
           </div>
         </div>

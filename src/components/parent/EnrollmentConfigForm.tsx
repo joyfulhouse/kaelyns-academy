@@ -1,23 +1,21 @@
 "use client";
 
-import { useEffect, useId, useState, useTransition } from "react";
+import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  CheckCircleIcon,
-  WarningCircleIcon,
-} from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Field";
 import { Select } from "@/components/ui/Select";
 import { Switch } from "@/components/ui/Switch";
 import { TextInput } from "@/components/ui/TextInput";
+import { StatusMessage } from "@/components/ui/StatusMessage";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { updateEnrollmentConfigAction } from "@/app/(parent)/actions";
 import type { EnrollmentConfig } from "@/lib/content/config";
 
 /**
  * Per-enrollment configuration controls: band (ready|stretch), active unit
  * toggles, AI practice, and daily goal. Wired to `updateEnrollmentConfigAction`
- * via the AddChildForm pattern (useTransition + router.refresh on success).
+ * via useAsyncAction (transition + router.refresh on success).
  *
  * Active-unit semantics: all units on → omit `activeUnitKeys` from the stored
  * config (means "all active"); any unit off → include the list of active keys
@@ -49,12 +47,6 @@ export function parseDailyGoal(raw: string): {
   return { value, valid: true };
 }
 
-type SaveState =
-  | { status: "idle" }
-  | { status: "saving" }
-  | { status: "saved" }
-  | { status: "error"; message: string };
-
 export interface EnrollmentConfigFormProps {
   learnerId: string;
   slug: string;
@@ -85,8 +77,7 @@ export function EnrollmentConfigForm({
   const [dailyGoal, setDailyGoal] = useState<string>(
     String(config.dailyGoal ?? 5),
   );
-  const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
-  const [isPending, startTransition] = useTransition();
+  const { run, pending, error, succeeded, reset } = useAsyncAction();
 
   // Parse + validate the daily goal once (see parseDailyGoal) so the value we
   // surface and the value we save can never disagree.
@@ -96,10 +87,10 @@ export function EnrollmentConfigForm({
   // Auto-dismiss the "Saved" confirmation after a few seconds. Errors are left
   // sticky so the parent always sees what failed.
   useEffect(() => {
-    if (saveState.status !== "saved") return;
-    const timer = setTimeout(() => setSaveState({ status: "idle" }), 3000);
+    if (!succeeded) return;
+    const timer = setTimeout(() => reset(), 3000);
     return () => clearTimeout(timer);
-  }, [saveState.status]);
+  }, [succeeded, reset]);
 
   function toggleUnit(key: string, checked: boolean) {
     setActiveKeys((prev) => {
@@ -111,11 +102,11 @@ export function EnrollmentConfigForm({
       }
       return next;
     });
-    setSaveState({ status: "idle" });
+    reset();
   }
 
   function handleSave() {
-    if (isPending) return;
+    if (pending) return;
     if (goalError) return;
 
     // Build the config: when every unit is active, omit activeUnitKeys entirely.
@@ -133,22 +124,9 @@ export function EnrollmentConfigForm({
       dailyGoal: parsedGoal,
     };
 
-    startTransition(async () => {
-      setSaveState({ status: "saving" });
-      try {
-        const result = await updateEnrollmentConfigAction(learnerId, slug, nextConfig);
-        if (result.ok) {
-          setSaveState({ status: "saved" });
-          router.refresh();
-        } else {
-          setSaveState({ status: "error", message: result.message });
-        }
-      } catch {
-        setSaveState({
-          status: "error",
-          message: "Could not save config. Please try again.",
-        });
-      }
+    run(() => updateEnrollmentConfigAction(learnerId, slug, nextConfig), {
+      onSuccess: () => router.refresh(),
+      fallbackMessage: "Could not save config. Please try again.",
     });
   }
 
@@ -163,9 +141,9 @@ export function EnrollmentConfigForm({
             value={band}
             onChange={(e) => {
               setBand(e.target.value);
-              setSaveState({ status: "idle" });
+              reset();
             }}
-            disabled={isPending}
+            disabled={pending}
             className="max-w-xs"
           />
         )}
@@ -182,7 +160,7 @@ export function EnrollmentConfigForm({
                 checked={activeKeys.has(unit.key)}
                 onChange={(checked) => toggleUnit(unit.key, checked)}
                 label={unit.title}
-                disabled={isPending}
+                disabled={pending}
               />
             ))}
           </div>
@@ -194,11 +172,11 @@ export function EnrollmentConfigForm({
         checked={aiPractice}
         onChange={(v) => {
           setAiPractice(v);
-          setSaveState({ status: "idle" });
+          reset();
         }}
         label="AI-generated practice"
         description="The bounded tutor generates fresh practice activities for this program."
-        disabled={isPending}
+        disabled={pending}
       />
 
       {/* Daily goal */}
@@ -219,9 +197,9 @@ export function EnrollmentConfigForm({
             value={dailyGoal}
             onChange={(e) => {
               setDailyGoal(e.target.value);
-              setSaveState({ status: "idle" });
+              reset();
             }}
-            disabled={isPending}
+            disabled={pending}
             className="max-w-[120px]"
           />
         )}
@@ -234,30 +212,14 @@ export function EnrollmentConfigForm({
           variant="soft"
           size="sm"
           onClick={handleSave}
-          disabled={isPending || Boolean(goalError)}
+          disabled={pending || Boolean(goalError)}
         >
-          {isPending ? "Saving…" : "Save config"}
+          {pending ? "Saving…" : "Save config"}
         </Button>
 
-        {saveState.status === "saved" && (
-          <span
-            role="status"
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-success"
-          >
-            <CheckCircleIcon weight="fill" className="size-4" />
-            Saved.
-          </span>
-        )}
+        {succeeded && <StatusMessage tone="success">Saved.</StatusMessage>}
 
-        {saveState.status === "error" && (
-          <span
-            role="alert"
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-danger"
-          >
-            <WarningCircleIcon weight="regular" className="size-4" />
-            {saveState.message}
-          </span>
-        )}
+        {error !== null && <StatusMessage tone="error">{error}</StatusMessage>}
       </div>
     </div>
   );
