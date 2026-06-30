@@ -27,17 +27,43 @@ export function getLesson(unit: Unit, lessonId: string): Lesson | undefined {
   return unit.lessons.find((l) => l.id === lessonId);
 }
 
+/** One activity together with its containing unit and lesson. */
+export interface ActivityContext {
+  unit: Unit;
+  lesson: Lesson;
+  activity: Activity;
+}
+
+/**
+ * Visit every activity in a program, in authored order, with its containing unit
+ * and lesson. The single tree-walk the program inspectors below all share, so the
+ * three-level nesting lives in exactly one place.
+ */
+export function forEachActivity(
+  program: Program,
+  visit: (ctx: ActivityContext) => void,
+): void {
+  for (const unit of program.units) {
+    for (const lesson of unit.lessons) {
+      for (const activity of lesson.activities) {
+        visit({ unit, lesson, activity });
+      }
+    }
+  }
+}
+
+/** Flat list of every activity (with unit/lesson context) in a program. */
+export function flatActivities(program: Program): ActivityContext[] {
+  const out: ActivityContext[] = [];
+  forEachActivity(program, (ctx) => out.push(ctx));
+  return out;
+}
+
 export function findActivity(
   program: Program,
   activityId: string,
-): { unit: Unit; lesson: Lesson; activity: Activity } | undefined {
-  for (const unit of program.units) {
-    for (const lesson of unit.lessons) {
-      const activity = lesson.activities.find((a) => a.id === activityId);
-      if (activity) return { unit, lesson, activity };
-    }
-  }
-  return undefined;
+): ActivityContext | undefined {
+  return flatActivities(program).find(({ activity }) => activity.id === activityId);
 }
 
 export function programStats(program: Program): {
@@ -45,39 +71,31 @@ export function programStats(program: Program): {
   lessons: number;
   activities: number;
 } {
+  // Lessons (incl. empty ones) are counted from the tree directly; only the
+  // activity total rides on forEachActivity.
   let lessons = 0;
+  for (const unit of program.units) lessons += unit.lessons.length;
   let activities = 0;
-  for (const unit of program.units) {
-    lessons += unit.lessons.length;
-    for (const lesson of unit.lessons) activities += lesson.activities.length;
-  }
+  forEachActivity(program, () => {
+    activities += 1;
+  });
   return { units: program.units.length, lessons, activities };
 }
 
 /** Every authored activity id in a program (for program-scoped completion). */
 export function activityIdsForProgram(program: Program): string[] {
-  const ids: string[] = [];
-  for (const unit of program.units) {
-    for (const lesson of unit.lessons) {
-      for (const activity of lesson.activities) ids.push(activity.id);
-    }
-  }
-  return ids;
+  return flatActivities(program).map(({ activity }) => activity.id);
 }
 
 /** The distinct {@link SkillDomain}s a program touches (from its activities' skills). */
 function programDomains(program: Program): Set<string> {
   const domains = new Set<string>();
-  for (const unit of program.units) {
-    for (const lesson of unit.lessons) {
-      for (const activity of lesson.activities) {
-        for (const tag of activity.skillTags) {
-          const skill = SKILLS.find((s) => s.slug === tag);
-          if (skill) domains.add(skill.domain);
-        }
-      }
+  forEachActivity(program, ({ activity }) => {
+    for (const tag of activity.skillTags) {
+      const skill = SKILLS.find((s) => s.slug === tag);
+      if (skill) domains.add(skill.domain);
     }
-  }
+  });
   return domains;
 }
 
@@ -90,21 +108,12 @@ function programDomains(program: Program): Set<string> {
  */
 export function skillTagsForProgram(program: Program): SkillTag[] {
   const tags = new Set<SkillTag>();
-  for (const unit of program.units) {
-    for (const lesson of unit.lessons) {
-      for (const activity of lesson.activities) {
-        for (const tag of activity.skillTags) tags.add(tag);
-      }
-    }
-  }
+  forEachActivity(program, ({ activity }) => {
+    for (const tag of activity.skillTags) tags.add(tag);
+  });
   const domains = programDomains(program);
   for (const skill of SKILLS) {
     if (domains.has(skill.domain)) tags.add(skill.slug);
   }
   return [...tags];
-}
-
-/** The program (if any) that contains a given authored activity id. */
-export function findProgramByActivityId(activityId: string): Program | undefined {
-  return PROGRAMS.find((p) => findActivity(p, activityId) !== undefined);
 }
