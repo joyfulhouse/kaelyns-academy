@@ -15,16 +15,7 @@
  * Idempotent; prints the affected row and fails loudly if the id doesn't exist.
  * Build-safe: standalone CLI, never imported by the app; connects lazily and exits.
  */
-import postgres from "postgres";
-
-const LOCK_TIMEOUT_MS = 10_000;
-const STATEMENT_TIMEOUT_MS = 30_000;
-
-const url = process.env.DATABASE_URL;
-if (!url) {
-  console.error("[grant-admin] DATABASE_URL is not set");
-  process.exit(1);
-}
+import { runCli } from "./lib/cli-db";
 
 const args = process.argv.slice(2);
 const revoke = args.includes("--revoke");
@@ -35,25 +26,13 @@ if (!userId) {
 }
 const role = revoke ? "user" : "admin";
 
-const sql = postgres(url, {
-  max: 1,
-  connection: { lock_timeout: LOCK_TIMEOUT_MS, statement_timeout: STATEMENT_TIMEOUT_MS },
-});
-
-try {
+await runCli("grant-admin", async (sql) => {
   const [row] = await sql<{ email: string; role: string }[]>`
     UPDATE "user" SET role = ${role} WHERE id = ${userId} RETURNING email, role
   `;
   if (!row) {
     console.error(`[grant-admin] no user with id '${userId}' — nothing changed.`);
-    await sql.end();
-    process.exit(1);
+    return 1; // clean expected failure (not a thrown error): exit 1, no FAILED log
   }
   console.log(`[grant-admin] ${row.email} → role='${row.role}'`);
-  await sql.end();
-  process.exit(0);
-} catch (err) {
-  console.error("[grant-admin] FAILED:", err);
-  await sql.end({ timeout: 5 }).catch(() => {});
-  process.exit(1);
-}
+});

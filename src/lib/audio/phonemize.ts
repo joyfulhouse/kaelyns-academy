@@ -14,21 +14,23 @@
  * root and call `${root}/dev/phonemize`.
  */
 import { z } from "zod";
-import { getEnv } from "@/lib/env";
+import { kokoroBase, timedFetch } from "./kokoro";
 
 const PHONEMIZE_TIMEOUT_MS = 10_000;
 
 /** Map `text` to its misaki phoneme string via Kokoro, or `null` on any failure. */
 export async function phonemize(text: string): Promise<string | null> {
   try {
-    const base = getEnv("KOKORO_URL", "http://localhost:8880/v1").replace(/\/$/, "");
-    const root = base.replace(/\/v1$/, "");
-    const res = await fetch(`${root}/dev/phonemize`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, language: "a" }),
-      signal: AbortSignal.timeout(PHONEMIZE_TIMEOUT_MS),
-    });
+    const root = kokoroBase().replace(/\/v1$/, "");
+    const res = await timedFetch(
+      `${root}/dev/phonemize`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text, language: "a" }),
+      },
+      PHONEMIZE_TIMEOUT_MS,
+    );
     if (!res.ok) return null;
     const data: unknown = await res.json();
     const parsed = z.object({ phonemes: z.string() }).safeParse(data);

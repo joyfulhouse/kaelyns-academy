@@ -9,17 +9,18 @@ import { Buffer } from "node:buffer";
 import { getEnv } from "@/lib/env";
 import { captureNonCritical } from "@/lib/capture";
 import { clipObjectPath } from "./config";
+import { timedFetch } from "./kokoro";
 
 /** True if a clip already exists in the bucket (anonymous HEAD via AUDIO_ORIGIN). */
 export async function clipExists(prefix: string, key: string): Promise<boolean> {
   const origin = getEnv("AUDIO_ORIGIN", "").trim().replace(/\/$/, "");
   if (!origin) return false;
   try {
-    const res = await fetch(`${origin}/${clipObjectPath(prefix, key)}`, {
-      method: "HEAD",
-      cache: "no-store",
-      signal: AbortSignal.timeout(5_000),
-    });
+    const res = await timedFetch(
+      `${origin}/${clipObjectPath(prefix, key)}`,
+      { method: "HEAD", cache: "no-store" },
+      5_000,
+    );
     return res.ok;
   } catch {
     return false;

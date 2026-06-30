@@ -18,32 +18,17 @@
  * Reads $DATABASE_URL and $ADMIN_EMAILS. Build-safe: a standalone CLI, never
  * imported by the app; connects lazily and exits with a deterministic code.
  */
-import postgres from "postgres";
-
-const LOCK_TIMEOUT_MS = 10_000;
-const STATEMENT_TIMEOUT_MS = 30_000;
-
-const url = process.env.DATABASE_URL;
-if (!url) {
-  console.error("[seed-admin-roles] DATABASE_URL is not set");
-  process.exit(1);
-}
+import { runCli } from "./lib/cli-db";
 
 const allowlist = (process.env.ADMIN_EMAILS ?? "")
   .split(",")
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
 
-const sql = postgres(url, {
-  max: 1,
-  connection: { lock_timeout: LOCK_TIMEOUT_MS, statement_timeout: STATEMENT_TIMEOUT_MS },
-});
-
-try {
+await runCli("seed-admin-roles", async (sql) => {
   if (allowlist.length === 0) {
     console.log("[seed-admin-roles] ADMIN_EMAILS is empty — nothing to seed.");
-    await sql.end();
-    process.exit(0);
+    return;
   }
 
   // Warn loudly about allowlisted rows that EXIST but are UNVERIFIED: these are the
@@ -77,10 +62,4 @@ try {
       ? "[seed-admin-roles] no admin grants (verified allowlisted users already admin, or none registered/verified)."
       : `[seed-admin-roles] granted admin to ${granted.length} verified user(s): ${granted.map((g) => g.email).join(", ")}`,
   );
-  await sql.end();
-  process.exit(0);
-} catch (err) {
-  console.error("[seed-admin-roles] FAILED:", err);
-  await sql.end({ timeout: 5 }).catch(() => {});
-  process.exit(1);
-}
+});
