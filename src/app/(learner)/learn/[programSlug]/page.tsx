@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getProgramAsync } from "@/lib/content/repository";
+import { studioTitle } from "@/lib/site";
 import { StudioHome } from "@/components/learner/StudioHome";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,7 @@ interface ProgramPageProps {
 export async function generateMetadata({ params }: ProgramPageProps): Promise<Metadata> {
   const { programSlug } = await params;
   const program = await getProgramAsync(programSlug);
-  return { title: program ? program.title : "Studio" };
+  return studioTitle(program?.title);
 }
 
 export default async function ProgramHomePage({ params }: ProgramPageProps) {

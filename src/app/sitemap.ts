@@ -1,6 +1,5 @@
 import type { MetadataRoute } from "next";
-
-const BASE_URL = "https://kaelyns.academy";
+import { SITE_ORIGIN } from "@/lib/site";
 
 /**
  * Public marketing surface only. `/` is the marketing home and `/learn` is the
@@ -12,13 +11,13 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const lastModified = new Date();
   return [
     {
-      url: BASE_URL,
+      url: SITE_ORIGIN,
       lastModified,
       changeFrequency: "weekly",
       priority: 1,
     },
     {
-      url: `${BASE_URL}/learn`,
+      url: `${SITE_ORIGIN}/learn`,
       lastModified,
       changeFrequency: "weekly",
       priority: 0.8,
