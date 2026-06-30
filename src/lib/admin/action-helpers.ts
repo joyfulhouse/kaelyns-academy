@@ -18,7 +18,9 @@ import {
   VersionNotDraftError,
 } from "@/lib/content/store";
 
-export type AdminActionReason = "unauthenticated" | "forbidden" | "invalid" | "unavailable";
+// Internal to this module; consumers import the AdminErrorResult shape (and switch
+// on the `reason` literals) rather than this union by name.
+type AdminActionReason = "unauthenticated" | "forbidden" | "invalid" | "unavailable";
 
 export type AdminErrorResult = { ok: false; reason: AdminActionReason; message: string };
 
@@ -33,7 +35,7 @@ export type AdminErrorResult = { ok: false; reason: AdminActionReason; message: 
  * and any unexpected error → logged non-critically under `context` + a generic
  * `unavailable`. Messages are preserved verbatim from the old inline mapper.
  */
-export function mapError(error: unknown, context: string): AdminErrorResult {
+function mapError(error: unknown, context: string): AdminErrorResult {
   if (error instanceof AdminForbiddenError) {
     return { ok: false, reason: "forbidden", message: "Admin access required." };
   }
