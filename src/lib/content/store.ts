@@ -6,9 +6,8 @@
  * calls the write mutations directly.
  */
 import { eq, max, and, desc } from "drizzle-orm";
-import type { ActivityKind } from "@/content/activity-configs";
-import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
 import type { Activity, Band, Program, SkillTag, Unit, Lesson, World } from "@/content/types";
+import { validateActivityConfig, firstConfigIssueMessage } from "@/content/validate";
 import { captureNonCritical } from "@/lib/capture";
 import { getDb, schema } from "@/lib/db";
 
@@ -114,19 +113,15 @@ export function assembleProgram(rows: ProgramTreeRows): Program {
 
 /** Validate one activity row against its config schema; return null on failure. */
 function assembleActivity(row: ActivityRow): Activity | null {
-  const kind = row.kind as ActivityKind;
-  const schema = ACTIVITY_CONFIG_SCHEMAS[kind];
-  if (schema === undefined) {
+  const result = validateActivityConfig(row.kind, row.config);
+  if (!result.ok) {
+    // A single bad row must never crash a learner: drop it and report.
     captureNonCritical(
       "activity config invalid",
-      new Error(`Unknown activity kind: ${row.kind} (id=${row.id})`),
+      result.reason === "unknown-kind"
+        ? new Error(`Unknown activity kind: ${row.kind} (id=${row.id})`)
+        : result.error,
     );
-    return null;
-  }
-
-  const parsed = schema.safeParse(row.config);
-  if (!parsed.success) {
-    captureNonCritical("activity config invalid", parsed.error);
     return null;
   }
 
@@ -142,7 +137,7 @@ function assembleActivity(row: ActivityRow): Activity | null {
     band: row.band as Band,
     skillTags: row.skillTags as SkillTag[],
     ...(row.standardTags.length > 0 ? { standardTags: row.standardTags as string[] } : {}),
-    config: parsed.data,
+    config: result.data,
   } as Activity; // cast: discriminated union — kind+config pair validated above
 }
 
@@ -710,16 +705,12 @@ export async function saveVersionTree(
   for (const unit of input.units) {
     for (const lesson of unit.lessons) {
       for (const activity of lesson.activities) {
-        const actSchema = ACTIVITY_CONFIG_SCHEMAS[activity.kind as ActivityKind];
-        if (!actSchema) {
-          throw new ActivityConfigValidationError(
-            activity.activityKey,
-            `Unknown activity kind: "${activity.kind}"`,
-          );
-        }
-        const result = actSchema.safeParse(activity.config);
-        if (!result.success) {
-          const msg = result.error.issues[0]?.message ?? "invalid config";
+        const result = validateActivityConfig(activity.kind, activity.config);
+        if (!result.ok) {
+          const msg =
+            result.reason === "unknown-kind"
+              ? `Unknown activity kind: "${activity.kind}"`
+              : firstConfigIssueMessage(result.error, { fallback: "invalid config" });
           throw new ActivityConfigValidationError(activity.activityKey, msg);
         }
       }
