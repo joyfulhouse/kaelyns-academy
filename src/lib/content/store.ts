@@ -41,6 +41,17 @@ export interface ProgramSummary {
   languages: string[];
 }
 
+// ── Ordering ─────────────────────────────────────────────────────────────────
+
+/**
+ * Comparator that orders any rows carrying an `orderKey` ascending
+ * (locale-insensitive text sort; keys are authored as zero-padded strings).
+ * The single sort used for units, lessons, and activities throughout the store.
+ */
+export function byOrderKey(a: { orderKey: string }, b: { orderKey: string }): number {
+  return a.orderKey.localeCompare(b.orderKey);
+}
+
 // ── Pure tree assembler ──────────────────────────────────────────────────────
 
 /**
@@ -55,7 +66,7 @@ export interface ProgramSummary {
 export function assembleProgram(rows: ProgramTreeRows): Program {
   const { version, units, lessons, activities } = rows;
 
-  const sortedUnits = [...units].sort((a, b) => a.orderKey.localeCompare(b.orderKey));
+  const sortedUnits = [...units].sort(byOrderKey);
 
   return {
     slug: version.programSlug,
@@ -66,7 +77,7 @@ export function assembleProgram(rows: ProgramTreeRows): Program {
     units: sortedUnits.map((unitRow, unitIndex): Unit => {
       const unitLessons = lessons
         .filter((l) => l.unitId === unitRow.id)
-        .sort((a, b) => a.orderKey.localeCompare(b.orderKey));
+        .sort(byOrderKey);
 
       return {
         // The assembled node id is the STABLE authored key (unitKey), NOT the
@@ -91,7 +102,7 @@ export function assembleProgram(rows: ProgramTreeRows): Program {
         lessons: unitLessons.map((lessonRow, lessonIndex): Lesson => {
           const lessonActivities = activities
             .filter((a) => a.lessonId === lessonRow.id)
-            .sort((a, b) => a.orderKey.localeCompare(b.orderKey));
+            .sort(byOrderKey);
 
           const assembledActivities: Activity[] = [];
           for (const actRow of lessonActivities) {
@@ -144,6 +155,42 @@ function assembleActivity(row: ActivityRow): Activity | null {
 // ── DB read helpers (thin glue — not unit-tested, getDb() inside functions) ──
 
 /**
+ * Walk version → units → lessons → activities, reading each level only when its
+ * parent returned rows (the `inArray` guards avoid an empty-IN query). Returns
+ * the RAW, unsorted rows — callers order them (assembleProgram / rowsToEditableUnits).
+ * Shared by getProgramVersionTreeRows and loadVersionForEdit.
+ */
+async function loadVersionTreeRows(versionId: string): Promise<{
+  units: UnitRow[];
+  lessons: LessonRow[];
+  activities: ActivityRow[];
+}> {
+  const db = getDb();
+
+  const units = await db.query.unit.findMany({
+    where: (u) => eq(u.programVersionId, versionId),
+  });
+  const unitIds = units.map((u) => u.id);
+
+  const lessons =
+    unitIds.length === 0
+      ? []
+      : await db.query.lesson.findMany({
+          where: (l, { inArray }) => inArray(l.unitId, unitIds),
+        });
+  const lessonIds = lessons.map((l) => l.id);
+
+  const activities =
+    lessonIds.length === 0
+      ? []
+      : await db.query.activity.findMany({
+          where: (a, { inArray }) => inArray(a.lessonId, lessonIds),
+        });
+
+  return { units, lessons, activities };
+}
+
+/**
  * Load the full program tree for the currently-published version of a program.
  * Returns null when the program is not found or has no published version.
  */
@@ -186,27 +233,7 @@ export async function getProgramVersionTreeRows(
     programSlug = programRow.slug;
   }
 
-  const units = await db.query.unit.findMany({
-    where: (u) => eq(u.programVersionId, versionId),
-  });
-
-  const unitIds = units.map((u) => u.id);
-
-  const lessons =
-    unitIds.length === 0
-      ? []
-      : await db.query.lesson.findMany({
-          where: (l, { inArray }) => inArray(l.unitId, unitIds),
-        });
-
-  const lessonIds = lessons.map((l) => l.id);
-
-  const activities =
-    lessonIds.length === 0
-      ? []
-      : await db.query.activity.findMany({
-          where: (a, { inArray }) => inArray(a.lessonId, lessonIds),
-        });
+  const { units, lessons, activities } = await loadVersionTreeRows(versionId);
 
   return {
     version: { ...versionRow, programSlug },
@@ -529,6 +556,40 @@ export function buildVersionTreeRows(
 // ── DB mutations (transactional where multi-row) ──────────────────────────────
 
 /**
+ * PURE. The shared `program_version` metadata columns, normalising optional
+ * fields to `null` and a missing `languages` to `[]`. Spread into the version
+ * INSERT (create/clone) or passed straight to the metadata UPDATE (save), so the
+ * column shape lives in one place across all three writers.
+ */
+export function versionColumns(meta: {
+  title: string;
+  subtitle?: string | null;
+  ageBand?: string | null;
+  summary?: string | null;
+  world?: string | null;
+  locale?: string | null;
+  languages?: string[] | null;
+}): {
+  title: string;
+  subtitle: string | null;
+  ageBand: string | null;
+  summary: string | null;
+  world: string | null;
+  locale: string | null;
+  languages: string[];
+} {
+  return {
+    title: meta.title,
+    subtitle: meta.subtitle ?? null,
+    ageBand: meta.ageBand ?? null,
+    summary: meta.summary ?? null,
+    world: meta.world ?? null,
+    locale: meta.locale ?? null,
+    languages: meta.languages ?? [],
+  };
+}
+
+/**
  * Insert a new `program` (status `draft`) + its first `program_version`
  * (version 1, status `draft`). Rejects a duplicate slug.
  */
@@ -567,13 +628,7 @@ export async function createProgramDraft(input: {
       programId,
       version: 1,
       status: "draft",
-      title: input.title,
-      subtitle: input.subtitle ?? null,
-      ageBand: input.ageBand ?? null,
-      summary: input.summary ?? null,
-      world: input.world ?? null,
-      locale: input.locale ?? null,
-      languages: input.languages ?? [],
+      ...versionColumns(input),
     });
   });
 
@@ -597,61 +652,7 @@ export async function loadVersionForEdit(versionId: string): Promise<EditableVer
   });
   if (!programRow) return null;
 
-  const unitRows = await db.query.unit.findMany({
-    where: (u) => eq(u.programVersionId, versionId),
-  });
-  unitRows.sort((a, b) => a.orderKey.localeCompare(b.orderKey));
-
-  const unitIds = unitRows.map((u) => u.id);
-  const lessonRows =
-    unitIds.length === 0
-      ? []
-      : await db.query.lesson.findMany({
-          where: (l, { inArray }) => inArray(l.unitId, unitIds),
-        });
-  lessonRows.sort((a, b) => a.orderKey.localeCompare(b.orderKey));
-
-  const lessonIds = lessonRows.map((l) => l.id);
-  const activityRows =
-    lessonIds.length === 0
-      ? []
-      : await db.query.activity.findMany({
-          where: (a, { inArray }) => inArray(a.lessonId, lessonIds),
-        });
-  activityRows.sort((a, b) => a.orderKey.localeCompare(b.orderKey));
-
-  const units: EditableUnit[] = unitRows.map((u) => {
-    const uLessons = lessonRows.filter((l) => l.unitId === u.id);
-    return {
-      unitKey: u.unitKey,
-      title: u.title,
-      emoji: u.emoji ?? undefined,
-      world: u.world,
-      bigIdea: u.bigIdea ?? undefined,
-      phonicsFocus: u.phonicsFocus ?? undefined,
-      mathFocus: u.mathFocus ?? undefined,
-      project: u.project ?? undefined,
-      checkpoint: u.checkpoint ?? undefined,
-      lessons: uLessons.map((l) => {
-        const lActivities = activityRows.filter((a) => a.lessonId === l.id);
-        return {
-          lessonKey: l.lessonKey,
-          title: l.title,
-          activities: lActivities.map((a) => ({
-            activityKey: a.activityKey,
-            kind: a.kind,
-            title: a.title,
-            blurb: a.blurb ?? undefined,
-            estMinutes: a.estMinutes ?? undefined,
-            band: a.band,
-            skillTags: a.skillTags as string[],
-            standardTags: a.standardTags as string[],
-            config: a.config,
-          })),
-        };
-      }),
-    };
-  });
+  const { units, lessons, activities } = await loadVersionTreeRows(versionId);
 
   return {
     programId: programRow.id,
@@ -668,7 +669,7 @@ export async function loadVersionForEdit(versionId: string): Promise<EditableVer
       locale: versionRow.locale ?? undefined,
       languages: versionRow.languages,
     },
-    units,
+    units: rowsToEditableUnits(units, lessons, activities),
   };
 }
 
@@ -739,15 +740,7 @@ export async function saveVersionTree(
     // Update version metadata.
     await tx
       .update(schema.programVersion)
-      .set({
-        title: input.metadata.title,
-        subtitle: input.metadata.subtitle ?? null,
-        ageBand: input.metadata.ageBand ?? null,
-        summary: input.metadata.summary ?? null,
-        world: input.metadata.world ?? null,
-        locale: input.metadata.locale ?? null,
-        languages: input.metadata.languages,
-      })
+      .set(versionColumns(input.metadata))
       .where(eq(schema.programVersion.id, versionId));
 
     // Delete existing units — cascades to lessons and activities.
@@ -929,7 +922,10 @@ export async function cloneVersionToDraft(
 
   const newVersionId = globalThis.crypto.randomUUID();
   const { units: unitRows, lessons: lessonRows, activities: activityRows } =
-    buildVersionTreeRows(newVersionId, sourceRowsToEditable(sourceRows));
+    buildVersionTreeRows(
+      newVersionId,
+      rowsToEditableUnits(sourceRows.units, sourceRows.lessons, sourceRows.activities),
+    );
 
   try {
     await db.transaction(async (tx) => {
@@ -938,13 +934,7 @@ export async function cloneVersionToDraft(
         programId,
         version: nextVersion,
         status: "draft",
-        title: sourceRows.version.title,
-        subtitle: sourceRows.version.subtitle ?? null,
-        ageBand: sourceRows.version.ageBand ?? null,
-        summary: sourceRows.version.summary ?? null,
-        world: sourceRows.version.world ?? null,
-        locale: sourceRows.version.locale ?? null,
-        languages: sourceRows.version.languages,
+        ...versionColumns(sourceRows.version),
       });
       if (unitRows.length > 0) await tx.insert(schema.unit).values(unitRows);
       if (lessonRows.length > 0) await tx.insert(schema.lesson).values(lessonRows);
@@ -1038,34 +1028,36 @@ export async function listAdminPrograms(): Promise<AdminProgramRow[]> {
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
-/** Convert ProgramTreeRows into the EditableUnit[] shape for clone / tree build. */
-function sourceRowsToEditable(rows: ProgramTreeRows): EditableUnit[] {
-  const sortedUnits = [...rows.units].sort((a, b) => a.orderKey.localeCompare(b.orderKey));
-
-  return sortedUnits.map((u) => {
-    const uLessons = rows.lessons
+/**
+ * PURE. Map flat unit/lesson/activity rows into the ordered `EditableUnit[]` shape
+ * (each level sorted by `orderKey`). Shared by the edit-load (loadVersionForEdit)
+ * and clone (cloneVersionToDraft) paths.
+ */
+function rowsToEditableUnits(
+  units: UnitRow[],
+  lessons: LessonRow[],
+  activities: ActivityRow[],
+): EditableUnit[] {
+  return [...units].sort(byOrderKey).map((u) => ({
+    unitKey: u.unitKey,
+    title: u.title,
+    emoji: u.emoji ?? undefined,
+    world: u.world,
+    bigIdea: u.bigIdea ?? undefined,
+    phonicsFocus: u.phonicsFocus ?? undefined,
+    mathFocus: u.mathFocus ?? undefined,
+    project: u.project ?? undefined,
+    checkpoint: u.checkpoint ?? undefined,
+    lessons: lessons
       .filter((l) => l.unitId === u.id)
-      .sort((a, b) => a.orderKey.localeCompare(b.orderKey));
-
-    return {
-      unitKey: u.unitKey,
-      title: u.title,
-      emoji: u.emoji ?? undefined,
-      world: u.world,
-      bigIdea: u.bigIdea ?? undefined,
-      phonicsFocus: u.phonicsFocus ?? undefined,
-      mathFocus: u.mathFocus ?? undefined,
-      project: u.project ?? undefined,
-      checkpoint: u.checkpoint ?? undefined,
-      lessons: uLessons.map((l) => {
-        const lActivities = rows.activities
+      .sort(byOrderKey)
+      .map((l) => ({
+        lessonKey: l.lessonKey,
+        title: l.title,
+        activities: activities
           .filter((a) => a.lessonId === l.id)
-          .sort((a, b) => a.orderKey.localeCompare(b.orderKey));
-
-        return {
-          lessonKey: l.lessonKey,
-          title: l.title,
-          activities: lActivities.map((a) => ({
+          .sort(byOrderKey)
+          .map((a) => ({
             activityKey: a.activityKey,
             kind: a.kind,
             title: a.title,
@@ -1076,8 +1068,6 @@ function sourceRowsToEditable(rows: ProgramTreeRows): EditableUnit[] {
             standardTags: a.standardTags as string[],
             config: a.config,
           })),
-        };
-      }),
-    };
-  });
+      })),
+  }));
 }
