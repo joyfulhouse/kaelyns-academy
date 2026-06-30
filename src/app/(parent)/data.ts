@@ -5,7 +5,6 @@
 import { getSessionOrNull } from "@/lib/auth";
 import { withAccount } from "@/lib/tenancy";
 import {
-  getLearner,
   getLearnerSettings,
   getRecentAttempts,
   getSkillState,
@@ -13,10 +12,10 @@ import {
   listLearners,
   listEnrollmentsDetailed,
   skillOutcomeCounts,
-  type GeneratedAttempt,
   type LearnerRow,
   type RecentAttempt,
 } from "@/lib/tutor/store";
+import { withOwnedLearner } from "@/lib/tutor/scope";
 import type { LearnerSettings } from "@/lib/content/config";
 import { deriveOutcome, type SkillState } from "@/lib/tutor/mastery";
 import {
@@ -138,18 +137,31 @@ export interface ActivityRow {
   when: string;
 }
 
-async function toActivityRow(program: Program | undefined, a: RecentAttempt): Promise<ActivityRow> {
-  let found = program ? findActivity(program, a.activityId) : undefined;
+/**
+ * Resolve an activity's display title across programs: try the supplied `program`
+ * first (if any), then fall back to the owning program — attempts can span
+ * programs (e.g. a World Languages activity surfaced on the core dashboard), so
+ * the parent sees a real title, not the raw id. Falls back to the readable kind
+ * label when no program defines the activity. Shared by toActivityRow (recent
+ * activity) and the provenance trail.
+ */
+async function resolveActivityTitle(
+  activityId: string,
+  kind: string,
+  program?: Program,
+): Promise<string> {
+  let found = program ? findActivity(program, activityId) : undefined;
   if (!found) {
-    // Attempts can span programs (e.g. a World Languages activity shown on the
-    // core dashboard) — resolve the owning program so the parent sees a real
-    // title, not the raw id.
-    const owner = await findProgramByActivityIdAsync(a.activityId);
-    found = owner ? findActivity(owner, a.activityId) : undefined;
+    const owner = await findProgramByActivityIdAsync(activityId);
+    found = owner ? findActivity(owner, activityId) : undefined;
   }
+  return found?.activity.title ?? kindLabel(kind);
+}
+
+async function toActivityRow(program: Program | undefined, a: RecentAttempt): Promise<ActivityRow> {
   return {
     activityId: a.activityId,
-    title: found?.activity.title ?? kindLabel(a.kind),
+    title: await resolveActivityTitle(a.activityId, a.kind, program),
     kindLabel: kindLabel(a.kind),
     stars: a.stars,
     day: a.day,
@@ -157,21 +169,29 @@ async function toActivityRow(program: Program | undefined, a: RecentAttempt): Pr
   };
 }
 
+/**
+ * Build the {@link LearnerCard} list for an account: every learner with their
+ * core-program outcome summary. Resolves the adaptive program + its skill tags
+ * once, then tallies each learner's outcomes against them. Shared by the overview
+ * and the learner list so the card shape is computed in exactly one place.
+ */
+async function buildLearnerCards(accountId: string): Promise<LearnerCard[]> {
+  const learners = await listLearners(accountId);
+  const [program, adaptiveTags] = await Promise.all([
+    getProgramAsync(ADAPTIVE_PROGRAM_SLUG),
+    adaptiveSkillTags(),
+  ]);
+  return Promise.all(
+    learners.map(async (learner) => {
+      const counts = await skillOutcomeCounts(accountId, learner.id, adaptiveTags);
+      return { learner, program, summary: summarize(counts, adaptiveTags.length) };
+    }),
+  );
+}
+
 /** The account's learners, each with an outcome summary, for the overview/list. */
 export async function listLearnerCards(): Promise<LearnerCard[]> {
-  return withAccount(async ({ accountId }) => {
-    const learners = await listLearners(accountId);
-    const [program, adaptiveTags] = await Promise.all([
-      getProgramAsync(ADAPTIVE_PROGRAM_SLUG),
-      adaptiveSkillTags(),
-    ]);
-    return Promise.all(
-      learners.map(async (learner) => {
-        const counts = await skillOutcomeCounts(accountId, learner.id, adaptiveTags);
-        return { learner, program, summary: summarize(counts, adaptiveTags.length) };
-      }),
-    );
-  });
+  return withAccount(({ accountId }) => buildLearnerCards(accountId));
 }
 
 /**
@@ -227,12 +247,17 @@ export interface LearnerSettingsForParent {
 export async function getLearnerSettingsForParent(
   learnerId: string,
 ): Promise<LearnerSettingsForParent | null> {
-  return withAccount(async ({ accountId }) => {
-    const learner = await getLearner(accountId, learnerId);
-    if (!learner) return null;
-    const settings = await getLearnerSettings(accountId, learner.id);
-    return { learner, settings };
-  });
+  return withAccount(({ accountId }) =>
+    withOwnedLearner<LearnerSettingsForParent | null>(
+      accountId,
+      learnerId,
+      async (learner) => {
+        const settings = await getLearnerSettings(accountId, learner.id);
+        return { learner, settings };
+      },
+      null,
+    ),
+  );
 }
 
 /** One provenance row the "what the AI made" page renders. */
@@ -255,13 +280,6 @@ export interface LearnerActivityTrail {
   nextCursor: string | null;
 }
 
-/** Resolve a generated attempt's activity title across programs (mirrors toActivityRow). */
-async function provenanceTitle(a: GeneratedAttempt): Promise<string> {
-  const owner = await findProgramByActivityIdAsync(a.activityId);
-  const found = owner ? findActivity(owner, a.activityId) : undefined;
-  return found?.activity.title ?? kindLabel(a.kind);
-}
-
 /**
  * The per-learner provenance page read (P6 / spec §8 "parent-visible 'what the
  * AI made' trail"): the requested learner + a page of their AI-generated
@@ -273,23 +291,28 @@ export async function getLearnerActivityTrail(
   learnerId: string,
   cursor?: string | null,
 ): Promise<LearnerActivityTrail | null> {
-  return withAccount(async ({ accountId }) => {
-    const learner = await getLearner(accountId, learnerId);
-    if (!learner) return null;
-    const page = await listGeneratedAttempts(accountId, learnerId, { cursor });
-    const rows: ProvenanceRow[] = await Promise.all(
-      page.items.map(async (a) => ({
-        activityId: a.activityId,
-        title: await provenanceTitle(a),
-        kindLabel: kindLabel(a.kind),
-        stars: a.stars,
-        model: a.model,
-        route: a.route,
-        madeOn: a.generatedAt ? relativeDay(a.generatedAt.slice(0, 10)) : null,
-      })),
-    );
-    return { learner, rows, nextCursor: page.nextCursor };
-  });
+  return withAccount(({ accountId }) =>
+    withOwnedLearner<LearnerActivityTrail | null>(
+      accountId,
+      learnerId,
+      async (learner) => {
+        const page = await listGeneratedAttempts(accountId, learnerId, { cursor });
+        const rows: ProvenanceRow[] = await Promise.all(
+          page.items.map(async (a) => ({
+            activityId: a.activityId,
+            title: await resolveActivityTitle(a.activityId, a.kind),
+            kindLabel: kindLabel(a.kind),
+            stars: a.stars,
+            model: a.model,
+            route: a.route,
+            madeOn: a.generatedAt ? relativeDay(a.generatedAt.slice(0, 10)) : null,
+          })),
+        );
+        return { learner, rows, nextCursor: page.nextCursor };
+      },
+      null,
+    ),
+  );
 }
 
 /** A single labelled skill_state row, in domain order, for the learner detail. */
@@ -325,32 +348,36 @@ function outcomeFor(state: SkillState, slug: SkillTag): SkillOutcome | undefined
  * account's (the page turns that into a 404).
  */
 export async function getLearnerDetail(learnerId: string): Promise<LearnerDetail | null> {
-  return withAccount(async ({ accountId }) => {
-    const learner = await getLearner(accountId, learnerId);
-    if (!learner) return null;
+  return withAccount(({ accountId }) =>
+    withOwnedLearner<LearnerDetail | null>(
+      accountId,
+      learnerId,
+      async (learner) => {
+        const program = await getProgramAsync(ADAPTIVE_PROGRAM_SLUG);
+        const [state, attempts] = await Promise.all([
+          getSkillState(accountId, learnerId),
+          getRecentAttempts(accountId, learnerId, 12),
+        ]);
 
-    const program = await getProgramAsync(ADAPTIVE_PROGRAM_SLUG);
-    const [state, attempts] = await Promise.all([
-      getSkillState(accountId, learnerId),
-      getRecentAttempts(accountId, learnerId, 12),
-    ]);
+        const skills: SkillStatus[] = SKILLS.map((skill) => ({
+          slug: skill.slug,
+          label: skill.label,
+          domain: skill.domain,
+          readyIndicator: skill.readyIndicator,
+          outcome: outcomeFor(state, skill.slug),
+        }));
 
-    const skills: SkillStatus[] = SKILLS.map((skill) => ({
-      slug: skill.slug,
-      label: skill.label,
-      domain: skill.domain,
-      readyIndicator: skill.readyIndicator,
-      outcome: outcomeFor(state, skill.slug),
-    }));
-
-    return {
-      learner,
-      program,
-      skills,
-      recent: await Promise.all(attempts.map((a) => toActivityRow(program, a))),
-      hasActivity: attempts.length > 0,
-    };
-  });
+        return {
+          learner,
+          program,
+          skills,
+          recent: await Promise.all(attempts.map((a) => toActivityRow(program, a))),
+          hasActivity: attempts.length > 0,
+        };
+      },
+      null,
+    ),
+  );
 }
 
 /** The overview's "first learner" view: their summary + recent activity. */
@@ -367,19 +394,7 @@ export interface OverviewData {
  */
 export async function getOverview(): Promise<OverviewData> {
   return withAccount(async ({ accountId }) => {
-    const learners = await listLearners(accountId);
-    const [program, adaptiveTags] = await Promise.all([
-      getProgramAsync(ADAPTIVE_PROGRAM_SLUG),
-      adaptiveSkillTags(),
-    ]);
-
-    const cards: LearnerCard[] = await Promise.all(
-      learners.map(async (learner) => {
-        const counts = await skillOutcomeCounts(accountId, learner.id, adaptiveTags);
-        return { learner, program, summary: summarize(counts, adaptiveTags.length) };
-      }),
-    );
-
+    const cards = await buildLearnerCards(accountId);
     const first = cards[0];
     if (!first) return { learners: cards, primary: null };
 
