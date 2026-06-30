@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import Link from "next/link";
 import { CaretLeftIcon } from "@phosphor-icons/react/dist/ssr";
 import { Pill } from "@/components/ui/Pill";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { BackLink } from "@/components/ui/BackLink";
 import { AssignProgramControl } from "@/components/parent/AssignProgramControl";
 import { getProgramDetail } from "@/app/(parent)/data";
 import { getProgramAsync } from "@/lib/content/repository";
@@ -43,45 +44,38 @@ export default async function ProgramDetailPage({
   return (
     <div className="mx-auto max-w-3xl">
       {/* Back nav */}
-      <Link
+      <BackLink
         href="/parent/curriculum"
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-soft hover:text-ink"
-      >
-        <CaretLeftIcon weight="bold" className="size-4" />
-        Curriculum
-      </Link>
+        label="Curriculum"
+        icon={<CaretLeftIcon weight="bold" className="size-4" />}
+      />
 
       {/* Program header */}
-      <header className="mt-4">
-        <p className="font-display text-sm font-semibold text-ink-faint">Program</p>
-        <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight">
-          {summary.title}
-        </h1>
-        {summary.subtitle && (
-          <p className="mt-1 text-lg text-ink-soft">{summary.subtitle}</p>
-        )}
+      <PageHeader className="mt-4" eyebrow="Program" title={summary.title} />
+      {summary.subtitle && (
+        <p className="mt-1 text-lg text-ink-soft">{summary.subtitle}</p>
+      )}
 
-        {/* Meta pills */}
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          {summary.ageBand && <Pill tone="ready">{summary.ageBand}</Pill>}
-          {summary.languages.map((lang) => (
-            <Pill key={lang} tone="accent">{lang}</Pill>
-          ))}
-        </div>
+      {/* Meta pills */}
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        {summary.ageBand && <Pill tone="ready">{summary.ageBand}</Pill>}
+        {summary.languages.map((lang) => (
+          <Pill key={lang} tone="accent">{lang}</Pill>
+        ))}
+      </div>
 
-        {/* Stats */}
-        <p className="mt-3 text-sm text-ink-faint">
-          {stats.units} {stats.units === 1 ? "unit" : "units"}
-          {" · "}
-          {stats.lessons} {stats.lessons === 1 ? "lesson" : "lessons"}
-          {" · "}
-          {stats.activities} {stats.activities === 1 ? "activity" : "activities"}
-        </p>
+      {/* Stats */}
+      <p className="mt-3 text-sm text-ink-faint">
+        {stats.units} {stats.units === 1 ? "unit" : "units"}
+        {" · "}
+        {stats.lessons} {stats.lessons === 1 ? "lesson" : "lessons"}
+        {" · "}
+        {stats.activities} {stats.activities === 1 ? "activity" : "activities"}
+      </p>
 
-        {summary.summary && (
-          <p className="mt-4 max-w-prose text-ink-soft">{summary.summary}</p>
-        )}
-      </header>
+      {summary.summary && (
+        <p className="mt-4 max-w-prose text-ink-soft">{summary.summary}</p>
+      )}
 
       {/* Units */}
       {units.length > 0 && (

@@ -2,18 +2,18 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  ArrowLeftIcon,
   CakeIcon,
   GearSixIcon,
   SparkleIcon,
-  StarIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import { Pill } from "@/components/ui/Pill";
-import { Stars } from "@/components/ui/Stars";
 import { ProgressRing } from "@/components/ui/ProgressRing";
+import { BackLink } from "@/components/ui/BackLink";
+import { AvatarBadge } from "@/components/ui/AvatarBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { outcomeDisplay, outcomeWeight } from "@/components/parent/skill-display";
+import { ActivityRowItem } from "@/components/parent/ActivityRowItem";
 import {
-  avatarInitial,
   getLearnerDetail,
   getLearnerCurriculum,
   type ActivityRow,
@@ -23,6 +23,7 @@ import { CurriculumPanel } from "@/components/parent/CurriculumPanel";
 import { LearnerDataControls } from "@/components/parent/LearnerDataControls";
 import { programStats } from "@/content";
 import type { SkillDomain } from "@/content";
+import { cn } from "@/lib/cn";
 
 // Deliberately a static, non-identifying title. The child's display name is
 // child PII (spec §8) and is shown only inside the authenticated page body —
@@ -72,23 +73,12 @@ export default async function LearnerDetailPage({
 
   return (
     <div className="mx-auto max-w-5xl">
-      <Link
-        href="/parent/learners"
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
-      >
-        <ArrowLeftIcon weight="bold" className="size-4" />
-        All learners
-      </Link>
+      <BackLink href="/parent/learners" label="All learners" />
 
       {/* Header */}
       <header className="mt-4 flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-4">
-          <span
-            aria-hidden
-            className="grid size-16 place-items-center rounded-pill border-2 border-ink/15 bg-accent/15 font-display text-3xl font-semibold text-ink"
-          >
-            {avatarInitial(name)}
-          </span>
+          <AvatarBadge name={name} size="lg" />
           <div>
             <h1 className="font-display text-3xl font-semibold tracking-tight">{name}</h1>
             {learner.birthMonth && (
@@ -135,7 +125,19 @@ export default async function LearnerDetailPage({
       </nav>
 
       {!hasActivity ? (
-        <EmptyState name={name} />
+        <EmptyState
+          className="mt-10 p-12"
+          icon={
+            <span
+              aria-hidden
+              className="grid size-12 place-items-center rounded-md border border-line bg-accent/12 text-accent-deep"
+            >
+              <SparkleIcon weight="regular" className="size-6" />
+            </span>
+          }
+          title="No activities yet"
+          description={`When ${name} starts, her progress shows here: skills by subject, recent activity, and an honest read on how things are going.`}
+        />
       ) : (
         <>
           <SkillsByDomain skills={skills} />
@@ -147,25 +149,6 @@ export default async function LearnerDetailPage({
 
       <LearnerDataControls learnerId={id} learnerName={learner.displayName} />
     </div>
-  );
-}
-
-/** Honest empty state: nothing measured yet, so we invite rather than fabricate. */
-function EmptyState({ name }: { name: string }) {
-  return (
-    <section className="mt-10 grid place-items-center rounded-xl border border-dashed border-line-strong p-12 text-center">
-      <span
-        aria-hidden
-        className="grid size-12 place-items-center rounded-md border border-line bg-accent/12 text-accent-deep"
-      >
-        <SparkleIcon weight="regular" className="size-6" />
-      </span>
-      <p className="mt-4 font-display text-lg font-semibold">No activities yet</p>
-      <p className="mt-1 max-w-md text-ink-soft">
-        When {name} starts, her progress shows here: skills by subject, recent activity, and an
-        honest read on how things are going.
-      </p>
-    </section>
   );
 }
 
@@ -249,24 +232,12 @@ function RecentAttempts({ name, recent }: { name: string; recent: ActivityRow[] 
 
       <ul className="mt-4 overflow-hidden rounded-xl border border-line">
         {recent.map((record, i) => (
-          <li
+          <ActivityRowItem
             key={`${record.activityId}-${i}`}
-            className={`flex items-center gap-3 px-5 py-3.5 ${i > 0 ? "border-t border-line" : ""}`}
-          >
-            <span
-              aria-hidden
-              className="grid size-9 shrink-0 place-items-center rounded-md border border-line bg-paper-sunk/70 text-ink-soft"
-            >
-              <StarIcon weight={record.stars >= 3 ? "fill" : "regular"} className="size-4" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-medium text-ink">{record.title}</p>
-              <p className="text-sm text-ink-faint">
-                {record.kindLabel} · {record.when}
-              </p>
-            </div>
-            <Stars value={record.stars} size="sm" />
-          </li>
+            row={record}
+            size="sm"
+            className={cn("px-5 py-3.5", i > 0 && "border-t border-line")}
+          />
         ))}
       </ul>
       <p className="mt-3 text-sm text-ink-faint">

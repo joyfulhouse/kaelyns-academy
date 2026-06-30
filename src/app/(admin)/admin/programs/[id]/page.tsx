@@ -1,13 +1,10 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import Link from "next/link";
-import {
-  ArrowLeftIcon,
-  PencilIcon,
-} from "@phosphor-icons/react/dist/ssr";
+import { PencilIcon } from "@phosphor-icons/react/dist/ssr";
 import { Pill } from "@/components/ui/Pill";
 import { Surface } from "@/components/ui/Surface";
 import { Button } from "@/components/ui/Button";
+import { BackLink } from "@/components/ui/BackLink";
 import { ProgramLifecycleControls } from "@/components/admin/ProgramLifecycleControls";
 import { listAdminPrograms } from "@/lib/content/store";
 import { PROGRAM_STATUS_TONE, PROGRAM_STATUS_LABEL } from "@/lib/status-display";
@@ -36,13 +33,7 @@ export default async function ProgramDetailPage({
   return (
     <div className="flex flex-col gap-8">
       {/* Back nav */}
-      <Link
-        href="/admin"
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-soft transition-colors hover:text-ink"
-      >
-        <ArrowLeftIcon weight="regular" className="size-4" />
-        All programs
-      </Link>
+      <BackLink href="/admin" label="All programs" />
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">

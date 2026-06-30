@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowRightIcon, BookOpenIcon } from "@phosphor-icons/react/dist/ssr";
 import { Pill } from "@/components/ui/Pill";
 import { Surface } from "@/components/ui/Surface";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { CreateProgramForm } from "@/components/admin/CreateProgramForm";
 import { listAdminPrograms } from "@/lib/content/store";
 import { PROGRAM_STATUS_TONE, PROGRAM_STATUS_LABEL } from "@/lib/status-display";
@@ -50,10 +51,12 @@ export default async function AdminProgramsPage() {
         </h2>
 
         {programs.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-line py-12 text-center">
-            <BookOpenIcon weight="regular" className="size-8 text-ink-faint" />
-            <p className="text-sm text-ink-soft">No programs yet. Create one above.</p>
-          </div>
+          <EmptyState
+            className="py-12"
+            icon={<BookOpenIcon weight="regular" className="size-8 text-ink-faint" />}
+            title="No programs yet"
+            description="Create one above."
+          />
         ) : (
           <div className="flex flex-col gap-2">
             {programs.map((program) => (
