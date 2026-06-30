@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import { motion } from "motion/react";
 import { ArrowRightIcon, CheckCircleIcon, MicrophoneStageIcon } from "@phosphor-icons/react/dist/ssr";
 import type { ReadingComprehensionConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
-import { Prompt, SpeakerButton } from "../_shared/ActivityChrome";
+import { Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
 import { RewardOverlay } from "../_shared/RewardOverlay";
+import { useActivity } from "../_shared/useActivity";
+import { useManagedTimeout } from "../_shared/useManagedTimeout";
 import { useReducedMotion } from "../_shared/useReducedMotion";
+import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { schema, score, type ReadingComprehensionResponse } from "./logic";
 
@@ -20,9 +23,10 @@ export function ReadingComprehensionPlayer({
   config,
   onComplete,
 }: ActivityPlayerProps<ReadingComprehensionConfig, ReadingComprehensionResponse>) {
-  const parsed = useMemo(() => schema.parse(config), [config]);
+  const parsed = useActivity(schema, config);
   const speech = useSpeech();
   const reduced = useReducedMotion();
+  const timer = useManagedTimeout();
 
   const [stage, setStage] = useState<Stage>("passage");
   const [questionIndex, setQuestionIndex] = useState(0);
@@ -31,23 +35,8 @@ export function ReadingComprehensionPlayer({
   const [firstTry, setFirstTry] = useState<boolean[]>([]);
   const [done, setDone] = useState<ReadingComprehensionResponse | null>(null);
 
-  // Speak the instruction once when the activity opens.
-  const spokenRef = useRef(false);
-  useEffect(() => {
-    if (spokenRef.current) return;
-    spokenRef.current = true;
-    speech.speak(parsed.instruction);
-  }, [parsed.instruction, speech]);
-
-  // Clear the advance timer on unmount so leaving mid-reveal can't record an
-  // attempt or set state for a screen the child has already left.
-  const timerRef = useRef<number | null>(null);
-  useEffect(
-    () => () => {
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-    },
-    [],
-  );
+  // Read the instruction aloud once when the activity opens.
+  useSpeakOnce(speech.speak, parsed.instruction);
 
   const current = parsed.questions[questionIndex];
 
@@ -89,8 +78,7 @@ export function ReadingComprehensionPlayer({
       record[questionIndex] = !missedThisQuestion;
       speech.speak("That's it.");
       // Let the green check land, then move on.
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-      timerRef.current = window.setTimeout(() => recordAndAdvance(record), 750);
+      timer.set(() => recordAndAdvance(record), 750);
     } else {
       // Forgiving: no wrong-mark. Gently nudge back to the passage and let them
       // re-read and try a different card.
@@ -155,13 +143,13 @@ export function ReadingComprehensionPlayer({
             })}
           </div>
 
-          <p className="min-h-6 text-center text-sm text-ink-soft" aria-live="polite">
+          <ProgressHint className="min-h-6">
             {picked !== null
               ? "Nice reading."
               : missedThisQuestion
                 ? "Look at the story again, then pick another one."
                 : ""}
-          </p>
+          </ProgressHint>
         </div>
       )}
 

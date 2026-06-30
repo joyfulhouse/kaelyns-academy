@@ -1,16 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import { motion } from "motion/react";
 import { ArrowCounterClockwiseIcon } from "@phosphor-icons/react/dist/ssr";
 import type { MathTenframeConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
-import { Prompt, SpeakerButton } from "../_shared/ActivityChrome";
+import { PlayerControls, Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
 import { RewardOverlay } from "../_shared/RewardOverlay";
+import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
+import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
+import { useWrongShake } from "../_shared/useWrongShake";
 import { goalFor, schema, score, type MathTenframeResponse } from "./logic";
 
 const CELLS_PER_FRAME = 10;
@@ -19,9 +22,10 @@ export function MathTenframePlayer({
   config,
   onComplete,
 }: ActivityPlayerProps<MathTenframeConfig, MathTenframeResponse>) {
-  const parsed = useMemo(() => schema.parse(config), [config]);
+  const parsed = useActivity(schema, config);
   const speech = useSpeech();
   const reduced = useReducedMotion();
+  const shake = useWrongShake();
 
   const goal = goalFor(parsed);
   const capacity = parsed.frames * CELLS_PER_FRAME;
@@ -31,27 +35,12 @@ export function MathTenframePlayer({
 
   const [added, setAdded] = useState(0); // dots the child placed
   const [attempts, setAttempts] = useState(0);
-  const [wrong, setWrong] = useState(false);
   const [done, setDone] = useState<MathTenframeResponse | null>(null);
 
   const total = preset + added;
 
-  const spokenRef = useRef(false);
-  useEffect(() => {
-    if (spokenRef.current) return;
-    spokenRef.current = true;
-    speech.speak(parsed.instruction);
-  }, [parsed.instruction, speech]);
-
-  // Clear the wrong-state timer on unmount so a mid-shake navigation can't set
-  // state after the component is gone.
-  const timerRef = useRef<number | null>(null);
-  useEffect(
-    () => () => {
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-    },
-    [],
-  );
+  // Read the instruction aloud once when the activity opens.
+  useSpeakOnce(speech.speak, parsed.instruction);
 
   if (done) {
     const result = score(parsed, done);
@@ -65,7 +54,7 @@ export function MathTenframePlayer({
   }
 
   function toggleCell(index: number) {
-    if (wrong) return;
+    if (shake.wrong) return;
     if (index < preset) return; // preset dots are locked (the given quantity)
     const placedIndex = index - preset;
     if (placedIndex < added) {
@@ -87,10 +76,12 @@ export function MathTenframePlayer({
     if (total === goal) {
       setDone({ count: total, attempts: attemptCount });
     } else {
-      setWrong(true);
-      speech.speak(total > goal ? "That's a little too many. Try again." : "A few more. Try again.");
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-      timerRef.current = window.setTimeout(() => setWrong(false), 900);
+      shake.trigger({
+        speak: () =>
+          speech.speak(
+            total > goal ? "That's a little too many. Try again." : "A few more. Try again.",
+          ),
+      });
     }
   }
 
@@ -106,8 +97,7 @@ export function MathTenframePlayer({
 
       <motion.div
         className="flex flex-wrap items-center justify-center gap-6"
-        animate={wrong && !reduced ? { x: [0, -8, 8, -6, 6, 0] } : { x: 0 }}
-        transition={{ duration: 0.4, ease: [0.25, 1, 0.5, 1] }}
+        {...shake.shakeProps(reduced)}
       >
         {Array.from({ length: parsed.frames }, (_, frame) => (
           <TenFrame
@@ -121,20 +111,20 @@ export function MathTenframePlayer({
         ))}
       </motion.div>
 
-      <p className="text-center text-sm text-ink-soft" aria-live="polite">
+      <ProgressHint>
         {total === 0 ? "Tap to add dots" : `${total} dot${total === 1 ? "" : "s"}`}
-      </p>
+      </ProgressHint>
 
-      <div className="flex flex-wrap items-center justify-center gap-3">
-        <Button variant="soft" size="md" onClick={reset} disabled={added === 0 || wrong}>
+      <PlayerControls>
+        <Button variant="soft" size="md" onClick={reset} disabled={added === 0 || shake.wrong}>
           <ArrowCounterClockwiseIcon weight="bold" aria-hidden="true" />
           Clear
         </Button>
         <SpeakerButton speech={speech} text={parsed.instruction} label="Hear what to do again" />
-        <Button variant="primary" size="kid" onClick={check} disabled={wrong}>
+        <Button variant="primary" size="kid" onClick={check} disabled={shake.wrong}>
           Check it
         </Button>
-      </div>
+      </PlayerControls>
     </div>
   );
 }

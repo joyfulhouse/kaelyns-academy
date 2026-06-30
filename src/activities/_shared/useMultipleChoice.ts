@@ -20,7 +20,9 @@ export interface MultipleChoice {
  */
 export function useMultipleChoice(opts: {
   count: number;
-  voiceChoice: (choiceIndex: number) => void;
+  /** Voice the tapped choice. `itemIndex` is the current step, so callers never
+   *  need to reference this hook's returned `step` inside their own setup. */
+  voiceChoice: (choiceIndex: number, itemIndex: number) => void;
   onFinish: (answers: number[]) => void;
   advanceMs?: number;
 }): MultipleChoice {
@@ -35,7 +37,7 @@ export function useMultipleChoice(opts: {
       if (picked !== null) return;
       setPicked(choiceIndex);
       const nextAnswers = [...answers, choiceIndex];
-      voiceChoice(choiceIndex);
+      voiceChoice(choiceIndex, step);
       timer.set(() => {
         if (step + 1 >= count) {
           onFinish(nextAnswers);

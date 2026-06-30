@@ -1,16 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { ArrowCounterClockwiseIcon, MinusIcon, PlusIcon } from "@phosphor-icons/react/dist/ssr";
 import type { MathArrayConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
-import { Prompt, SpeakerButton } from "../_shared/ActivityChrome";
+import { PlayerControls, Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
 import { RewardOverlay } from "../_shared/RewardOverlay";
+import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
+import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
+import { useWrongShake } from "../_shared/useWrongShake";
 import {
   expectedFor,
   schema,
@@ -23,9 +26,10 @@ export function MathArrayPlayer({
   config,
   onComplete,
 }: ActivityPlayerProps<MathArrayConfig, MathArrayResponse>) {
-  const parsed = useMemo(() => schema.parse(config), [config]);
+  const parsed = useActivity(schema, config);
   const speech = useSpeech();
   const reduced = useReducedMotion();
+  const shake = useWrongShake();
 
   const total = totalFor(parsed);
   const expected = expectedFor(parsed);
@@ -36,25 +40,10 @@ export function MathArrayPlayer({
   const [filled, setFilled] = useState(isBuild ? 0 : total);
   const [answer, setAnswer] = useState(0); // the product / quotient being entered
   const [attempts, setAttempts] = useState(0);
-  const [wrong, setWrong] = useState(false);
   const [done, setDone] = useState<MathArrayResponse | null>(null);
 
-  const spokenRef = useRef(false);
-  useEffect(() => {
-    if (spokenRef.current) return;
-    spokenRef.current = true;
-    speech.speak(parsed.instruction);
-  }, [parsed.instruction, speech]);
-
-  // Clear the wrong-state timer on unmount so a mid-shake navigation can't set
-  // state after the component is gone.
-  const timerRef = useRef<number | null>(null);
-  useEffect(
-    () => () => {
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-    },
-    [],
-  );
+  // Read the instruction aloud once when the activity opens.
+  useSpeakOnce(speech.speak, parsed.instruction);
 
   if (done) {
     const result = score(parsed, done);
@@ -68,13 +57,13 @@ export function MathArrayPlayer({
   }
 
   function tapTile(index: number) {
-    if (!isBuild || wrong) return;
+    if (!isBuild || shake.wrong) return;
     // Tapping a tile fills up to it (or clears back to it if already filled).
     setFilled((prev) => (index < prev ? index : index + 1));
   }
 
   function bump(delta: number) {
-    if (wrong) return;
+    if (shake.wrong) return;
     setAnswer((prev) => Math.max(0, Math.min(prev + delta, 200)));
   }
 
@@ -93,12 +82,14 @@ export function MathArrayPlayer({
     if (answer === expected) {
       setDone({ entered: answer, attempts: attemptCount });
     } else {
-      setWrong(true);
-      speech.speak(
-        answer > expected ? "That's a little too many. Count again." : "A little more. Count again.",
-      );
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-      timerRef.current = window.setTimeout(() => setWrong(false), 900);
+      shake.trigger({
+        speak: () =>
+          speech.speak(
+            answer > expected
+              ? "That's a little too many. Count again."
+              : "A little more. Count again.",
+          ),
+      });
     }
   }
 
@@ -115,33 +106,29 @@ export function MathArrayPlayer({
         </p>
       )}
 
-      <motion.div
-        className="flex justify-center"
-        animate={wrong && !reduced ? { x: [0, -8, 8, -6, 6, 0] } : { x: 0 }}
-        transition={{ duration: 0.4, ease: [0.25, 1, 0.5, 1] }}
-      >
+      <motion.div className="flex justify-center" {...shake.shakeProps(reduced)}>
         <ArrayGrid
           rows={parsed.rows}
           cols={parsed.cols}
           filled={filled}
           emoji={parsed.emoji}
-          interactive={isBuild && !wrong}
+          interactive={isBuild && !shake.wrong}
           mode={parsed.mode}
           reduced={reduced}
           onTapTile={tapTile}
         />
       </motion.div>
 
-      <p className="text-center text-sm text-ink-soft" aria-live="polite">
+      <ProgressHint>
         {isBuild
           ? buildComplete
             ? `${parsed.rows} rows of ${parsed.cols}`
             : `${filled} of ${total} tiles`
           : countingHint(parsed)}
-      </p>
+      </ProgressHint>
 
       {isBuild ? (
-        <div className="flex flex-wrap items-center justify-center gap-3">
+        <PlayerControls>
           <Button variant="soft" size="md" onClick={resetBuild} disabled={filled === 0}>
             <ArrowCounterClockwiseIcon weight="bold" aria-hidden="true" />
             Clear
@@ -150,16 +137,16 @@ export function MathArrayPlayer({
           <Button variant="primary" size="kid" onClick={finishBuild} disabled={!buildComplete}>
             I built it
           </Button>
-        </div>
+        </PlayerControls>
       ) : (
         <div className="grid justify-items-center gap-5">
-          <AnswerStepper value={answer} disabled={wrong} onBump={bump} />
-          <div className="flex flex-wrap items-center justify-center gap-3">
+          <AnswerStepper value={answer} disabled={shake.wrong} onBump={bump} />
+          <PlayerControls>
             <SpeakerButton speech={speech} text={parsed.instruction} label="Hear what to do again" />
-            <Button variant="primary" size="kid" onClick={check} disabled={wrong}>
+            <Button variant="primary" size="kid" onClick={check} disabled={shake.wrong}>
               Check it
             </Button>
-          </div>
+          </PlayerControls>
         </div>
       )}
     </div>
