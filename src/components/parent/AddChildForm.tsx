@@ -1,12 +1,14 @@
 "use client";
 
-import { useId, useState, useTransition } from "react";
+import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircleIcon, PlusIcon, WarningCircleIcon } from "@phosphor-icons/react/dist/ssr";
+import { PlusIcon } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Field";
 import { TextInput } from "@/components/ui/TextInput";
 import { Select } from "@/components/ui/Select";
+import { StatusMessage } from "@/components/ui/StatusMessage";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { createLearnerAction } from "@/app/(parent)/actions";
 
 /**
@@ -33,52 +35,41 @@ const MONTH_OPTIONS = [
   { value: "December", label: "December" },
 ];
 
-type FormState =
-  | { status: "idle" }
-  | { status: "error"; message: string }
-  | { status: "success"; name: string };
-
 export function AddChildForm() {
   const router = useRouter();
   const nameId = useId();
   const monthId = useId();
   const [name, setName] = useState("");
   const [birthMonth, setBirthMonth] = useState("");
-  const [state, setState] = useState<FormState>({ status: "idle" });
-  const [isPending, startTransition] = useTransition();
+  // Name of the just-added learner, for the success confirmation copy.
+  const [savedName, setSavedName] = useState("");
+  const { run, pending, error, succeeded, reset, fail } = useAsyncAction();
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isPending) return;
+    if (pending) return;
 
     // Cheap client guard so the required-field error is instant; the server
     // re-validates regardless (it is the source of truth).
     if (name.trim().length === 0) {
-      setState({ status: "error", message: "Please enter a name." });
+      fail("Please enter a name.");
       return;
     }
 
-    startTransition(async () => {
-      try {
-        const result = await createLearnerAction({ displayName: name, birthMonth });
-        if (result.ok) {
-          setState({ status: "success", name: result.learner.displayName });
-          setName("");
-          setBirthMonth("");
-          router.refresh();
-        } else {
-          setState({ status: "error", message: result.message });
-        }
-      } catch {
-        setState({
-          status: "error",
-          message: "We could not add the learner right now. Please try again in a moment.",
-        });
-      }
+    run(() => createLearnerAction({ displayName: name, birthMonth }), {
+      onSuccess: (result) => {
+        setSavedName(result.learner.displayName);
+        setName("");
+        setBirthMonth("");
+        router.refresh();
+      },
+      fallbackMessage: "We could not add the learner right now. Please try again in a moment.",
     });
   }
 
-  const errorMessage = state.status === "error" ? state.message : undefined;
+  // The server/guard error renders in the name Field; the badge below is a
+  // defensive fallback for an error state with no displayable message.
+  const errorMessage = error ?? undefined;
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -90,13 +81,13 @@ export function AddChildForm() {
               value={name}
               onChange={(e) => {
                 setName(e.target.value);
-                if (state.status !== "idle") setState({ status: "idle" });
+                if (error !== null || succeeded) reset();
               }}
               placeholder="First name or nickname"
               autoComplete="off"
               maxLength={40}
               invalid={Boolean(errorMessage)}
-              disabled={isPending}
+              disabled={pending}
             />
           )}
         </Field>
@@ -113,30 +104,26 @@ export function AddChildForm() {
               options={MONTH_OPTIONS}
               value={birthMonth}
               onChange={(e) => setBirthMonth(e.target.value)}
-              disabled={isPending}
+              disabled={pending}
             />
           )}
         </Field>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit" variant="accent" size="md" disabled={isPending}>
+        <Button type="submit" variant="accent" size="md" disabled={pending}>
           <PlusIcon weight="bold" className="size-4" />
-          {isPending ? "Adding…" : "Add a child"}
+          {pending ? "Adding…" : "Add a child"}
         </Button>
 
-        {state.status === "success" && (
-          <span role="status" className="inline-flex items-center gap-1.5 text-sm font-medium text-success">
-            <CheckCircleIcon weight="fill" className="size-4" />
-            {state.name} is enrolled. Welcome aboard.
-          </span>
+        {succeeded && (
+          <StatusMessage tone="success">
+            {savedName} is enrolled. Welcome aboard.
+          </StatusMessage>
         )}
 
-        {state.status === "error" && !errorMessage && (
-          <span role="alert" className="inline-flex items-center gap-1.5 text-sm font-medium text-danger">
-            <WarningCircleIcon weight="regular" className="size-4" />
-            Something went wrong.
-          </span>
+        {error !== null && error.length === 0 && (
+          <StatusMessage tone="error">Something went wrong.</StatusMessage>
         )}
       </div>
     </form>

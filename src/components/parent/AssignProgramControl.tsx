@@ -1,15 +1,16 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CheckCircleIcon,
   PlusCircleIcon,
-  WarningCircleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Pill } from "@/components/ui/Pill";
 import { Surface } from "@/components/ui/Surface";
+import { StatusMessage } from "@/components/ui/StatusMessage";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { assignProgramAction } from "@/app/(parent)/actions";
 import {
   ENROLLMENT_STATUS_PILL_TONE,
@@ -24,8 +25,9 @@ type ActionState =
 /**
  * Per-learner assign controls for the program-detail page. Shows each child's
  * current enrollment status for this program and an "Assign" button when the
- * child is not yet enrolled (or was removed). Uses the AddChildForm pattern:
- * useTransition + startTransition(async) + router.refresh().
+ * child is not yet enrolled (or was removed). Uses useAsyncAction for the
+ * transition; the error is kept keyed by learnerId so it renders under the right
+ * child (the hook's `onError` callback sets that keyed state).
  */
 export function AssignProgramControl({
   slug,
@@ -35,37 +37,25 @@ export function AssignProgramControl({
   learners: LearnerWithStatus[];
 }) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const { run, pending } = useAsyncAction();
   const [actionState, setActionState] = useState<ActionState>({ status: "idle" });
   // Only announce to screen readers after a real successful assignment — not on
   // initial idle mount (which would otherwise read a spurious "updated").
   const [announce, setAnnounce] = useState(false);
 
   function handleAssign(learnerId: string) {
-    if (isPending) return;
+    if (pending) return;
     setActionState({ status: "idle" });
     setAnnounce(false);
 
-    startTransition(async () => {
-      try {
-        const result = await assignProgramAction(learnerId, slug);
-        if (result.ok) {
-          setAnnounce(true);
-          router.refresh();
-        } else {
-          setActionState({
-            status: "error",
-            learnerId,
-            message: result.message ?? "Could not assign the program.",
-          });
-        }
-      } catch {
-        setActionState({
-          status: "error",
-          learnerId,
-          message: "Could not assign the program. Please try again.",
-        });
-      }
+    run(() => assignProgramAction(learnerId, slug), {
+      onSuccess: () => {
+        setAnnounce(true);
+        router.refresh();
+      },
+      errorMessage: (result) => result.message ?? "Could not assign the program.",
+      onError: (message) => setActionState({ status: "error", learnerId, message }),
+      fallbackMessage: "Could not assign the program. Please try again.",
     });
   }
 
@@ -92,13 +82,9 @@ export function AssignProgramControl({
             <div className="min-w-0">
               <p className="font-display text-sm font-semibold text-ink">{learner.displayName}</p>
               {err && (
-                <p
-                  role="alert"
-                  className="mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-danger"
-                >
-                  <WarningCircleIcon weight="regular" className="size-4" />
+                <StatusMessage tone="error" className="mt-1">
                   {err}
-                </p>
+                </StatusMessage>
               )}
             </div>
 
@@ -124,10 +110,10 @@ export function AssignProgramControl({
                   variant="accent"
                   size="sm"
                   onClick={() => handleAssign(learner.id)}
-                  disabled={isPending}
+                  disabled={pending}
                 >
                   <PlusCircleIcon weight="regular" className="size-4" />
-                  {isPending ? "Assigning…" : "Assign"}
+                  {pending ? "Assigning…" : "Assign"}
                 </Button>
               ) : null}
             </div>
@@ -136,7 +122,7 @@ export function AssignProgramControl({
       })}
 
       {/* Screen-reader success feedback — only after a real successful action. */}
-      {announce && actionState.status === "idle" && !isPending && (
+      {announce && actionState.status === "idle" && !pending && (
         <p className="sr-only" role="status">
           Assignments updated.
         </p>

@@ -1,19 +1,20 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BookOpenIcon,
-  CheckCircleIcon,
   PlusIcon,
   TrashIcon,
   ArrowCounterClockwiseIcon,
-  WarningCircleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Pill } from "@/components/ui/Pill";
 import { Surface } from "@/components/ui/Surface";
 import { Select } from "@/components/ui/Select";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { StatusMessage } from "@/components/ui/StatusMessage";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { EnrollmentConfigForm } from "@/components/parent/EnrollmentConfigForm";
 import {
   assignProgramAction,
@@ -31,13 +32,18 @@ type ActionState =
   | { status: "idle" }
   | { status: "error"; slug: string; message: string };
 
+/** The shared enrollment server-action result, without importing the action's
+ *  (non-exported) result type — assign/remove/restore all return this shape. */
+type EnrollmentResult = Awaited<ReturnType<typeof assignProgramAction>>;
+
 /**
  * Parent curriculum panel for a learner-detail page. Lists enrolled programs
  * with their status and config, lets the parent remove/restore them, and
  * offers an "add a program" control for the published catalog.
  *
- * Wires to the Task 3.1 server actions using the AddChildForm pattern:
- * useTransition + call in startTransition(async () => …) + router.refresh().
+ * Wires to the enrollment server actions via useAsyncAction; the error is kept
+ * keyed by program slug (set through the hook's `onError`) so it renders under
+ * the right program.
  */
 export function CurriculumPanel({
   learnerId,
@@ -47,7 +53,7 @@ export function CurriculumPanel({
   curriculum: LearnerCurriculumProps;
 }) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const { run, pending } = useAsyncAction();
   const [actionState, setActionState] = useState<ActionState>({ status: "idle" });
   const [selectedSlug, setSelectedSlug] = useState("");
   // Only announce to screen readers after a real successful action — not on the
@@ -58,32 +64,20 @@ export function CurriculumPanel({
 
   function callAction(
     slug: string,
-    action: (learnerId: string, slug: string) => Promise<{ ok: boolean; message?: string }>,
+    action: (learnerId: string, slug: string) => Promise<EnrollmentResult>,
   ) {
-    if (isPending) return;
+    if (pending) return;
     setActionState({ status: "idle" });
     setAnnounce(false);
 
-    startTransition(async () => {
-      try {
-        const result = await action(learnerId, slug);
-        if (result.ok) {
-          setAnnounce(true);
-          router.refresh();
-        } else {
-          setActionState({
-            status: "error",
-            slug,
-            message: result.message ?? "Something went wrong.",
-          });
-        }
-      } catch {
-        setActionState({
-          status: "error",
-          slug,
-          message: "Could not update the program. Please try again.",
-        });
-      }
+    run(() => action(learnerId, slug), {
+      onSuccess: () => {
+        setAnnounce(true);
+        router.refresh();
+      },
+      errorMessage: (result) => result.message ?? "Something went wrong.",
+      onError: (message) => setActionState({ status: "error", slug, message }),
+      fallbackMessage: "Could not update the program. Please try again.",
     });
   }
 
@@ -96,31 +90,19 @@ export function CurriculumPanel({
   }
 
   function handleAdd() {
-    if (!selectedSlug || isPending) return;
+    if (!selectedSlug || pending) return;
     setActionState({ status: "idle" });
     setAnnounce(false);
 
-    startTransition(async () => {
-      try {
-        const result = await assignProgramAction(learnerId, selectedSlug);
-        if (result.ok) {
-          setSelectedSlug("");
-          setAnnounce(true);
-          router.refresh();
-        } else {
-          setActionState({
-            status: "error",
-            slug: selectedSlug,
-            message: result.message ?? "Could not assign the program.",
-          });
-        }
-      } catch {
-        setActionState({
-          status: "error",
-          slug: selectedSlug,
-          message: "Could not assign the program. Please try again.",
-        });
-      }
+    run(() => assignProgramAction(learnerId, selectedSlug), {
+      onSuccess: () => {
+        setSelectedSlug("");
+        setAnnounce(true);
+        router.refresh();
+      },
+      errorMessage: (result) => result.message ?? "Could not assign the program.",
+      onError: (message) => setActionState({ status: "error", slug: selectedSlug, message }),
+      fallbackMessage: "Could not assign the program. Please try again.",
     });
   }
 
@@ -137,18 +119,12 @@ export function CurriculumPanel({
       </p>
 
       {enrolled.length === 0 ? (
-        <div className="mt-5 grid place-items-center rounded-xl border border-dashed border-line-strong p-10 text-center">
-          <span
-            aria-hidden
-            className="grid size-10 place-items-center rounded-md border border-line bg-accent/12 text-accent-deep"
-          >
-            <BookOpenIcon weight="regular" className="size-5" />
-          </span>
-          <p className="mt-3 font-display text-base font-semibold">No programs yet</p>
-          <p className="mt-1 text-sm text-ink-soft">
-            Add a program below to get this learner started.
-          </p>
-        </div>
+        <EmptyState
+          className="mt-8 p-12"
+          icon={<BookOpenIcon weight="regular" className="size-10 text-ink-faint" />}
+          title="No programs yet"
+          description="Add a program below to get this learner started."
+        />
       ) : (
         <div className="mt-5 flex flex-col gap-4">
           {enrolled.map((program) => {
@@ -190,7 +166,7 @@ export function CurriculumPanel({
                         variant="soft"
                         size="sm"
                         onClick={() => handleRemove(program.slug)}
-                        disabled={isPending}
+                        disabled={pending}
                         aria-label={`Remove ${program.title}`}
                       >
                         <TrashIcon weight="regular" className="size-4" />
@@ -204,7 +180,7 @@ export function CurriculumPanel({
                         variant="soft"
                         size="sm"
                         onClick={() => handleRestore(program.slug)}
-                        disabled={isPending}
+                        disabled={pending}
                         aria-label={`Restore ${program.title}`}
                       >
                         <ArrowCounterClockwiseIcon weight="regular" className="size-4" />
@@ -215,13 +191,9 @@ export function CurriculumPanel({
                 </div>
 
                 {actionErr && (
-                  <p
-                    role="alert"
-                    className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-danger"
-                  >
-                    <WarningCircleIcon weight="regular" className="size-4" />
+                  <StatusMessage tone="error" className="mt-2">
                     {actionErr}
-                  </p>
+                  </StatusMessage>
                 )}
 
                 {/* Config form — only for non-removed programs */}
@@ -256,7 +228,7 @@ export function CurriculumPanel({
                 setSelectedSlug(e.target.value);
                 setActionState({ status: "idle" });
               }}
-              disabled={isPending}
+              disabled={pending}
               className="max-w-xs"
               aria-label="Select a program to add"
             />
@@ -266,20 +238,14 @@ export function CurriculumPanel({
               variant="accent"
               size="sm"
               onClick={handleAdd}
-              disabled={isPending || !selectedSlug}
+              disabled={pending || !selectedSlug}
             >
               <PlusIcon weight="bold" className="size-4" />
-              {isPending ? "Adding…" : "Add"}
+              {pending ? "Adding…" : "Add"}
             </Button>
 
             {actionState.status === "error" && actionState.slug === selectedSlug && (
-              <span
-                role="alert"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-danger"
-              >
-                <WarningCircleIcon weight="regular" className="size-4" />
-                {actionState.message}
-              </span>
+              <StatusMessage tone="error">{actionState.message}</StatusMessage>
             )}
 
             {actionState.status === "idle" && !selectedSlug && (
@@ -290,7 +256,7 @@ export function CurriculumPanel({
       </div>
 
       {/* Global success feedback — only after a real successful action. */}
-      {announce && actionState.status === "idle" && isPending === false && (
+      {announce && actionState.status === "idle" && !pending && (
         <p className="sr-only" role="status">
           Programs updated.
         </p>
@@ -298,4 +264,3 @@ export function CurriculumPanel({
     </section>
   );
 }
-

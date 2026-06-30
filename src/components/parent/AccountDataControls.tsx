@@ -1,18 +1,19 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CheckCircleIcon,
   DownloadSimpleIcon,
   TrashIcon,
-  WarningCircleIcon,
   XCircleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Surface } from "@/components/ui/Surface";
 import { Field } from "@/components/ui/Field";
 import { TextInput } from "@/components/ui/TextInput";
+import { StatusMessage } from "@/components/ui/StatusMessage";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { deleteAccountAction, exportAccountAction } from "@/app/(parent)/actions";
 import { downloadJson } from "@/components/parent/downloadJson";
 
@@ -25,23 +26,17 @@ import { downloadJson } from "@/components/parent/downloadJson";
  * email AND password, both re-verified server-side (the password through Better
  * Auth) BEFORE anything is deleted — wrong/missing either refuses and deletes
  * nothing. On success the session is invalidated and we redirect to /goodbye.
+ *
+ * Export and delete each get their own useAsyncAction (independent pending +
+ * error); a local `confirming` flag tracks whether the re-auth form is open.
  */
-
-type ExportState = { status: "idle" } | { status: "error"; message: string };
-
-type DeleteState =
-  | { status: "idle" }
-  | { status: "confirming" }
-  | { status: "error"; message: string };
-
 export function AccountDataControls({ accountEmail }: { accountEmail: string | null }) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-  const [exportState, setExportState] = useState<ExportState>({ status: "idle" });
+  const exportAction = useAsyncAction();
 
-  // Delete card: its own pending flag + inputs (email + password re-auth).
-  const [isDeleting, startDeleteTransition] = useTransition();
-  const [deleteState, setDeleteState] = useState<DeleteState>({ status: "idle" });
+  // Delete card: its own async action + the re-auth inputs (email + password).
+  const deleteAction = useAsyncAction();
+  const [confirming, setConfirming] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -50,68 +45,38 @@ export function AccountDataControls({ accountEmail }: { accountEmail: string | n
   const canConfirmDelete = confirmEmail.trim().length > 0 && password.length > 0;
 
   function openDelete() {
-    setDeleteState({ status: "confirming" });
-    setExportState({ status: "idle" });
+    setConfirming(true);
+    exportAction.reset();
   }
 
   function cancelDelete() {
-    setDeleteState({ status: "idle" });
+    setConfirming(false);
     setConfirmEmail("");
     setPassword("");
+    deleteAction.reset();
   }
 
   function handleDeleteConfirm() {
-    if (isDeleting || !canConfirmDelete) return;
-    setDeleteState({ status: "confirming" });
+    if (deleteAction.pending || !canConfirmDelete) return;
 
-    startDeleteTransition(async () => {
-      try {
-        const result = await deleteAccountAction({
-          password,
-          confirmToken: confirmEmail,
-        });
-        if (result.ok) {
-          // Session is gone — leave the gated app for the public confirmation.
-          router.push("/goodbye");
-        } else {
-          setDeleteState({
-            status: "error",
-            message:
-              result.message ?? "Could not delete your account. Please try again.",
-          });
-        }
-      } catch {
-        setDeleteState({
-          status: "error",
-          message: "Could not delete your account. Please try again.",
-        });
-      }
-    });
+    deleteAction.run(
+      () => deleteAccountAction({ password, confirmToken: confirmEmail }),
+      {
+        // Session is gone — leave the gated app for the public confirmation.
+        onSuccess: () => router.push("/goodbye"),
+        fallbackMessage: "Could not delete your account. Please try again.",
+      },
+    );
   }
 
   function handleExport() {
-    if (isPending) return;
-    setExportState({ status: "idle" });
+    if (exportAction.pending) return;
 
-    startTransition(async () => {
-      try {
-        const result = await exportAccountAction();
-        if (result.ok) {
-          // The account bundle filename carries NO child name so it can't leak one
-          // via the download / browser history (spec §8).
-          downloadJson(result.data, "kaelyns-academy-export.json");
-        } else {
-          setExportState({
-            status: "error",
-            message: result.message ?? "Could not export data. Please try again.",
-          });
-        }
-      } catch {
-        setExportState({
-          status: "error",
-          message: "Could not export data. Please try again.",
-        });
-      }
+    exportAction.run(() => exportAccountAction(), {
+      // The account bundle filename carries NO child name so it can't leak one
+      // via the download / browser history (spec §8).
+      onSuccess: (result) => downloadJson(result.data, "kaelyns-academy-export.json"),
+      fallbackMessage: "Could not export data. Please try again.",
     });
   }
 
@@ -141,21 +106,15 @@ export function AccountDataControls({ accountEmail }: { accountEmail: string | n
                 variant="soft"
                 size="sm"
                 onClick={handleExport}
-                disabled={isPending}
+                disabled={exportAction.pending}
               >
                 <DownloadSimpleIcon weight="regular" className="size-4" />
-                {isPending ? "Exporting…" : "Export JSON"}
+                {exportAction.pending ? "Exporting…" : "Export JSON"}
               </Button>
             </div>
 
-            {exportState.status === "error" && (
-              <p
-                role="alert"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-danger"
-              >
-                <WarningCircleIcon weight="regular" className="size-4" />
-                {exportState.message}
-              </p>
+            {exportAction.error !== null && (
+              <StatusMessage tone="error">{exportAction.error}</StatusMessage>
             )}
           </div>
         </Surface>
@@ -175,7 +134,7 @@ export function AccountDataControls({ accountEmail }: { accountEmail: string | n
               </p>
             </div>
 
-            {deleteState.status !== "confirming" && deleteState.status !== "error" && (
+            {!confirming && (
               <div className="flex flex-wrap items-center gap-2">
                 <Button type="button" variant="ghost" size="sm" onClick={openDelete}>
                   <TrashIcon weight="regular" className="size-4" />
@@ -184,7 +143,7 @@ export function AccountDataControls({ accountEmail }: { accountEmail: string | n
               </div>
             )}
 
-            {(deleteState.status === "confirming" || deleteState.status === "error") && (
+            {confirming && (
               <div className="flex flex-col gap-3">
                 <p className="text-sm font-medium text-danger">
                   This permanently deletes your account and all data. Confirm your email and
@@ -204,7 +163,7 @@ export function AccountDataControls({ accountEmail }: { accountEmail: string | n
                       value={confirmEmail}
                       onChange={(e) => setConfirmEmail(e.target.value)}
                       placeholder={accountEmail ?? "you@example.com"}
-                      disabled={isDeleting}
+                      disabled={deleteAction.pending}
                     />
                   )}
                 </Field>
@@ -218,7 +177,7 @@ export function AccountDataControls({ accountEmail }: { accountEmail: string | n
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Your password"
-                      disabled={isDeleting}
+                      disabled={deleteAction.pending}
                     />
                   )}
                 </Field>
@@ -229,32 +188,26 @@ export function AccountDataControls({ accountEmail }: { accountEmail: string | n
                     variant="soft"
                     size="sm"
                     onClick={handleDeleteConfirm}
-                    disabled={isDeleting || !canConfirmDelete}
+                    disabled={deleteAction.pending || !canConfirmDelete}
                     className="border-danger/40 text-danger hover:border-danger/60"
                   >
                     <CheckCircleIcon weight="regular" className="size-4" />
-                    {isDeleting ? "Deleting…" : "Permanently delete"}
+                    {deleteAction.pending ? "Deleting…" : "Permanently delete"}
                   </Button>
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     onClick={cancelDelete}
-                    disabled={isDeleting}
+                    disabled={deleteAction.pending}
                   >
                     <XCircleIcon weight="regular" className="size-4" />
                     Cancel
                   </Button>
                 </div>
 
-                {deleteState.status === "error" && (
-                  <p
-                    role="alert"
-                    className="inline-flex items-center gap-1.5 text-sm font-medium text-danger"
-                  >
-                    <WarningCircleIcon weight="regular" className="size-4" />
-                    {deleteState.message}
-                  </p>
+                {deleteAction.error !== null && (
+                  <StatusMessage tone="error">{deleteAction.error}</StatusMessage>
                 )}
               </div>
             )}

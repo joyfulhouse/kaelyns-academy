@@ -1,18 +1,18 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import {
-  CheckCircleIcon,
   ListChecksIcon,
   RobotIcon,
   SpeakerHighIcon,
-  WarningCircleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Field";
 import { Select } from "@/components/ui/Select";
 import { Switch } from "@/components/ui/Switch";
+import { StatusMessage } from "@/components/ui/StatusMessage";
 import { SampleBadge } from "@/components/parent/SampleBadge";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { saveLearnerSettingsAction } from "@/app/(parent)/actions";
 import type { LearnerSettings } from "@/lib/content/config";
 
@@ -68,11 +68,6 @@ export function settingsToFormState(settings: LearnerSettings | null): SettingsS
   };
 }
 
-type SaveState =
-  | { status: "idle" }
-  | { status: "saved" }
-  | { status: "error"; message: string };
-
 export function SettingsForm({
   learnerId,
   initialSettings,
@@ -89,16 +84,15 @@ export function SettingsForm({
   const [settings, setSettings] = useState<SettingsState>(() =>
     settingsToFormState(initialSettings),
   );
-  const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
-  const [isPending, startTransition] = useTransition();
+  const { run, pending, error, succeeded, reset } = useAsyncAction();
 
   function update<K extends keyof SettingsState>(key: K, value: SettingsState[K]) {
     setSettings((prev) => ({ ...prev, [key]: value }));
-    setSaveState({ status: "idle" });
+    reset();
   }
 
   function handleSave() {
-    if (isPending) return;
+    if (pending) return;
 
     // With no learner there is nothing to persist — Save is disabled in that
     // state, so we never reach here and never claim a save that didn't happen.
@@ -106,25 +100,15 @@ export function SettingsForm({
 
     const dailyGoal = parseInt(settings.dailyGoal, 10);
 
-    startTransition(async () => {
-      try {
-        const result = await saveLearnerSettingsAction(learnerId, {
+    run(
+      () =>
+        saveLearnerSettingsAction(learnerId, {
           dailyGoal: Number.isFinite(dailyGoal) ? dailyGoal : undefined,
           aiPractice: settings.aiFeatures,
           readAloud: settings.readAloudDefault,
-        });
-        if (result.ok) {
-          setSaveState({ status: "saved" });
-        } else {
-          setSaveState({ status: "error", message: result.message });
-        }
-      } catch {
-        setSaveState({
-          status: "error",
-          message: "Could not save settings. Please try again.",
-        });
-      }
-    });
+        }),
+      { fallbackMessage: "Could not save settings. Please try again." },
+    );
   }
 
   return (
@@ -156,7 +140,7 @@ export function SettingsForm({
                     options={DAILY_GOAL_OPTIONS}
                     value={settings.dailyGoal}
                     onChange={(e) => update("dailyGoal", e.target.value)}
-                    disabled={isPending}
+                    disabled={pending}
                     className="mt-1 max-w-xs"
                   />
                 )}
@@ -171,7 +155,7 @@ export function SettingsForm({
               onChange={(v) => update("aiFeatures", v)}
               label="AI tutoring features"
               description="The bounded tutor adapts difficulty and generates fresh practice. Children never free-chat with it, and you can turn it off entirely."
-              disabled={isPending}
+              disabled={pending}
               className="flex-1"
             />
           </div>
@@ -183,7 +167,7 @@ export function SettingsForm({
               onChange={(v) => update("readAloudDefault", v)}
               label="Read-aloud by default"
               description="Prompts and instructions are spoken aloud automatically. Recommended for pre- and early readers."
-              disabled={isPending}
+              disabled={pending}
               className="flex-1"
             />
           </div>
@@ -194,31 +178,15 @@ export function SettingsForm({
             variant="primary"
             size="md"
             onClick={handleSave}
-            disabled={isPending || !learnerId}
+            disabled={pending || !learnerId}
             title={learnerId ? undefined : "Add a child to save settings"}
           >
-            {isPending ? "Saving…" : "Save changes"}
+            {pending ? "Saving…" : "Save changes"}
           </Button>
 
-          {saveState.status === "saved" && (
-            <span
-              role="status"
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-success"
-            >
-              <CheckCircleIcon weight="fill" className="size-4" />
-              Settings saved.
-            </span>
-          )}
+          {succeeded && <StatusMessage tone="success">Settings saved.</StatusMessage>}
 
-          {saveState.status === "error" && (
-            <span
-              role="alert"
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-danger"
-            >
-              <WarningCircleIcon weight="regular" className="size-4" />
-              {saveState.message}
-            </span>
-          )}
+          {error !== null && <StatusMessage tone="error">{error}</StatusMessage>}
         </div>
       </section>
     </div>

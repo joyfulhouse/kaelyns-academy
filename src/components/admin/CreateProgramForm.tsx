@@ -1,22 +1,20 @@
 "use client";
 
-import { useId, useState, useTransition } from "react";
+import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  CheckCircleIcon,
-  PlusIcon,
-  WarningCircleIcon,
-} from "@phosphor-icons/react/dist/ssr";
+import { PlusIcon } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Field";
 import { TextInput } from "@/components/ui/TextInput";
 import { Select } from "@/components/ui/Select";
+import { StatusMessage } from "@/components/ui/StatusMessage";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { createProgramDraftAction } from "@/app/(admin)/admin/actions";
 
 /**
- * Create-program form. Follows the AddChildForm pattern: useTransition +
- * startTransition(async) + router.push on success. Validates discriminated
- * action results including "forbidden" and "invalid" (e.g. duplicate slug).
+ * Create-program form. Uses useAsyncAction (transition + discriminated result)
+ * and router.push on success. Validates "forbidden" and "invalid" (e.g. a
+ * duplicate slug) results; field-specific guards surface in the relevant Field.
  */
 
 const WORLD_OPTIONS = [
@@ -27,11 +25,6 @@ const WORLD_OPTIONS = [
   { value: "garden", label: "Garden" },
   { value: "bigtop", label: "Big Top" },
 ];
-
-type FormState =
-  | { status: "idle" }
-  | { status: "error"; message: string }
-  | { status: "success" };
 
 export function CreateProgramForm() {
   const router = useRouter();
@@ -51,31 +44,31 @@ export function CreateProgramForm() {
   const [world, setWorld] = useState("");
   const [languages, setLanguages] = useState("en");
 
-  const [state, setState] = useState<FormState>({ status: "idle" });
-  const [isPending, startTransition] = useTransition();
+  const { run, pending, error, succeeded, reset, fail } = useAsyncAction();
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isPending) return;
+    if (pending) return;
 
-    // Client guard — server re-validates regardless.
+    // Client guard — server re-validates regardless. These field-specific
+    // messages route to the matching Field by their "Slug"/"Title" prefix.
     if (slug.trim().length === 0) {
-      setState({ status: "error", message: "Slug is required." });
+      fail("Slug is required.");
       return;
     }
     if (title.trim().length === 0) {
-      setState({ status: "error", message: "Title is required." });
+      fail("Title is required.");
       return;
     }
 
-    startTransition(async () => {
-      try {
-        const langArray = languages
-          .split(",")
-          .map((l) => l.trim())
-          .filter(Boolean);
+    const langArray = languages
+      .split(",")
+      .map((l) => l.trim())
+      .filter(Boolean);
 
-        const result = await createProgramDraftAction({
+    run(
+      () =>
+        createProgramDraftAction({
           slug: slug.trim(),
           title: title.trim(),
           subtitle: subtitle.trim() || undefined,
@@ -83,31 +76,22 @@ export function CreateProgramForm() {
           summary: summary.trim() || undefined,
           world: world || undefined,
           languages: langArray.length > 0 ? langArray : undefined,
-        });
-
-        if (result.ok) {
-          setState({ status: "success" });
-          router.push(`/admin/programs/${result.programId}`);
-        } else {
-          const message =
-            result.reason === "forbidden"
-              ? "Admins only. You do not have permission to create programs."
-              : result.message;
-          setState({ status: "error", message });
-        }
-      } catch {
-        setState({
-          status: "error",
-          message: "Could not create the program. Please try again.",
-        });
-      }
-    });
+        }),
+      {
+        onSuccess: (result) => router.push(`/admin/programs/${result.programId}`),
+        errorMessage: (result) =>
+          result.reason === "forbidden"
+            ? "Admins only. You do not have permission to create programs."
+            : result.message,
+        fallbackMessage: "Could not create the program. Please try again.",
+      },
+    );
   }
 
-  const errorMessage = state.status === "error" ? state.message : undefined;
+  const errorMessage = error ?? undefined;
 
   function clearError() {
-    if (state.status !== "idle") setState({ status: "idle" });
+    if (error !== null || succeeded) reset();
   }
 
   return (
@@ -123,7 +107,7 @@ export function CreateProgramForm() {
               autoComplete="off"
               maxLength={80}
               invalid={Boolean(errorMessage?.startsWith("Slug"))}
-              disabled={isPending}
+              disabled={pending}
             />
           )}
         </Field>
@@ -135,7 +119,7 @@ export function CreateProgramForm() {
               options={WORLD_OPTIONS}
               value={world}
               onChange={(e) => setWorld(e.target.value)}
-              disabled={isPending}
+              disabled={pending}
             />
           )}
         </Field>
@@ -151,7 +135,7 @@ export function CreateProgramForm() {
             autoComplete="off"
             maxLength={160}
             invalid={Boolean(errorMessage?.startsWith("Title"))}
-            disabled={isPending}
+            disabled={pending}
           />
         )}
       </Field>
@@ -166,7 +150,7 @@ export function CreateProgramForm() {
               placeholder="8-week summer readiness program"
               autoComplete="off"
               maxLength={240}
-              disabled={isPending}
+              disabled={pending}
             />
           )}
         </Field>
@@ -180,7 +164,7 @@ export function CreateProgramForm() {
               placeholder="Ages 5–6"
               autoComplete="off"
               maxLength={40}
-              disabled={isPending}
+              disabled={pending}
             />
           )}
         </Field>
@@ -195,7 +179,7 @@ export function CreateProgramForm() {
             placeholder="A short description shown in the catalog."
             autoComplete="off"
             maxLength={400}
-            disabled={isPending}
+            disabled={pending}
           />
         )}
       </Field>
@@ -213,30 +197,24 @@ export function CreateProgramForm() {
             onChange={(e) => setLanguages(e.target.value)}
             placeholder="en"
             autoComplete="off"
-            disabled={isPending}
+            disabled={pending}
           />
         )}
       </Field>
 
       {/* General error (non-field-specific) */}
       {errorMessage && !errorMessage.startsWith("Slug") && !errorMessage.startsWith("Title") && (
-        <p role="alert" className="inline-flex items-center gap-1.5 text-sm font-medium text-danger">
-          <WarningCircleIcon weight="regular" className="size-4" />
-          {errorMessage}
-        </p>
+        <StatusMessage tone="error">{errorMessage}</StatusMessage>
       )}
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit" variant="accent" size="md" disabled={isPending}>
+        <Button type="submit" variant="accent" size="md" disabled={pending}>
           <PlusIcon weight="bold" className="size-4" />
-          {isPending ? "Creating…" : "Create program"}
+          {pending ? "Creating…" : "Create program"}
         </Button>
 
-        {state.status === "success" && (
-          <span role="status" className="inline-flex items-center gap-1.5 text-sm font-medium text-success">
-            <CheckCircleIcon weight="fill" className="size-4" />
-            Program created. Redirecting…
-          </span>
+        {succeeded && (
+          <StatusMessage tone="success">Program created. Redirecting…</StatusMessage>
         )}
       </div>
     </form>

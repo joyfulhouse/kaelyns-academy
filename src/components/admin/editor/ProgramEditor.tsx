@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useRef } from "react";
 import { useForm, useFieldArray, useController } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -14,16 +14,13 @@ import {
 import type { DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useRouter } from "next/navigation";
-import {
-  FloppyDiskIcon,
-  PlusIcon,
-  CheckCircleIcon,
-  WarningCircleIcon,
-} from "@phosphor-icons/react/dist/ssr";
+import { FloppyDiskIcon, PlusIcon } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Field";
 import { TextInput } from "@/components/ui/TextInput";
 import { Surface } from "@/components/ui/Surface";
+import { StatusMessage } from "@/components/ui/StatusMessage";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { saveVersionTreeAction } from "@/app/(admin)/admin/actions";
 import {
   editableToForm,
@@ -91,12 +88,6 @@ interface ProgramEditorProps {
   version: EditableVersion;
 }
 
-type SaveState =
-  | { status: "idle" }
-  | { status: "saving" }
-  | { status: "saved" }
-  | { status: "error"; message: string };
-
 /**
  * PURE. Walk the form tree and return the first activity whose `configJson`
  * fails its per-kind schema, as a ready-to-show error message — or `null` when
@@ -126,8 +117,7 @@ export function firstConfigError(units: EditorFormValues["units"]): string | nul
  */
 export function ProgramEditor({ version }: ProgramEditorProps) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-  const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
+  const { run, pending, error, succeeded, fail } = useAsyncAction();
 
   // Advisory-only ref: tracks which configs have reported errors via
   // onValidChange, used only to surface a live "some configs have errors" hint.
@@ -178,25 +168,13 @@ export function ProgramEditor({ version }: ProgramEditorProps) {
     // the positional invalidConfigsRef keys.
     const configError = firstConfigError(data.units);
     if (configError) {
-      setSaveState({ status: "error", message: configError });
+      fail(configError);
       return;
     }
 
-    setSaveState({ status: "saving" });
-
-    startTransition(async () => {
-      try {
-        const tree = formToEditable(data);
-        const result = await saveVersionTreeAction(version.versionId, tree);
-        if (result.ok) {
-          setSaveState({ status: "saved" });
-          router.refresh();
-        } else {
-          setSaveState({ status: "error", message: result.message ?? "Save failed." });
-        }
-      } catch {
-        setSaveState({ status: "error", message: "Save failed. Please try again." });
-      }
+    run(() => saveVersionTreeAction(version.versionId, formToEditable(data)), {
+      onSuccess: () => router.refresh(),
+      fallbackMessage: "Save failed. Please try again.",
     });
   }
 
@@ -343,34 +321,13 @@ export function ProgramEditor({ version }: ProgramEditorProps) {
 
       {/* Save bar */}
       <div className="flex items-center gap-4 rounded-xl border border-line bg-paper-raised p-4">
-        <Button
-          type="submit"
-          variant="accent"
-          size="md"
-          disabled={isPending || saveState.status === "saving"}
-        >
+        <Button type="submit" variant="accent" size="md" disabled={pending}>
           <FloppyDiskIcon weight="regular" className="size-5" />
-          {saveState.status === "saving" ? "Saving…" : "Save"}
+          {pending ? "Saving…" : "Save"}
         </Button>
 
-        {saveState.status === "saved" && (
-          <span
-            role="status"
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-success"
-          >
-            <CheckCircleIcon weight="fill" className="size-4" />
-            Saved
-          </span>
-        )}
-        {saveState.status === "error" && (
-          <span
-            role="alert"
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-danger"
-          >
-            <WarningCircleIcon weight="regular" className="size-4" />
-            {saveState.message}
-          </span>
-        )}
+        {succeeded && <StatusMessage tone="success">Saved</StatusMessage>}
+        {error !== null && <StatusMessage tone="error">{error}</StatusMessage>}
       </div>
     </form>
   );
