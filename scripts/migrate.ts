@@ -30,9 +30,7 @@
 import { readFileSync } from "node:fs";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
-import postgres from "postgres";
-
-type Sql = ReturnType<typeof postgres>;
+import { runCli, type Sql } from "./lib/cli-db";
 
 const MIGRATIONS_FOLDER = "drizzle";
 
@@ -146,33 +144,24 @@ async function assertBaselined(sql: Sql): Promise<void> {
   }
 }
 
-const url = process.env.DATABASE_URL;
-if (!url) {
-  console.error("[migrate] DATABASE_URL is not set");
-  process.exit(1);
-}
-
-const sql = postgres(url, {
-  max: 1,
-  // Sent as session GUCs on connect, so they bound every statement migrate() runs.
-  connection: { lock_timeout: LOCK_TIMEOUT_MS, statement_timeout: STATEMENT_TIMEOUT_MS },
-});
-try {
-  // Serialize concurrent runners (see MIGRATION_LOCK_KEY). Blocking acquire,
-  // bounded by statement_timeout; a retry waits for the in-flight run and then
-  // finds the journal already caught up.
-  await sql`SELECT pg_advisory_lock(${MIGRATION_LOCK_KEY})`;
-  try {
-    await assertBaselined(sql);
-    await migrate(drizzle(sql), { migrationsFolder: MIGRATIONS_FOLDER });
-  } finally {
-    await sql`SELECT pg_advisory_unlock(${MIGRATION_LOCK_KEY})`.catch(() => {});
-  }
-  console.log("[migrate] schema is up to date");
-  await sql.end();
-  process.exit(0);
-} catch (err) {
-  console.error("[migrate] FAILED:", err);
-  await sql.end({ timeout: 5 }).catch(() => {});
-  process.exit(1);
-}
+// Bootstrap (DATABASE_URL guard, single-connection client with the bounds above,
+// and the try/catch → graceful end + deterministic exit envelope) is shared via
+// runCli. The migration LOGIC below — the session-level advisory lock, the
+// fail-closed baseline assertion, and migrate() itself — is unchanged.
+await runCli(
+  "migrate",
+  async (sql) => {
+    // Serialize concurrent runners (see MIGRATION_LOCK_KEY). Blocking acquire,
+    // bounded by statement_timeout; a retry waits for the in-flight run and then
+    // finds the journal already caught up.
+    await sql`SELECT pg_advisory_lock(${MIGRATION_LOCK_KEY})`;
+    try {
+      await assertBaselined(sql);
+      await migrate(drizzle(sql), { migrationsFolder: MIGRATIONS_FOLDER });
+    } finally {
+      await sql`SELECT pg_advisory_unlock(${MIGRATION_LOCK_KEY})`.catch(() => {});
+    }
+    console.log("[migrate] schema is up to date");
+  },
+  { lockTimeoutMs: LOCK_TIMEOUT_MS, statementTimeoutMs: STATEMENT_TIMEOUT_MS },
+);
