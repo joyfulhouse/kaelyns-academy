@@ -109,6 +109,12 @@ export function useAsyncAction(): AsyncAction {
           else setError(message);
         }
       } catch {
+        // A throw here can come from the action OR from an onSuccess side-effect
+        // (router.refresh, a download, …) that ran after `setSucceeded(true)`.
+        // Clear succeeded so the result settles to error-only — success and
+        // error are mutually exclusive, matching the single-state machines this
+        // hook replaced (which couldn't show both at once).
+        setSucceeded(false);
         const message = resolveActionError<R>(undefined, options);
         if (options?.onError) options.onError(message);
         else setError(message);
