@@ -3,16 +3,16 @@
 import { usePathname } from "next/navigation";
 import { ArrowClockwiseIcon, CompassIcon, HouseIcon } from "@phosphor-icons/react/dist/ssr";
 import { Button } from "@/components/ui/Button";
-import { Mascot } from "@/components/art/Mascot";
+import { KidMessagePanel } from "@/components/boundaries/KidMessagePanel";
 import { useRouteError } from "@/lib/hooks/useRouteError";
 
 /**
  * Kid-surface error boundary for the learner route group. Without it, an error
  * thrown inside /learn/* bubbles to the global error.tsx, which renders on a
- * plain (non-kid) surface and loses the warm, large-tap kid voice. Mirrors the
- * global shell's copy/structure but wraps it in `.surface-kid` (bigger taps +
- * base font) and uses `size="kid"` actions. The error is reported as
- * non-critical (never re-throws); `reset()` retries the failed segment.
+ * plain (non-kid) surface and loses the warm, large-tap kid voice. Reuses the
+ * shared KidMessagePanel wrapped in `.surface-kid` (bigger taps + base font) with
+ * `size="kid"` actions. The error is reported as non-critical (never re-throws);
+ * `reset()` retries the failed segment.
  */
 export default function LearnerError({
   error,
@@ -32,15 +32,13 @@ export default function LearnerError({
   const isNested = pathname?.startsWith("/learn/") ?? false;
 
   return (
-    <main className="surface-kid grid min-h-dvh place-items-center bg-paper px-6 text-center">
-      <div className="max-w-md">
-        <Mascot mood="think" size={140} className="mx-auto motion-safe:animate-float" />
-        <h1 className="mt-6 font-display text-3xl font-semibold tracking-tight text-ink">
-          Oops, a little hiccup.
-        </h1>
-        <p className="mt-3 text-lg text-ink-soft">
-          Something got mixed up. Let&rsquo;s try that again, your place is saved.
-        </p>
+    <KidMessagePanel
+      surface
+      mood="think"
+      title="Oops, a little hiccup."
+      body={<>Something got mixed up. Let&rsquo;s try that again, your place is saved.</>}
+      digest={error.digest}
+      actions={
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <Button onClick={() => reset()} variant="primary" size="kid">
             <ArrowClockwiseIcon weight="bold" aria-hidden="true" />
@@ -58,10 +56,7 @@ export default function LearnerError({
             </Button>
           )}
         </div>
-        {error.digest && (
-          <p className="mt-6 text-sm text-ink-faint">Reference: {error.digest}</p>
-        )}
-      </div>
-    </main>
+      }
+    />
   );
 }

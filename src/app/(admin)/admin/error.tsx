@@ -1,7 +1,6 @@
 "use client";
 
-import { ArrowClockwiseIcon } from "@phosphor-icons/react/dist/ssr";
-import { Button } from "@/components/ui/Button";
+import { RouteErrorPanel } from "@/components/boundaries/RouteErrorPanel";
 import { useRouteError } from "@/lib/hooks/useRouteError";
 
 /**
@@ -21,22 +20,11 @@ export default function AdminError({
   useRouteError("Admin route error", error);
 
   return (
-    <div className="mx-auto grid max-w-md place-items-center py-16 text-center">
-      <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">
-        Something went wrong in the admin console.
-      </h1>
-      <p className="mt-3 text-ink-soft">
-        We hit an error loading this view. No changes were lost — please try again.
-      </p>
-      <div className="mt-8">
-        <Button onClick={() => reset()} variant="primary" size="md">
-          <ArrowClockwiseIcon weight="bold" className="size-4" />
-          Try again
-        </Button>
-      </div>
-      {error.digest && (
-        <p className="mt-6 text-sm text-ink-faint">Reference: {error.digest}</p>
-      )}
-    </div>
+    <RouteErrorPanel
+      title="Something went wrong in the admin console."
+      body="We hit an error loading this view. No changes were lost — please try again."
+      reset={reset}
+      digest={error.digest}
+    />
   );
 }
