@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { findActivity } from "@/content";
 import type { Activity, Unit, World } from "@/content";
 import { getProgramAsync } from "@/lib/content/repository";
+import { studioTitle } from "@/lib/site";
 import { ActivityHost } from "@/components/learner/ActivityHost";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,7 @@ export async function generateMetadata({ params }: ActivityPageProps): Promise<M
   const { programSlug, activityId } = await params;
   const program = await getProgramAsync(programSlug);
   const found = program ? findActivity(program, activityId) : undefined;
-  return { title: found ? found.activity.title : "Studio" };
+  return studioTitle(found?.activity.title);
 }
 
 /**

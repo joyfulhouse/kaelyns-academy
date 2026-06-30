@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import Link from "next/link";
 import { CaretLeftIcon } from "@phosphor-icons/react/dist/ssr";
 import { Pill } from "@/components/ui/Pill";
+import { BackLink } from "@/components/ui/BackLink";
 import { AssignProgramControl } from "@/components/parent/AssignProgramControl";
 import { getProgramDetail } from "@/app/(parent)/data";
 import { getProgramAsync } from "@/lib/content/repository";
@@ -43,13 +43,12 @@ export default async function ProgramDetailPage({
   return (
     <div className="mx-auto max-w-3xl">
       {/* Back nav */}
-      <Link
+      <BackLink
         href="/parent/curriculum"
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-soft hover:text-ink"
-      >
-        <CaretLeftIcon weight="bold" className="size-4" />
-        Curriculum
-      </Link>
+        label="Curriculum"
+        variant="plain"
+        icon={<CaretLeftIcon weight="bold" className="size-4" />}
+      />
 
       {/* Program header */}
       <header className="mt-4">

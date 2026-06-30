@@ -1,6 +1,5 @@
 import type { MetadataRoute } from "next";
-
-const BASE_URL = "https://kaelyns.academy";
+import { SITE_ORIGIN } from "@/lib/site";
 
 /**
  * Allow crawling of the public marketing surface; keep the authenticated parent
@@ -18,7 +17,7 @@ export default function robots(): MetadataRoute.Robots {
       allow: "/",
       disallow: ["/admin", "/parent", "/api", "/learn/"],
     },
-    sitemap: `${BASE_URL}/sitemap.xml`,
-    host: BASE_URL,
+    sitemap: `${SITE_ORIGIN}/sitemap.xml`,
+    host: SITE_ORIGIN,
   };
 }

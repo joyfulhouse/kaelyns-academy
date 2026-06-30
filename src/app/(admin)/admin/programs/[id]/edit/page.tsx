@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeftIcon } from "@phosphor-icons/react/dist/ssr";
 import { Surface } from "@/components/ui/Surface";
+import { BackLink } from "@/components/ui/BackLink";
 import { ProgramEditor } from "@/components/admin/editor/ProgramEditor";
 import { listAdminPrograms, loadVersionForEdit } from "@/lib/content/store";
 import { CloneToDraftButton } from "./CloneToDraftButton";
@@ -89,13 +88,5 @@ export default async function EditProgramPage({
 }
 
 function BackNav({ id }: { id: string }) {
-  return (
-    <Link
-      href={`/admin/programs/${id}`}
-      className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-soft transition-colors hover:text-ink"
-    >
-      <ArrowLeftIcon weight="regular" className="size-4" />
-      Program detail
-    </Link>
-  );
+  return <BackLink href={`/admin/programs/${id}`} label="Program detail" variant="transition" />;
 }

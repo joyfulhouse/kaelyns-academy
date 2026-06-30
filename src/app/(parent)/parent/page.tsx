@@ -5,22 +5,20 @@ import {
   CakeIcon,
   CaretRightIcon,
   SparkleIcon,
-  StarIcon,
   UsersThreeIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import { Pill } from "@/components/ui/Pill";
 import { Surface } from "@/components/ui/Surface";
-import { Stars } from "@/components/ui/Stars";
 import { Button } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { AvatarBadge } from "@/components/ui/AvatarBadge";
 import { ProgressReportCard } from "@/components/parent/ProgressReportCard";
+import { ActivityRowItem } from "@/components/parent/ActivityRowItem";
 import { outcomeDisplay } from "@/components/parent/skill-display";
 import {
-  avatarInitial,
   getOverview,
   type ActivityRow,
   type OutcomeSummary,
-  type OverviewData,
 } from "@/app/(parent)/data";
 import type { LearnerRow } from "@/lib/tutor/store";
 import type { Program } from "@/content";
@@ -103,12 +101,7 @@ function ProfileCard({ learner, program }: { learner: LearnerRow; program: Progr
   return (
     <Surface tone="raised" className="flex flex-col gap-5 p-6">
       <div className="flex items-center gap-4">
-        <span
-          aria-hidden
-          className="grid size-14 place-items-center rounded-pill border-2 border-ink/15 bg-accent/15 font-display text-2xl font-semibold text-ink"
-        >
-          {avatarInitial(learner.displayName)}
-        </span>
+        <AvatarBadge name={learner.displayName} size="md" />
         <div>
           <h2 className="font-display text-xl font-semibold tracking-tight">{learner.displayName}</h2>
           <p className="text-sm text-ink-soft">{program?.ageBand ?? "Learner"}</p>
@@ -219,24 +212,12 @@ function RecentActivity({
         <>
           <ul className="mt-4 divide-y divide-line">
             {recent.map((record, i) => (
-              <li
+              <ActivityRowItem
                 key={`${record.activityId}-${i}`}
-                className="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
-              >
-                <span
-                  aria-hidden
-                  className="grid size-10 shrink-0 place-items-center rounded-md border border-line bg-paper-sunk/70 text-ink-soft"
-                >
-                  <StarIcon weight={record.stars >= 3 ? "fill" : "regular"} className="size-5" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-ink">{record.title}</p>
-                  <p className="text-sm text-ink-faint">
-                    {record.kindLabel} · {record.when}
-                  </p>
-                </div>
-                <Stars value={record.stars} size="sm" />
-              </li>
+                row={record}
+                size="md"
+                className="py-3 first:pt-0 last:pb-0"
+              />
             ))}
           </ul>
 

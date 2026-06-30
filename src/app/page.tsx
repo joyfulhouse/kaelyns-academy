@@ -17,6 +17,7 @@ import { SiteFooter } from "@/components/shell/SiteFooter";
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/a11y/SkipLink";
 import { programStats } from "@/content";
 import { getProgramAsync } from "@/lib/content/repository";
+import { SITE_ORIGIN, SITE_DESCRIPTION } from "@/lib/site";
 import { cn } from "@/lib/cn";
 
 const PILLARS = [
@@ -53,19 +54,18 @@ const STRUCTURED_DATA = {
   "@graph": [
     {
       "@type": "EducationalOrganization",
-      "@id": "https://kaelyns.academy/#org",
+      "@id": `${SITE_ORIGIN}/#org`,
       name: "Kaelyn's Academy",
-      url: "https://kaelyns.academy",
-      description:
-        "A warm, adaptive learning studio for young children. Every subject meets each child at her real level and teaches forward, one mastered skill at a time, with gentle AI tutoring.",
-      logo: "https://kaelyns.academy/icons/icon-512.png",
+      url: SITE_ORIGIN,
+      description: SITE_DESCRIPTION,
+      logo: `${SITE_ORIGIN}/icons/icon-512.png`,
     },
     {
       "@type": "WebSite",
-      "@id": "https://kaelyns.academy/#website",
+      "@id": `${SITE_ORIGIN}/#website`,
       name: "Kaelyn's Academy",
-      url: "https://kaelyns.academy",
-      publisher: { "@id": "https://kaelyns.academy/#org" },
+      url: SITE_ORIGIN,
+      publisher: { "@id": `${SITE_ORIGIN}/#org` },
     },
   ],
 };

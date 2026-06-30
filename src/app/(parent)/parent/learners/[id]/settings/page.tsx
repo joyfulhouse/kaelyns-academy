@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeftIcon } from "@phosphor-icons/react/dist/ssr";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { BackLink } from "@/components/ui/BackLink";
 import { getLearnerSettingsForParent } from "@/app/(parent)/data";
 import { SettingsForm } from "@/app/(parent)/parent/settings/SettingsForm";
 
@@ -34,13 +33,7 @@ export default async function LearnerSettingsPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <Link
-        href={`/parent/learners/${id}`}
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
-      >
-        <ArrowLeftIcon weight="bold" className="size-4" />
-        Back to {learner.displayName}
-      </Link>
+      <BackLink href={`/parent/learners/${id}`} label={`Back to ${learner.displayName}`} />
 
       <PageHeader
         className="mt-4"

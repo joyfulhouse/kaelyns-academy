@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Fraunces, Lexend } from "next/font/google";
 import { SerwistProvider } from "@serwist/turbopack/react";
 import { IosInstallHint } from "@/components/pwa/IosInstallHint";
+import { SITE_ORIGIN, SITE_DESCRIPTION } from "@/lib/site";
 import "./globals.css";
 
 const fraunces = Fraunces({
@@ -18,12 +19,8 @@ const lexend = Lexend({
   display: "swap",
 });
 
-const SITE_URL = "https://kaelyns.academy";
-const SITE_DESCRIPTION =
-  "A warm, adaptive learning studio for young children. Every subject meets each child at her real level and teaches forward, one mastered skill at a time, with gentle AI tutoring.";
-
 export const metadata: Metadata = {
-  metadataBase: new URL(SITE_URL),
+  metadataBase: new URL(SITE_ORIGIN),
   title: {
     default: "Kaelyn's Academy",
     template: "%s · Kaelyn's Academy",
@@ -36,7 +33,7 @@ export const metadata: Metadata = {
     siteName: "Kaelyn's Academy",
     title: "Kaelyn's Academy",
     description: SITE_DESCRIPTION,
-    url: SITE_URL,
+    url: SITE_ORIGIN,
     // og:image is provided by the file convention (src/app/opengraph-image.tsx).
   },
   twitter: {

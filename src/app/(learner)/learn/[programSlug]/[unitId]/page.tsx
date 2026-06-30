@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { getUnit } from "@/content";
 import { getProgramAsync } from "@/lib/content/repository";
+import { studioTitle } from "@/lib/site";
 import { UnitView } from "@/components/learner/UnitView";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ export async function generateMetadata({ params }: UnitPageProps): Promise<Metad
   const { programSlug, unitId } = await params;
   const program = await getProgramAsync(programSlug);
   const unit = program ? getUnit(program, unitId) : undefined;
-  return { title: unit ? unit.title : "Studio" };
+  return studioTitle(unit?.title);
 }
 
 /**
