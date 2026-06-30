@@ -3,18 +3,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // parseJsonbFailClosed is the single §8 fail-closed parse shared by every
 // enrollment-config / learner-settings read. A malformed stored value must
 // degrade to `{ aiPractice: false }` (BLOCK AI), never `{}` (which would leave
-// aiPractice undefined → the gate wouldn't block → fail-OPEN). The Sentry capture
-// is asserted via a mocked captureException so we know corruption is reported.
-const captureException = vi.fn();
+// aiPractice undefined → the gate wouldn't block → fail-OPEN). We assert the
+// Sentry capture fires on corruption. @sentry/nextjs is mocked inline — no
+// out-of-scope variable inside the hoisted vi.mock factory (which would sit in
+// the TDZ at hoist time) — matching the canonical pattern in capture.test.ts,
+// asserting via the imported mocked Sentry.captureException.
 vi.mock("@sentry/nextjs", () => ({
-  withScope: (fn: (scope: unknown) => void) => fn({ setLevel: vi.fn() }),
-  captureException: (e: unknown) => captureException(e),
+  captureException: vi.fn(),
+  withScope: (cb: (scope: { setLevel: () => void }) => void) => cb({ setLevel: vi.fn() }),
 }));
 
+import * as Sentry from "@sentry/nextjs";
 import { enrollmentConfigSchema, learnerSettingsSchema } from "@/lib/content/config";
 import { parseJsonbFailClosed } from "./jsonb";
 
-beforeEach(() => captureException.mockClear());
+beforeEach(() => vi.mocked(Sentry.captureException).mockClear());
 
 describe("parseJsonbFailClosed", () => {
   it("returns the parsed value for a valid config (no capture)", () => {
@@ -24,7 +27,7 @@ describe("parseJsonbFailClosed", () => {
       "enrollment config (x)",
     );
     expect(got).toEqual({ aiPractice: true, band: "ready" });
-    expect(captureException).not.toHaveBeenCalled();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
   it("keeps a legitimately empty/absent value permissive ({}), default-allow", () => {
@@ -32,7 +35,7 @@ describe("parseJsonbFailClosed", () => {
     expect(parseJsonbFailClosed(enrollmentConfigSchema, {}, "x")).toEqual({});
     expect(parseJsonbFailClosed(enrollmentConfigSchema, null, "x")).toEqual({});
     expect(parseJsonbFailClosed(enrollmentConfigSchema, undefined, "x")).toEqual({});
-    expect(captureException).not.toHaveBeenCalled();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
   it("fails CLOSED to { aiPractice: false } on a malformed config and logs", () => {
@@ -44,13 +47,13 @@ describe("parseJsonbFailClosed", () => {
       "enrollment config (learner=L slug=S)",
     );
     expect(got).toEqual({ aiPractice: false });
-    expect(captureException).toHaveBeenCalledOnce();
+    expect(Sentry.captureException).toHaveBeenCalledOnce();
   });
 
   it("fails CLOSED on out-of-range numeric fields too", () => {
     const got = parseJsonbFailClosed(enrollmentConfigSchema, { dailyGoal: 999 }, "x");
     expect(got).toEqual({ aiPractice: false });
-    expect(captureException).toHaveBeenCalledOnce();
+    expect(Sentry.captureException).toHaveBeenCalledOnce();
   });
 
   it("applies the same fail-closed default to the learner-settings schema", () => {
@@ -60,7 +63,7 @@ describe("parseJsonbFailClosed", () => {
       "learner settings (gate learner=L)",
     );
     expect(got).toEqual({ aiPractice: false });
-    expect(captureException).toHaveBeenCalledOnce();
+    expect(Sentry.captureException).toHaveBeenCalledOnce();
   });
 
   it("parses valid learner settings unchanged", () => {
@@ -70,6 +73,6 @@ describe("parseJsonbFailClosed", () => {
       "x",
     );
     expect(got).toEqual({ aiPractice: false, readAloud: true });
-    expect(captureException).not.toHaveBeenCalled();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 });
