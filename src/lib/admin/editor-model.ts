@@ -4,7 +4,7 @@
  * No I/O, no side effects. Unit-tested in editor-model.test.ts.
  */
 import type { ActivityKind } from "@/content/activity-configs";
-import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
+import { firstConfigIssueMessage, validateActivityConfig } from "@/content/validate";
 import type { EditableActivity, EditableLesson, EditableUnit, EditableVersion, VersionMetadata } from "@/lib/content/store";
 
 // ── Form value types ──────────────────────────────────────────────────────────
@@ -295,14 +295,15 @@ function formToActivity(a: ActivityFormValues): EditableActivity {
 /**
  * Validate a raw JSON string against the schema for `kind`.
  * Returns `{ ok: true }` or `{ ok: false; message: string }`.
+ *
+ * The kind lookup + schema parse are delegated to the shared
+ * `validateActivityConfig`; only the JSON-string parse (with the field-level,
+ * path-prefixed message the editor surfaces) is editor-specific.
  */
 export function validateConfigJson(
   kind: string,
   json: string,
 ): { ok: true } | { ok: false; message: string } {
-  const schema = ACTIVITY_CONFIG_SCHEMAS[kind as ActivityKind];
-  if (!schema) return { ok: false, message: `Unknown activity kind: "${kind}"` };
-
   let parsed: unknown;
   try {
     parsed = JSON.parse(json) as unknown;
@@ -310,12 +311,13 @@ export function validateConfigJson(
     return { ok: false, message: "Invalid JSON" };
   }
 
-  const result = schema.safeParse(parsed);
-  if (!result.success) {
-    const first = result.error.issues[0];
-    const path = first?.path.join(".") ?? "";
-    const msg = first?.message ?? "Invalid config";
-    return { ok: false, message: path ? `${path}: ${msg}` : msg };
+  const result = validateActivityConfig(kind, parsed);
+  if (result.ok) return { ok: true };
+  if (result.reason === "unknown-kind") {
+    return { ok: false, message: `Unknown activity kind: "${kind}"` };
   }
-  return { ok: true };
+  return {
+    ok: false,
+    message: firstConfigIssueMessage(result.error, { withPath: true, fallback: "Invalid config" }),
+  };
 }
