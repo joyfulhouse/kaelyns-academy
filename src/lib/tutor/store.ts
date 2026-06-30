@@ -5,7 +5,6 @@ import { and, count, desc, eq, inArray, lt, or } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { attempt, deletionAudit, enrollment, learner, skillState, user, verification } from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
-import { captureNonCritical } from "@/lib/capture";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
 import {
   enrollmentConfigSchema,
@@ -17,6 +16,13 @@ import { getPublishedVersionId } from "@/lib/content/store";
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
 import { shapeLearnerExport, type LearnerExport } from "./export";
 import { shapeAccountExport, type AccountExport } from "./account-export";
+import { parseJsonbFailClosed } from "./jsonb";
+import { toLearnerRow, withOwnedLearner, type LearnerRow } from "./scope";
+
+// getLearner + LearnerRow now live in ./scope (the shared account-ownership gate);
+// re-export them so existing importers of "@/lib/tutor/store" keep their paths.
+export { getLearner } from "./scope";
+export type { LearnerRow };
 
 /**
  * The DB-backed tutor store: the server equivalent of the client's
@@ -25,14 +31,6 @@ import { shapeAccountExport, type AccountExport } from "./account-export";
  * The mastery engine (deriveOutcome) is applied here so client and server agree
  * on what "solid" means.
  */
-
-export interface LearnerRow {
-  id: string;
-  accountId: string;
-  displayName: string;
-  avatar: string | null;
-  birthMonth: string | null;
-}
 
 /** Bound stored evidence (jsonb can otherwise grow without limit). */
 const MAX_HISTORY = 24;
@@ -51,33 +49,13 @@ export function nextSkillRecord(
   return { history, outcome: deriveOutcome({ history } as SkillRecord) };
 }
 
-function toRow(r: typeof learner.$inferSelect): LearnerRow {
-  return {
-    id: r.id,
-    accountId: r.accountId,
-    displayName: r.displayName,
-    avatar: r.avatar,
-    birthMonth: r.birthMonth,
-  };
-}
-
 export async function listLearners(accountId: string): Promise<LearnerRow[]> {
   const rows = await getDb()
     .select()
     .from(learner)
     .where(eq(learner.accountId, accountId))
     .orderBy(learner.createdAt);
-  return rows.map(toRow);
-}
-
-/** Scoped fetch: returns null if the learner doesn't exist OR isn't this account's. */
-export async function getLearner(accountId: string, learnerId: string): Promise<LearnerRow | null> {
-  const rows = await getDb()
-    .select()
-    .from(learner)
-    .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
-    .limit(1);
-  return rows[0] ? toRow(rows[0]) : null;
+  return rows.map(toLearnerRow);
 }
 
 export async function createLearner(
@@ -93,7 +71,7 @@ export async function createLearner(
       avatar: input.avatar ?? null,
     })
     .returning();
-  return toRow(rows[0]);
+  return toLearnerRow(rows[0]);
 }
 
 /** The account's first learner, creating a default one if none exist. */
@@ -129,13 +107,18 @@ export async function ensureEnrollment(learnerId: string, programSlug: string): 
 
 /** Program slugs a learner is enrolled in (verified to belong to the account). */
 export async function listEnrollments(accountId: string, learnerId: string): Promise<string[]> {
-  const owned = await getLearner(accountId, learnerId);
-  if (!owned) return [];
-  const rows = await getDb()
-    .select({ programSlug: enrollment.programSlug })
-    .from(enrollment)
-    .where(eq(enrollment.learnerId, learnerId));
-  return rows.map((r) => r.programSlug);
+  return withOwnedLearner<string[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select({ programSlug: enrollment.programSlug })
+        .from(enrollment)
+        .where(eq(enrollment.learnerId, learnerId));
+      return rows.map((r) => r.programSlug);
+    },
+    [],
+  );
 }
 
 /**
@@ -150,6 +133,12 @@ export class EnrollmentNotActiveError extends Error {
     super(`No active enrollment for learner "${learnerId}" in program "${programSlug}"`);
     this.name = "EnrollmentNotActiveError";
   }
+}
+
+/** The (learner, program) composite predicate shared by every single-enrollment
+ *  query (keyed on the `enrollment_learner_program_uq` unique index). */
+function enrollmentKey(learnerId: string, programSlug: string) {
+  return and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, programSlug));
 }
 
 export interface RecordAttemptInput {
@@ -203,9 +192,7 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
     const enrolled = await tx
       .select({ status: enrollment.status })
       .from(enrollment)
-      .where(
-        and(eq(enrollment.learnerId, input.learnerId), eq(enrollment.programSlug, input.programSlug)),
-      )
+      .where(enrollmentKey(input.learnerId, input.programSlug))
       .limit(1)
       // Lock the enrollment row for the tx's lifetime so a concurrent pause/remove
       // can't commit between this active-check and the attempt insert below (the
@@ -265,14 +252,19 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
 /** Read the learner's skill_state in the mastery engine's shape (for next-best,
  *  per-strand levels, and the parent report). */
 export async function getSkillState(accountId: string, learnerId: string): Promise<SkillState> {
-  const owned = await getLearner(accountId, learnerId);
-  if (!owned) return {};
-  const rows = await getDb().select().from(skillState).where(eq(skillState.learnerId, learnerId));
-  const state: SkillState = {};
-  for (const r of rows) {
-    state[r.skill as SkillTag] = { history: r.evidence as { day: string; outcome: SkillOutcome }[] };
-  }
-  return state;
+  return withOwnedLearner<SkillState>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb().select().from(skillState).where(eq(skillState.learnerId, learnerId));
+      const state: SkillState = {};
+      for (const r of rows) {
+        state[r.skill as SkillTag] = { history: r.evidence as { day: string; outcome: SkillOutcome }[] };
+      }
+      return state;
+    },
+    {},
+  );
 }
 
 export interface RecentAttempt {
@@ -287,15 +279,20 @@ export async function getRecentAttempts(
   learnerId: string,
   limit = 8,
 ): Promise<RecentAttempt[]> {
-  const owned = await getLearner(accountId, learnerId);
-  if (!owned) return [];
-  const rows = await getDb()
-    .select()
-    .from(attempt)
-    .where(eq(attempt.learnerId, learnerId))
-    .orderBy(desc(attempt.createdAt))
-    .limit(limit);
-  return rows.map((r) => ({ activityId: r.activityId, kind: r.kind, stars: r.score.stars, day: r.day }));
+  return withOwnedLearner<RecentAttempt[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select()
+        .from(attempt)
+        .where(eq(attempt.learnerId, learnerId))
+        .orderBy(desc(attempt.createdAt))
+        .limit(limit);
+      return rows.map((r) => ({ activityId: r.activityId, kind: r.kind, stars: r.score.stars, day: r.day }));
+    },
+    [],
+  );
 }
 
 /** One AI-generated attempt for the parent-visible provenance trail (P6 / §8). */
@@ -339,41 +336,45 @@ export async function listGeneratedAttempts(
   learnerId: string,
   opts: { limit?: number; cursor?: string | null } = {},
 ): Promise<GeneratedAttemptsPage> {
-  const owned = await getLearner(accountId, learnerId);
-  if (!owned) return { items: [], nextCursor: null };
+  return withOwnedLearner<GeneratedAttemptsPage>(
+    accountId,
+    learnerId,
+    async () => {
+      const limit = Math.max(1, Math.min(PROVENANCE_PAGE_MAX, opts.limit ?? PROVENANCE_PAGE_DEFAULT));
+      const cursorDate = opts.cursor ? new Date(opts.cursor) : null;
+      const cursorValid = cursorDate && !Number.isNaN(cursorDate.getTime()) ? cursorDate : null;
 
-  const limit = Math.max(1, Math.min(PROVENANCE_PAGE_MAX, opts.limit ?? PROVENANCE_PAGE_DEFAULT));
-  const cursorDate = opts.cursor ? new Date(opts.cursor) : null;
-  const cursorValid = cursorDate && !Number.isNaN(cursorDate.getTime()) ? cursorDate : null;
+      const predicate = cursorValid
+        ? and(
+            eq(attempt.learnerId, learnerId),
+            eq(attempt.generated, true),
+            lt(attempt.createdAt, cursorValid),
+          )
+        : and(eq(attempt.learnerId, learnerId), eq(attempt.generated, true));
 
-  const predicate = cursorValid
-    ? and(
-        eq(attempt.learnerId, learnerId),
-        eq(attempt.generated, true),
-        lt(attempt.createdAt, cursorValid),
-      )
-    : and(eq(attempt.learnerId, learnerId), eq(attempt.generated, true));
+      const rows = await getDb()
+        .select()
+        .from(attempt)
+        .where(predicate)
+        .orderBy(desc(attempt.createdAt))
+        .limit(limit + 1); // +1 to detect a further page
 
-  const rows = await getDb()
-    .select()
-    .from(attempt)
-    .where(predicate)
-    .orderBy(desc(attempt.createdAt))
-    .limit(limit + 1); // +1 to detect a further page
-
-  const hasMore = rows.length > limit;
-  const page = hasMore ? rows.slice(0, limit) : rows;
-  const items: GeneratedAttempt[] = page.map((r) => ({
-    activityId: r.activityId,
-    kind: r.kind,
-    stars: clampStars(r.score.stars),
-    model: r.genModel,
-    route: r.genRoute,
-    generatedAt: r.genAt ? r.genAt.toISOString() : null,
-    createdAt: r.createdAt.toISOString(),
-  }));
-  const nextCursor = hasMore ? items[items.length - 1]!.createdAt : null;
-  return { items, nextCursor };
+      const hasMore = rows.length > limit;
+      const page = hasMore ? rows.slice(0, limit) : rows;
+      const items: GeneratedAttempt[] = page.map((r) => ({
+        activityId: r.activityId,
+        kind: r.kind,
+        stars: clampStars(r.score.stars),
+        model: r.genModel,
+        route: r.genRoute,
+        generatedAt: r.genAt ? r.genAt.toISOString() : null,
+        createdAt: r.createdAt.toISOString(),
+      }));
+      const nextCursor = hasMore ? items[items.length - 1]!.createdAt : null;
+      return { items, nextCursor };
+    },
+    { items: [], nextCursor: null },
+  );
 }
 
 export interface CompletedActivity {
@@ -402,25 +403,30 @@ export async function getCompletedActivityIds(
   accountId: string,
   learnerId: string,
 ): Promise<CompletedActivity[]> {
-  const owned = await getLearner(accountId, learnerId);
-  if (!owned) return [];
-  const rows = await getDb()
-    .select({ activityId: attempt.activityId, score: attempt.score })
-    .from(attempt)
-    .where(and(eq(attempt.learnerId, learnerId), eq(attempt.generated, false)))
-    // Bound this otherwise-unbounded select (one learner's authored-attempt volume
-    // is far below this, so the best-stars fold stays complete). Order newest-first
-    // so that IF the cap is ever hit the dropped rows are deterministic (the oldest
-    // attempts) rather than an arbitrary set; index-backed by attempt_learner_created_idx.
-    .orderBy(desc(attempt.createdAt))
-    .limit(5000);
-  const best = new Map<string, number>();
-  for (const r of rows) {
-    const stars = clampStars(r.score.stars);
-    const prior = best.get(r.activityId) ?? 0;
-    if (stars > prior || !best.has(r.activityId)) best.set(r.activityId, Math.max(prior, stars));
-  }
-  return [...best.entries()].map(([activityId, stars]) => ({ activityId, stars }));
+  return withOwnedLearner<CompletedActivity[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select({ activityId: attempt.activityId, score: attempt.score })
+        .from(attempt)
+        .where(and(eq(attempt.learnerId, learnerId), eq(attempt.generated, false)))
+        // Bound this otherwise-unbounded select (one learner's authored-attempt volume
+        // is far below this, so the best-stars fold stays complete). Order newest-first
+        // so that IF the cap is ever hit the dropped rows are deterministic (the oldest
+        // attempts) rather than an arbitrary set; index-backed by attempt_learner_created_idx.
+        .orderBy(desc(attempt.createdAt))
+        .limit(5000);
+      const best = new Map<string, number>();
+      for (const r of rows) {
+        const stars = clampStars(r.score.stars);
+        const prior = best.get(r.activityId) ?? 0;
+        if (stars > prior || !best.has(r.activityId)) best.set(r.activityId, Math.max(prior, stars));
+      }
+      return [...best.entries()].map(([activityId, stars]) => ({ activityId, stars }));
+    },
+    [],
+  );
 }
 
 /** Outcome tally across a learner's skills (for the dashboard summary). */
@@ -429,38 +435,33 @@ export async function skillOutcomeCounts(
   learnerId: string,
   skills: SkillTag[],
 ): Promise<Record<SkillOutcome, number>> {
-  const owned = await getLearner(accountId, learnerId);
   const counts: Record<SkillOutcome, number> = { not_yet: 0, emerging: 0, solid: 0 };
-  if (!owned || skills.length === 0) return counts;
-  const rows = await getDb()
-    .select({ skill: skillState.skill, outcome: skillState.outcome })
-    .from(skillState)
-    .where(and(eq(skillState.learnerId, learnerId), inArray(skillState.skill, skills)));
-  const bySkill = new Map(rows.map((r) => [r.skill, r.outcome as SkillOutcome]));
-  for (const s of skills) counts[bySkill.get(s) ?? "not_yet"] += 1;
-  return counts;
+  return withOwnedLearner<Record<SkillOutcome, number>>(
+    accountId,
+    learnerId,
+    async () => {
+      if (skills.length === 0) return counts;
+      const rows = await getDb()
+        .select({ skill: skillState.skill, outcome: skillState.outcome })
+        .from(skillState)
+        .where(and(eq(skillState.learnerId, learnerId), inArray(skillState.skill, skills)));
+      const bySkill = new Map(rows.map((r) => [r.skill, r.outcome as SkillOutcome]));
+      for (const s of skills) counts[bySkill.get(s) ?? "not_yet"] += 1;
+      return counts;
+    },
+    counts,
+  );
 }
 
 // ── Enrollment lifecycle + config + settings ─────────────────────────────────
-
-/**
- * Write-time validation for the enrollment `config` jsonb. The action layer
- * already validates caller input, but this store fn is the actual persistence
- * boundary and is exported for other server callers (seeds, future actions,
- * tests). Validating here means malformed data can NEVER be persisted, mirroring
- * the read-side defensive parse — and unlike the read (which fails CLOSED to
- * `{ aiPractice: false }` because corrupt rows already exist), a write fails
- * fast: a bad config must never reach the column. @throws {ZodError}.
- */
-function validateEnrollmentConfig(config: EnrollmentConfig): EnrollmentConfig {
-  return enrollmentConfigSchema.parse(config);
-}
-
-/** Write-time validation for the per-learner `settings` jsonb. Same rationale as
- *  {@link validateEnrollmentConfig}: reject malformed data before it persists. */
-function validateLearnerSettings(settings: LearnerSettings): LearnerSettings {
-  return learnerSettingsSchema.parse(settings);
-}
+//
+// Write-time validation calls `<schema>.parse(...)` directly at each persistence
+// site below. The action layer already validates caller input, but the store is
+// the actual persistence boundary, so re-parsing here means malformed data can
+// NEVER reach the column (defense-in-depth). Unlike the READ path — which fails
+// CLOSED to `{ aiPractice: false }` via parseJsonbFailClosed because corrupt rows
+// may already exist — a WRITE fails fast: a bad value throws {ZodError} and is
+// never persisted.
 
 /**
  * Upsert a program enrollment for the learner (owned-by-account check first).
@@ -475,26 +476,31 @@ export async function assignProgram(
   slug: string,
   programVersionId: string | null,
 ): Promise<boolean> {
-  const owned = await getLearner(accountId, learnerId);
-  if (!owned) return false;
-  // A fresh enrollment starts with an empty config; run it through the schema so
-  // every config write in this store goes through one validation gate.
-  const config = validateEnrollmentConfig({});
-  await getDb()
-    .insert(enrollment)
-    .values({
-      learnerId,
-      programSlug: slug,
-      status: "active",
-      config,
-      programVersionId,
-      updatedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: [enrollment.learnerId, enrollment.programSlug],
-      set: { status: "active", programVersionId, updatedAt: new Date() },
-    });
-  return true;
+  return withOwnedLearner<boolean>(
+    accountId,
+    learnerId,
+    async () => {
+      // A fresh enrollment starts with an empty config; run it through the schema
+      // so every config write in this store goes through one validation gate.
+      const config = enrollmentConfigSchema.parse({});
+      await getDb()
+        .insert(enrollment)
+        .values({
+          learnerId,
+          programSlug: slug,
+          status: "active",
+          config,
+          programVersionId,
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [enrollment.learnerId, enrollment.programSlug],
+          set: { status: "active", programVersionId, updatedAt: new Date() },
+        });
+      return true;
+    },
+    false,
+  );
 }
 
 /**
@@ -510,25 +516,29 @@ export async function setEnrollmentStatus(
   slug: string,
   status: EnrollmentStatus,
 ): Promise<boolean> {
-  const owned = await getLearner(accountId, learnerId);
-  if (!owned) return false;
+  return withOwnedLearner<boolean>(
+    accountId,
+    learnerId,
+    async () => {
+      // Read the current row to enforce the transition matrix.
+      const rows = await getDb()
+        .select({ status: enrollment.status })
+        .from(enrollment)
+        .where(enrollmentKey(learnerId, slug))
+        .limit(1);
+      if (!rows[0]) return false; // No enrollment row.
 
-  // Read the current row to enforce the transition matrix.
-  const rows = await getDb()
-    .select({ status: enrollment.status })
-    .from(enrollment)
-    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
-    .limit(1);
-  if (!rows[0]) return false; // No enrollment row.
+      const current = rows[0].status as EnrollmentStatus;
+      if (!canTransitionStatus(current, status)) return false;
 
-  const current = rows[0].status as EnrollmentStatus;
-  if (!canTransitionStatus(current, status)) return false;
-
-  await getDb()
-    .update(enrollment)
-    .set({ status, updatedAt: new Date() })
-    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)));
-  return true;
+      await getDb()
+        .update(enrollment)
+        .set({ status, updatedAt: new Date() })
+        .where(enrollmentKey(learnerId, slug));
+      return true;
+    },
+    false,
+  );
 }
 
 /**
@@ -543,17 +553,22 @@ export async function setEnrollmentConfig(
   slug: string,
   config: EnrollmentConfig,
 ): Promise<boolean> {
-  const owned = await getLearner(accountId, learnerId);
-  if (!owned) return false;
-  // Validate before persisting: a malformed config must never reach the column
-  // (defense-in-depth behind the action-layer parse). @throws {ZodError}.
-  const validated = validateEnrollmentConfig(config);
-  const updated = await getDb()
-    .update(enrollment)
-    .set({ config: validated, updatedAt: new Date() })
-    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
-    .returning({ id: enrollment.id });
-  return updated.length > 0;
+  return withOwnedLearner<boolean>(
+    accountId,
+    learnerId,
+    async () => {
+      // Validate before persisting: a malformed config must never reach the column
+      // (defense-in-depth behind the action-layer parse). @throws {ZodError}.
+      const validated = enrollmentConfigSchema.parse(config);
+      const updated = await getDb()
+        .update(enrollment)
+        .set({ config: validated, updatedAt: new Date() })
+        .where(enrollmentKey(learnerId, slug))
+        .returning({ id: enrollment.id });
+      return updated.length > 0;
+    },
+    false,
+  );
 }
 
 /**
@@ -564,45 +579,30 @@ export async function listEnrollmentsDetailed(
   accountId: string,
   learnerId: string,
 ): Promise<EnrollmentDetail[]> {
-  const owned = await getLearner(accountId, learnerId);
-  if (!owned) return [];
-  const rows = await getDb()
-    .select()
-    .from(enrollment)
-    .where(eq(enrollment.learnerId, learnerId));
-  return rows.map((r) => ({
-    slug: r.programSlug,
-    status: r.status as EnrollmentStatus,
-    config: r.config as EnrollmentConfig,
-    programVersionId: r.programVersionId,
-    startedAt: r.startedAt,
-  }));
+  return withOwnedLearner<EnrollmentDetail[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select()
+        .from(enrollment)
+        .where(eq(enrollment.learnerId, learnerId));
+      return rows.map((r) => ({
+        slug: r.programSlug,
+        status: r.status as EnrollmentStatus,
+        config: r.config as EnrollmentConfig,
+        programVersionId: r.programVersionId,
+        startedAt: r.startedAt,
+      }));
+    },
+    [],
+  );
 }
 
-/**
- * Parse a stored enrollment config jsonb defensively, failing CLOSED on
- * corruption. A legitimately empty/absent config stays `{}` (default-allow —
- * the §8 gate only blocks on `aiPractice === false`). But a value that FAILS to
- * parse (e.g. a hand-edited row with `aiPractice: "false"`) could have been
- * meant to disable AI, and degrading it to `{}` would leave `aiPractice`
- * undefined → the gate would NOT block → fail-open. So on parse failure we log
- * and return `{ aiPractice: false }`, which blocks AI for that corrupt row.
- */
-function parseEnrollmentConfig(raw: unknown, context: string): EnrollmentConfig {
-  const parsed = enrollmentConfigSchema.safeParse(raw ?? {});
-  if (parsed.success) return parsed.data;
-  captureNonCritical(`malformed enrollment config (${context})`, parsed.error);
-  return { aiPractice: false };
-}
-
-/** Same defensive, fail-closed parse for the per-learner settings jsonb: a
- *  malformed value yields `{ aiPractice: false }` (block), never `{}` (allow). */
-function parseLearnerSettings(raw: unknown, context: string): LearnerSettings {
-  const parsed = learnerSettingsSchema.safeParse(raw ?? {});
-  if (parsed.success) return parsed.data;
-  captureNonCritical(`malformed learner settings (${context})`, parsed.error);
-  return { aiPractice: false };
-}
+// The fail-closed defensive parse for both AI-gate jsonb columns lives in
+// parseJsonbFailClosed (./jsonb): on a corrupt value it returns
+// `{ aiPractice: false }` (block AI), never `{}` (allow). Each read below calls it
+// with the column's schema and a descriptor that is logged as `malformed <ctx>`.
 
 /**
  * Read the enrollment config for a specific (learner, program) pair (owned-by-account).
@@ -615,15 +615,24 @@ export async function getEnrollmentConfig(
   learnerId: string,
   slug: string,
 ): Promise<EnrollmentConfig> {
-  const owned = await getLearner(accountId, learnerId);
-  if (!owned) return {};
-  const rows = await getDb()
-    .select({ config: enrollment.config })
-    .from(enrollment)
-    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
-    .limit(1);
-  if (!rows[0]) return {};
-  return parseEnrollmentConfig(rows[0].config, `learner=${learnerId} slug=${slug}`);
+  return withOwnedLearner<EnrollmentConfig>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select({ config: enrollment.config })
+        .from(enrollment)
+        .where(enrollmentKey(learnerId, slug))
+        .limit(1);
+      if (!rows[0]) return {};
+      return parseJsonbFailClosed(
+        enrollmentConfigSchema,
+        rows[0].config,
+        `enrollment config (learner=${learnerId} slug=${slug})`,
+      );
+    },
+    {},
+  );
 }
 
 /**
@@ -644,15 +653,20 @@ export async function getEnrollmentVersionId(
   learnerId: string,
   slug: string,
 ): Promise<{ programVersionId: string | null } | null> {
-  const owned = await getLearner(accountId, learnerId);
-  if (!owned) return null;
-  const rows = await getDb()
-    .select({ programVersionId: enrollment.programVersionId })
-    .from(enrollment)
-    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
-    .limit(1);
-  if (!rows[0]) return null;
-  return { programVersionId: rows[0].programVersionId };
+  return withOwnedLearner<{ programVersionId: string | null } | null>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select({ programVersionId: enrollment.programVersionId })
+        .from(enrollment)
+        .where(enrollmentKey(learnerId, slug))
+        .limit(1);
+      if (!rows[0]) return null;
+      return { programVersionId: rows[0].programVersionId };
+    },
+    null,
+  );
 }
 
 /**
@@ -667,18 +681,27 @@ export async function getEnrollmentForGate(
   learnerId: string,
   slug: string,
 ): Promise<{ status: EnrollmentStatus; config: EnrollmentConfig } | null> {
-  const owned = await getLearner(accountId, learnerId);
-  if (!owned) return null;
-  const rows = await getDb()
-    .select({ status: enrollment.status, config: enrollment.config })
-    .from(enrollment)
-    .where(and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, slug)))
-    .limit(1);
-  if (!rows[0]) return null;
-  return {
-    status: rows[0].status as EnrollmentStatus,
-    config: parseEnrollmentConfig(rows[0].config, `gate learner=${learnerId} slug=${slug}`),
-  };
+  return withOwnedLearner<{ status: EnrollmentStatus; config: EnrollmentConfig } | null>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select({ status: enrollment.status, config: enrollment.config })
+        .from(enrollment)
+        .where(enrollmentKey(learnerId, slug))
+        .limit(1);
+      if (!rows[0]) return null;
+      return {
+        status: rows[0].status as EnrollmentStatus,
+        config: parseJsonbFailClosed(
+          enrollmentConfigSchema,
+          rows[0].config,
+          `enrollment config (gate learner=${learnerId} slug=${slug})`,
+        ),
+      };
+    },
+    null,
+  );
 }
 
 /**
@@ -692,13 +715,20 @@ export async function getLearnerSettings(
   accountId: string,
   learnerId: string,
 ): Promise<LearnerSettings | null> {
+  // One account-scoped select that ALSO reads the `settings` column (which the
+  // LearnerRow projection doesn't carry) — so this stays inline rather than
+  // going through withOwnedLearner (which would add a second ownership query).
   const rows = await getDb()
     .select({ settings: learner.settings })
     .from(learner)
     .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
     .limit(1);
   if (!rows[0]) return null;
-  return parseLearnerSettings(rows[0].settings, `gate learner=${learnerId}`);
+  return parseJsonbFailClosed(
+    learnerSettingsSchema,
+    rows[0].settings,
+    `learner settings (gate learner=${learnerId})`,
+  );
 }
 
 /**
@@ -715,7 +745,7 @@ export async function saveLearnerSettings(
 ): Promise<boolean> {
   // Validate before persisting: malformed settings must never reach the column
   // (defense-in-depth behind the action-layer parse). @throws {ZodError}.
-  const validated = validateLearnerSettings(settings);
+  const validated = learnerSettingsSchema.parse(settings);
   const updated = await getDb()
     .update(learner)
     .set({ settings: validated, updatedAt: new Date() })
@@ -739,7 +769,9 @@ export async function buildLearnerExport(
   learnerId: string,
   exportedAt: string,
 ): Promise<LearnerExport | null> {
-  // Ownership check: must belong to this account.
+  // Ownership check that ALSO returns the FULL learner row (gatherLearnerExport
+  // needs settings + every column) — so this stays inline rather than going
+  // through withOwnedLearner, whose LearnerRow projection drops settings.
   const rows = await getDb()
     .select()
     .from(learner)

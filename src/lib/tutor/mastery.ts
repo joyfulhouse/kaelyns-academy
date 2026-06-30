@@ -46,11 +46,6 @@ export function outcomeOf(state: SkillState, skill: SkillTag): SkillOutcome {
   return deriveOutcome(state[skill]);
 }
 
-/** Has this skill been attempted at all? */
-export function isAttempted(state: SkillState, skill: SkillTag): boolean {
-  return (state[skill]?.history.length ?? 0) > 0;
-}
-
 /**
  * Fold one activity's skill evidence into the state, stamped with the day.
  * Returns a new state (does not mutate the input).
