@@ -23,6 +23,7 @@ import { synthesizeMp3 } from "@/lib/audio/kokoro";
 import { normalizeText, ttsKey } from "@/lib/audio/ttsKey";
 import { clipExists, putClip } from "@/lib/audio/store";
 import { captureNonCritical } from "@/lib/capture";
+import { dedupeInflight } from "@/lib/concurrency";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getAccountOrNull } from "@/lib/tenancy";
 
@@ -107,17 +108,7 @@ export async function POST(req: Request): Promise<Response> {
 
   // Miss: synthesize (deduped), write-through, stream.
   try {
-    let promise = inflight.get(key);
-    if (!promise) {
-      promise = synthesizeMp3(text, voice, speed);
-      inflight.set(key, promise);
-    }
-    let bytes: Uint8Array<ArrayBuffer>;
-    try {
-      bytes = await promise;
-    } finally {
-      inflight.delete(key);
-    }
+    const bytes = await dedupeInflight(inflight, key, () => synthesizeMp3(text, voice, speed));
     void putClip(prefix, key, bytes); // best-effort; do not block playback
     return new Response(bytes, {
       status: 200,

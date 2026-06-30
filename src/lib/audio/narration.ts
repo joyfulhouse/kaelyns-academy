@@ -6,6 +6,7 @@
  * synth via /api/tts.
  */
 import { captureNonCritical } from "@/lib/capture";
+import { dedupeInflight } from "@/lib/concurrency";
 import { MAX_TTS_TEXT_LEN, type Persist, enSpeed, enVoice, prefixFor } from "./config";
 import { synthesizeMp3 } from "./kokoro";
 import { normalizeText, ttsKey } from "./ttsKey";
@@ -46,15 +47,9 @@ export async function ensureNarration(
 
   // Collapse concurrent identical synths so one clip isn't synthesized/written twice.
   const dedupeKey = `${prefix}/${key}`;
-  const running = inflight.get(dedupeKey);
-  if (running) return running;
-  const task = synthAndStore(canonical, voice, speed, prefix, key);
-  inflight.set(dedupeKey, task);
-  try {
-    return await task;
-  } finally {
-    inflight.delete(dedupeKey);
-  }
+  return dedupeInflight(inflight, dedupeKey, () =>
+    synthAndStore(canonical, voice, speed, prefix, key),
+  );
 }
 
 async function synthAndStore(
