@@ -35,7 +35,7 @@ import { useProgress } from "./useProgress";
  * kid UI snappy; a refetch then reconciles with the server's derived outcome.
  */
 
-export type LearnerMode = "loading" | "account" | "guest";
+type LearnerMode = "loading" | "account" | "guest";
 
 /** A learner as the surface renders it (covers both real DB + mock guests). */
 export interface SurfaceLearner {

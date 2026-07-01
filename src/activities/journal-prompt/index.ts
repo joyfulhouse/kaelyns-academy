@@ -12,6 +12,4 @@ export const journalPrompt: ActivityType<JournalPromptConfig, JournalPromptRespo
   score,
   skillsAffected,
 };
-
-export { schema, score, skillsAffected };
 export type { JournalPromptResponse };

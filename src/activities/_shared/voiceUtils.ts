@@ -5,9 +5,6 @@
  * tune rate/pitch per language (CJK reads a touch slower than English).
  */
 
-/** Locales we author for; any other BCP-47 string is still accepted. */
-export type SpeechLocale = "en-US" | "zh-TW" | "es-MX" | "ja-JP" | "ko-KR" | (string & {});
-
 /** Per-locale prosody. en-US is the fallback for anything unlisted. */
 export const LOCALE_SPEECH_PARAMS: Record<string, { rate: number; pitch: number }> = {
   "en-US": { rate: 0.92, pitch: 1.05 }, // a touch slow for early ears

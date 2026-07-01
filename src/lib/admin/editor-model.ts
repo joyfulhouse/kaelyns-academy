@@ -41,7 +41,7 @@ export interface UnitFormValues {
   lessons: LessonFormValues[];
 }
 
-export interface MetadataFormValues {
+interface MetadataFormValues {
   title: string;
   subtitle: string;
   ageBand: string;

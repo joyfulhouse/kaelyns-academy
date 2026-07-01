@@ -20,6 +20,4 @@ export const mathArray: ActivityType<MathArrayConfig, MathArrayResponse> = {
   score,
   skillsAffected,
 };
-
-export { expectedFor, schema, score, skillsAffected, totalFor };
 export type { MathArrayResponse };

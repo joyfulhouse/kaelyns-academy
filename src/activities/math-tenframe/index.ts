@@ -12,6 +12,4 @@ export const mathTenframe: ActivityType<MathTenframeConfig, MathTenframeResponse
   score,
   skillsAffected,
 };
-
-export { goalFor, schema, score, skillsAffected };
 export type { MathTenframeResponse };

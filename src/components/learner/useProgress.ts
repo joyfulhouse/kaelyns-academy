@@ -18,7 +18,7 @@ import { getKeySnapshot, subscribeKey, writeKey } from "./localStore";
  * keep this hook's return shape identical.
  */
 
-export type StarCount = 0 | 1 | 2 | 3;
+type StarCount = 0 | 1 | 2 | 3;
 
 /** activityId -> best stars earned. Absent key = not yet completed. */
 export type ProgressMap = Record<string, StarCount>;

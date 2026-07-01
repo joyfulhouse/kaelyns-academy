@@ -60,7 +60,7 @@ export function spokenEnglishStrings(item: unknown): string[] {
  *  Generation is capped at 8 items, so a normal batch warms well under this; the
  *  cap only bites on adversarial max-size configs, bounding the fire-and-forget
  *  synth burst (which bypasses the /api/tts rate limit). */
-export const PREWARM_MAX = 128;
+const PREWARM_MAX = 128;
 
 /** The deduped, hard-capped list of strings to pre-warm for a batch of generated
  *  activity configs. Bounds fan-out so one /api/practice response can't enqueue an

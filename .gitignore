@@ -58,3 +58,9 @@ next-env.d.ts
 /blob-report/
 /.playwright/
 /e2e/.auth/
+
+# Local orchestration state — per-worktree, never commit (merge-ready attestations,
+# gate telemetry, isolation worktrees). Committing these leaks local state into PRs.
+/.merge-ready/
+/.claude/logs/
+/.claude/worktrees/

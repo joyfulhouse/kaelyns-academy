@@ -37,7 +37,7 @@ export interface CliDbOptions {
  * open a single-connection postgres client whose connection GUCs bound every
  * statement it runs.
  */
-export function openCliDb(label: string, options: CliDbOptions = {}): Sql {
+function openCliDb(label: string, options: CliDbOptions = {}): Sql {
   const url = process.env.DATABASE_URL;
   if (!url) {
     console.error(`[${label}] DATABASE_URL is not set`);

@@ -9,7 +9,7 @@ import { outcomeFromAccuracy, starsFromAccuracy } from "../_shared/scoring";
 export const schema = readingComprehensionConfig;
 
 /** A single question's kind (literal recall, inference, etc.). */
-export type QuestionKind = ReadingComprehensionConfig["questions"][number]["kind"];
+type QuestionKind = ReadingComprehensionConfig["questions"][number]["kind"];
 
 /**
  * What the child did: per-question, whether they got it on the first tap, plus

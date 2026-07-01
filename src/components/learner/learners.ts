@@ -24,11 +24,11 @@ export const LEARNERS: Learner[] = [
   { id: "robin", name: "Robin", avatar: "🐢" },
 ];
 
-export const DEFAULT_LEARNER_ID = LEARNERS[0].id;
+const DEFAULT_LEARNER_ID = LEARNERS[0].id;
 
 const ACTIVE_LEARNER_KEY = "ka:active-learner";
 
-export function getLearner(id: string): Learner | undefined {
+function getLearner(id: string): Learner | undefined {
   return LEARNERS.find((l) => l.id === id);
 }
 

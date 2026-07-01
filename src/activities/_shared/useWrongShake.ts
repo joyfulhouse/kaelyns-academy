@@ -5,9 +5,9 @@ import type { TargetAndTransition, Transition } from "motion/react";
 import { useManagedTimeout } from "./useManagedTimeout";
 
 /** The wrong-answer shake keyframes: a quick, decaying left-right wobble (DESIGN.md §4). */
-export const SHAKE_ANIM: TargetAndTransition = { x: [0, -8, 8, -6, 6, 0] };
+const SHAKE_ANIM: TargetAndTransition = { x: [0, -8, 8, -6, 6, 0] };
 /** Shared transition for the shake and its resting state. */
-export const SHAKE_TRANSITION: Transition = { duration: 0.4, ease: [0.25, 1, 0.5, 1] };
+const SHAKE_TRANSITION: Transition = { duration: 0.4, ease: [0.25, 1, 0.5, 1] };
 
 const REST: TargetAndTransition = { x: 0 };
 

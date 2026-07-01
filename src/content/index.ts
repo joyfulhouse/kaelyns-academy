@@ -23,10 +23,6 @@ export function getUnit(program: Program, unitId: string): Unit | undefined {
   return program.units.find((u) => u.id === unitId);
 }
 
-export function getLesson(unit: Unit, lessonId: string): Lesson | undefined {
-  return unit.lessons.find((l) => l.id === lessonId);
-}
-
 /** One activity together with its containing unit and lesson. */
 export interface ActivityContext {
   unit: Unit;

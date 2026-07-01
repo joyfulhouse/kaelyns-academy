@@ -40,9 +40,9 @@ export const EXPORT_NOT_EXPORTED = [
 ] as const;
 
 /** Where the manifest points for the retention policy + full inventory rationale. */
-export const PRIVACY_DOC_PATH = "docs/architecture/PRIVACY.md";
+const PRIVACY_DOC_PATH = "docs/architecture/PRIVACY.md";
 
-export interface AccountExportManifest {
+interface AccountExportManifest {
   schemaVersion: number;
   /** ISO, injected by the action. */
   exportedAt: string;
@@ -55,7 +55,7 @@ export interface AccountExportManifest {
 }
 
 /** The minimized parent record — NEVER password/tokens. */
-export interface AccountExportAccount {
+interface AccountExportAccount {
   id: string;
   email: string;
   createdAt: string;

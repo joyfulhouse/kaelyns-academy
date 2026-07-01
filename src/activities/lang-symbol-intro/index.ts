@@ -12,6 +12,4 @@ export const langSymbolIntro: ActivityType<LangSymbolIntroConfig, LangSymbolIntr
   score,
   skillsAffected,
 };
-
-export { schema, score, skillsAffected };
 export type { LangSymbolIntroResponse };

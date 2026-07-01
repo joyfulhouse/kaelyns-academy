@@ -2,8 +2,8 @@ import Link from "next/link";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
-export type ButtonVariant = "primary" | "honey" | "accent" | "soft" | "ghost";
-export type ButtonSize = "sm" | "md" | "lg" | "kid";
+type ButtonVariant = "primary" | "honey" | "accent" | "soft" | "ghost";
+type ButtonSize = "sm" | "md" | "lg" | "kid";
 
 /** bg + text per variant (contrast-safe: light fills carry ink, deep fills carry on-accent) */
 const FILL: Record<ButtonVariant, string> = {

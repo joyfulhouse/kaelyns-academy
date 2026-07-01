@@ -29,7 +29,7 @@ export type SkillDomain =
   | "japanese"
   | "korean";
 export type SkillTag = string; // "phonics.digraphs"
-export type StandardTag = string; // "CCSS.RF.1.3"
+type StandardTag = string; // "CCSS.RF.1.3"
 
 /** Per-program visual world (sets --accent over the stable shell). */
 export type World = "sunshine" | "ocean" | "space" | "garden" | "bigtop";
@@ -65,7 +65,7 @@ export type Activity =
   | ActivityOf<"lang-symbol-intro", LangSymbolIntroConfig>
   | ActivityOf<"lang-listen-match", LangListenMatchConfig>;
 
-export type CheckpointKind = "baseline" | "mid" | "final";
+type CheckpointKind = "baseline" | "mid" | "final";
 
 export interface Lesson {
   id: string;

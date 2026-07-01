@@ -20,14 +20,10 @@ import { parseInput } from "@/lib/actions/results";
 import { idParam, withAdminAction, type AdminErrorResult } from "@/lib/admin/action-helpers";
 import {
   createProgramDraft,
-  loadVersionForEdit,
   saveVersionTree,
   publishVersion,
   cloneVersionToDraft,
   archiveProgram,
-  listAdminPrograms,
-  type EditableVersion,
-  type AdminProgramRow,
 } from "@/lib/content/store";
 
 // NOTE: do NOT re-export types from this "use server" file. Next.js's server-action
@@ -193,29 +189,5 @@ export async function archiveProgramAction(
     await archiveProgram(programId);
     revalidateCatalog();
     return { ok: true };
-  });
-}
-
-/** Load a version's full tree for editing (any status). */
-export async function loadVersionForEditAction(
-  versionId: string,
-): Promise<{ ok: true; version: EditableVersion } | AdminErrorResult> {
-  return withAdminAction("loadVersionForEditAction", async () => {
-    const id = idParam(versionId, "Invalid version id.");
-    if (!id.ok) return id;
-
-    const version = await loadVersionForEdit(versionId);
-    if (!version) return { ok: false, reason: "unavailable", message: "Version not found." };
-    return { ok: true, version };
-  });
-}
-
-/** List all programs (any status) for the admin program list. */
-export async function listAdminProgramsAction(): Promise<
-  { ok: true; programs: AdminProgramRow[] } | AdminErrorResult
-> {
-  return withAdminAction("listAdminProgramsAction", async () => {
-    const programs = await listAdminPrograms();
-    return { ok: true, programs };
   });
 }

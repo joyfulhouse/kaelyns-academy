@@ -104,12 +104,14 @@ export function ProgramPicker({ programs }: { programs: PickerProgram[] }) {
       }
       // CURATION GAP (accepted, P0 pilot): when a signed-in child has zero
       // active enrollments, `visibleSlugs` is `null` → the picker shows ALL
-      // published programs (the kid can then self-enroll by opening a tile, see
-      // ensureEnrollmentAction). Parent assignment is NOT strictly enforced on
-      // the kid surface — a deliberately forgiving UX so a child never hits an
-      // empty/locked screen. Bounds: removed programs stay removed, only
-      // never-assigned PUBLISHED programs are reachable, and nothing crosses
-      // accounts. See docs/claude/KNOWN-RISKS-P0-PILOT.md ("Kid-surface curation").
+      // published programs so the kid can open any tile. Parent assignment is NOT
+      // strictly enforced on the kid surface — a deliberately forgiving UX so a
+      // child never hits an empty/locked screen. Opening a tile does not itself
+      // enroll: the server gate (getLearnerStateAction) fails closed unless the
+      // enrollment is already active, so a never-assigned program renders the calm
+      // "ask a grown-up" state. Bounds: removed programs stay removed, only
+      // PUBLISHED programs are reachable, and nothing crosses accounts. See
+      // docs/claude/KNOWN-RISKS-P0-PILOT.md ("Kid-surface curation").
       // None resolved (e.g. enrollment read unavailable) falls back to all.
       setResolution({ phase: "ready", visibleSlugs: known.length > 0 ? known : null });
     })();
