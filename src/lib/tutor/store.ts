@@ -3,7 +3,16 @@
 // is the guard, and only server actions / route handlers import it.)
 import { and, count, desc, eq, inArray, lt, or } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { attempt, deletionAudit, enrollment, learner, skillState, user, verification } from "@/lib/db/schema";
+import {
+  attempt,
+  deletionAudit,
+  enrollment,
+  learner,
+  skillState,
+  starLedger,
+  user,
+  verification,
+} from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
 import {
@@ -13,6 +22,7 @@ import {
   type LearnerSettings,
 } from "@/lib/content/config";
 import { getPublishedVersionId } from "@/lib/content/store";
+import { earnedStarsForAttempt } from "@/lib/rewards/logic";
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
 import { shapeLearnerExport, type LearnerExport } from "./export";
 import { shapeAccountExport, type AccountExport } from "./account-export";
@@ -202,6 +212,34 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
       genRoute: provenance?.route ?? null,
       genAt: provenance?.at ?? null,
     });
+
+    // Star economy (Adventure 2.0): first authored completion earns score.stars
+    // into the append-only ledger, inside this same transaction (all-or-nothing
+    // with the attempt). Repeats/generated earn 0 (v1 grind-proof rule).
+    const prior = await tx
+      .select({ id: attempt.id })
+      .from(attempt)
+      .where(
+        and(
+          eq(attempt.learnerId, input.learnerId),
+          eq(attempt.activityId, input.activityId),
+          eq(attempt.generated, false),
+        ),
+      )
+      .limit(2); // the row we just inserted + any earlier one
+    const earned = earnedStarsForAttempt({
+      generated,
+      stars: input.score.stars,
+      alreadyCompleted: prior.length > 1,
+    });
+    if (earned > 0) {
+      await tx.insert(starLedger).values({
+        learnerId: input.learnerId,
+        delta: earned,
+        reason: "activity_complete",
+        refId: input.activityId,
+      });
+    }
 
     // Acquire the per-skill row locks in a deterministic (skill-sorted) order:
     // two concurrent attempts for the same learner with overlapping skills would

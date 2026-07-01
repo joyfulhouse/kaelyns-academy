@@ -12,12 +12,19 @@ const lockedSkills: string[] = [];
 // The values() payload of each `attempt` insert — lets a test assert provenance
 // (gen_model/gen_route/gen_at) is persisted for generated rows and null otherwise.
 const attemptInserts: Record<string, unknown>[] = [];
+// The values() payload of each `star_ledger` insert — lets a test assert the
+// star-economy earn (delta/reason/refId) written inside recordAttempt's tx.
+const ledgerInserts: Record<string, unknown>[] = [];
 // Mutable canned rows the fake `tx` returns for each select target.
 const learnerRows = { value: [{ id: "L1" }] as Record<string, unknown>[] };
 const skillRows = { value: [] as Record<string, unknown>[] };
 // The in-tx active-enrollment gate read (Fix-F A4): default ACTIVE so the
 // happy-path tests persist; the gate tests override to removed/paused/none.
 const enrollmentRows = { value: [{ status: "active" }] as Record<string, unknown>[] };
+// The in-tx "prior authored completion" read (star economy): default a single
+// row (only the just-inserted attempt) so the happy path is a first completion;
+// the repeat-completion test overrides to two rows (prior + just-inserted).
+const attemptRows = { value: [{ id: "new" }] as Record<string, unknown>[] };
 
 function tableName(t: unknown): string {
   return (t as { _name?: string })._name ?? "unknown";
@@ -46,6 +53,9 @@ function builder(op: string, table: string) {
       if (chain.op === "insert" && chain.table === "attempt" && v) {
         attemptInserts.push(v);
       }
+      if (chain.op === "insert" && chain.table === "star_ledger" && v) {
+        ledgerInserts.push(v);
+      }
       return chain;
     },
     onConflictDoNothing() {
@@ -68,7 +78,9 @@ function builder(op: string, table: string) {
             ? skillRows.value
             : chain.op === "select" && chain.table === "enrollment"
               ? enrollmentRows.value
-              : [];
+              : chain.op === "select" && chain.table === "attempt"
+                ? attemptRows.value
+                : [];
       return Promise.resolve(rows).then(resolve);
     },
   };
@@ -92,9 +104,10 @@ const transaction = vi.fn(async (fn: (tx: unknown) => Promise<void>) => fn(tx));
 vi.mock("@/lib/db", () => ({ getDb: () => ({ transaction }) }));
 vi.mock("@/lib/db/schema", () => ({
   learner: { _name: "learner", id: {}, accountId: {} },
-  attempt: { _name: "attempt" },
+  attempt: { _name: "attempt", id: {}, learnerId: {}, activityId: {}, generated: {} },
   enrollment: { _name: "enrollment", learnerId: {}, programSlug: {}, status: {} },
   skillState: { _name: "skill_state", id: {}, learnerId: {}, skill: {} },
+  starLedger: { _name: "star_ledger" },
 }));
 // drizzle-orm operators are used only to build opaque predicate objects here.
 vi.mock("drizzle-orm", () => ({
@@ -125,10 +138,12 @@ describe("recordAttempt (atomic persistence)", () => {
     ops.length = 0;
     lockedSkills.length = 0;
     attemptInserts.length = 0;
+    ledgerInserts.length = 0;
     transaction.mockClear();
     learnerRows.value = [{ id: "L1" }];
     skillRows.value = [];
     enrollmentRows.value = [{ status: "active" }];
+    attemptRows.value = [{ id: "new" }];
   });
 
   it("runs inside a single transaction", async () => {
@@ -274,6 +289,27 @@ describe("recordAttempt (atomic persistence)", () => {
       },
     });
     expect(lockedSkills).toEqual(["math.add", "math.count", "math.sub"]);
+  });
+
+  // ── Adventure 2.0: star-economy earn on first authored completion ───────────
+
+  it("credits the ledger inside the tx on a first authored completion", async () => {
+    // Default attemptRows.value is a single row (only the just-inserted attempt).
+    await recordAttempt("acct-1", input);
+    expect(ledgerInserts).toEqual([
+      expect.objectContaining({ delta: 3, reason: "activity_complete", refId: input.activityId }),
+    ]);
+  });
+
+  it("writes no ledger row for generated practice", async () => {
+    await recordAttempt("acct-1", { ...input, generated: true });
+    expect(ledgerInserts).toHaveLength(0);
+  });
+
+  it("writes no ledger row on a repeat completion", async () => {
+    attemptRows.value = [{ id: "prev" }, { id: "new" }]; // prior authored attempt exists
+    await recordAttempt("acct-1", input);
+    expect(ledgerInserts).toHaveLength(0);
   });
 });
 
