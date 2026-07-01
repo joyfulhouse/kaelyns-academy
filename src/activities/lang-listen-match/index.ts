@@ -12,6 +12,4 @@ export const langListenMatch: ActivityType<LangListenMatchConfig, LangListenMatc
   score,
   skillsAffected,
 };
-
-export { schema, score, skillsAffected };
 export type { LangListenMatchResponse };

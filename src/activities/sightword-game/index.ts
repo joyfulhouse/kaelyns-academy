@@ -12,6 +12,4 @@ export const sightwordGame: ActivityType<SightwordGameConfig, SightwordGameRespo
   score,
   skillsAffected,
 };
-
-export { schema, score, skillsAffected };
 export type { SightwordGameResponse };

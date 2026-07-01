@@ -16,6 +16,4 @@ export const readingComprehension: ActivityType<
   score,
   skillsAffected,
 };
-
-export { schema, score, skillsAffected };
 export type { ReadingComprehensionResponse };

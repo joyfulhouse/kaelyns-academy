@@ -12,6 +12,4 @@ export const phonicsWordbuild: ActivityType<PhonicsWordbuildConfig, PhonicsWordb
   score,
   skillsAffected,
 };
-
-export { schema, score, skillsAffected };
 export type { PhonicsWordbuildResponse };
