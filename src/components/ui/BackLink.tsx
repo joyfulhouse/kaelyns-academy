@@ -10,7 +10,7 @@ import { ArrowLeftIcon } from "@phosphor-icons/react/dist/ssr";
  *   - transition: admin program detail / edit back-links
  *   - plain:      the curriculum back-link (which supplies its own caret icon)
  */
-export type BackLinkVariant = "underline" | "transition" | "plain";
+type BackLinkVariant = "underline" | "transition" | "plain";
 
 const VARIANT_CLASS: Record<BackLinkVariant, string> = {
   underline:

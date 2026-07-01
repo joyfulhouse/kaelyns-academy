@@ -35,7 +35,7 @@ export interface ProgressReportSkill {
 }
 
 /** A recent activity result, already reduced to what the parent sees. */
-export interface ProgressReportRecent {
+interface ProgressReportRecent {
   title: string;
   stars: number;
 }
@@ -52,7 +52,7 @@ export interface ProgressReportInput {
  * The validated report. Each list holds {@link MIN_LIST}..{@link MAX_LIST} short
  * items; `summary` and `suggestion` are short paragraphs of plain prose.
  */
-export const progressReportSchema = z.object({
+const progressReportSchema = z.object({
   summary: z.string().min(1).max(800),
   wins: z.array(z.string().min(1).max(240)).min(MIN_LIST).max(MAX_LIST),
   reinforce: z.array(z.string().min(1).max(240)).min(MIN_LIST).max(MAX_LIST),

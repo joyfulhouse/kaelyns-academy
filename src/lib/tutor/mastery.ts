@@ -21,7 +21,7 @@ export interface SkillRecord {
 export type SkillState = Record<SkillTag, SkillRecord>;
 
 /** Number of distinct days on which the skill should be solid before it locks. */
-export const MASTERY_DISTINCT_DAYS = 2;
+const MASTERY_DISTINCT_DAYS = 2;
 
 /** Keep history bounded so localStorage can't grow without limit. */
 const MAX_HISTORY = 24;

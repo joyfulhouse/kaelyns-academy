@@ -2,8 +2,6 @@ import type { EnrollmentConfig } from "@/lib/content/config";
 
 export type EnrollmentStatus = "active" | "paused" | "removed";
 
-export const ENROLLMENT_STATUSES: EnrollmentStatus[] = ["active", "paused", "removed"];
-
 /**
  * Allowed status transitions for an enrollment:
  *  - X → X (idempotent) always true.

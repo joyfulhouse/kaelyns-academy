@@ -15,7 +15,7 @@ const DEFAULT_BASE = "/audio";
 const CLIP_EXT = "m4a";
 
 /** Client-safe base URL for audio clips (NEXT_PUBLIC_ so it inlines on the client). */
-export function audioBaseUrl(): string {
+function audioBaseUrl(): string {
   const fromEnv =
     typeof process !== "undefined" ? process.env.NEXT_PUBLIC_AUDIO_BASE_URL : undefined;
   return fromEnv && fromEnv.trim() ? fromEnv.trim().replace(/\/$/, "") : DEFAULT_BASE;

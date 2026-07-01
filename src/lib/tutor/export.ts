@@ -10,7 +10,7 @@ import type { LearnerSettings, EnrollmentConfig } from "@/lib/content/config";
  * from a generated attempt. Metadata only — model/route/when — never a raw
  * prompt (which could embed the child's display name → PII).
  */
-export interface AiProvenanceEntry {
+interface AiProvenanceEntry {
   activityId: string;
   kind: string;
   /** Logical model route (e.g. "ha-assist"); null for pre-provenance generated rows. */

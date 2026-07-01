@@ -1,7 +1,7 @@
 import type { ComponentPropsWithoutRef, ElementType, ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
-export type SurfaceTone = "paper" | "raised" | "sunk" | "accent-tint";
+type SurfaceTone = "paper" | "raised" | "sunk" | "accent-tint";
 
 const TONE: Record<SurfaceTone, string> = {
   paper: "bg-paper",

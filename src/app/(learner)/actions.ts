@@ -10,7 +10,6 @@ import {
   getCompletedActivityIds,
   getEnrollmentConfig,
   getEnrollmentForGate,
-  getLearner,
   getLearnerSettings,
   getSkillState,
   listEnrollmentsDetailed,
@@ -22,7 +21,7 @@ import {
   skillTagsForProgram,
 } from "@/content";
 import type { Program } from "@/content";
-import { listProgramsAsync, resolveLearnerProgram } from "@/lib/content/repository";
+import { resolveLearnerProgram } from "@/lib/content/repository";
 import type { SkillState } from "@/lib/tutor";
 
 /**
@@ -140,45 +139,6 @@ export async function getEnrollmentsAction(learnerId: string): Promise<string[]>
       captureNonCritical("getEnrollmentsAction failed", error);
     }
     return [];
-  }
-}
-
-export type EnsureEnrollmentResult =
-  | { ok: true }
-  | { ok: false; reason: "unauthenticated" | "invalid" | "error" };
-
-/**
- * Lazily enroll a learner into a program the first time they open it. The slug
- * is validated against the program registry before any write, so an untrusted
- * URL slug can never create a bogus enrollment. Never throws to the client.
- *
- * CURATION GAP (accepted, P0 pilot): this lets a signed-in child self-enroll
- * into ANY published program by opening it (the kid surface shows all published
- * programs when they have no active assignments — see ProgramPicker). Parent
- * assignment is intentionally not strictly enforced on the kid surface, so a
- * child never lands on an empty/locked screen. Bounds: tenancy is still enforced
- * (only a learner the account owns is enrolled), removed programs stay removed,
- * and only PUBLISHED programs are reachable. See
- * docs/claude/KNOWN-RISKS-P0-PILOT.md ("Kid-surface curation").
- */
-export async function ensureEnrollmentAction(
-  learnerId: string,
-  programSlug: string,
-): Promise<EnsureEnrollmentResult> {
-  if (!learnerId) return { ok: false, reason: "invalid" };
-  const known = (await listProgramsAsync()).some((p) => p.slug === programSlug);
-  if (!known) return { ok: false, reason: "invalid" };
-  try {
-    await withAccount(async ({ accountId }) => {
-      // Only enroll a learner the signed-in account actually owns (tenancy).
-      const owned = await getLearner(accountId, learnerId);
-      if (owned) await ensureEnrollment(learnerId, programSlug);
-    });
-    return { ok: true };
-  } catch (error) {
-    if (error instanceof UnauthenticatedError) return { ok: false, reason: "unauthenticated" };
-    captureNonCritical("ensureEnrollmentAction failed", error);
-    return { ok: false, reason: "error" };
   }
 }
 

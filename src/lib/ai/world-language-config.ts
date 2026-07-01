@@ -26,7 +26,7 @@ export function isLangKind(kind: ActivityKind): kind is LangActivityKind {
  * list focused (and the token budget bounded) while leaving plenty of room for
  * a slice plus distractors. The largest authored group is well under this.
  */
-export const INVENTORY_SLICE_CAP = 40;
+const INVENTORY_SLICE_CAP = 40;
 
 /**
  * Model routing for language generation. The CJK + Spanish routes stay on the

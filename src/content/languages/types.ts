@@ -13,7 +13,7 @@ import type { SkillDomain } from "../types";
  * Pedagogical mode. Zhuyin = the learner already speaks the language and maps
  * known sounds onto new symbols; the rest = a new language from scratch.
  */
-export type LangMode = "script-mapping" | "l2-from-scratch";
+type LangMode = "script-mapping" | "l2-from-scratch";
 
 /** One canonical symbol / word in a language's inventory. */
 export interface ScriptEntry {
@@ -45,7 +45,7 @@ export interface ScriptEntry {
 }
 
 /** TTS voice preference hints for the browser Speech API. */
-export interface VoiceHints {
+interface VoiceHints {
   /** BCP-47 tag set on `SpeechSynthesisUtterance.lang`. */
   lang: string;
   /** Preferred installed-voice name substrings, in priority order. */

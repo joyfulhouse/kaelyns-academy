@@ -8,6 +8,6 @@ import { createAuthClient } from "better-auth/react";
  * server secrets (`BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`) are read lazily in
  * `@/lib/auth`, never here.
  */
-export const authClient = createAuthClient();
+const authClient = createAuthClient();
 
-export const { signIn, signUp, signOut, useSession } = authClient;
+export const { signIn, signUp, signOut } = authClient;

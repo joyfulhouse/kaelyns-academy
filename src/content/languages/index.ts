@@ -10,8 +10,7 @@ import { korean } from "./korean";
  * voice. The bounded AI generator draws answers/distractors ONLY from these
  * inventories, and the audio pipeline keys clip ids off `ScriptEntry.id`.
  */
-export type { LanguageDef, ScriptEntry, LangMode, VoiceHints } from "./types";
-export { audioBaseUrl, audioClipUrl } from "./audio";
+export type { LanguageDef, ScriptEntry } from "./types";
 
 /** All languages, keyed by id (== SkillDomain == the program Unit id). */
 export const LANGUAGES: Record<LanguageDef["id"], LanguageDef> = {

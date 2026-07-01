@@ -7,12 +7,6 @@ import type { ActivityScore, SkillOutcome, SkillTag } from "@/content/types";
  * activity is completed before it scores; stars reflect independence.
  */
 
-/** Clamp any number into the 0..3 star range as an integer. */
-export function clampStars(n: number): 0 | 1 | 2 | 3 {
-  const s = Math.max(0, Math.min(3, Math.round(n)));
-  return s as 0 | 1 | 2 | 3;
-}
-
 /**
  * Map a first-try success rate (0..1) to earned stars. Thresholds are shared
  * with `outcomeFromAccuracy` so stars and skill evidence always agree:

@@ -38,7 +38,6 @@ import {
 import type { EnrollmentConfig } from "@/lib/content/config";
 import type { EnrollmentStatus } from "@/lib/tutor/enrollment";
 import type { EnrolledProgramView } from "@/lib/parent-views";
-export type { EnrolledProgramView } from "@/lib/parent-views";
 
 /**
  * Read helpers for the parent surface, every one scoped through `withAccount`
@@ -113,7 +112,7 @@ export interface LearnerCard {
  * server. "Today" / "Yesterday" for the recent past, otherwise a short date.
  * Returns the raw string if it does not parse (defensive; never throws).
  */
-export function relativeDay(day: string, today: Date = new Date()): string {
+function relativeDay(day: string, today: Date = new Date()): string {
   const parsed = new Date(`${day}T00:00:00`);
   if (Number.isNaN(parsed.getTime())) return day;
   const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -420,8 +419,7 @@ export function avatarInitial(displayName: string): string {
 /* ── Curriculum read helper ────────────────────────────────────────────────── */
 
 // EnrolledProgramView is the canonical shape shared with the client via
-// @/lib/parent-views (re-exported at the top of this file so callers can
-// import it from either location).
+// @/lib/parent-views; consumers import it from there directly.
 
 /** The two lists the CurriculumPanel renders. */
 export interface LearnerCurriculum {
@@ -512,7 +510,7 @@ export interface LearnerWithStatus {
 /**
  * A unit summary derived from the full program tree.
  */
-export interface UnitSummary {
+interface UnitSummary {
   key: string;
   title: string;
   emoji?: string;
@@ -521,7 +519,7 @@ export interface UnitSummary {
 /**
  * A skill entry for the program-detail page (label + domain, deduped).
  */
-export interface ProgramSkillEntry {
+interface ProgramSkillEntry {
   label: string;
   domain: string;
 }

@@ -105,22 +105,6 @@ export async function ensureEnrollment(learnerId: string, programSlug: string): 
     .onConflictDoNothing({ target: [enrollment.learnerId, enrollment.programSlug] });
 }
 
-/** Program slugs a learner is enrolled in (verified to belong to the account). */
-export async function listEnrollments(accountId: string, learnerId: string): Promise<string[]> {
-  return withOwnedLearner<string[]>(
-    accountId,
-    learnerId,
-    async () => {
-      const rows = await getDb()
-        .select({ programSlug: enrollment.programSlug })
-        .from(enrollment)
-        .where(eq(enrollment.learnerId, learnerId));
-      return rows.map((r) => r.programSlug);
-    },
-    [],
-  );
-}
-
 /**
  * Thrown by {@link recordAttempt} when the learner has no ACTIVE enrollment for
  * the program the attempt belongs to (Fix-F A4). The attempt is NOT persisted;
@@ -296,7 +280,7 @@ export async function getRecentAttempts(
 }
 
 /** One AI-generated attempt for the parent-visible provenance trail (P6 / §8). */
-export interface GeneratedAttempt {
+interface GeneratedAttempt {
   activityId: string;
   kind: string;
   stars: number;

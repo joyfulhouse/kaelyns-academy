@@ -19,7 +19,7 @@ import { getKeySnapshot, subscribeKey, writeKey } from "./localStore";
  * the same subscribe/getSnapshot/record contract and keep this return shape.
  */
 
-export type SkillEvidence = { skill: SkillTag; outcome: SkillOutcome };
+type SkillEvidence = { skill: SkillTag; outcome: SkillOutcome };
 
 export interface UseSkillState {
   /** The learner's current mastery state (engine `SkillState`). */

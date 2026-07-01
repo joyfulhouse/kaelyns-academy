@@ -9,7 +9,7 @@
  * "coming soon" placeholder (getActivityType(kind) returns undefined), so the
  * learner surface and the activity plugins can be built independently.
  */
-import { registerActivityType, type RegisteredActivityType } from "@/content/registry";
+import { registerActivityType } from "@/content/registry";
 import { phonicsWordbuild } from "./phonics-wordbuild";
 import { sightwordGame } from "./sightword-game";
 import { mathTenframe } from "./math-tenframe";
@@ -37,6 +37,4 @@ export function registerActivityTypes(): void {
 
 registerActivityTypes();
 
-/** Re-exported for convenience so the host can import from one place. */
-export type { RegisteredActivityType };
 export { getActivityType, allActivityTypes, isActivityKindRegistered } from "@/content/registry";

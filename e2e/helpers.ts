@@ -5,7 +5,7 @@ import { type Page, expect } from "@playwright/test";
  * the two SEEDED accounts plus per-run throwaway accounts created by the auth spec.
  */
 
-export function requireEnv(name: string): string {
+function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
     throw new Error(`Missing env ${name}. Set it in .env.local — see e2e/README.md.`);
@@ -57,12 +57,6 @@ export async function signUp(
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Create account" }).click();
   await page.waitForURL("**/parent", { timeout: 30_000 });
-}
-
-/** Sign out from the parent dashboard (desktop sidebar control). */
-export async function signOut(page: Page): Promise<void> {
-  await page.locator("aside").getByRole("button", { name: "Sign out" }).click();
-  await page.waitForURL("**/sign-in", { timeout: 30_000 });
 }
 
 /** Permanently delete the currently signed-in account via the §8 re-auth flow. */
