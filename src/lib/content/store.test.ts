@@ -47,6 +47,7 @@ describe("assembleProgram", () => {
           mathFocus: "Addition",
           project: "Build a number line",
           checkpoint: null,
+          branchKey: null,
         },
         {
           id: "u1",
@@ -61,6 +62,7 @@ describe("assembleProgram", () => {
           mathFocus: null,
           project: "Book talk",
           checkpoint: null,
+          branchKey: null,
         },
       ],
       lessons: [
@@ -157,6 +159,7 @@ describe("assembleProgram", () => {
           mathFocus: null,
           project: "Read",
           checkpoint: null,
+          branchKey: null,
         },
       ],
       lessons: [
@@ -218,6 +221,7 @@ describe("assembleProgram", () => {
           mathFocus: "Tenframe",
           project: "Count things",
           checkpoint: null,
+          branchKey: null,
         },
       ],
       lessons: [
@@ -280,6 +284,7 @@ describe("assembleProgram", () => {
           mathFocus: null,
           project: "Count",
           checkpoint: null,
+          branchKey: null,
         },
       ],
       lessons: [
@@ -353,6 +358,7 @@ describe("assembleProgram", () => {
           mathFocus: null,
           project: "Read",
           checkpoint: null,
+          branchKey: null,
         },
       ],
       lessons: [

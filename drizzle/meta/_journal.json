@@ -64,6 +64,13 @@
       "when": 1782568557584,
       "tag": "0008_ambitious_maddog",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1782949585719,
+      "tag": "0009_living_doorman",
+      "breakpoints": true
     }
   ]
 }
