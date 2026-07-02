@@ -38,6 +38,7 @@ export interface UnitFormValues {
   mathFocus: string;
   project: string;
   checkpoint: string; // "" | "baseline" | "mid" | "final"
+  branchKey: string; // "" | authored branch key (Adventure 2.0 forking, spec §4.4)
   lessons: LessonFormValues[];
 }
 
@@ -142,6 +143,7 @@ export function newUnit(): UnitFormValues {
     mathFocus: "",
     project: "",
     checkpoint: "",
+    branchKey: "",
     lessons: [],
   };
 }
@@ -179,6 +181,7 @@ function unitToForm(u: EditableUnit): UnitFormValues {
     mathFocus: u.mathFocus ?? "",
     project: u.project ?? "",
     checkpoint: u.checkpoint ?? "",
+    branchKey: u.branchKey ?? "",
     lessons: u.lessons.map(lessonToForm),
   };
 }
@@ -248,6 +251,7 @@ function formToUnit(u: UnitFormValues): EditableUnit {
     mathFocus: u.mathFocus || undefined,
     project: u.project || undefined,
     checkpoint: u.checkpoint || undefined,
+    branchKey: u.branchKey || undefined,
     lessons: u.lessons.map(formToLesson),
   };
 }

@@ -40,6 +40,7 @@ const FIXTURE: EditableVersion = {
       mathFocus: "addition",
       project: "Build a diorama",
       checkpoint: "baseline",
+      branchKey: "left",
       lessons: [
         {
           lessonKey: "lesson-01",
@@ -100,7 +101,7 @@ describe("editableToForm + formToEditable round-trip", () => {
     expect(back.metadata.languages).toEqual(["en", "zh-TW"]);
   });
 
-  it("preserves unit fields (emoji, world, bigIdea, checkpoint)", () => {
+  it("preserves unit fields (emoji, world, bigIdea, checkpoint, branchKey)", () => {
     const form = editableToForm(FIXTURE);
     const back = formToEditable(form);
     const u = back.units[0];
@@ -108,6 +109,7 @@ describe("editableToForm + formToEditable round-trip", () => {
     expect(u?.world).toBe("ocean");
     expect(u?.bigIdea).toBe("Oceans are full of life");
     expect(u?.checkpoint).toBe("baseline");
+    expect(u?.branchKey).toBe("left");
   });
 
   it("preserves activity fields (band, skillTags, estMinutes, config)", () => {
@@ -121,7 +123,7 @@ describe("editableToForm + formToEditable round-trip", () => {
     expect((a?.config as { focus: string })?.focus).toBe("sh, ch");
   });
 
-  it("handles optional fields (no subtitle, no checkpoint, no blurb)", () => {
+  it("handles optional fields (no subtitle, no checkpoint, no branchKey, no blurb)", () => {
     const minimal: EditableVersion = {
       ...FIXTURE,
       metadata: { ...FIXTURE.metadata, subtitle: undefined, ageBand: undefined },
@@ -156,6 +158,7 @@ describe("editableToForm + formToEditable round-trip", () => {
 
     expect(back.metadata.subtitle).toBeUndefined();
     expect(back.units[0]?.checkpoint).toBeUndefined();
+    expect(back.units[0]?.branchKey).toBeUndefined();
     const a = back.units[0]?.lessons[0]?.activities[0];
     expect(a?.blurb).toBeUndefined();
     expect(a?.estMinutes).toBeUndefined();

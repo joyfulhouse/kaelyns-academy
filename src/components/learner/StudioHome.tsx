@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import {
   ArrowRightIcon,
@@ -27,6 +27,7 @@ import { useRewards } from "./useRewards";
 import { useQuests } from "./useQuests";
 import { TodaysAdventures } from "./TodaysAdventures";
 import { computeUnitProgress, computeProgramRatio } from "./useProgress";
+import { computeUnlockedIds, segmentUnits } from "./branching";
 import { ACTIVITY_META } from "./activityMeta";
 
 /**
@@ -367,6 +368,36 @@ function WorldMap({
     ? program.units.filter((u) => activeUnitKeys.has(u.id))
     : program.units;
 
+  // Fork-aware unlock (spec §4.4): a unit is "started" once it has any
+  // completion, same "forgiving" posture as the old prevDone gate — but routed
+  // through the pure branching model so fork groups open both paths together
+  // and a fully linear program (no branchKey anywhere) unlocks identically to
+  // before (guarded by branching.test.ts's "fully linear" case).
+  const startedIds = new Set(
+    visibleUnits.filter((u) => computeUnitProgress(u, progressMap).completed > 0).map((u) => u.id),
+  );
+  const unlockedIds = computeUnlockedIds(visibleUnits, startedIds);
+
+  // Fork rendering v1 (spec §4.4): a single-column path, plus a "choose your
+  // path" divider and a small "Path N" pill per branch. Segment once and derive
+  // both the branch→label map and the set of unit ids that start a fork group
+  // (where the divider renders) from the same pure segmentUnits() call, so
+  // labels and divider placement can never drift from the unlock logic above.
+  // Plain (unmemoized): visibleUnits is O(units-per-program) — small — and
+  // aliases the `program` prop in the no-curation branch, which the React
+  // Compiler's escape analysis flags as unsafe to hand-memoize over.
+  const segments = segmentUnits(visibleUnits);
+  const branchLabels = new Map<string, string>();
+  const forkGroupStartIds = new Set<string>();
+  for (const seg of segments) {
+    if (seg.kind !== "fork") continue;
+    const groupHead = seg.branches[0]?.units[0];
+    if (groupHead) forkGroupStartIds.add(groupHead.id);
+    seg.branches.forEach((branch, bi) => {
+      branchLabels.set(branch.key, `Path ${bi + 1}`);
+    });
+  }
+
   // dailyGoal: count today's completed authored activities from the progressMap.
   const dailyGoal = config.dailyGoal && config.dailyGoal > 0 ? config.dailyGoal : null;
   const todayCompletedCount = ready ? completed.size : 0;
@@ -465,42 +496,51 @@ function WorldMap({
         topPick && <NextThingCard pick={topPick} programSlug={program.slug} reduce={Boolean(reduce)} />
       )}
 
-      {/* The path of worlds (curated by activeUnitKeys when set) */}
+      {/* The path of worlds (curated by activeUnitKeys when set). Fork groups
+          (spec §4.4) stay single-column in v1: a divider announces the choice
+          and both branches render as playable tiles side by side in the list
+          (never locked against each other — rule 4). */}
       <ol className="relative flex flex-col gap-5">
         {visibleUnits.map((unit, i) => {
           const up = computeUnitProgress(unit, progressMap);
-          const prevDone =
-            i === 0 ? true : computeUnitProgress(visibleUnits[i - 1], progressMap).completed > 0;
-          // Forgiving gate: the first world is always open; each next world
-          // opens once the child has started the one before. No penalties, just
-          // a sense of journey.
-          const locked = !prevDone;
+          const locked = !unlockedIds.has(unit.id);
           const alignRight = i % 2 === 1;
           const strand = strandByUnitId.get(unit.id);
+          const branch = unit.branchKey ? branchLabels.get(unit.branchKey) : undefined;
 
           return (
-            <li
-              key={unit.id}
-              data-world={unit.world}
-              className={cn("flex", alignRight ? "justify-end" : "justify-start")}
-            >
-              <WorldTile
-                index={i}
-                order={unit.order}
-                title={unit.title}
-                emoji={unit.emoji}
-                checkpoint={Boolean(unit.checkpoint)}
-                href={`/learn/${program.slug}/${unit.id}`}
-                locked={locked}
-                ratio={strand ? strand.ratio : up.ratio}
-                level={strand ? strand.currentLessonIndex : null}
-                totalLevels={unit.lessons.length}
-                stars={up.stars}
-                maxStars={up.maxStars}
-                done={up.done}
-                reduce={Boolean(reduce)}
-              />
-            </li>
+            <Fragment key={unit.id}>
+              {forkGroupStartIds.has(unit.id) && (
+                <li className="flex justify-center py-1">
+                  <span className="inline-flex items-center gap-1.5 rounded-pill border-2 border-ink/20 bg-honey/25 px-4 py-1.5 font-display text-sm font-semibold text-ink-soft">
+                    <SparkleIcon weight="fill" className="size-4 text-honey" aria-hidden />
+                    Choose your path!
+                  </span>
+                </li>
+              )}
+              <li
+                data-world={unit.world}
+                className={cn("flex", alignRight ? "justify-end" : "justify-start")}
+              >
+                <WorldTile
+                  index={i}
+                  order={unit.order}
+                  title={unit.title}
+                  emoji={unit.emoji}
+                  checkpoint={Boolean(unit.checkpoint)}
+                  branch={branch}
+                  href={`/learn/${program.slug}/${unit.id}`}
+                  locked={locked}
+                  ratio={strand ? strand.ratio : up.ratio}
+                  level={strand ? strand.currentLessonIndex : null}
+                  totalLevels={unit.lessons.length}
+                  stars={up.stars}
+                  maxStars={up.maxStars}
+                  done={up.done}
+                  reduce={Boolean(reduce)}
+                />
+              </li>
+            </Fragment>
           );
         })}
       </ol>
@@ -584,6 +624,7 @@ function WorldTile({
   title,
   emoji,
   checkpoint,
+  branch,
   href,
   locked,
   ratio,
@@ -599,6 +640,9 @@ function WorldTile({
   title: string;
   emoji: string;
   checkpoint: boolean;
+  /** Fork-branch label ("Path 1"/"Path 2", spec §4.4), or undefined off the
+   *  branching map / on solo units. */
+  branch?: string;
   href: string;
   locked: boolean;
   ratio: number;
@@ -638,6 +682,11 @@ function WorldTile({
             World {order}
             {checkpoint ? " · check-in" : ""}
           </span>
+          {branch && (
+            <span className="rounded-pill border-2 border-ink/15 bg-paper/70 px-2 py-0.5 text-xs text-ink-soft">
+              {branch}
+            </span>
+          )}
           {showLevel && (
             <span className="rounded-pill border-2 border-ink/15 bg-paper/70 px-2 py-0.5 text-xs text-ink-soft">
               Level {level} of {totalLevels}

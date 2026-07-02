@@ -107,6 +107,7 @@ interface UnitRow {
   mathFocus?: string;
   project?: string;
   checkpoint?: string;
+  branchKey?: string;
 }
 
 interface LessonRow {
@@ -222,6 +223,7 @@ export function buildSeedPlan(programs: Program[], skills: Skill[]): SeedPlan {
         mathFocus: u.mathFocus,
         project: u.project,
         checkpoint: u.checkpoint,
+        branchKey: u.branchKey,
       });
 
       for (const [lIdx, l] of u.lessons.entries()) {
@@ -411,6 +413,7 @@ async function seedContent(): Promise<void> {
           mathFocus: u.mathFocus,
           project: u.project,
           checkpoint: u.checkpoint,
+          branchKey: u.branchKey,
         })
         .onConflictDoUpdate({
           target: [schema.unit.programVersionId, schema.unit.unitKey],
@@ -424,6 +427,7 @@ async function seedContent(): Promise<void> {
             mathFocus: u.mathFocus,
             project: u.project,
             checkpoint: u.checkpoint,
+            branchKey: u.branchKey,
           },
         })
         .returning({ id: schema.unit.id });

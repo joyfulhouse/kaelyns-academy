@@ -64,6 +64,7 @@ const unitSchema = z.object({
   mathFocus: z.string(),
   project: z.string(),
   checkpoint: z.string(),
+  branchKey: z.string(),
   lessons: z.array(lessonSchema),
 });
 

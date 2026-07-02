@@ -99,6 +99,7 @@ export function assembleProgram(rows: ProgramTreeRows): Program {
         ...(unitRow.checkpoint != null
           ? { checkpoint: unitRow.checkpoint as "baseline" | "mid" | "final" }
           : {}),
+        ...(unitRow.branchKey != null ? { branchKey: unitRow.branchKey } : {}),
         lessons: unitLessons.map((lessonRow, lessonIndex): Lesson => {
           const lessonActivities = activities
             .filter((a) => a.lessonId === lessonRow.id)
@@ -362,6 +363,7 @@ export interface EditableUnit {
   mathFocus?: string;
   project?: string;
   checkpoint?: string;
+  branchKey?: string;
   lessons: EditableLesson[];
 }
 
@@ -516,6 +518,7 @@ export function buildVersionTreeRows(
       mathFocus: u.mathFocus ?? null,
       project: u.project ?? null,
       checkpoint: u.checkpoint ?? null,
+      branchKey: u.branchKey ?? null,
     });
 
     for (let li = 0; li < u.lessons.length; li++) {
@@ -1048,6 +1051,7 @@ function rowsToEditableUnits(
     mathFocus: u.mathFocus ?? undefined,
     project: u.project ?? undefined,
     checkpoint: u.checkpoint ?? undefined,
+    branchKey: u.branchKey ?? undefined,
     lessons: lessons
       .filter((l) => l.unitId === u.id)
       .sort(byOrderKey)

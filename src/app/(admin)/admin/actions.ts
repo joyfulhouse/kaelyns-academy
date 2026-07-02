@@ -77,6 +77,7 @@ const editableUnitSchema = z.object({
   mathFocus: z.string().optional(),
   project: z.string().optional(),
   checkpoint: z.string().optional(),
+  branchKey: z.string().min(1).max(40).optional(),
   lessons: z.array(editableLessonSchema),
 });
 
