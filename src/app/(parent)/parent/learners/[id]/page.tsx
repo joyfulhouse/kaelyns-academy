@@ -40,7 +40,7 @@ export const metadata: Metadata = { title: "Learner" };
  * (one parent-report row per language) so language progress is shown and
  * labelled, not dropped or lumped in with the core curriculum.
  */
-const DOMAIN_ORDER: { key: SkillDomain; label: string }[] = [
+const DOMAIN_ORDER = [
   { key: "reading", label: "Reading & Comprehension" },
   { key: "word", label: "Word Study" },
   { key: "vocab", label: "Vocabulary" },
@@ -53,7 +53,14 @@ const DOMAIN_ORDER: { key: SkillDomain; label: string }[] = [
   { key: "spanish", label: "Spanish" },
   { key: "japanese", label: "Japanese" },
   { key: "korean", label: "Korean" },
-];
+] as const;
+
+// Exhaustiveness backstop: every SkillDomain MUST appear in DOMAIN_ORDER, or
+// its parent-report row would silently vanish. A missing NON-ARCHIVED domain
+// fails typecheck. (Note: "phonics" is archived; omitting it is intentional.)
+type _MissingDomain = Exclude<SkillDomain, "phonics" | (typeof DOMAIN_ORDER)[number]["key"]>;
+type _VerifyExhaustive = _MissingDomain extends never ? true : false;
+const _exhaustivenessCheck: _VerifyExhaustive = true;
 
 export default async function LearnerDetailPage({
   params,
