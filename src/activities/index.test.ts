@@ -10,27 +10,23 @@ import { ACTIVITY_CONFIG_SCHEMAS, type ActivityKind } from "@/content/activity-c
 const KINDS = Object.keys(ACTIVITY_CONFIG_SCHEMAS) as ActivityKind[];
 
 describe("activity-type registration", () => {
-  it("registers a plugin for every implemented kind; unimplemented kinds fall back to the coming-soon placeholder", () => {
-    // Not every kind in ACTIVITY_CONFIG_SCHEMAS has a plugin yet — a kind can
-    // land (schema + defaultConfigFor skeleton) before its Player/logic module
-    // is built. Unregistered kinds render a "coming soon" placeholder (see the
-    // file header above), so this test only asserts internal consistency: a
-    // registered kind's plugin is well-formed, and an unregistered kind has no
-    // plugin at all (never a half-registered state).
+  it("registers a well-formed plugin for every kind in ACTIVITY_CONFIG_SCHEMAS (no orphan kinds)", () => {
+    // Every kind in ACTIVITY_CONFIG_SCHEMAS must have a registered plugin — a
+    // schema landing without its Player/logic module would silently fall back
+    // to the activity host's "coming soon" placeholder for real content, which
+    // is not acceptable once a kind is authored into curriculum. This asserts
+    // full coverage, plus that each registered plugin is well-formed.
     registerActivityTypes();
     for (const kind of KINDS) {
+      expect(isActivityKindRegistered(kind)).toBe(true);
       const type = getActivityType(kind);
-      if (isActivityKindRegistered(kind)) {
-        expect(type?.kind).toBe(kind);
-        expect(typeof type?.score).toBe("function");
-        expect(typeof type?.skillsAffected).toBe("function");
-        expect(type?.Player).toBeTypeOf("function");
-        expect(type?.label).toBeTruthy();
-      } else {
-        expect(type).toBeUndefined();
-      }
+      expect(type?.kind).toBe(kind);
+      expect(typeof type?.score).toBe("function");
+      expect(typeof type?.skillsAffected).toBe("function");
+      expect(type?.Player).toBeTypeOf("function");
+      expect(type?.label).toBeTruthy();
     }
-    expect(allActivityTypes().length).toBeLessThanOrEqual(KINDS.length);
+    expect(allActivityTypes()).toHaveLength(KINDS.length);
   });
 
   it("is idempotent (re-registering does not duplicate)", () => {
