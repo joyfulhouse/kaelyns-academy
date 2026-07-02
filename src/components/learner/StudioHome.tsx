@@ -27,7 +27,7 @@ import { useRewards } from "./useRewards";
 import { useQuests } from "./useQuests";
 import { TodaysAdventures } from "./TodaysAdventures";
 import { computeUnitProgress, computeProgramRatio } from "./useProgress";
-import { computeUnlockedIds, segmentUnits } from "./branching";
+import { computeUnlockedIds, pathLabelsByUnitId, segmentUnits } from "./branching";
 import { ACTIVITY_META } from "./activityMeta";
 
 /**
@@ -380,22 +380,22 @@ function WorldMap({
 
   // Fork rendering v1 (spec §4.4): a single-column path, plus a "choose your
   // path" divider and a small "Path N" pill per branch. Segment once and derive
-  // both the branch→label map and the set of unit ids that start a fork group
+  // both the per-unit label map and the set of unit ids that start a fork group
   // (where the divider renders) from the same pure segmentUnits() call, so
   // labels and divider placement can never drift from the unlock logic above.
+  // Labels are keyed by unit id (pathLabelsByUnitId), NOT by branchKey — two
+  // fork groups reusing the same key literals (e.g. both "left"/"right") would
+  // otherwise silently overwrite each other's numbering in a single flat map.
   // Plain (unmemoized): visibleUnits is O(units-per-program) — small — and
   // aliases the `program` prop in the no-curation branch, which the React
   // Compiler's escape analysis flags as unsafe to hand-memoize over.
   const segments = segmentUnits(visibleUnits);
-  const branchLabels = new Map<string, string>();
+  const branchLabels = pathLabelsByUnitId(visibleUnits);
   const forkGroupStartIds = new Set<string>();
   for (const seg of segments) {
     if (seg.kind !== "fork") continue;
     const groupHead = seg.branches[0]?.units[0];
     if (groupHead) forkGroupStartIds.add(groupHead.id);
-    seg.branches.forEach((branch, bi) => {
-      branchLabels.set(branch.key, `Path ${bi + 1}`);
-    });
   }
 
   // dailyGoal: count today's completed authored activities from the progressMap.
@@ -506,7 +506,7 @@ function WorldMap({
           const locked = !unlockedIds.has(unit.id);
           const alignRight = i % 2 === 1;
           const strand = strandByUnitId.get(unit.id);
-          const branch = unit.branchKey ? branchLabels.get(unit.branchKey) : undefined;
+          const branch = branchLabels.get(unit.id);
 
           return (
             <Fragment key={unit.id}>

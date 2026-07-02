@@ -35,6 +35,25 @@ export function segmentUnits<T extends BranchableUnit>(units: T[]): Segment<T>[]
   return segments;
 }
 
+/** Per-UNIT path labels ("Path 1", "Path 2", …) numbered by first appearance
+ *  WITHIN each fork group — reusing a branchKey in a later group can't
+ *  collide because the map is keyed by unit id, not branch key. */
+export function pathLabelsByUnitId<T extends { id: string; branchKey?: string }>(
+  units: T[],
+): Map<string, string> {
+  const labels = new Map<string, string>();
+  for (const seg of segmentUnits(units)) {
+    if (seg.kind !== "fork") continue;
+    seg.branches.forEach((branch, bi) => {
+      const label = `Path ${bi + 1}`;
+      for (const unit of branch.units) {
+        labels.set(unit.id, label);
+      }
+    });
+  }
+  return labels;
+}
+
 function segmentStarted<T extends BranchableUnit>(seg: Segment<T>, started: Set<string>): boolean {
   if (seg.kind === "solo") return started.has(seg.unit.id);
   // A fork segment "starts" the NEXT segment only once at least one branch has
