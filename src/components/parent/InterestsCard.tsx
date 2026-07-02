@@ -22,10 +22,12 @@ import type { InterestView } from "@/lib/interests/store";
  */
 export function InterestsCard({
   learnerId,
+  learnerName,
   allInterests,
   offeredIds,
 }: {
   learnerId: string;
+  learnerName: string;
   allInterests: InterestView[];
   offeredIds: string[];
 }) {
@@ -56,7 +58,7 @@ export function InterestsCard({
     <section>
       <h2 className="font-display text-xl font-semibold tracking-tight">Interests</h2>
       <p className="mt-1 max-w-prose text-sm text-ink-soft">
-        Kaelyn can pick up to 5 of the interests you enable. Her picks theme her AI practice
+        {learnerName} can pick up to 5 of the interests you enable. Their picks theme AI practice
         stories.
       </p>
 

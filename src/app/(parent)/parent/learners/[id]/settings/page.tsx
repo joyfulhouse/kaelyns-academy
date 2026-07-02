@@ -51,6 +51,7 @@ export default async function LearnerSettingsPage({
         {interests && (
           <InterestsCard
             learnerId={learner.id}
+            learnerName={learner.displayName}
             allInterests={interests.allInterests}
             offeredIds={interests.offeredIds}
           />
