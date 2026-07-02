@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { ACTIVITY_CONFIG_SCHEMAS } from "./activity-configs";
 import { PROGRAMS, getSkill } from "./index";
 import { getLanguage } from "./languages";
+import { kaelynAdaptive } from "./programs/kaelyn-adaptive";
+import { SKILLS } from "./skills";
 
 /**
  * Whole-curriculum guards across every registered program. TypeScript checks the
@@ -54,6 +56,17 @@ describe("authored program content", () => {
     // cross-program duplicate id would leak completion/stars between programs.
     const ids = everyActivity().map(({ activity }) => activity.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("Life Skills Math unit uses registered kinds + real skills", () => {
+    const unit = kaelynAdaptive.units.find((u) => u.id === "life-skills-math");
+    expect(unit).toBeDefined();
+    const acts = unit!.lessons.flatMap((l) => l.activities);
+    expect(acts.length).toBeGreaterThanOrEqual(9);
+    const kinds = new Set(["math-clock", "math-money", "math-measure"]);
+    expect(acts.every((a) => kinds.has(a.kind))).toBe(true);
+    const skills = new Set(SKILLS.map((s) => s.slug));
+    expect(acts.every((a) => a.skillTags.every((t) => skills.has(t)))).toBe(true);
   });
 });
 
