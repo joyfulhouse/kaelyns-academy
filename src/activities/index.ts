@@ -14,6 +14,7 @@ import { phonicsWordbuild } from "./phonics-wordbuild";
 import { sightwordGame } from "./sightword-game";
 import { mathTenframe } from "./math-tenframe";
 import { mathMoney } from "./math-money";
+import { mathClock } from "./math-clock";
 import { journalPrompt } from "./journal-prompt";
 import { readingComprehension } from "./reading-comprehension";
 import { mathArray } from "./math-array";
@@ -30,6 +31,7 @@ export function registerActivityTypes(): void {
   registerActivityType(sightwordGame);
   registerActivityType(mathTenframe);
   registerActivityType(mathMoney);
+  registerActivityType(mathClock);
   registerActivityType(journalPrompt);
   registerActivityType(readingComprehension);
   registerActivityType(mathArray);
