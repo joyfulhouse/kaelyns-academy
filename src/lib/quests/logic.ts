@@ -76,6 +76,49 @@ const MAX_DAILY_QUESTS = 3;
  * A template whose params fail the kind schema is skipped (bad authoring must
  * not break the child's day). Deterministic — no randomness (spec §13).
  */
+/**
+ * Kind dispatch as a RETURNING switch with no `default`: because the declared
+ * return type excludes `undefined`, TypeScript raises TS2366 ("function lacks
+ * ending return statement") whenever a QuestKind is left unhandled — the same
+ * compiler net that protects `attemptMatchesQuest`. Returns null when the
+ * kind's required input is missing (the template is skipped for the day).
+ */
+function buildDraft(
+  t: QuestTemplateRow,
+  paramsData: unknown,
+  recs: RecommendationLite[],
+  emergingSkills: string[],
+): QuestDraft | null {
+  switch (t.kind) {
+    case "complete_n": {
+      const count = (paramsData as { count: number }).count;
+      return { templateId: t.id, kind: t.kind, title: t.title, target: { count }, rewardStars: t.rewardStars };
+    }
+    case "try_strand": {
+      const rec = recs[0];
+      if (!rec) return null;
+      return {
+        templateId: t.id,
+        kind: t.kind,
+        title: t.title.replace("{focus}", rec.unitTitle),
+        target: { count: 1, unitId: rec.unitId },
+        rewardStars: t.rewardStars,
+      };
+    }
+    case "practice_skill": {
+      const skill = emergingSkills[0];
+      if (!skill) return null;
+      return {
+        templateId: t.id,
+        kind: t.kind,
+        title: t.title.replace("{focus}", skill),
+        target: { count: 2, skill },
+        rewardStars: t.rewardStars,
+      };
+    }
+  }
+}
+
 export function selectDailyQuests(
   templates: QuestTemplateRow[],
   recs: RecommendationLite[],
@@ -88,43 +131,10 @@ export function selectDailyQuests(
     const params = QUEST_PARAMS_SCHEMAS[t.kind]?.safeParse(t.params);
     if (!params?.success) continue;
 
-    let draft: QuestDraft | null = null;
-    switch (t.kind) {
-      case "complete_n": {
-        const count = (params.data as { count: number }).count;
-        draft = { templateId: t.id, kind: t.kind, title: t.title, target: { count }, rewardStars: t.rewardStars };
-        break;
-      }
-      case "try_strand": {
-        const rec = recs[0];
-        if (!rec) break;
-        draft = {
-          templateId: t.id,
-          kind: t.kind,
-          title: t.title.replace("{focus}", rec.unitTitle),
-          target: { count: 1, unitId: rec.unitId },
-          rewardStars: t.rewardStars,
-        };
-        break;
-      }
-      case "practice_skill": {
-        const skill = emergingSkills[0];
-        if (!skill) break;
-        draft = {
-          templateId: t.id,
-          kind: t.kind,
-          title: t.title.replace("{focus}", skill),
-          target: { count: 2, skill },
-          rewardStars: t.rewardStars,
-        };
-        break;
-      }
-    }
-
-    if (draft) {
-      drafts.push(draft);
-      seenKinds.add(t.kind);
-    }
+    const draft = buildDraft(t, params.data, recs, emergingSkills);
+    if (!draft) continue;
+    drafts.push(draft);
+    seenKinds.add(t.kind);
   }
   return drafts;
 }
