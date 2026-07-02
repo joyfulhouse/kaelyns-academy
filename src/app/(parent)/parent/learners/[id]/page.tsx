@@ -53,7 +53,7 @@ const DOMAIN_ORDER = [
   { key: "spanish", label: "Spanish" },
   { key: "japanese", label: "Japanese" },
   { key: "korean", label: "Korean" },
-] as const;
+] as const satisfies readonly { key: SkillDomain; label: string }[];
 
 // Exhaustiveness backstop: every SkillDomain MUST appear in DOMAIN_ORDER, or
 // its parent-report row would silently vanish. A missing NON-ARCHIVED domain

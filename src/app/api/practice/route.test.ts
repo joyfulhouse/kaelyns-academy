@@ -162,6 +162,15 @@ describe("POST /api/practice", () => {
     });
   });
 
+  it("400s when kind is authored-only (not generable) in explore request", async () => {
+    vi.mocked(getAccountOrNull).mockResolvedValue(null);
+    const res = await POST(
+      post({ kind: "math-clock", band: "ready", focus: "counting" }, { "cf-connecting-ip": "203.0.113.7" }),
+    );
+    expect(res.status).toBe(400);
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
   it("keys signed-in callers by account with a more generous window", async () => {
     vi.mocked(generatePracticeItems).mockResolvedValue([]);
     await POST(post({ kind: KIND, band: "ready", focus: "counting" }));
