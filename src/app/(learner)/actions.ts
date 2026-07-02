@@ -22,6 +22,7 @@ import {
 } from "@/content";
 import type { Program } from "@/content";
 import { resolveLearnerProgram } from "@/lib/content/repository";
+import { findUnitIdOfActivity } from "@/lib/quests/logic";
 import type { SkillState } from "@/lib/tutor";
 
 /**
@@ -212,8 +213,19 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
       : undefined;
 
   try {
-    await withAccount(({ accountId }) =>
-      recordAttempt(accountId, {
+    await withAccount(async ({ accountId }) => {
+      // Quest-fold context (Adventure 2.0): locate the containing unit on the
+      // learner's pinned tree, server-derived — never trusted from the client.
+      // Unresolvable (unknown activity, resolver failure) degrades to
+      // complete_n-only matching rather than failing the attempt write.
+      let unitId: string | null = null;
+      try {
+        const program = await resolveLearnerProgram(accountId, data.learnerId, data.programSlug);
+        if (program) unitId = findUnitIdOfActivity(program, data.activityId);
+      } catch {
+        unitId = null;
+      }
+      return recordAttempt(accountId, {
         learnerId: data.learnerId,
         programSlug: data.programSlug,
         activityId: data.activityId,
@@ -223,8 +235,9 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
         score: data.score,
         day: new Date().toISOString().slice(0, 10),
         provenance,
-      }),
-    );
+        unitId,
+      });
+    });
     return { ok: true };
   } catch (error) {
     if (error instanceof UnauthenticatedError) return { ok: false, reason: "unauthenticated" };

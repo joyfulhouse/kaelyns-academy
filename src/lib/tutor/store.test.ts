@@ -15,6 +15,9 @@ const attemptInserts: Record<string, unknown>[] = [];
 // The values() payload of each `star_ledger` insert — lets a test assert the
 // star-economy earn (delta/reason/refId) written inside recordAttempt's tx.
 const ledgerInserts: Record<string, unknown>[] = [];
+// The set() payload of each `learner_quest` update — lets a test assert the
+// Adventure 2.0 attempt fold (progress/status) written inside recordAttempt's tx.
+const questUpdates: Record<string, unknown>[] = [];
 // Mutable canned rows the fake `tx` returns for each select target.
 const learnerRows = { value: [{ id: "L1" }] as Record<string, unknown>[] };
 const skillRows = { value: [] as Record<string, unknown>[] };
@@ -25,6 +28,10 @@ const enrollmentRows = { value: [{ status: "active" }] as Record<string, unknown
 // row (only the just-inserted attempt) so the happy path is a first completion;
 // the repeat-completion test overrides to two rows (prior + just-inserted).
 const attemptRows = { value: [{ id: "new" }] as Record<string, unknown>[] };
+// The day's learner_quest rows (Adventure 2.0 fold); applyAttemptToQuests only
+// SELECTs status="active" rows (mirroring the real query's WHERE clause) — the
+// fake filters here so "offered leaves untouched" is actually observable.
+const questRows = { value: [] as Record<string, unknown>[] };
 
 function tableName(t: unknown): string {
   return (t as { _name?: string })._name ?? "unknown";
@@ -43,7 +50,10 @@ function builder(op: string, table: string) {
     where() {
       return chain;
     },
-    set() {
+    set(v?: Record<string, unknown>) {
+      if (chain.op === "update" && chain.table === "learner_quest" && v) {
+        questUpdates.push(v);
+      }
       return chain;
     },
     values(v?: Record<string, unknown>) {
@@ -80,7 +90,9 @@ function builder(op: string, table: string) {
               ? enrollmentRows.value
               : chain.op === "select" && chain.table === "attempt"
                 ? attemptRows.value
-                : [];
+                : chain.op === "select" && chain.table === "learner_quest"
+                  ? questRows.value.filter((r) => r.status === "active")
+                  : [];
       return Promise.resolve(rows).then(resolve);
     },
   };
@@ -108,12 +120,25 @@ vi.mock("@/lib/db/schema", () => ({
   enrollment: { _name: "enrollment", learnerId: {}, programSlug: {}, status: {} },
   skillState: { _name: "skill_state", id: {}, learnerId: {}, skill: {} },
   starLedger: { _name: "star_ledger" },
+  // Adventure 2.0 quest fold (applyAttemptToQuests, src/lib/quests/store.ts —
+  // imported by recordAttempt and resolved against this SAME mocked module).
+  learnerQuest: {
+    _name: "learner_quest",
+    id: {},
+    learnerId: {},
+    programSlug: {},
+    assignedOn: {},
+    status: {},
+  },
+  questTemplate: { _name: "quest_template" },
+  skill: { _name: "skill" },
 }));
 // drizzle-orm operators are used only to build opaque predicate objects here.
 vi.mock("drizzle-orm", () => ({
   and: (...a: unknown[]) => a,
   eq: (...a: unknown[]) => a,
   desc: (a: unknown) => a,
+  asc: (a: unknown) => a,
   inArray: (...a: unknown[]) => a,
 }));
 
@@ -133,17 +158,26 @@ const input = {
   day: "2026-06-15",
 };
 
+/** The shared happy-path input, factored to a call so quest-fold tests read
+ *  like the brief (recordAttempt("acct-1", baseInput())) without mutating the
+ *  shared `input` object other tests reuse. */
+function baseInput(): typeof input {
+  return input;
+}
+
 describe("recordAttempt (atomic persistence)", () => {
   beforeEach(() => {
     ops.length = 0;
     lockedSkills.length = 0;
     attemptInserts.length = 0;
     ledgerInserts.length = 0;
+    questUpdates.length = 0;
     transaction.mockClear();
     learnerRows.value = [{ id: "L1" }];
     skillRows.value = [];
     enrollmentRows.value = [{ status: "active" }];
     attemptRows.value = [{ id: "new" }];
+    questRows.value = [];
   });
 
   it("runs inside a single transaction", async () => {
@@ -310,6 +344,43 @@ describe("recordAttempt (atomic persistence)", () => {
     attemptRows.value = [{ id: "prev" }, { id: "new" }]; // prior authored attempt exists
     await recordAttempt("acct-1", input);
     expect(ledgerInserts).toHaveLength(0);
+  });
+
+  // ── Adventure 2.0: quest fold + reward credit, INSIDE the attempt tx ────────
+
+  it("folds an active quest and credits its reward inside the attempt tx", async () => {
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+    await recordAttempt("acct-1", baseInput());
+    expect(questUpdates).toContainEqual(
+      expect.objectContaining({ status: "done", progress: { done: 1 } }),
+    );
+    expect(ledgerInserts).toContainEqual(
+      expect.objectContaining({ delta: 2, reason: "quest_complete", refId: "Q1" }),
+    );
+  });
+
+  it("leaves offered quests untouched", async () => {
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "offered",
+      },
+    ];
+    await recordAttempt("acct-1", baseInput());
+    expect(questUpdates).toHaveLength(0);
   });
 });
 

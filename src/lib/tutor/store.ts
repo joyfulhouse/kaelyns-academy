@@ -28,6 +28,7 @@ import { shapeLearnerExport, type LearnerExport } from "./export";
 import { shapeAccountExport, type AccountExport } from "./account-export";
 import { parseJsonbFailClosed } from "./jsonb";
 import { toLearnerRow, withOwnedLearner, type LearnerRow } from "./scope";
+import { applyAttemptToQuests } from "@/lib/quests/store";
 
 // getLearner + LearnerRow now live in ./scope (the shared account-ownership gate);
 // re-export them so existing importers of "@/lib/tutor/store" keep their paths.
@@ -152,6 +153,10 @@ export interface RecordAttemptInput {
    * Absent for authored attempts → the gen_* columns stay null.
    */
   provenance?: { model: string; route: string; at: Date };
+  /** Quest-fold context (Adventure 2.0): the containing unit id, resolved
+   *  server-side by the action from the learner's pinned tree. Null when
+   *  unresolvable — complete_n still counts; unit-targeted quests just miss. */
+  unitId?: string | null;
 }
 
 /**
@@ -268,6 +273,15 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
         .set({ evidence: history, outcome, updatedAt: new Date() })
         .where(eq(skillState.id, row.id));
     }
+
+    // Adventure 2.0: fold this attempt into today's ACTIVE quests + credit any
+    // completed quest's reward — inside this same transaction.
+    await applyAttemptToQuests(tx, input.learnerId, input.day, {
+      activityId: input.activityId,
+      unitId: input.unitId ?? null,
+      skills: input.score.skillEvidence.map((e) => e.skill),
+      generated,
+    });
   });
 }
 
