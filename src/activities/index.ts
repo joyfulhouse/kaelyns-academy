@@ -19,6 +19,8 @@ import { readingComprehension } from "./reading-comprehension";
 import { mathArray } from "./math-array";
 import { langSymbolIntro } from "./lang-symbol-intro";
 import { langListenMatch } from "./lang-listen-match";
+import { mathClock } from "./math-clock";
+import { mathMeasure } from "./math-measure";
 
 let registered = false;
 
@@ -35,6 +37,8 @@ export function registerActivityTypes(): void {
   registerActivityType(mathArray);
   registerActivityType(langSymbolIntro);
   registerActivityType(langListenMatch);
+  registerActivityType(mathClock);
+  registerActivityType(mathMeasure);
 }
 
 registerActivityTypes();

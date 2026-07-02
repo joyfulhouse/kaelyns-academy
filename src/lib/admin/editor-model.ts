@@ -100,6 +100,22 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
           { spoken: "ㄅ", choices: ["ㄅ", "ㄆ"], answerIndex: 0 },
         ],
       };
+    case "math-clock":
+      return { mode: "read", instruction: "", hour: 12, minute: 0, choices: ["12:00", "12:30"], answerIndex: 0 };
+    case "math-money":
+      return { mode: "identify", instruction: "", coins: ["penny", "nickel"], targetCoin: "penny" };
+    case "math-measure":
+      return {
+        mode: "compare",
+        instruction: "",
+        attribute: "length",
+        question: "most",
+        items: [
+          { label: "pencil", emoji: "✏️", size: 3 },
+          { label: "crayon", emoji: "🖍️", size: 2 },
+        ],
+        answerIndex: 0,
+      };
   }
 }
 

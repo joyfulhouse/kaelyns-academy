@@ -9,6 +9,22 @@ vi.mock("@/lib/ai/practice", () => ({
     model: "ha-assist",
     route: String(band),
   }),
+  // Stub isGenerableKind to identify which kinds can be AI-generated (true for
+  // generable kinds like phonics-wordbuild/math-tenframe, false for authored-only
+  // like math-clock/money/measure). Uses KIND_BRIEF as its source of truth.
+  isGenerableKind: (kind: string) => {
+    const GENERABLE_KINDS = [
+      "phonics-wordbuild",
+      "sightword-game",
+      "math-tenframe",
+      "journal-prompt",
+      "reading-comprehension",
+      "math-array",
+      "lang-symbol-intro",
+      "lang-listen-match",
+    ];
+    return GENERABLE_KINDS.includes(kind);
+  },
 }));
 vi.mock("@/lib/tenancy", () => ({ getAccountOrNull: vi.fn() }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: vi.fn() }));
