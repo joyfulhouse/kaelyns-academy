@@ -82,6 +82,9 @@ const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
   "math-array": "Array builder",
   "lang-symbol-intro": "Meet the symbols",
   "lang-listen-match": "Listen & find",
+  "math-clock": "Tell the time",
+  "math-money": "Count money",
+  "math-measure": "Measure & compare",
 };
 
 /** Plain-language label for an attempt's kind (falls back to the raw kind). */

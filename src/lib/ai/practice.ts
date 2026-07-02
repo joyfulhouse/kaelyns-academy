@@ -73,6 +73,21 @@ export const KIND_BRIEF: Record<ActivityKind, string> = {
   "lang-listen-match":
     "Listening-discrimination items. Each: {locale, instruction, skillTags:[...], items:[{spoken, audioKey?, choices:[2-6 symbols/words], choiceLabels?:[romanization], answerIndex}]}. " +
     "The child hears `spoken` and taps the matching choice. Every choice and the answer MUST come from the authored inventory. 2 to 8 items.",
+  "math-clock":
+    'Clock items. Each: {mode:"read"|"set"}. ' +
+    'For read: {mode:"read", instruction, hour:1-12, minute:0|30, choices:[2-4 digital-time strings like "3:00"], answerIndex}. ' +
+    'For set: {mode:"set", instruction, targetHour:1-12, targetMinute:0|30}. ' +
+    "Keep times to the hour and half-hour. 1 to 4 items total.",
+  "math-money":
+    'Money items. Each: {mode:"identify"|"count"}. ' +
+    'For identify: {mode:"identify", instruction, coins:[2-6 coin types from penny|nickel|dime|quarter], targetCoin:one of those coins}. ' +
+    'For count: {mode:"count", instruction, palette:[1-4 coin types], targetCents:1-100 (max a dollar)}. ' +
+    "Mix identification and counting. 1 to 4 items total.",
+  "math-measure":
+    'Measurement items. Each: {mode:"compare"|"units"}. ' +
+    'For compare: {mode:"compare", instruction, attribute:"length"|"height"|"weight", question:"most"|"least", items:[2-4 objects with {label, emoji, size:visual proportion}], answerIndex}. ' +
+    'For units: {mode:"units", instruction, unit:"cube"|"paperclip"|"block"|"hand", length:1-12 (true unit count), choices:[2-4 numbers 0-20], answerIndex}. ' +
+    "Mix comparisons and unit measurements. 1 to 4 items total.",
 };
 
 const MODEL_FOR_BAND: Record<Band, TutorModel> = {

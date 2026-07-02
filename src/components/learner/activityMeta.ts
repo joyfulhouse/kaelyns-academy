@@ -1,10 +1,13 @@
 import {
   BookOpenTextIcon,
+  ClockIcon,
+  CoinIcon,
   DotsNineIcon,
   GridFourIcon,
   HandTapIcon,
   NotePencilIcon,
   PuzzlePieceIcon,
+  RulerIcon,
   SpeakerHighIcon,
   TranslateIcon,
 } from "@phosphor-icons/react/dist/ssr";
@@ -24,4 +27,7 @@ export const ACTIVITY_META: Record<ActivityKind, { icon: Icon; label: string }> 
   "math-array": { icon: DotsNineIcon, label: "Make an array" },
   "lang-symbol-intro": { icon: TranslateIcon, label: "Meet the symbols" },
   "lang-listen-match": { icon: SpeakerHighIcon, label: "Listen & find" },
+  "math-clock": { icon: ClockIcon, label: "Tell the time" },
+  "math-money": { icon: CoinIcon, label: "Count money" },
+  "math-measure": { icon: RulerIcon, label: "Measure & compare" },
 };
