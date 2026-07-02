@@ -84,7 +84,7 @@ export function TodaysAdventures({
                 onClick={() => {
                   if (q.status === "offered") handleActivate(q.id);
                 }}
-                disabled={q.status === "offered" && pendingId === q.id}
+                disabled={q.status === "offered" && pendingId !== null}
                 aria-pressed={q.status === "active"}
                 aria-label={
                   q.status === "active"

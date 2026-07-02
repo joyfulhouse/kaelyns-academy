@@ -292,13 +292,26 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
     }
 
     // Adventure 2.0: fold this attempt into today's ACTIVE quests + credit any
-    // completed quest's reward — inside this same transaction.
-    await applyAttemptToQuests(tx, input.learnerId, input.programSlug, input.day, {
-      activityId: input.activityId,
-      unitId: input.unitId ?? null,
-      skills: input.score.skillEvidence.map((e) => e.skill),
-      generated,
-    });
+    // completed quest's reward — inside this same transaction. Gated on
+    // questEligible (Codex round 2, Important #1): GENERATED practice
+    // legitimately has no authored-tree membership and still counts toward
+    // complete_n quests (bounded ≤ daily quests — accepted residual, design
+    // intent unchanged). An AUTHORED attempt counts toward quests ONLY when
+    // creditEligible (server-verified tree membership) is true — otherwise the
+    // program-unresolvable branch could complete a complete_n quest and credit
+    // quest_complete stars even though the star-ledger activity_complete earn
+    // was correctly withheld above. Skipping the fold entirely (rather than
+    // passing a flag through) is correct: no quest should advance from an
+    // attempt whose membership couldn't be verified.
+    const questEligible = generated || input.creditEligible;
+    if (questEligible) {
+      await applyAttemptToQuests(tx, input.learnerId, input.programSlug, input.day, {
+        activityId: input.activityId,
+        unitId: input.unitId ?? null,
+        skills: input.score.skillEvidence.map((e) => e.skill),
+        generated,
+      });
+    }
   });
 }
 

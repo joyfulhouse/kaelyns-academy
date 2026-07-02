@@ -453,6 +453,54 @@ describe("recordAttempt (atomic persistence)", () => {
     expect(questUpdates).toHaveLength(0);
     expect(ledgerInserts.some((l) => l.reason === "quest_complete")).toBe(false);
   });
+
+  // ── Codex round 2, Important #1: questEligible = generated || creditEligible ──
+  // (closes the quest-credit leak on the program-unresolvable branch, while
+  // preserving generated practice's ability to fold complete_n quests).
+
+  it("does not fold or credit a quest for an AUTHORED attempt when creditEligible is false", async () => {
+    // Program-unresolvable branch: membership couldn't be verified, so the
+    // star-ledger earn is already withheld (existing test above); this asserts
+    // applyAttemptToQuests is skipped entirely too — no quest UPDATE and no
+    // quest_complete ledger insert, even though an active quest would
+    // otherwise complete on this attempt.
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+    await recordAttempt("acct-1", { ...baseInput(), generated: false, creditEligible: false });
+    expect(questUpdates).toHaveLength(0);
+    expect(ledgerInserts.some((l) => l.reason === "quest_complete")).toBe(false);
+  });
+
+  it("still folds and credits a quest for GENERATED practice when creditEligible is false", async () => {
+    // Design preserved: generated practice legitimately has no authored-tree
+    // membership (creditEligible is meaningless/false for it), and must still
+    // be able to complete a complete_n quest.
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+    await recordAttempt("acct-1", { ...baseInput(), generated: true, creditEligible: false });
+    expect(questUpdates).toContainEqual(
+      expect.objectContaining({ status: "done", progress: { done: 1 } }),
+    );
+    expect(ledgerInserts).toContainEqual(
+      expect.objectContaining({ delta: 2, reason: "quest_complete", refId: "Q1" }),
+    );
+  });
 });
 
 describe("nextSkillRecord (DB evidence fold)", () => {
