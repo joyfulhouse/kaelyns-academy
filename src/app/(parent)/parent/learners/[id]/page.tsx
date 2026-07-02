@@ -47,6 +47,7 @@ const DOMAIN_ORDER: { key: SkillDomain; label: string }[] = [
   { key: "writing", label: "Writing" },
   { key: "math", label: "Math" },
   { key: "habits", label: "Habits" },
+  { key: "lifeskills", label: "Life Skills Math" },
   // World Languages
   { key: "zhuyin", label: "Zhuyin (Bopomofo)" },
   { key: "spanish", label: "Spanish" },
