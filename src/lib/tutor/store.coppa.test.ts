@@ -17,6 +17,12 @@ interface Op {
   table: string;
   values?: Record<string, unknown>;
   where?: unknown;
+  /** Recorded by `.limit(n)` — the `select.limit` op's bound. */
+  limit?: number;
+  /** Recorded by `.orderBy(...)` — the (identity-mapped, via the drizzle-orm
+   *  mock's `desc`) column refs, in call order — so a test can assert both the
+   *  number of orderBy columns and which columns they are. */
+  cols?: unknown[];
 }
 const ops: Op[] = [];
 
@@ -65,11 +71,15 @@ function selectChain() {
       chain._where = w;
       return chain;
     },
-    limit() {
+    // Bounds/ordering regression net (review finding): record the actual
+    // `.limit(n)` bound and `.orderBy(...)` column shape per table, so a test
+    // can assert them directly instead of only exercising the read.
+    limit(n?: number) {
+      ops.push({ op: "select.limit", table, limit: n });
       return chain;
     },
-    orderBy() {
-      ops.push({ op: "select.orderBy", table });
+    orderBy(...cols: unknown[]) {
+      ops.push({ op: "select.orderBy", table, cols });
       return chain;
     },
     then<T>(resolve: (r: unknown[]) => T) {
@@ -129,7 +139,7 @@ vi.mock("@/lib/db/schema", () => ({
   learnerSticker: { _name: "learner_sticker", learnerId: {} },
   interest: { _name: "interest", id: {}, slug: {} },
   learnerInterest: { _name: "learner_interest", learnerId: {}, interestId: {}, source: {} },
-  learnerQuest: { _name: "learner_quest", learnerId: {}, assignedOn: {} },
+  learnerQuest: { _name: "learner_quest", learnerId: {}, assignedOn: {}, updatedAt: {} },
 }));
 vi.mock("drizzle-orm", () => ({
   and: (...a: unknown[]) => a,
@@ -142,6 +152,11 @@ vi.mock("drizzle-orm", () => ({
 }));
 
 import { buildAccountExport, deleteAccount, listGeneratedAttempts } from "./store";
+// The (mocked) schema table refs themselves, so the orderBy assertions below can
+// compare by reference against what gatherLearnerExport actually passed to
+// `.orderBy(...)` — not just count columns, which would pass even if the wrong
+// column were swapped in.
+import { learnerQuest, starLedger } from "@/lib/db/schema";
 
 beforeEach(() => {
   ops.length = 0;
@@ -187,6 +202,42 @@ describe("buildAccountExport (tenancy + shape)", () => {
     });
     expect(result!.learners.map((l) => l.learner.id)).toEqual(["L1", "L2"]);
     expect(result!.manifest.contents).toContain("aiProvenance");
+  });
+});
+
+// Regression net for a review finding: nothing previously asserted the export
+// reads' `.limit(...)` bounds or `.orderBy(...)` shape, so a future edit could
+// silently drop either (unbounded read, or non-deterministic pagination at the
+// boundary) and the suite would still pass. buildAccountExport exercises
+// gatherLearnerExport (the reads live there, unexported) for one owned learner.
+describe("gatherLearnerExport bounds + ordering (via buildAccountExport)", () => {
+  beforeEach(() => {
+    rows.user = [{ id: "U1", email: "p@example.com", createdAt: new Date("2026-01-01T00:00:00.000Z") }];
+    rows.learner = [{ id: "L1", displayName: "A", birthMonth: null, settings: {}, createdAt: new Date() }];
+  });
+
+  it("bounds the star_ledger detail read to limit 500", async () => {
+    await buildAccountExport("U1", "2026-06-26T00:00:00.000Z");
+    const ledgerLimit = ops.find((o) => o.op === "select.limit" && o.table === "star_ledger");
+    expect(ledgerLimit?.limit).toBe(500);
+  });
+
+  it("bounds the learner_quest read to limit 200", async () => {
+    await buildAccountExport("U1", "2026-06-26T00:00:00.000Z");
+    const questLimit = ops.find((o) => o.op === "select.limit" && o.table === "learner_quest");
+    expect(questLimit?.limit).toBe(200);
+  });
+
+  it("orders the learner_quest read by assignedOn desc, THEN updatedAt desc — the tiebreaker for legal same-day assignedOn ties (assignedOn is a day-granularity `date` column, so ordering by it alone leaves the 200-row boundary non-deterministic)", async () => {
+    await buildAccountExport("U1", "2026-06-26T00:00:00.000Z");
+    const questOrder = ops.find((o) => o.op === "select.orderBy" && o.table === "learner_quest");
+    expect(questOrder?.cols).toEqual([learnerQuest.assignedOn, learnerQuest.updatedAt]);
+  });
+
+  it("orders the star_ledger detail read by createdAt desc (already a timestamptz — no same-key tiebreak needed)", async () => {
+    await buildAccountExport("U1", "2026-06-26T00:00:00.000Z");
+    const ledgerOrder = ops.find((o) => o.op === "select.orderBy" && o.table === "star_ledger");
+    expect(ledgerOrder?.cols).toEqual([starLedger.createdAt]);
   });
 });
 

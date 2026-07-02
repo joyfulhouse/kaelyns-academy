@@ -876,7 +876,11 @@ async function gatherLearnerExport(
       .select()
       .from(learnerQuest)
       .where(eq(learnerQuest.learnerId, learnerId))
-      .orderBy(desc(learnerQuest.assignedOn))
+      // assignedOn is a `date` (day-granularity) column with legal same-day
+      // ties, so ordering by it alone leaves rows at the 200-row boundary in a
+      // non-deterministic order across exports (Postgres makes no promises among
+      // ties). updatedAt (timestamptz) breaks the tie deterministically.
+      .orderBy(desc(learnerQuest.assignedOn), desc(learnerQuest.updatedAt))
       .limit(200),
   ]);
 
