@@ -217,7 +217,7 @@ export const mathMeasureConfig = z.discriminatedUnion("mode", [
           label: z.string().min(1).max(24),
           emoji: z.string().min(1).max(8),
           /** Visual proportion only (renders the bar/size); NOT the answer. */
-          size: z.number(),
+          size: z.number().min(0).max(100),
         }),
       )
       .min(2)

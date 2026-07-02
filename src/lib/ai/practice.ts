@@ -42,8 +42,15 @@ import {
 /** Cap generation so a bad prompt can't ask for an unbounded batch. */
 const MAX_ITEMS = 8;
 
-/** Plain-language guidance per kind so the model emits the right config shape. */
-export const KIND_BRIEF: Record<ActivityKind, string> = {
+/**
+ * Plain-language guidance per kind so the model emits the right config shape.
+ * Partial, NOT exhaustive: a kind with no entry is authored-only (spec §9) —
+ * {@link isGenerableKind} / {@link generatePracticeItems} refuse to generate it.
+ * The 3 math-clock/money/measure kinds are deliberately absent: their config
+ * schemas defer answerIndex/bounds validation to plugin logic assuming
+ * hand-authored, content-validated input, so they must never be AI-generable.
+ */
+export const KIND_BRIEF: Partial<Record<ActivityKind, string>> = {
   "phonics-wordbuild":
     'Build-a-word items. Each: {focus, instruction, tiles:[letters/digraphs], say:{tile:IPA}, words:[{word, picture?}]}. ' +
     "Every target word MUST be spellable from the provided tiles. `picture` is a single emoji. " +
@@ -73,22 +80,19 @@ export const KIND_BRIEF: Record<ActivityKind, string> = {
   "lang-listen-match":
     "Listening-discrimination items. Each: {locale, instruction, skillTags:[...], items:[{spoken, audioKey?, choices:[2-6 symbols/words], choiceLabels?:[romanization], answerIndex}]}. " +
     "The child hears `spoken` and taps the matching choice. Every choice and the answer MUST come from the authored inventory. 2 to 8 items.",
-  "math-clock":
-    'Clock items. Each: {mode:"read"|"set"}. ' +
-    'For read: {mode:"read", instruction, hour:1-12, minute:0|30, choices:[2-4 digital-time strings like "3:00"], answerIndex}. ' +
-    'For set: {mode:"set", instruction, targetHour:1-12, targetMinute:0|30}. ' +
-    "Keep times to the hour and half-hour. 1 to 4 items total.",
-  "math-money":
-    'Money items. Each: {mode:"identify"|"count"}. ' +
-    'For identify: {mode:"identify", instruction, coins:[2-6 coin types from penny|nickel|dime|quarter], targetCoin:one of those coins}. ' +
-    'For count: {mode:"count", instruction, palette:[1-4 coin types], targetCents:1-100 (max a dollar)}. ' +
-    "Mix identification and counting. 1 to 4 items total.",
-  "math-measure":
-    'Measurement items. Each: {mode:"compare"|"units"}. ' +
-    'For compare: {mode:"compare", instruction, attribute:"length"|"height"|"weight", question:"most"|"least", items:[2-4 objects with {label, emoji, size:visual proportion}], answerIndex}. ' +
-    'For units: {mode:"units", instruction, unit:"cube"|"paperclip"|"block"|"hand", length:1-12 (true unit count), choices:[2-4 numbers 0-20], answerIndex}. ' +
-    "Mix comparisons and unit measurements. 1 to 4 items total.",
 };
+
+/**
+ * Whether `kind` may be AI-generated at all (spec §9 authored-only non-goal).
+ * True for the World-Languages kinds (their own inventory-guarded path) and
+ * for any kind with a {@link KIND_BRIEF} entry; false otherwise (authored-only,
+ * e.g. math-clock/math-money/math-measure). Single source of truth used by
+ * both {@link generatePracticeItems}'s refusal and any caller that wants to
+ * offer/accept generation only for generable kinds.
+ */
+export function isGenerableKind(kind: ActivityKind): boolean {
+  return isLangKind(kind) || KIND_BRIEF[kind] !== undefined;
+}
 
 const MODEL_FOR_BAND: Record<Band, TutorModel> = {
   ready: TUTOR_FAST,
@@ -469,6 +473,15 @@ export async function generatePracticeItems<K extends ActivityKind>(
     // authored inventory. Throws if none survive.
     const guarded = validateLangItems(kind, result.items, lang, slice);
     return guarded as z.output<(typeof ACTIVITY_CONFIG_SCHEMAS)[K]>[];
+  }
+
+  // Authored-only kind (spec §9): no KIND_BRIEF entry means no vetted prompt
+  // contract for this shape, so refuse rather than let the model free-guess a
+  // config whose schema deliberately trusts hand-authored bounds/answerIndex.
+  // The route turns this throw into a 502 -> authored-content fallback, same
+  // as the World-Languages guard above.
+  if (KIND_BRIEF[kind] === undefined) {
+    throw new Error(`generatePracticeItems: "${kind}" is authored-only (no generation brief)`);
   }
 
   const result = await chatJSON({
