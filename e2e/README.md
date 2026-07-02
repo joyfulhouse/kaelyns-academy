@@ -31,7 +31,7 @@ First time on a machine: `bunx playwright install chromium`.
 
 - **setup** — signs in the two seeded accounts once, saves session state to
   `e2e/.auth/{parent,admin}.json` (gitignored). `parent`/`admin` projects depend on it.
-- **public** — signed-out specs (`smoke`, `auth`, `learner`).
+- **public** — signed-out specs (`smoke`, `auth`, `learner`, `life-skills-math`).
 - **parent** / **admin** — reuse the saved sessions. `motivation.spec.ts` lives in
   the `parent` project (its admin-only assertion locally overrides to the admin
   storageState via `test.use`) rather than getting its own project, since it needs
