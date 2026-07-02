@@ -383,6 +383,29 @@ export const SKILLS: Skill[] = [
     readyIndicator: "Works independently for a focused block and keeps trying when something is hard",
   },
 
+  // ── Life Skills Math (B1): time · money · measurement ──
+  {
+    slug: "math.time",
+    domain: "lifeskills",
+    label: "Telling time to the hour & half-hour",
+    readyIndicator: "Reads and sets an analog clock to the hour and half-hour, and matches it to the digital time",
+    stretchIndicator: "Tells time to the quarter-hour and orders events by clock time",
+  },
+  {
+    slug: "math.money",
+    domain: "lifeskills",
+    label: "Coins & counting money",
+    readyIndicator: "Names penny, nickel, dime, and quarter and counts a small set of coins to a total up to one dollar",
+    stretchIndicator: "Makes the same amount with different coin combinations",
+  },
+  {
+    slug: "math.measure",
+    domain: "lifeskills",
+    label: "Comparing & measuring",
+    readyIndicator: "Compares objects by length, height, and weight, and measures length in non-standard units",
+    stretchIndicator: "Orders three or more objects and reasons about which unit fits",
+  },
+
   // ── World Languages: Zhuyin / Bopomofo ──
   // Script-mapping: she already speaks Mandarin and reads pinyin, so this is
   // learning the symbols for sounds she knows, not a new language.

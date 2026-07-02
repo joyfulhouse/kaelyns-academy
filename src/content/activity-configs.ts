@@ -165,6 +165,77 @@ export const langListenMatchConfig = z.object({
 });
 export type LangListenMatchConfig = z.input<typeof langListenMatchConfig>;
 
+// ── Life Skills Math (Adventure 2.0 B1) ──────────────────────────────────────
+
+export const mathClockConfig = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("read"),
+    instruction: z.string(),
+    hour: z.number().int().min(1).max(12),
+    minute: z.union([z.literal(0), z.literal(30)]),
+    /** Digital-time choices like "3:00" / "3:30". */
+    choices: z.array(z.string().min(1).max(8)).min(2).max(4),
+    answerIndex: z.number().int().min(0),
+  }),
+  z.object({
+    mode: z.literal("set"),
+    instruction: z.string(),
+    targetHour: z.number().int().min(1).max(12),
+    targetMinute: z.union([z.literal(0), z.literal(30)]),
+  }),
+]);
+export type MathClockConfig = z.input<typeof mathClockConfig>;
+
+const coinEnum = z.enum(["penny", "nickel", "dime", "quarter"]);
+export const mathMoneyConfig = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("identify"),
+    instruction: z.string(),
+    coins: z.array(coinEnum).min(2).max(6),
+    targetCoin: coinEnum,
+  }),
+  z.object({
+    mode: z.literal("count"),
+    instruction: z.string(),
+    /** Coin types the child can tap into the tray. */
+    palette: z.array(coinEnum).min(1).max(4),
+    targetCents: z.number().int().min(1).max(100),
+  }),
+]);
+export type MathMoneyConfig = z.input<typeof mathMoneyConfig>;
+
+export const mathMeasureConfig = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("compare"),
+    instruction: z.string(),
+    attribute: z.enum(["length", "height", "weight"]),
+    /** "most" → longest/tallest/heaviest; "least" → shortest/…/lightest. */
+    question: z.enum(["most", "least"]),
+    items: z
+      .array(
+        z.object({
+          label: z.string().min(1).max(24),
+          emoji: z.string().min(1).max(8),
+          /** Visual proportion only (renders the bar/size); NOT the answer. */
+          size: z.number().min(0).max(100),
+        }),
+      )
+      .min(2)
+      .max(4),
+    answerIndex: z.number().int().min(0),
+  }),
+  z.object({
+    mode: z.literal("units"),
+    instruction: z.string(),
+    unit: z.enum(["cube", "paperclip", "block", "hand"]),
+    /** True length in units (the visual renders this many unit icons). */
+    length: z.number().int().min(1).max(12),
+    choices: z.array(z.number().int().min(0).max(20)).min(2).max(4),
+    answerIndex: z.number().int().min(0),
+  }),
+]);
+export type MathMeasureConfig = z.input<typeof mathMeasureConfig>;
+
 export const ACTIVITY_CONFIG_SCHEMAS = {
   "phonics-wordbuild": phonicsWordbuildConfig,
   "sightword-game": sightwordGameConfig,
@@ -174,6 +245,9 @@ export const ACTIVITY_CONFIG_SCHEMAS = {
   "math-array": mathArrayConfig,
   "lang-symbol-intro": langSymbolIntroConfig,
   "lang-listen-match": langListenMatchConfig,
+  "math-clock": mathClockConfig,
+  "math-money": mathMoneyConfig,
+  "math-measure": mathMeasureConfig,
 } as const;
 
 export type ActivityKind = keyof typeof ACTIVITY_CONFIG_SCHEMAS;

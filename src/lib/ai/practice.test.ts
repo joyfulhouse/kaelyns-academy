@@ -19,6 +19,7 @@ vi.mock("@/lib/audio/phonemize", () => ({ phonemize }));
 
 import {
   generatePracticeItems,
+  isGenerableKind,
   KIND_BRIEF,
   provenanceForGeneration,
   repairPhonicsBatch,
@@ -276,6 +277,16 @@ describe("generatePracticeItems (bounded + schema-validated)", () => {
     const items = await generatePracticeItems("phonics-wordbuild", "ready", "short a", 1);
     expect(items[0].say).toEqual({ c: "k", t: "t" }); // bogus "a":"z" dropped
   });
+
+  it("refuses to generate an authored-only kind (no KIND_BRIEF entry) without calling the gateway", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      generatePracticeItems("math-clock", "ready", "telling time", 1),
+    ).rejects.toThrow(/authored-only/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("KIND_BRIEF", () => {
@@ -287,6 +298,27 @@ describe("KIND_BRIEF", () => {
     // Concrete examples anchor the contract for the model.
     expect(brief).toContain('"ta":"teɪ"');
     expect(brief).toContain('"c":"k"');
+  });
+
+  it("has no brief for the authored-only new math kinds (spec §9 non-goal)", () => {
+    expect(KIND_BRIEF["math-clock"]).toBeUndefined();
+    expect(KIND_BRIEF["math-money"]).toBeUndefined();
+    expect(KIND_BRIEF["math-measure"]).toBeUndefined();
+  });
+});
+
+describe("isGenerableKind (single source of truth for authored-only gating)", () => {
+  it("is true for kinds with a KIND_BRIEF entry and for World-Languages kinds", () => {
+    expect(isGenerableKind("phonics-wordbuild")).toBe(true);
+    expect(isGenerableKind("math-tenframe")).toBe(true);
+    expect(isGenerableKind("lang-symbol-intro")).toBe(true);
+    expect(isGenerableKind("lang-listen-match")).toBe(true);
+  });
+
+  it("is false for the authored-only new math kinds", () => {
+    expect(isGenerableKind("math-clock")).toBe(false);
+    expect(isGenerableKind("math-money")).toBe(false);
+    expect(isGenerableKind("math-measure")).toBe(false);
   });
 });
 

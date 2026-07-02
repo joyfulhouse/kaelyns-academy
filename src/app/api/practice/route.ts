@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
+import { ACTIVITY_CONFIG_SCHEMAS, type ActivityKind } from "@/content/activity-configs";
 import { findActivity, getSkill } from "@/content";
 import { readJsonBody } from "@/lib/api/http";
 import { resolveRateLimit } from "@/lib/api/rate";
 import { jsonError } from "@/lib/api/respond";
 import { captureNonCritical } from "@/lib/capture";
-import { generatePracticeItems, provenanceForGeneration } from "@/lib/ai/practice";
+import { generatePracticeItems, isGenerableKind, provenanceForGeneration } from "@/lib/ai/practice";
 import { resolveLearnerProgram } from "@/lib/content/repository";
 import { pickedInterestLabels } from "@/lib/interests/store";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -30,8 +30,15 @@ const RATE_LIMIT_ANON = { limit: 10, windowMs: 60_000 };
 
 // Anonymous explore: the guest surface has no enrollment, so it supplies the
 // (bounded) generation params. generatePracticeItems still schema-validates output.
+// `kind` is narrowed to the generable set (single source of truth: isGenerableKind)
+// so an authored-only kind (spec §9, e.g. math-clock/money/measure) 400s here
+// instead of round-tripping to generatePracticeItems's refusal + 502 fallback.
+const GENERABLE_KINDS = (Object.keys(ACTIVITY_CONFIG_SCHEMAS) as ActivityKind[]).filter(
+  isGenerableKind,
+) as [ActivityKind, ...ActivityKind[]];
+
 const exploreSchema = z.object({
-  kind: z.enum(Object.keys(ACTIVITY_CONFIG_SCHEMAS) as [keyof typeof ACTIVITY_CONFIG_SCHEMAS]),
+  kind: z.enum(GENERABLE_KINDS),
   band: z.enum(["ready", "stretch"]),
   focus: z.string().min(1).max(200),
   n: z.number().int().min(1).max(8).default(3),

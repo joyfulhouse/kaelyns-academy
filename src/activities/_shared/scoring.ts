@@ -33,3 +33,16 @@ export function evenSkillEvidence(
 ): ActivityScore["skillEvidence"] {
   return skills.map((skill) => ({ skill, outcome }));
 }
+
+/**
+ * First-try success rate for a single-check activity from the attempt count:
+ * finished on the first check → 1 (solid), second → 0.5 (emerging), later → 0.2
+ * (finished, not-yet). Not finished → 0. Shared by every single-check plugin so
+ * the stars/outcome ladder is identical everywhere.
+ */
+export function firstTryRateFromAttempts(correct: boolean, attempts: number): number {
+  if (!correct) return 0;
+  if (attempts <= 1) return 1;
+  if (attempts === 2) return 0.5;
+  return 0.2;
+}
