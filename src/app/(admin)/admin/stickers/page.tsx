@@ -4,6 +4,7 @@ import { StickerPackForm } from "@/components/admin/StickerPackForm";
 import { StickerForm } from "@/components/admin/StickerForm";
 import { LifecycleStatusControls } from "@/components/admin/LifecycleStatusControls";
 import { LifecycleStatusPill } from "@/components/admin/LifecycleStatusPill";
+import { InlineDisclosure } from "@/components/admin/InlineDisclosure";
 import { listStickerPacks } from "@/lib/rewards/admin-store";
 import { setStickerPackStatusAction } from "@/app/(admin)/admin/motivation-actions";
 
@@ -87,14 +88,9 @@ export default async function AdminStickersPage() {
                   </ul>
                 )}
 
-                <details className="mt-4">
-                  <summary className="cursor-pointer text-xs font-medium text-ink-soft">
-                    Add a sticker to this pack
-                  </summary>
-                  <div className="mt-3">
-                    <StickerForm packId={pack.id} />
-                  </div>
-                </details>
+                <InlineDisclosure label="Add a sticker to this pack">
+                  <StickerForm packId={pack.id} />
+                </InlineDisclosure>
               </Surface>
             ))}
           </div>

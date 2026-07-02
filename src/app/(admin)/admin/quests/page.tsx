@@ -4,6 +4,7 @@ import { Pill } from "@/components/ui/Pill";
 import { QuestTemplateForm } from "@/components/admin/QuestTemplateForm";
 import { LifecycleStatusControls } from "@/components/admin/LifecycleStatusControls";
 import { LifecycleStatusPill } from "@/components/admin/LifecycleStatusPill";
+import { InlineDisclosure } from "@/components/admin/InlineDisclosure";
 import { listQuestTemplates } from "@/lib/quests/admin-store";
 import { setQuestTemplateStatusAction } from "@/app/(admin)/admin/motivation-actions";
 
@@ -65,12 +66,9 @@ export default async function AdminQuestsPage() {
                   <LifecycleStatusControls id={t.id} status={t.status} action={setQuestTemplateStatusAction} />
                 </div>
 
-                <details className="mt-4">
-                  <summary className="cursor-pointer text-xs font-medium text-ink-soft">Edit</summary>
-                  <div className="mt-3">
-                    <QuestTemplateForm template={t} />
-                  </div>
-                </details>
+                <InlineDisclosure label="Edit">
+                  <QuestTemplateForm template={t} />
+                </InlineDisclosure>
               </Surface>
             ))}
           </div>

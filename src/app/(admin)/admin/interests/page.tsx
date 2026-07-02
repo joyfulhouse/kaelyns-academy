@@ -3,6 +3,7 @@ import { Surface } from "@/components/ui/Surface";
 import { InterestForm } from "@/components/admin/InterestForm";
 import { LifecycleStatusControls } from "@/components/admin/LifecycleStatusControls";
 import { LifecycleStatusPill } from "@/components/admin/LifecycleStatusPill";
+import { InlineDisclosure } from "@/components/admin/InlineDisclosure";
 import { listInterests } from "@/lib/interests/admin-store";
 import { setInterestStatusAction } from "@/app/(admin)/admin/motivation-actions";
 
@@ -67,12 +68,9 @@ export default async function AdminInterestsPage() {
                   <LifecycleStatusControls id={i.id} status={i.status} action={setInterestStatusAction} />
                 </div>
 
-                <details className="mt-3">
-                  <summary className="cursor-pointer text-xs font-medium text-ink-soft">Edit</summary>
-                  <div className="mt-3">
-                    <InterestForm interest={i} />
-                  </div>
-                </details>
+                <InlineDisclosure label="Edit">
+                  <InterestForm interest={i} />
+                </InlineDisclosure>
               </Surface>
             ))}
           </div>

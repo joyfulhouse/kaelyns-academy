@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "motion/react";
 import { CheckCircleIcon, CompassIcon, StarIcon } from "@phosphor-icons/react/dist/ssr";
 import { cn } from "@/lib/cn";
@@ -23,9 +24,21 @@ export function TodaysAdventures({
   reduce,
 }: {
   quests: QuestView[];
-  onActivate: (id: string) => void;
+  onActivate: (id: string) => Promise<void>;
   reduce: boolean;
 }) {
+  // In-flight guard (same idiom as InterestPicker's `saving`): a child
+  // double-tapping "I'll do this one!" before the activate round-trip
+  // resolves would otherwise fire onActivate twice. Keyed per-quest so
+  // other offered quests stay tappable while one is settling.
+  const [pendingId, setPendingId] = useState<string | null>(null);
+
+  function handleActivate(id: string) {
+    if (pendingId) return;
+    setPendingId(id);
+    void onActivate(id).finally(() => setPendingId(null));
+  }
+
   const doneMotionProps = reduce
     ? {}
     : {
@@ -69,8 +82,9 @@ export function TodaysAdventures({
               <button
                 type="button"
                 onClick={() => {
-                  if (q.status === "offered") onActivate(q.id);
+                  if (q.status === "offered") handleActivate(q.id);
                 }}
+                disabled={q.status === "offered" && pendingId === q.id}
                 aria-pressed={q.status === "active"}
                 aria-label={
                   q.status === "active"
@@ -79,6 +93,7 @@ export function TodaysAdventures({
                 }
                 className={cn(
                   "flex min-h-11 w-full items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition",
+                  "disabled:pointer-events-none disabled:opacity-60",
                   q.status === "active"
                     ? "border-ink bg-honey/30 shadow-pop"
                     : "border-ink/30 bg-paper active:translate-y-1 active:shadow-none motion-safe:hover:-translate-y-0.5",

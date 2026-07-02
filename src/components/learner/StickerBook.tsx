@@ -5,6 +5,7 @@ import { useReducedMotion } from "motion/react";
 import { ArrowClockwiseIcon, StarIcon } from "@phosphor-icons/react/dist/ssr";
 import { cn } from "@/lib/cn";
 import { Mascot } from "@/components/art/Mascot";
+import { Button } from "@/components/ui/Button";
 import type { PurchaseResult } from "@/lib/rewards/stickers";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner } from "./learners";
@@ -65,14 +66,10 @@ export function StickerBook({ programSlug }: { programSlug: string }) {
           <p className="mt-6 text-lg text-ink-soft">
             Hmm, your sticker book is hiding. Let&rsquo;s try again!
           </p>
-          <button
-            type="button"
-            onClick={() => refresh()}
-            className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-pill border-2 border-ink bg-paper px-5 py-2.5 font-display text-base font-semibold shadow-sm transition active:translate-y-0.5 motion-safe:hover:-translate-y-0.5 motion-safe:hover:shadow-md"
-          >
-            <ArrowClockwiseIcon weight="bold" className="size-5" />
+          <Button type="button" onClick={() => refresh()} variant="soft" size="kid" className="mt-6">
+            <ArrowClockwiseIcon weight="bold" className="size-6" />
             Try again
-          </button>
+          </Button>
         </div>
       </AppShellKid>
     );

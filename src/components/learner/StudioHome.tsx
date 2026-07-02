@@ -483,13 +483,7 @@ function WorldMap({
           days keep the tutor's single best recommendation (guest fallback,
           spec §4.1 — a hard requirement, no regression). */}
       {quests ? (
-        <TodaysAdventures
-          quests={quests}
-          onActivate={(id) => {
-            void activate(id);
-          }}
-          reduce={Boolean(reduce)}
-        />
+        <TodaysAdventures quests={quests} onActivate={activate} reduce={Boolean(reduce)} />
       ) : (
         topPick && <NextThingCard pick={topPick} programSlug={program.slug} reduce={Boolean(reduce)} />
       )}
