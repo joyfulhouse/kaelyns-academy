@@ -5,7 +5,9 @@ import { learner, learnerSticker, sticker, stickerPack, starLedger } from "@/lib
 import { withOwnedLearner } from "@/lib/tutor/scope";
 import { sumLedger } from "./logic";
 
-export interface CatalogSticker {
+// Not exported: only consumed through CatalogPack.stickers (knip-clean — no
+// external importer names this type directly).
+interface CatalogSticker {
   id: string;
   slug: string;
   title: string;

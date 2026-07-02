@@ -17,6 +17,10 @@ import {
   DuplicateSlugError,
   VersionNotDraftError,
 } from "@/lib/content/store";
+import { ConcurrentStatusChangeError, InvalidStatusTransitionError } from "@/lib/admin/lifecycle";
+import { DuplicatePackSlugError, DuplicateStickerSlugError } from "@/lib/rewards/admin-store";
+import { DuplicateTemplateSlugError } from "@/lib/quests/admin-store";
+import { DuplicateInterestSlugError } from "@/lib/interests/admin-store";
 
 // Internal to this module; consumers import the AdminErrorResult shape (and switch
 // on the `reason` literals) rather than this union by name.
@@ -28,8 +32,12 @@ export type AdminErrorResult = { ok: false; reason: AdminActionReason; message: 
  * Map an error thrown by the admin gate or a store mutation to the discriminated
  * failure shape. The admin-specific branches stay here:
  *   - AdminForbiddenError → `forbidden`
- *   - the store's validation errors (duplicate slug/key, non-draft, bad config) →
+ *   - the store's validation errors (duplicate slug/key, non-draft, bad config,
+ *     the motivation stores' duplicate-slug + lifecycle-transition errors) →
  *     `invalid` with the error's own message (NOT logged — they are expected).
+ *   - a bare `z.ZodError` thrown by a store's `.parse()` boundary (the Task 12
+ *     motivation stores' defense-in-depth validation — see rewards/quests/
+ *     interests admin-store.ts) → `invalid` with the first issue's message.
  * Everything else delegates to the shared `mapActionError`: an
  * `UnauthenticatedError` → the calm "Please sign in again." prompt (not logged),
  * and any unexpected error → logged non-critically under `context` + a generic
@@ -43,9 +51,18 @@ function mapError(error: unknown, context: string): AdminErrorResult {
     error instanceof DuplicateSlugError ||
     error instanceof VersionNotDraftError ||
     error instanceof ActivityConfigValidationError ||
-    error instanceof DuplicateKeyError
+    error instanceof DuplicateKeyError ||
+    error instanceof DuplicatePackSlugError ||
+    error instanceof DuplicateStickerSlugError ||
+    error instanceof DuplicateTemplateSlugError ||
+    error instanceof DuplicateInterestSlugError ||
+    error instanceof InvalidStatusTransitionError ||
+    error instanceof ConcurrentStatusChangeError
   ) {
     return { ok: false, reason: "invalid", message: error.message };
+  }
+  if (error instanceof z.ZodError) {
+    return { ok: false, reason: "invalid", message: error.issues[0]?.message ?? "Invalid input." };
   }
   return mapActionError(error, context, "An unexpected error occurred. Please try again.");
 }

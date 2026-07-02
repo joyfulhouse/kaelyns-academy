@@ -1,8 +1,12 @@
 /**
  * Shared status display maps — client-safe (no React, no server imports).
  *
- * Two distinct namespaces:
+ * Three distinct namespaces:
  *  - Program status (admin surface): draft / published / archived
+ *  - Lifecycle status (Task 12 motivation admin: stickers/quests/interests):
+ *    draft / published / archived — same values as program status, but kept
+ *    as a separate export (typed against LifecycleStatus) so the two surfaces
+ *    don't couple to one shared symbol by coincidence of identical strings.
  *  - Enrollment status (parent surface): active / paused / removed
  *
  * The parent surface intentionally labels the enrollment "active" state as
@@ -12,6 +16,7 @@
  */
 
 import type { PillTone } from "@/components/ui/Pill";
+import type { LifecycleStatus } from "@/lib/admin/lifecycle";
 import type { EnrollmentStatus } from "@/lib/tutor/enrollment";
 
 // ── Program status (admin) ────────────────────────────────────────────────────
@@ -25,6 +30,22 @@ export const PROGRAM_STATUS_TONE: Record<string, PillTone> = {
 
 /** Human-readable label for each program lifecycle status (admin surface). */
 export const PROGRAM_STATUS_LABEL: Record<string, string> = {
+  draft: "Draft",
+  published: "Published",
+  archived: "Archived",
+};
+
+// ── Lifecycle status (motivation taxonomies: stickers/quests/interests) ──────
+
+/** Pill tone for each motivation-taxonomy row's status. */
+export const LIFECYCLE_STATUS_TONE: Record<LifecycleStatus, PillTone> = {
+  draft: "ready",
+  published: "success",
+  archived: "neutral",
+};
+
+/** Human-readable label for each motivation-taxonomy row's status. */
+export const LIFECYCLE_STATUS_LABEL: Record<LifecycleStatus, string> = {
   draft: "Draft",
   published: "Published",
   archived: "Archived",

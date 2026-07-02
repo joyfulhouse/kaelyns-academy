@@ -1,0 +1,87 @@
+import type { Metadata } from "next";
+import { Surface } from "@/components/ui/Surface";
+import { Pill } from "@/components/ui/Pill";
+import { InterestForm } from "@/components/admin/InterestForm";
+import { LifecycleStatusControls } from "@/components/admin/LifecycleStatusControls";
+import { listInterests } from "@/lib/interests/admin-store";
+import { setInterestStatusAction } from "@/app/(admin)/admin/motivation-actions";
+import { LIFECYCLE_STATUS_TONE, LIFECYCLE_STATUS_LABEL } from "@/lib/status-display";
+import type { LifecycleStatus } from "@/lib/admin/lifecycle";
+
+/**
+ * Admin interest taxonomy list — RSC, already gated by the admin layout.
+ * Calls the admin-store directly (the layout has already enforced admin).
+ * New interests default to draft (§8: only published rows reach the child
+ * picker or the AI theming prompt).
+ */
+export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = { title: "Interests" };
+
+export default async function AdminInterestsPage() {
+  const interests = await listInterests();
+
+  return (
+    <div className="flex flex-col gap-10">
+      <div>
+        <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">
+          Interests
+        </h1>
+        <p className="mt-1 text-sm text-ink-soft">
+          The bounded taxonomy parents offer and children pick from — the only interest text AI practice ever sees.
+        </p>
+      </div>
+
+      <section aria-labelledby="create-interest-heading">
+        <h2 id="create-interest-heading" className="mb-4 font-display text-base font-semibold text-ink">
+          Create an interest
+        </h2>
+        <Surface tone="raised" className="p-6 border border-line">
+          <InterestForm />
+        </Surface>
+      </section>
+
+      <section aria-labelledby="interest-list-heading">
+        <h2 id="interest-list-heading" className="mb-4 font-display text-base font-semibold text-ink">
+          All interests
+          {interests.length > 0 && (
+            <span className="ml-2 font-normal text-ink-soft">({interests.length})</span>
+          )}
+        </h2>
+
+        {interests.length === 0 ? (
+          <p className="text-sm text-ink-soft">No interests yet. Create one above.</p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {interests.map((i) => (
+              <Surface key={i.id} tone="raised" className="p-4 border border-line">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    {i.icon && (
+                      <span aria-hidden="true" className="text-lg">
+                        {i.icon}
+                      </span>
+                    )}
+                    <span className="font-medium text-ink">{i.label}</span>
+                    <Pill tone={LIFECYCLE_STATUS_TONE[i.status as LifecycleStatus] ?? "neutral"}>
+                      {LIFECYCLE_STATUS_LABEL[i.status as LifecycleStatus] ?? i.status}
+                    </Pill>
+                    <span className="truncate text-xs text-ink-faint">/{i.slug}</span>
+                  </div>
+                  <LifecycleStatusControls id={i.id} status={i.status} action={setInterestStatusAction} />
+                </div>
+
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-xs font-medium text-ink-soft">Edit</summary>
+                  <div className="mt-3">
+                    <InterestForm interest={i} />
+                  </div>
+                </details>
+              </Surface>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
