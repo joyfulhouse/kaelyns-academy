@@ -75,6 +75,9 @@ function builder(op: string, table: string) {
     limit() {
       return chain;
     },
+    orderBy() {
+      return chain;
+    },
     for() {
       ops.push({ op: "select.for", table: chain.table });
       return chain;
@@ -91,7 +94,17 @@ function builder(op: string, table: string) {
               : chain.op === "select" && chain.table === "attempt"
                 ? attemptRows.value
                 : chain.op === "select" && chain.table === "learner_quest"
-                  ? questRows.value.filter((r) => r.status === "active")
+                  ? // Mirrors applyAttemptToQuests's WHERE: status="active" AND
+                    // programSlug=<the recorded attempt's program> (Finding 1: cross-
+                    // program leakage). A canned row with no programSlug is treated as
+                    // belonging to the current program (existing tests don't care about
+                    // this dimension); a row with an explicit, different programSlug is
+                    // filtered out, same as the status filter already does for "offered".
+                    questRows.value.filter(
+                      (r) =>
+                        r.status === "active" &&
+                        (r.programSlug === undefined || r.programSlug === input.programSlug),
+                    )
                   : [];
       return Promise.resolve(rows).then(resolve);
     },
@@ -381,6 +394,47 @@ describe("recordAttempt (atomic persistence)", () => {
     ];
     await recordAttempt("acct-1", baseInput());
     expect(questUpdates).toHaveLength(0);
+  });
+
+  // Finding 1 (review): applyAttemptToQuests must be program-scoped — an
+  // active quest assigned for a DIFFERENT program than the recorded attempt
+  // must not fold or credit, the same way a learner enrolled in both
+  // kaelyn-adaptive and world-languages can't have one program's activity
+  // complete the other's quest.
+  it("does not fold or credit an active quest from a different program", async () => {
+    questRows.value = [
+      {
+        id: "Q1",
+        programSlug: "world-languages", // baseInput()'s attempt is for kaelyn-adaptive
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+    await recordAttempt("acct-1", baseInput());
+    expect(questUpdates).toHaveLength(0);
+    expect(ledgerInserts.some((l) => l.reason === "quest_complete")).toBe(false);
+  });
+
+  // Finding 2 (review): a corrupt jsonb column (target/progress fails its zod
+  // schema) must fail CLOSED — the row is skipped entirely, so it can never
+  // fold, complete, or credit stars off corrupt data.
+  it("does not fold, complete, or credit a quest with a corrupt target", async () => {
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: {}, // missing required `count` — fails questTargetSchema
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+    await recordAttempt("acct-1", baseInput());
+    expect(questUpdates).toHaveLength(0);
+    expect(ledgerInserts.some((l) => l.reason === "quest_complete")).toBe(false);
   });
 });
 

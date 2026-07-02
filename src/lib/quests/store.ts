@@ -32,21 +32,27 @@ export interface QuestView {
 type Db = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
 
 /**
- * Parse a stored quest jsonb value (target/progress) defensively, falling
- * back to `fallback` on corruption. NOT `@/lib/tutor/jsonb`'s
- * parseJsonbFailClosed: that helper's `T extends AiGated` constraint requires
- * at least one property in common with `{ aiPractice?: boolean }`, and
- * QuestTarget/QuestProgress share none — TypeScript's weak-type check
- * correctly rejects the call (see Task 5 brief caveat 2; this is a real
- * compile error, not just a null-vs-default difference). Quest jsonb also
- * isn't a §8 AI gate, so a plain "log + safe default" fits better than that
- * helper's fail-closed-to-block-AI semantics anyway.
+ * Parse a stored quest jsonb value (target/progress) defensively. NOT
+ * `@/lib/tutor/jsonb`'s parseJsonbFailClosed: that helper's `T extends
+ * AiGated` constraint requires at least one property in common with
+ * `{ aiPractice?: boolean }`, and QuestTarget/QuestProgress share none —
+ * TypeScript's weak-type check correctly rejects the call (see Task 5 brief
+ * caveat 2; this is a real compile error, not just a null-vs-default
+ * difference).
+ *
+ * Unlike the original version of this helper, this now fails CLOSED like the
+ * §8 AI gate: quest jsonb funds the star economy (a `complete_n` quest whose
+ * corrupt `target`/`progress` silently defaulted to `{count: 1}`/`{done: 0}`
+ * would read as instantly completable, crediting stars off corrupt data), so
+ * on schema failure this logs via `captureNonCritical` and returns `null`
+ * instead of a safe-looking default — the caller (`toView`) skips the row
+ * entirely: it neither renders, folds, nor credits.
  */
-function parseQuestJsonb<T>(schema: ZodType<T>, raw: unknown, fallback: T, context: string): T {
+function safeParseQuestJsonb<T>(schema: ZodType<T>, raw: unknown, context: string): T | null {
   const parsed = schema.safeParse(raw ?? {});
   if (parsed.success) return parsed.data;
   captureNonCritical(`malformed ${context}`, parsed.error);
-  return fallback;
+  return null;
 }
 
 /** Published templates in authoring sort order (selection input). */
@@ -71,15 +77,28 @@ export async function skillLabel(slug: string): Promise<string> {
   return rows[0]?.label ?? slug;
 }
 
+/**
+ * Row → view, fail-closed: an unknown kind or a jsonb column that fails its
+ * schema parse returns `null` (skip this row — it neither renders, folds,
+ * nor credits) rather than substituting a default that could look
+ * instantly-completable.
+ */
 function toView(r: typeof learnerQuest.$inferSelect): QuestView | null {
   const kind = questKindSchema.safeParse(r.kind);
-  if (!kind.success) return null;
+  if (!kind.success) {
+    captureNonCritical(`unknown quest kind (${r.id})`, kind.error);
+    return null;
+  }
+  const target = safeParseQuestJsonb(questTargetSchema, r.target, `quest target (${r.id})`);
+  if (target === null) return null;
+  const progress = safeParseQuestJsonb(questProgressSchema, r.progress, `quest progress (${r.id})`);
+  if (progress === null) return null;
   return {
     id: r.id,
     title: r.title,
     kind: kind.data,
-    target: parseQuestJsonb(questTargetSchema, r.target, { count: 1 }, `quest target (${r.id})`),
-    progress: parseQuestJsonb(questProgressSchema, r.progress, { done: 0 }, `quest progress (${r.id})`),
+    target,
+    progress,
     rewardStars: r.rewardStars,
     status: r.status as QuestStatus,
   };
@@ -202,23 +221,29 @@ export async function activateQuest(
  * recordAttempt's open transaction (all-or-nothing with the attempt row).
  * Completion flips status to done and credits rewardStars to the ledger
  * (reason quest_complete) in the same tx.
+ *
+ * Program-scoped: only quests assigned for `programSlug` fold (mirrors
+ * `activateQuest`'s program-scoped demotion via `dayKey`). A learner enrolled
+ * in two programs completing an activity in one must never fold into or
+ * credit the other program's quests.
+ *
+ * Lock order is deterministic (`ORDER BY id`) so two racing `recordAttempt`
+ * transactions with overlapping active-quest rows lock in the same order
+ * rather than potentially deadlocking (mirrors the skill-fold's sorted-lock
+ * pattern in `src/lib/tutor/store.ts`).
  */
 export async function applyAttemptToQuests(
   tx: Db,
   learnerId: string,
+  programSlug: string,
   day: string,
   ctx: QuestAttemptCtx,
 ): Promise<void> {
   const rows = await tx
     .select()
     .from(learnerQuest)
-    .where(
-      and(
-        eq(learnerQuest.learnerId, learnerId),
-        eq(learnerQuest.assignedOn, day),
-        eq(learnerQuest.status, "active"),
-      ),
-    )
+    .where(and(dayKey(learnerId, programSlug, day), eq(learnerQuest.status, "active")))
+    .orderBy(asc(learnerQuest.id))
     .for("update");
   for (const row of rows) {
     const view = toView(row);

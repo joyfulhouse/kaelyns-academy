@@ -276,7 +276,7 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
 
     // Adventure 2.0: fold this attempt into today's ACTIVE quests + credit any
     // completed quest's reward — inside this same transaction.
-    await applyAttemptToQuests(tx, input.learnerId, input.day, {
+    await applyAttemptToQuests(tx, input.learnerId, input.programSlug, input.day, {
       activityId: input.activityId,
       unitId: input.unitId ?? null,
       skills: input.score.skillEvidence.map((e) => e.skill),
