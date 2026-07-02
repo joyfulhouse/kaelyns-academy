@@ -11,13 +11,36 @@ import type { PurchaseResult } from "@/lib/rewards/stickers";
 /**
  * Account-mode rewards state. Guest mode (null learnerId or signedIn:false)
  * yields state:null and the UI hides the economy entirely (spec §3.7).
+ *
+ * `getRewardsStateAction` swallows transient failures into a signedIn:false
+ * shape, which this hook maps to `state:null` — indistinguishable from "still
+ * loading" unless callers also check `settled`. `settled` flips true once the
+ * in-flight fetch resolves (success or swallowed failure), so a caller can
+ * tell "loading" (`!settled`) apart from "fetch failed, offer retry"
+ * (`settled && !state`), instead of dead-ending on a spinner forever.
+ *
+ * The exposed `state`/`settled` are DERIVED against `settledFor` (which
+ * learnerId the last resolved fetch belongs to), rather than reset via a
+ * synchronous `setState` in the mount/dependency effect — same idiom as
+ * useLearnerState's `loadedKey`. That keeps every setState call inside the
+ * fetch's `.then` (an async boundary), satisfying
+ * `react-hooks/set-state-in-effect`, while still enforcing "no learner → no
+ * state" the instant `learnerId` goes null and resetting `settled` the
+ * instant `learnerId` changes to a different learner — both take effect on
+ * the very next render, no extra effect tick needed.
  */
 export function useRewards(learnerId: string | null) {
   const [state, setState] = useState<RewardsState | null>(null);
+  const [settledState, setSettledState] = useState(false);
+  const [settledFor, setSettledFor] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     if (!learnerId) return;
-    void getRewardsStateAction(learnerId).then((s) => setState(s.signedIn ? s : null));
+    void getRewardsStateAction(learnerId).then((s) => {
+      setState(s.signedIn ? s : null);
+      setSettledState(true);
+      setSettledFor(learnerId);
+    });
   }, [learnerId]);
 
   useEffect(refresh, [refresh]);
@@ -32,5 +55,13 @@ export function useRewards(learnerId: string | null) {
     [learnerId, refresh],
   );
 
-  return { state, refresh, purchase };
+  // "No learner → no state" and "learner switch reads as not-yet-settled"
+  // are both enforced here, every render — not just when refresh runs.
+  const current = settledFor === learnerId;
+  return {
+    state: current ? state : null,
+    settled: current ? settledState : false,
+    refresh,
+    purchase,
+  };
 }

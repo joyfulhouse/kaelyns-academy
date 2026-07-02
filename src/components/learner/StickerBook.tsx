@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useReducedMotion } from "motion/react";
-import { StarIcon } from "@phosphor-icons/react/dist/ssr";
+import { ArrowClockwiseIcon, StarIcon } from "@phosphor-icons/react/dist/ssr";
 import { cn } from "@/lib/cn";
 import { Mascot } from "@/components/art/Mascot";
 import type { PurchaseResult } from "@/lib/rewards/stickers";
@@ -32,20 +32,47 @@ export function StickerBook({ programSlug }: { programSlug: string }) {
   // report the real account learner once a household is signed in.
   const { learner } = useActiveLearner();
   const { mode, selectedLearnerId } = useLearnerState(learner.id, programSlug);
-  const { state, purchase } = useRewards(mode === "account" ? selectedLearnerId : null);
+  const { state, settled, refresh, purchase } = useRewards(
+    mode === "account" ? selectedLearnerId : null,
+  );
   const [message, setMessage] = useState<string | null>(null);
   const reduce = useReducedMotion();
 
   // While the session resolves, OR while a confirmed account learner's rewards
-  // are still in flight, show a calm loading beat — same posture as
+  // fetch hasn't settled yet, show a calm loading beat — same posture as
   // StudioHome's ResolvingSurface — rather than flashing the guest "ask a
   // grown-up" message at a signed-in household before `state` arrives.
-  if (mode === "loading" || (mode === "account" && !state)) {
+  if (mode === "loading" || (mode === "account" && !state && !settled)) {
     return (
       <AppShellKid backHref={`/learn/${programSlug}`} readAloud="Getting your sticker book ready.">
         <div className="mx-auto flex max-w-2xl flex-col items-center pt-10 text-center">
           <Mascot mood="happy" size={64} className={reduce ? undefined : "motion-safe:animate-float"} />
           <p className="mt-6 text-base text-ink-faint">Getting your sticker book ready...</p>
+        </div>
+      </AppShellKid>
+    );
+  }
+
+  // The fetch settled but never produced state — a transient failure
+  // (getRewardsStateAction swallows errors into signedIn:false, which the
+  // hook maps to state:null). Never strand a signed-in child on the loading
+  // beat forever: offer a real retry instead.
+  if (mode === "account" && !state && settled) {
+    return (
+      <AppShellKid backHref={`/learn/${programSlug}`} readAloud="Your sticker book is hiding. Let's try again.">
+        <div className="mx-auto flex max-w-2xl flex-col items-center pt-10 text-center">
+          <Mascot mood="think" size={64} />
+          <p className="mt-6 text-lg text-ink-soft">
+            Hmm, your sticker book is hiding. Let&rsquo;s try again!
+          </p>
+          <button
+            type="button"
+            onClick={() => refresh()}
+            className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-pill border-2 border-ink bg-paper px-5 py-2.5 font-display text-base font-semibold shadow-sm transition active:translate-y-0.5 motion-safe:hover:-translate-y-0.5 motion-safe:hover:shadow-md"
+          >
+            <ArrowClockwiseIcon weight="bold" className="size-5" />
+            Try again
+          </button>
         </div>
       </AppShellKid>
     );
