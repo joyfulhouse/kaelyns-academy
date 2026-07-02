@@ -16,6 +16,7 @@ import {
   type RecentAttempt,
 } from "@/lib/tutor/store";
 import { withOwnedLearner } from "@/lib/tutor/scope";
+import { getLearnerInterests, listPublishedInterests, type InterestView } from "@/lib/interests/store";
 import type { LearnerSettings } from "@/lib/content/config";
 import { deriveOutcome, type SkillState } from "@/lib/tutor/mastery";
 import {
@@ -253,6 +254,40 @@ export async function getLearnerSettingsForParent(
       async (learner) => {
         const settings = await getLearnerSettings(accountId, learner.id);
         return { learner, settings };
+      },
+      null,
+    ),
+  );
+}
+
+/** The per-learner Interests card read: the requested learner + the full
+ *  published taxonomy + which ids the parent currently OFFERS. */
+export interface LearnerInterestsForParent {
+  learner: LearnerRow;
+  allInterests: InterestView[];
+  offeredIds: string[];
+}
+
+/**
+ * The per-learner Interests card read (Task 9): every published interest (so
+ * the parent can toggle any of them) plus which ones are currently offered for
+ * this learner. Returns null when the learner does not exist or is not this
+ * account's (the page turns that into a 404), matching
+ * {@link getLearnerSettingsForParent}.
+ */
+export async function getLearnerInterestsForParent(
+  learnerId: string,
+): Promise<LearnerInterestsForParent | null> {
+  return withAccount(({ accountId }) =>
+    withOwnedLearner<LearnerInterestsForParent | null>(
+      accountId,
+      learnerId,
+      async (learner) => {
+        const [allInterests, { offered }] = await Promise.all([
+          listPublishedInterests(),
+          getLearnerInterests(accountId, learner.id),
+        ]);
+        return { learner, allInterests, offeredIds: offered.map((o) => o.id) };
       },
       null,
     ),

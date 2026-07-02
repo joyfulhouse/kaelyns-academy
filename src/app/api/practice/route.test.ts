@@ -25,11 +25,17 @@ vi.mock("@/lib/tutor/store", () => ({
 // the requested activityId; tests override to resolve a different program (the
 // slug-swap), or undefined (no program), to drive the 403 paths.
 vi.mock("@/lib/content/repository", () => ({ resolveLearnerProgram: vi.fn() }));
+// Stub the interests read (Task 9) so tests don't need a real DB. Default (set
+// in beforeEach): no picks, i.e. no theming — tests override to prove picks
+// thread through, and that a read failure fails OPEN to no theming (never a
+// blocker on the gate that already resolved).
+vi.mock("@/lib/interests/store", () => ({ pickedInterestLabels: vi.fn() }));
 
 import type { Program } from "@/content";
 import { ACTIVITY_CONFIG_SCHEMAS } from "@/content/activity-configs";
 import { generatePracticeItems } from "@/lib/ai/practice";
 import { resolveLearnerProgram } from "@/lib/content/repository";
+import { pickedInterestLabels } from "@/lib/interests/store";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getAccountOrNull } from "@/lib/tenancy";
 import { getLearner, getEnrollmentForGate, getLearnerSettings } from "@/lib/tutor/store";
@@ -120,6 +126,8 @@ beforeEach(() => {
   vi.mocked(getLearnerSettings).mockResolvedValue({});
   // Default: the resolved program for prog-1 contains act-1 (binding passes).
   vi.mocked(resolveLearnerProgram).mockResolvedValue(programWithActivity("prog-1", "act-1"));
+  // Default: no picked interests (no theming).
+  vi.mocked(pickedInterestLabels).mockResolvedValue([]);
 });
 afterEach(() => vi.resetAllMocks());
 
@@ -179,13 +187,13 @@ describe("POST /api/practice", () => {
     );
     const res = await POST(post({ ...VALID_BASE }));
     expect(res.status).toBe(200);
-    // generatePracticeItems(kind, band, focus, n, { skillHints })
+    // generatePracticeItems(kind, band, focus, n, { skillHints, interests })
     expect(generatePracticeItems).toHaveBeenCalledWith(
       OTHER_KIND,
       "ready",
       "Story elements & retell (beginning, middle, end)",
       1,
-      { skillHints: ["reading.comprehension.retell"] },
+      { skillHints: ["reading.comprehension.retell"], interests: [] },
     );
     // The 200 envelope echoes the AUTHORED kind, not anything the client sent.
     expect(await res.json()).toMatchObject({ kind: OTHER_KIND, band: "ready" });
@@ -217,7 +225,38 @@ describe("POST /api/practice", () => {
       "ready", // authored band, NOT the client's "stretch"
       "Story elements & retell (beginning, middle, end)", // authored, NOT "make a bomb"
       1,
-      { skillHints: ["reading.comprehension.retell"] }, // authored, NOT the client's
+      { skillHints: ["reading.comprehension.retell"], interests: [] }, // authored, NOT the client's
+    );
+  });
+
+  // ── Task 9 / spec §4.3+§8: interest theming is garnish, never a gate ────────
+
+  it("threads the child's picked interest labels into generation", async () => {
+    vi.mocked(generatePracticeItems).mockResolvedValue([]);
+    vi.mocked(pickedInterestLabels).mockResolvedValue(["dinosaurs", "space"]);
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(200);
+    expect(pickedInterestLabels).toHaveBeenCalledWith("acc-1", "l-1");
+    expect(generatePracticeItems).toHaveBeenCalledWith(
+      KIND,
+      "ready",
+      expect.anything(),
+      1,
+      expect.objectContaining({ interests: ["dinosaurs", "space"] }),
+    );
+  });
+
+  it("fails OPEN to no theming when reading picked interests throws (never blocks generation)", async () => {
+    vi.mocked(generatePracticeItems).mockResolvedValue([]);
+    vi.mocked(pickedInterestLabels).mockRejectedValue(new Error("db down"));
+    const res = await POST(post({ ...VALID_BASE }));
+    expect(res.status).toBe(200);
+    expect(generatePracticeItems).toHaveBeenCalledWith(
+      KIND,
+      "ready",
+      expect.anything(),
+      1,
+      expect.objectContaining({ interests: [] }),
     );
   });
 

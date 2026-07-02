@@ -7,6 +7,7 @@ import {
   ArrowRightIcon,
   ArrowsLeftRightIcon,
   CompassIcon,
+  HeartIcon,
   LockSimpleIcon,
   SparkleIcon,
   StarIcon,
@@ -415,6 +416,19 @@ function WorldMap({
                 >
                   <StarIcon weight="fill" className="size-5 text-honey" aria-hidden />
                   {rewards.balance}
+                </Link>
+              )}
+              {/* Interests picker (Task 9 / spec §4.3): account-mode only, same
+                  gating seam as the sticker chip above (no interests economy
+                  in guest mode). Not program-scoped — one board for the whole
+                  learner — so it always links to the same path. */}
+              {mode === "account" && (
+                <Link
+                  href="/learn/interests"
+                  className="inline-flex size-11 items-center justify-center rounded-pill border-2 border-ink bg-paper"
+                  aria-label="Pick your favorite things"
+                >
+                  <HeartIcon weight="fill" className="size-5 text-coral" aria-hidden />
                 </Link>
               )}
             </div>

@@ -20,6 +20,11 @@ import {
   type QuestView,
 } from "@/lib/quests/store";
 import { selectDailyQuests } from "@/lib/quests/logic";
+import {
+  getLearnerInterests,
+  setPickedInterests,
+  type InterestView,
+} from "@/lib/interests/store";
 import { outcomeOf } from "@/lib/tutor/mastery";
 import { nextBest } from "@/lib/tutor/recommend";
 import {
@@ -37,6 +42,10 @@ import { skillTagsForProgram } from "@/content";
  */
 
 const idSchema = z.string().min(1);
+/** Bounded interest-id array: same shape as the parent-side offered-set cap
+ *  (store.ts slices to 30) — defense-in-depth before validatePicks' own
+ *  max-5 subset check runs. */
+const interestIdsSchema = z.array(z.string().min(1)).max(30);
 
 export interface RewardsState {
   signedIn: boolean;
@@ -152,6 +161,52 @@ export async function activateQuestAction(
   } catch (error) {
     if (!(error instanceof UnauthenticatedError)) {
       captureNonCritical("activateQuestAction failed", error);
+    }
+    return { ok: false };
+  }
+}
+
+/* ── Interests (spec §4.3): child-facing read + write of the picker board ── */
+
+export interface InterestsState {
+  offered: InterestView[];
+  picked: InterestView[];
+}
+
+const EMPTY_INTERESTS: InterestsState = { offered: [], picked: [] };
+
+/** The picker board: what the parent OFFERED and what the child has PICKED. */
+export async function getInterestsAction(learnerId: string): Promise<InterestsState> {
+  if (!idSchema.safeParse(learnerId).success) return EMPTY_INTERESTS;
+  try {
+    return await withAccount(({ accountId }) => getLearnerInterests(accountId, learnerId));
+  } catch (error) {
+    if (!(error instanceof UnauthenticatedError)) {
+      captureNonCritical("getInterestsAction failed", error);
+    }
+    return EMPTY_INTERESTS;
+  }
+}
+
+/**
+ * Save the child's picks. Server-authoritative (§8): `setPickedInterests`
+ * re-validates the submitted ids ⊆ the parent-offered set, max 5, so a
+ * tampered client request can never smuggle an unoffered interest in.
+ */
+export async function setPickedInterestsAction(
+  learnerId: string,
+  interestIds: string[],
+): Promise<{ ok: boolean }> {
+  if (!idSchema.safeParse(learnerId).success || !interestIdsSchema.safeParse(interestIds).success) {
+    return { ok: false };
+  }
+  try {
+    return await withAccount(async ({ accountId }) => ({
+      ok: await setPickedInterests(accountId, learnerId, interestIds),
+    }));
+  } catch (error) {
+    if (!(error instanceof UnauthenticatedError)) {
+      captureNonCritical("setPickedInterestsAction failed", error);
     }
     return { ok: false };
   }

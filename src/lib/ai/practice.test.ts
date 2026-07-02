@@ -173,6 +173,44 @@ describe("generatePracticeItems (bounded + schema-validated)", () => {
     expect(userMsg).toContain(`<<<UNTRUSTED>>>\n${evilHint}\n<<<END>>>`);
   });
 
+  it("themes items around picked interests, fenced as untrusted (Task 9 / §8)", async () => {
+    const valid = JSON.stringify({
+      items: [
+        {
+          focus: "short a CVC",
+          instruction: "Build the word.",
+          tiles: ["c", "a", "t"],
+          words: [{ word: "cat", picture: "🐱" }],
+        },
+      ],
+    });
+    const fetchMock = vi.fn().mockResolvedValue(completion(valid));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generatePracticeItems("phonics-wordbuild", "ready", "short a", 1, {
+      interests: ["dinosaurs", "space"],
+    });
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    const userMsg = body.messages.find((m: { role: string }) => m.role === "user")?.content ?? "";
+    expect(userMsg).toContain("theme items around what this child loves");
+    expect(userMsg).toContain("<<<UNTRUSTED>>>\ndinosaurs, space\n<<<END>>>");
+  });
+
+  it("omits interest theming entirely when none are picked", async () => {
+    const valid = JSON.stringify({
+      items: [{ instruction: "Find the words.", words: ["the", "and"] }],
+    });
+    const fetchMock = vi.fn().mockResolvedValue(completion(valid));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generatePracticeItems("sightword-game", "ready", "the, and", 1);
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    const userMsg = body.messages.find((m: { role: string }) => m.role === "user")?.content ?? "";
+    expect(userMsg).not.toContain("theme items around what this child loves");
+  });
+
   it("hard-fails a lang kind with no language skill hint (never an unguarded gateway call)", async () => {
     // The guard must throw BEFORE any gateway call when the skill hints don't
     // name a language, so a lang kind can never reach the generic,

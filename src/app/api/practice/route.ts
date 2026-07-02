@@ -8,6 +8,7 @@ import { jsonError } from "@/lib/api/respond";
 import { captureNonCritical } from "@/lib/capture";
 import { generatePracticeItems, provenanceForGeneration } from "@/lib/ai/practice";
 import { resolveLearnerProgram } from "@/lib/content/repository";
+import { pickedInterestLabels } from "@/lib/interests/store";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getAccountOrNull } from "@/lib/tenancy";
 import { getLearner, getEnrollmentForGate, getLearnerSettings } from "@/lib/tutor/store";
@@ -153,7 +154,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "ai_disabled" }, { status: 403 });
   }
 
-  return generate(activityKind, band, focus, n, skillHints);
+  // Interest theming (Task 9 / spec §4.3) is garnish, never a gate: the gate
+  // above already resolved (AI is allowed), so a failure reading the child's
+  // picks must not turn into a denial — fail OPEN to no theming.
+  let interests: string[] = [];
+  try {
+    interests = await pickedInterestLabels(accountId, learnerId);
+  } catch (error) {
+    captureNonCritical("pickedInterestLabels failed (theming skipped, non-fatal)", error);
+  }
+
+  return generate(activityKind, band, focus, n, skillHints, interests);
 }
 
 /** Shared bounded generation + uniform error envelope for both flows. */
@@ -163,9 +174,10 @@ async function generate(
   focus: string,
   n: number,
   skillHints: string[] | undefined,
+  interests: string[] = [],
 ): Promise<NextResponse> {
   try {
-    const items = await generatePracticeItems(kind, band, focus, n, { skillHints });
+    const items = await generatePracticeItems(kind, band, focus, n, { skillHints, interests });
     // Provenance (P6 / §8): bound metadata describing what produced these items,
     // derived SERVER-side from the same routing inputs the generator used, and
     // stamped now. The client echoes this back on the resulting attempt so the

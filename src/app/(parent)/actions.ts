@@ -37,6 +37,7 @@ import {
 } from "@/lib/ai/report";
 import { enrollmentConfigSchema, learnerSettingsSchema } from "@/lib/content/config";
 import type { EnrollmentConfig } from "@/lib/content/config";
+import { setOfferedInterests } from "@/lib/interests/store";
 import { ADAPTIVE_PROGRAM_SLUG, kindLabel } from "./data";
 
 /**
@@ -422,6 +423,53 @@ export async function saveLearnerSettingsAction(
     return { ok: true };
   } catch (error) {
     return mapActionError(error, "saveLearnerSettingsAction failed", "Could not save settings. Please try again.");
+  }
+}
+
+/* ── Interests (spec §4.3): parent-gated offered-set control ─────────────── */
+
+const offeredInterestIdsSchema = z.array(z.string().min(1)).max(30);
+
+/**
+ * Replace the parent-OFFERED interest set for one learner. `setOfferedInterests`
+ * also prunes any child pick that falls outside the new offered set, so a
+ * removed interest can never linger as a stale pick (§8 subset invariant).
+ */
+export async function setOfferedInterestsAction(
+  learnerId: string,
+  interestIds: string[],
+): Promise<EnrollmentActionResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  if (!learnerIdParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner." };
+  }
+
+  const idsParsed = offeredInterestIdsSchema.safeParse(interestIds);
+  if (!idsParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid interests." };
+  }
+
+  try {
+    const saved = await withAccount(async ({ accountId }) => {
+      return setOfferedInterests(accountId, learnerId, idsParsed.data);
+    });
+
+    if (!saved) {
+      captureNonCritical(
+        "setOfferedInterestsAction: learner not owned by account",
+        new Error(`learner=${learnerId}`),
+      );
+      return { ok: false, reason: "not-found", message: "Learner not found." };
+    }
+
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    return mapActionError(
+      error,
+      "setOfferedInterestsAction failed",
+      "Could not save interests. Please try again.",
+    );
   }
 }
 
