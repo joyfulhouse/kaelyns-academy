@@ -169,6 +169,7 @@ const input = {
     skillEvidence: [{ skill: "math.add", outcome: "solid" as const }],
   },
   day: "2026-06-15",
+  creditEligible: true,
 };
 
 /** The shared happy-path input, factored to a call so quest-fold tests read
@@ -357,6 +358,22 @@ describe("recordAttempt (atomic persistence)", () => {
     attemptRows.value = [{ id: "prev" }, { id: "new" }]; // prior authored attempt exists
     await recordAttempt("acct-1", input);
     expect(ledgerInserts).toHaveLength(0);
+  });
+
+  // ── Codex critical: server-verified membership gates the star earn ─────────
+
+  it("writes no ledger row for a first authored completion when creditEligible is false", async () => {
+    // Default attemptRows.value is a single row (first authored completion) —
+    // without the membership gate this would credit the ledger. A forged
+    // fresh activityId (unresolvable/unverified against the learner's pinned
+    // tree) must mint zero stars even though it looks like a first completion.
+    skillRows.value = [{ id: "S1", evidence: [] }];
+    await recordAttempt("acct-1", { ...input, creditEligible: false });
+    expect(ledgerInserts).toHaveLength(0);
+    // The attempt row and skill fold are still written — only the star credit
+    // is withheld.
+    expect(attemptInserts).toHaveLength(1);
+    expect(ops).toContainEqual({ op: "update", table: "skill_state" });
   });
 
   // ── Adventure 2.0: quest fold + reward credit, INSIDE the attempt tx ────────

@@ -197,6 +197,19 @@ export type RecordResult =
  * EnrollmentNotActiveError → no attempt or skill_state is written, and the
  * caller gets `reason: "inactive"`. This makes the kid-surface render-block (A3)
  * non-bypassable even via a direct API call with a stale/unassigned program.
+ *
+ * Star-economy membership witness (Codex critical): the client supplies
+ * `activityId` and `score.stars`, so an authored attempt (`generated: false`)
+ * MUST be verified against the learner's own pinned program tree before it can
+ * earn ledger stars — otherwise a forged request with a fresh, never-authored
+ * activityId would credit `activity_complete` stars unbounded (no prior attempt
+ * exists to trip the "already completed" guard). `findUnitIdOfActivity` doubles
+ * as that witness: a non-null `unitId` proves `activityId` belongs to the
+ * resolved tree. A resolved tree with no match is rejected outright (`invalid`)
+ * — a legitimate client only ever plays authored activities from that tree. An
+ * UNRESOLVABLE tree (DB blip) stays forgiving: the attempt is still recorded
+ * (mastery/skill folds are unaffected either way) but `creditEligible` is
+ * false, so no star ledger row is written off an unverifiable claim.
  */
 export async function recordAttemptAction(input: RecordAttemptInput): Promise<RecordResult> {
   const parsed = recordAttemptSchema.safeParse(input);
@@ -213,19 +226,40 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
       : undefined;
 
   try {
-    await withAccount(async ({ accountId }) => {
-      // Quest-fold context (Adventure 2.0): locate the containing unit on the
-      // learner's pinned tree, server-derived — never trusted from the client.
-      // Unresolvable (unknown activity, resolver failure) degrades to
-      // complete_n-only matching rather than failing the attempt write.
-      let unitId: string | null = null;
+    return await withAccount(async ({ accountId }): Promise<RecordResult> => {
+      // Quest-fold context (Adventure 2.0) AND the star-earn membership witness:
+      // locate the containing unit on the learner's pinned tree, server-derived —
+      // never trusted from the client. Unresolvable (resolver failure/unknown
+      // program) degrades to complete_n-only quest matching and no star credit,
+      // rather than failing the attempt write.
+      let program: Program | null = null;
       try {
-        const program = await resolveLearnerProgram(accountId, data.learnerId, data.programSlug);
-        if (program) unitId = findUnitIdOfActivity(program, data.activityId);
+        program = (await resolveLearnerProgram(accountId, data.learnerId, data.programSlug)) ?? null;
       } catch {
-        unitId = null;
+        program = null;
       }
-      return recordAttempt(accountId, {
+      const unitId: string | null = program ? findUnitIdOfActivity(program, data.activityId) : null;
+
+      // An authored attempt whose activityId is NOT in the learner's resolved
+      // tree is a forgery attempt (a fresh/arbitrary id) — reject before any
+      // write. A generated (AI practice) attempt is exempt: synthetic practice
+      // ids are legitimate there and never earn ledger stars anyway.
+      if (!generated && program && unitId === null) {
+        return { ok: false, reason: "invalid" };
+      }
+
+      // Server-derived, never client-supplied: true only for an authored attempt
+      // verified against the learner's own pinned tree. Gates the star-ledger
+      // earn in recordAttempt; the attempt/skill_state folds are unaffected.
+      const creditEligible = !generated && unitId !== null;
+      if (!program) {
+        captureNonCritical(
+          "recordAttemptAction: program unresolvable; attempt recorded without star credit",
+          new Error(`learnerId=${data.learnerId} programSlug=${data.programSlug}`),
+        );
+      }
+
+      await recordAttempt(accountId, {
         learnerId: data.learnerId,
         programSlug: data.programSlug,
         activityId: data.activityId,
@@ -236,9 +270,10 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
         day: new Date().toISOString().slice(0, 10),
         provenance,
         unitId,
+        creditEligible,
       });
+      return { ok: true };
     });
-    return { ok: true };
   } catch (error) {
     if (error instanceof UnauthenticatedError) return { ok: false, reason: "unauthenticated" };
     if (error instanceof EnrollmentNotActiveError) return { ok: false, reason: "inactive" };

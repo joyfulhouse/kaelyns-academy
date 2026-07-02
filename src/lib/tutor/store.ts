@@ -161,6 +161,12 @@ export interface RecordAttemptInput {
    *  server-side by the action from the learner's pinned tree. Null when
    *  unresolvable — complete_n still counts; unit-targeted quests just miss. */
   unitId?: string | null;
+  /**
+   * Server-derived in the action — TRUE only when the activityId was verified
+   * to belong to the learner's pinned authored tree. Never client-supplied.
+   * Gates the star-ledger earn; the attempt/skill folds are unaffected.
+   */
+  creditEligible: boolean;
 }
 
 /**
@@ -236,11 +242,18 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
         ),
       )
       .limit(2); // the row we just inserted + any earlier one
-    const earned = earnedStarsForAttempt({
-      generated,
-      stars: input.score.stars,
-      alreadyCompleted: prior.length > 1,
-    });
+    // Membership witness gate (Codex critical): earnedStarsForAttempt stays pure
+    // (it never sees creditEligible); the caller here refuses to even ask for a
+    // star credit unless the action already verified activityId belongs to the
+    // learner's own pinned tree. A forged fresh activityId can no longer mint
+    // stars just because no prior attempt row exists for it.
+    const earned = input.creditEligible
+      ? earnedStarsForAttempt({
+          generated,
+          stars: input.score.stars,
+          alreadyCompleted: prior.length > 1,
+        })
+      : 0;
     if (earned > 0) {
       await tx.insert(starLedger).values({
         learnerId: input.learnerId,
