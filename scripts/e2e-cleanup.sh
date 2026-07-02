@@ -67,7 +67,13 @@ if [[ "$CONFIRM" != "1" ]]; then
 fi
 
 # All deletes in ONE transaction. Cascades: throwaway user → its learners/sessions;
-# program → versions/units/lessons/activities; learner → attempts/skill_state.
+# program → versions/units/lessons/activities; learner → attempts/skill_state, and
+# (Adventure 2.0 Phase A) star_ledger/learner_sticker/learner_interest/learner_quest
+# — all four FK learner.id ON DELETE CASCADE (see src/lib/db/schema.ts), so no
+# separate per-table delete is needed here. The motivation.spec.ts e2e fixture
+# learner is named "E2E Learner" (never "E2E Kid…"), so $W_LEARNER never matches
+# it — that learner is a stable, intentionally-never-swept fixture (see
+# e2e/helpers.ts's ensurePersistentLearner doc comment).
 run -c "BEGIN;
         DELETE FROM learner WHERE $W_LEARNER;
         DELETE FROM \"user\" WHERE $W_USER;

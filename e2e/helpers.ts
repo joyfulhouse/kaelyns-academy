@@ -37,6 +37,38 @@ export function uniqueTag(): string {
 export const E2E_LEARNER_PREFIX = "E2E Kid";
 export const E2E_THROWAWAY_EMAIL_PREFIX = "e2e-throwaway+";
 
+/**
+ * A STABLE, never-deleted learner under the seeded `e2e-parent` account (unlike
+ * `E2E_LEARNER_PREFIX`'s per-run throwaway "E2E Kid <tag>" rows, which
+ * parent.spec.ts creates and deletes within one test). The motivation suite
+ * needs continuity — star balance, quest/sticker/interest state — across runs,
+ * so it reuses one fixture learner instead of a fresh zero-state one each time.
+ *
+ * Deliberately does NOT start with "E2E Kid": scripts/e2e-cleanup.sh's sweep
+ * predicate is `display_name LIKE 'E2E Kid%'`, scoped to the e2e-parent
+ * account — this name must never match it, or the fixture (and the star/quest/
+ * sticker/interest history riding on it) would be deleted out from under the
+ * suite on the next cleanup run.
+ */
+export const E2E_PERSISTENT_LEARNER_NAME = "E2E Learner";
+
+/**
+ * Find-or-create the persistent motivation-suite learner on `/parent/learners`.
+ * Idempotent: a second (or Nth) call across reruns finds the existing row and
+ * does nothing. Creating a learner here auto-enrolls them in the adaptive
+ * program (`createLearnerAction` → `ensureEnrollment(..., "kaelyn-adaptive")`),
+ * so once created this learner can always reach `/learn/kaelyn-adaptive`.
+ */
+export async function ensurePersistentLearner(page: Page): Promise<void> {
+  await page.goto("/parent/learners");
+  const existing = page.getByRole("link", { name: E2E_PERSISTENT_LEARNER_NAME });
+  if ((await existing.count()) > 0) return;
+
+  await page.getByLabel("Child's name", { exact: true }).fill(E2E_PERSISTENT_LEARNER_NAME);
+  await page.getByRole("button", { name: "Add a child" }).click();
+  await expect(page.getByRole("status")).toContainText(/enrolled/i);
+}
+
 export async function signIn(page: Page, email: string, password: string): Promise<void> {
   await page.goto("/sign-in");
   await page.getByLabel("Email", { exact: true }).fill(email);
