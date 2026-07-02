@@ -5,7 +5,7 @@ import { motion } from "motion/react";
 import type { MathMeasureConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
-import { PlayerControls, Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
+import { PlayerControls, Prompt, SpeakerButton } from "../_shared/ActivityChrome";
 import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
@@ -217,8 +217,6 @@ function UnitsBoard({
           </button>
         ))}
       </div>
-
-      <ProgressHint>{`How many ${meta.label}s long?`}</ProgressHint>
     </>
   );
 }

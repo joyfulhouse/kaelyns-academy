@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "motion/react";
+import { ArrowCounterClockwiseIcon } from "@phosphor-icons/react/dist/ssr";
 import type { MathClockConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
@@ -73,6 +74,11 @@ export function MathClockPlayer({
     }
   }
 
+  function reset() {
+    setPickedHour(null);
+    setPickedMinute(0);
+  }
+
   const previewHour = parsed.mode === "read" ? parsed.hour : (pickedHour ?? 12);
   const previewMinute = parsed.mode === "read" ? parsed.minute : pickedMinute;
 
@@ -97,7 +103,7 @@ export function MathClockPlayer({
                 disabled={shake.wrong}
                 aria-label={`Digital time ${choiceLabel}`}
                 className={cn(
-                  "min-h-11 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-4 font-display text-xl text-ink shadow-pop transition duration-200 ease-out",
+                  "min-h-11 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-4 font-display text-2xl text-ink shadow-pop transition duration-200 ease-out",
                   "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
                   "disabled:pointer-events-none disabled:opacity-50",
                 )}
@@ -165,6 +171,17 @@ export function MathClockPlayer({
       </ProgressHint>
 
       <PlayerControls>
+        {parsed.mode === "set" && (
+          <Button
+            variant="soft"
+            size="md"
+            onClick={reset}
+            disabled={(pickedHour === null && pickedMinute === 0) || shake.wrong}
+          >
+            <ArrowCounterClockwiseIcon weight="bold" aria-hidden="true" />
+            Clear
+          </Button>
+        )}
         <SpeakerButton speech={speech} text={parsed.instruction} label="Hear what to do again" />
         {parsed.mode === "set" && (
           <Button
