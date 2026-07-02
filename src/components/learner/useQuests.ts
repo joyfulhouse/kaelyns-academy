@@ -31,7 +31,7 @@ export function useQuests(learnerId: string | null, programSlug: string) {
 
   const refresh = useCallback(() => {
     if (!learnerId) return;
-    void getDailyQuestsAction(learnerId, programSlug).then((q) => {
+    return getDailyQuestsAction(learnerId, programSlug).then((q) => {
       setQuests(q.length > 0 ? q : null);
       setSettledFor(`${learnerId}:${programSlug}`);
     });
@@ -47,7 +47,7 @@ export function useQuests(learnerId: string | null, programSlug: string) {
     async (id: string) => {
       if (!learnerId) return;
       await activateQuestAction(learnerId, id);
-      refresh();
+      await refresh();
     },
     [learnerId, refresh],
   );
