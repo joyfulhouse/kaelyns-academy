@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/Button";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner, LEARNERS } from "./learners";
 import { useLearnerState, type SurfaceLearner, type UseLearnerState } from "./useLearnerState";
+import { useRewards } from "./useRewards";
 import { computeUnitProgress, computeProgramRatio } from "./useProgress";
 import { ACTIVITY_META } from "./activityMeta";
 
@@ -306,7 +307,11 @@ function WorldMap({
   onSwitchLearner: () => void;
 }) {
   const reduce = useReducedMotion();
-  const { skillState, completed, getStars, ready, config } = state;
+  const { skillState, completed, getStars, ready, config, mode, selectedLearnerId } = state;
+
+  // The sticker shop is account-mode only (spec §3.7); guest mode never calls
+  // the rewards actions, so the chip and its link simply don't render.
+  const { state: rewards } = useRewards(mode === "account" ? selectedLearnerId : null);
 
   // Build a stable, hydration-safe snapshot. Before state is read, treat the
   // map as empty, then progress fills in once ready.
@@ -392,6 +397,16 @@ function WorldMap({
                 <ArrowsLeftRightIcon weight="bold" className="size-5" />
                 Switch worlds
               </Link>
+              {rewards && (
+                <Link
+                  href={`/learn/${program.slug}/stickers`}
+                  className="inline-flex min-h-11 items-center gap-1.5 rounded-pill border-2 border-ink bg-paper px-3 font-display text-base font-semibold"
+                  aria-label={`${rewards.balance} stars. Open your sticker book.`}
+                >
+                  <StarIcon weight="fill" className="size-5 text-honey" aria-hidden />
+                  {rewards.balance}
+                </Link>
+              )}
             </div>
             {/* Daily goal pill: a light indicator, no enforcement */}
             {dailyGoal !== null && (
