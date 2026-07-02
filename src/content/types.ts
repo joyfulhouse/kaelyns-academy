@@ -6,6 +6,9 @@ import type {
   LangListenMatchConfig,
   LangSymbolIntroConfig,
   MathArrayConfig,
+  MathClockConfig,
+  MathMeasureConfig,
+  MathMoneyConfig,
   MathTenframeConfig,
   PhonicsWordbuildConfig,
   ReadingComprehensionConfig,
@@ -63,7 +66,10 @@ export type Activity =
   | ActivityOf<"reading-comprehension", ReadingComprehensionConfig>
   | ActivityOf<"math-array", MathArrayConfig>
   | ActivityOf<"lang-symbol-intro", LangSymbolIntroConfig>
-  | ActivityOf<"lang-listen-match", LangListenMatchConfig>;
+  | ActivityOf<"lang-listen-match", LangListenMatchConfig>
+  | ActivityOf<"math-clock", MathClockConfig>
+  | ActivityOf<"math-money", MathMoneyConfig>
+  | ActivityOf<"math-measure", MathMeasureConfig>;
 
 type CheckpointKind = "baseline" | "mid" | "final";
 
