@@ -23,6 +23,8 @@ import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner, LEARNERS } from "./learners";
 import { useLearnerState, type SurfaceLearner, type UseLearnerState } from "./useLearnerState";
 import { useRewards } from "./useRewards";
+import { useQuests } from "./useQuests";
+import { TodaysAdventures } from "./TodaysAdventures";
 import { computeUnitProgress, computeProgramRatio } from "./useProgress";
 import { ACTIVITY_META } from "./activityMeta";
 
@@ -312,6 +314,14 @@ function WorldMap({
   // The sticker shop is account-mode only (spec §3.7); guest mode never calls
   // the rewards actions, so the chip and its link simply don't render.
   const { state: rewards } = useRewards(mode === "account" ? selectedLearnerId : null);
+  // Today's Adventures (spec §4.1) is the account-mode-only daily quest
+  // board; guest mode and quest-less days (null/empty) keep the existing
+  // single-pick NextThingCard below (no regression, spec §4.1's hard guest
+  // fallback requirement).
+  const { quests, activate } = useQuests(
+    mode === "account" ? selectedLearnerId : null,
+    program.slug,
+  );
 
   // Build a stable, hydration-safe snapshot. Before state is read, treat the
   // map as empty, then progress fills in once ready.
@@ -408,11 +418,16 @@ function WorldMap({
                 </Link>
               )}
             </div>
-            {/* Daily goal pill: a light indicator, no enforcement */}
+            {/* Daily goal pill: a light indicator, no enforcement. Quest-aware
+                (spec §4.1): once today's adventures exist, the pill counts
+                those instead of the raw activity count — same board, same
+                target, no separate number to reconcile. */}
             {dailyGoal !== null && (
               <div className="mt-2">
                 <span className="inline-flex items-center rounded-pill border-2 border-ink/20 bg-paper px-3 py-1 font-display text-sm font-semibold text-ink-soft">
-                  {todayCompletedCount} / {dailyGoal} done
+                  {quests
+                    ? `${quests.filter((q) => q.status === "done").length} / ${quests.length} adventures done`
+                    : `${todayCompletedCount} / ${dailyGoal} done`}
                 </span>
               </div>
             )}
@@ -420,9 +435,20 @@ function WorldMap({
         </div>
       </div>
 
-      {/* Your next thing: the tutor's single best recommendation. */}
-      {topPick && (
-        <NextThingCard pick={topPick} programSlug={program.slug} reduce={Boolean(reduce)} />
+      {/* Today's Adventures (account mode, once quests exist) replaces the
+          single-pick card with the daily quest board; guests and quest-less
+          days keep the tutor's single best recommendation (guest fallback,
+          spec §4.1 — a hard requirement, no regression). */}
+      {quests ? (
+        <TodaysAdventures
+          quests={quests}
+          onActivate={(id) => {
+            void activate(id);
+          }}
+          reduce={Boolean(reduce)}
+        />
+      ) : (
+        topPick && <NextThingCard pick={topPick} programSlug={program.slug} reduce={Boolean(reduce)} />
       )}
 
       {/* The path of worlds (curated by activeUnitKeys when set) */}
