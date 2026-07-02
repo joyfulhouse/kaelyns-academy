@@ -88,31 +88,43 @@ export function selectDailyQuests(
     const params = QUEST_PARAMS_SCHEMAS[t.kind]?.safeParse(t.params);
     if (!params?.success) continue;
 
-    if (t.kind === "complete_n") {
-      const count = (params.data as { count: number }).count;
-      drafts.push({ templateId: t.id, kind: t.kind, title: t.title, target: { count }, rewardStars: t.rewardStars });
-    } else if (t.kind === "try_strand") {
-      const rec = recs[0];
-      if (!rec) continue;
-      drafts.push({
-        templateId: t.id,
-        kind: t.kind,
-        title: t.title.replace("{focus}", rec.unitTitle),
-        target: { count: 1, unitId: rec.unitId },
-        rewardStars: t.rewardStars,
-      });
-    } else {
-      const skill = emergingSkills[0];
-      if (!skill) continue;
-      drafts.push({
-        templateId: t.id,
-        kind: t.kind,
-        title: t.title.replace("{focus}", skill),
-        target: { count: 2, skill },
-        rewardStars: t.rewardStars,
-      });
+    let draft: QuestDraft | null = null;
+    switch (t.kind) {
+      case "complete_n": {
+        const count = (params.data as { count: number }).count;
+        draft = { templateId: t.id, kind: t.kind, title: t.title, target: { count }, rewardStars: t.rewardStars };
+        break;
+      }
+      case "try_strand": {
+        const rec = recs[0];
+        if (!rec) break;
+        draft = {
+          templateId: t.id,
+          kind: t.kind,
+          title: t.title.replace("{focus}", rec.unitTitle),
+          target: { count: 1, unitId: rec.unitId },
+          rewardStars: t.rewardStars,
+        };
+        break;
+      }
+      case "practice_skill": {
+        const skill = emergingSkills[0];
+        if (!skill) break;
+        draft = {
+          templateId: t.id,
+          kind: t.kind,
+          title: t.title.replace("{focus}", skill),
+          target: { count: 2, skill },
+          rewardStars: t.rewardStars,
+        };
+        break;
+      }
     }
-    seenKinds.add(t.kind);
+
+    if (draft) {
+      drafts.push(draft);
+      seenKinds.add(t.kind);
+    }
   }
   return drafts;
 }
