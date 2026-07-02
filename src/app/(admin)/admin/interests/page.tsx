@@ -1,12 +1,10 @@
 import type { Metadata } from "next";
 import { Surface } from "@/components/ui/Surface";
-import { Pill } from "@/components/ui/Pill";
 import { InterestForm } from "@/components/admin/InterestForm";
 import { LifecycleStatusControls } from "@/components/admin/LifecycleStatusControls";
+import { LifecycleStatusPill } from "@/components/admin/LifecycleStatusPill";
 import { listInterests } from "@/lib/interests/admin-store";
 import { setInterestStatusAction } from "@/app/(admin)/admin/motivation-actions";
-import { LIFECYCLE_STATUS_TONE, LIFECYCLE_STATUS_LABEL } from "@/lib/status-display";
-import type { LifecycleStatus } from "@/lib/admin/lifecycle";
 
 /**
  * Admin interest taxonomy list — RSC, already gated by the admin layout.
@@ -63,9 +61,7 @@ export default async function AdminInterestsPage() {
                       </span>
                     )}
                     <span className="font-medium text-ink">{i.label}</span>
-                    <Pill tone={LIFECYCLE_STATUS_TONE[i.status as LifecycleStatus] ?? "neutral"}>
-                      {LIFECYCLE_STATUS_LABEL[i.status as LifecycleStatus] ?? i.status}
-                    </Pill>
+                    <LifecycleStatusPill status={i.status} />
                     <span className="truncate text-xs text-ink-faint">/{i.slug}</span>
                   </div>
                   <LifecycleStatusControls id={i.id} status={i.status} action={setInterestStatusAction} />

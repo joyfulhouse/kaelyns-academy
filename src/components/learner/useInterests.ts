@@ -53,9 +53,19 @@ export function useInterests() {
     () => null,
   );
 
-  const mode: Mode = signedIn === null ? "loading" : signedIn && learnerIds.length > 0 ? "account" : "guest";
-  const learnerId =
-    mode === "account" ? (learnerIds.includes(remembered ?? "") ? remembered : learnerIds[0]) : null;
+  let mode: Mode;
+  if (signedIn === null) {
+    mode = "loading";
+  } else if (signedIn && learnerIds.length > 0) {
+    mode = "account";
+  } else {
+    mode = "guest";
+  }
+
+  let learnerId: string | null = null;
+  if (mode === "account") {
+    learnerId = learnerIds.includes(remembered ?? "") ? remembered : learnerIds[0];
+  }
 
   const refresh = useCallback(() => {
     if (!learnerId) return;

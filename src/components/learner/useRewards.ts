@@ -31,14 +31,12 @@ import type { PurchaseResult } from "@/lib/rewards/stickers";
  */
 export function useRewards(learnerId: string | null) {
   const [state, setState] = useState<RewardsState | null>(null);
-  const [settledState, setSettledState] = useState(false);
   const [settledFor, setSettledFor] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     if (!learnerId) return;
     void getRewardsStateAction(learnerId).then((s) => {
       setState(s.signedIn ? s : null);
-      setSettledState(true);
       setSettledFor(learnerId);
     });
   }, [learnerId]);
@@ -64,7 +62,7 @@ export function useRewards(learnerId: string | null) {
   const current = settledFor === learnerId;
   return {
     state: current ? state : null,
-    settled: current ? settledState : false,
+    settled: current ? settledFor !== null : false,
     refresh,
     purchase,
   };

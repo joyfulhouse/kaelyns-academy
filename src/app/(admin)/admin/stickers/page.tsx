@@ -1,13 +1,11 @@
 import type { Metadata } from "next";
 import { Surface } from "@/components/ui/Surface";
-import { Pill } from "@/components/ui/Pill";
 import { StickerPackForm } from "@/components/admin/StickerPackForm";
 import { StickerForm } from "@/components/admin/StickerForm";
 import { LifecycleStatusControls } from "@/components/admin/LifecycleStatusControls";
+import { LifecycleStatusPill } from "@/components/admin/LifecycleStatusPill";
 import { listStickerPacks } from "@/lib/rewards/admin-store";
 import { setStickerPackStatusAction } from "@/app/(admin)/admin/motivation-actions";
-import { LIFECYCLE_STATUS_TONE, LIFECYCLE_STATUS_LABEL } from "@/lib/status-display";
-import type { LifecycleStatus } from "@/lib/admin/lifecycle";
 
 /**
  * Admin sticker pack list — RSC, already gated by the admin layout.
@@ -58,9 +56,7 @@ export default async function AdminStickersPage() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-display text-sm font-semibold text-ink">{pack.title}</span>
-                      <Pill tone={LIFECYCLE_STATUS_TONE[pack.status as LifecycleStatus] ?? "neutral"}>
-                        {LIFECYCLE_STATUS_LABEL[pack.status as LifecycleStatus] ?? pack.status}
-                      </Pill>
+                      <LifecycleStatusPill status={pack.status} />
                     </div>
                     <p className="mt-0.5 truncate text-xs text-ink-faint">
                       /{pack.slug}

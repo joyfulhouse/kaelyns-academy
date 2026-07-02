@@ -3,10 +3,9 @@ import { Surface } from "@/components/ui/Surface";
 import { Pill } from "@/components/ui/Pill";
 import { QuestTemplateForm } from "@/components/admin/QuestTemplateForm";
 import { LifecycleStatusControls } from "@/components/admin/LifecycleStatusControls";
+import { LifecycleStatusPill } from "@/components/admin/LifecycleStatusPill";
 import { listQuestTemplates } from "@/lib/quests/admin-store";
 import { setQuestTemplateStatusAction } from "@/app/(admin)/admin/motivation-actions";
-import { LIFECYCLE_STATUS_TONE, LIFECYCLE_STATUS_LABEL } from "@/lib/status-display";
-import type { LifecycleStatus } from "@/lib/admin/lifecycle";
 
 /**
  * Admin quest template list — RSC, already gated by the admin layout.
@@ -57,9 +56,7 @@ export default async function AdminQuestsPage() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-display text-sm font-semibold text-ink">{t.title}</span>
-                      <Pill tone={LIFECYCLE_STATUS_TONE[t.status as LifecycleStatus] ?? "neutral"}>
-                        {LIFECYCLE_STATUS_LABEL[t.status as LifecycleStatus] ?? t.status}
-                      </Pill>
+                      <LifecycleStatusPill status={t.status} />
                       <Pill tone="neutral">{t.kind}</Pill>
                       <Pill tone="accent">+{t.rewardStars}⭐</Pill>
                     </div>

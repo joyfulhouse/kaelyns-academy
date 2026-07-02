@@ -313,17 +313,15 @@ function WorldMap({
   const reduce = useReducedMotion();
   const { skillState, completed, getStars, ready, config, mode, selectedLearnerId } = state;
 
-  // The sticker shop is account-mode only (spec §3.7); guest mode never calls
-  // the rewards actions, so the chip and its link simply don't render.
-  const { state: rewards } = useRewards(mode === "account" ? selectedLearnerId : null);
-  // Today's Adventures (spec §4.1) is the account-mode-only daily quest
-  // board; guest mode and quest-less days (null/empty) keep the existing
-  // single-pick NextThingCard below (no regression, spec §4.1's hard guest
-  // fallback requirement).
-  const { quests, activate } = useQuests(
-    mode === "account" ? selectedLearnerId : null,
-    program.slug,
-  );
+  // Both the sticker shop (spec §3.7) and Today's Adventures (spec §4.1) are
+  // account-mode only; guest mode never calls the rewards/quest actions, so the
+  // star chip, its link, and the quest board simply don't render. Passing null
+  // in guest mode is what gates each hook to its safe fallback.
+  const accountLearnerId = mode === "account" ? selectedLearnerId : null;
+  const { state: rewards } = useRewards(accountLearnerId);
+  // Quest-less days (null/empty) keep the existing single-pick NextThingCard
+  // below (no regression, spec §4.1's hard guest fallback requirement).
+  const { quests, activate } = useQuests(accountLearnerId, program.slug);
 
   // Build a stable, hydration-safe snapshot. Before state is read, treat the
   // map as empty, then progress fills in once ready.
