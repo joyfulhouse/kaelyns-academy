@@ -43,7 +43,11 @@ export function useRewards(learnerId: string | null) {
     });
   }, [learnerId]);
 
-  useEffect(refresh, [refresh]);
+  useEffect(() => {
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [refresh]);
 
   const purchase = useCallback(
     async (stickerId: string): Promise<PurchaseResult> => {

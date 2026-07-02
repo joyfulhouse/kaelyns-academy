@@ -987,7 +987,8 @@ export async function buildAccountExport(
  * Delete a child profile (and all its data via cascade). Returns true if the
  * learner was found and deleted, false if not owned or not found (tenancy boundary).
  *
- * FK cascade: `enrollment`, `attempt`, and `skill_state` all have
+ * FK cascade: `enrollment`, `attempt`, `skill_state`, `star_ledger`,
+ * `learner_sticker`, `learner_interest`, and `learner_quest` all have
  * `onDelete: "cascade"` on `learner.id`, so deleting the learner row removes
  * everything. No orphan cleanup needed.
  */
