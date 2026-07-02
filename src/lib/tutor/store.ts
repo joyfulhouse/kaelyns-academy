@@ -295,8 +295,10 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
     // completed quest's reward — inside this same transaction. Gated on
     // questEligible (Codex round 2, Important #1): GENERATED practice
     // legitimately has no authored-tree membership and still counts toward
-    // complete_n quests (bounded ≤ daily quests — accepted residual, design
-    // intent unchanged). An AUTHORED attempt counts toward quests ONLY when
+    // the day's active quest (any kind — complete_n, or practice_skill/try_strand
+    // via the attempt's skillEvidence; bounded ≤ daily quests, active-quest-only,
+    // once each — accepted residual, design intent unchanged). An AUTHORED
+    // attempt counts toward quests ONLY when
     // creditEligible (server-verified tree membership) is true — otherwise the
     // program-unresolvable branch could complete a complete_n quest and credit
     // quest_complete stars even though the star-ledger activity_complete earn
