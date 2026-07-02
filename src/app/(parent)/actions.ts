@@ -38,6 +38,7 @@ import {
 import { enrollmentConfigSchema, learnerSettingsSchema } from "@/lib/content/config";
 import type { EnrollmentConfig } from "@/lib/content/config";
 import { setOfferedInterests } from "@/lib/interests/store";
+import { grantBonusStars } from "@/lib/rewards/store";
 import { ADAPTIVE_PROGRAM_SLUG, kindLabel } from "./data";
 
 /**
@@ -470,6 +471,47 @@ export async function setOfferedInterestsAction(
       "setOfferedInterestsAction failed",
       "Could not save interests. Please try again.",
     );
+  }
+}
+
+/* ── Rewards (Adventure 2.0 Phase A / Task 10, spec §3.1) ─────────────────── */
+
+const bonusStarsSchema = z.number().int().min(1).max(20);
+
+/**
+ * Parent "offline win" bonus (spec §5): grant 1–20 bonus stars to a learner's
+ * star ledger (reason "adjustment"). Mirrors {@link saveLearnerSettingsAction}'s
+ * parseInput/withAccount/result/revalidate shape.
+ */
+export async function grantBonusStarsAction(
+  learnerId: string,
+  amount: number,
+): Promise<EnrollmentActionResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  if (!learnerIdParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner." };
+  }
+
+  const amountParsed = parseInput(bonusStarsSchema, amount, "Bonus stars must be between 1 and 20.");
+  if (!amountParsed.ok) return amountParsed;
+
+  try {
+    const granted = await withAccount(async ({ accountId }) => {
+      return grantBonusStars(accountId, learnerId, amountParsed.data);
+    });
+
+    if (!granted) {
+      captureNonCritical(
+        "grantBonusStarsAction: learner not owned by account (or amount out of bounds)",
+        new Error(`learner=${learnerId} amount=${amountParsed.data}`),
+      );
+      return { ok: false, reason: "not-found", message: "Learner not found." };
+    }
+
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    return mapActionError(error, "grantBonusStarsAction failed", "Could not grant bonus stars. Please try again.");
   }
 }
 

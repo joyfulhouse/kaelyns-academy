@@ -27,6 +27,10 @@ const rows: Record<string, Record<string, unknown>[]> = {
   enrollment: [],
   skill_state: [],
   attempt: [],
+  star_ledger: [],
+  learner_sticker: [],
+  learner_interest: [],
+  learner_quest: [],
 };
 // Canned scalar count() results, consumed in order by the count selects.
 const counts: number[] = [];
@@ -49,6 +53,12 @@ function selectChain() {
     },
     from(t: unknown) {
       table = tableName(t);
+      return chain;
+    },
+    innerJoin() {
+      // No-op passthrough (e.g. the learner_interest ⨝ interest read in
+      // gatherLearnerExport) — the fake resolves canned rows per `table`
+      // (the FROM target), never actually joins.
       return chain;
     },
     where(w?: unknown) {
@@ -115,6 +125,11 @@ vi.mock("@/lib/db/schema", () => ({
   attempt: { _name: "attempt", learnerId: {} },
   deletionAudit: { _name: "deletion_audit" },
   verification: { _name: "verification", identifier: {}, value: {} },
+  starLedger: { _name: "star_ledger", learnerId: {}, delta: {}, createdAt: {} },
+  learnerSticker: { _name: "learner_sticker", learnerId: {} },
+  interest: { _name: "interest", id: {}, slug: {} },
+  learnerInterest: { _name: "learner_interest", learnerId: {}, interestId: {}, source: {} },
+  learnerQuest: { _name: "learner_quest", learnerId: {}, assignedOn: {} },
 }));
 vi.mock("drizzle-orm", () => ({
   and: (...a: unknown[]) => a,
@@ -123,6 +138,7 @@ vi.mock("drizzle-orm", () => ({
   desc: (a: unknown) => a,
   inArray: (...a: unknown[]) => a,
   count: () => ["count"],
+  sum: (a: unknown) => ["sum", a],
 }));
 
 import { buildAccountExport, deleteAccount, listGeneratedAttempts } from "./store";

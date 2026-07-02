@@ -15,10 +15,12 @@ import { ActivityRowItem } from "@/components/parent/ActivityRowItem";
 import {
   getLearnerDetail,
   getLearnerCurriculum,
+  getLearnerRewards,
   type ActivityRow,
   type SkillStatus,
 } from "@/app/(parent)/data";
 import { CurriculumPanel } from "@/components/parent/CurriculumPanel";
+import { RewardsPanel } from "@/components/parent/RewardsPanel";
 import { LearnerDataControls } from "@/components/parent/LearnerDataControls";
 import { programStats } from "@/content";
 import type { SkillDomain } from "@/content";
@@ -58,10 +60,11 @@ export default async function LearnerDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  // Fetch detail and curriculum in parallel — both are account-scoped.
-  const [detail, curriculum] = await Promise.all([
+  // Fetch detail, curriculum, and rewards in parallel — all account-scoped.
+  const [detail, curriculum, rewards] = await Promise.all([
     getLearnerDetail(id),
     getLearnerCurriculum(id),
+    getLearnerRewards(id),
   ]);
   // 404 when the learner does not exist or is not this account's (tenancy).
   if (!detail) notFound();
@@ -133,6 +136,17 @@ export default async function LearnerDetailPage({
       )}
 
       <CurriculumPanel learnerId={id} curriculum={curriculum} />
+
+      {rewards && (
+        <div className="mt-10">
+          <RewardsPanel
+            learnerId={id}
+            learnerName={learner.displayName}
+            balance={rewards.balance}
+            ledger={rewards.ledger}
+          />
+        </div>
+      )}
 
       <LearnerDataControls learnerId={id} learnerName={learner.displayName} />
     </div>

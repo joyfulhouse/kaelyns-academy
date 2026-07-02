@@ -1,13 +1,17 @@
 // server-only: this module opens DB connections and must never be imported into
 // a Client Component. (the `server-only` package isn't installed; this comment
 // is the guard, and only server actions / route handlers import it.)
-import { and, count, desc, eq, inArray, lt, or } from "drizzle-orm";
+import { and, count, desc, eq, inArray, lt, or, sum } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   attempt,
   deletionAudit,
   enrollment,
+  interest,
   learner,
+  learnerInterest,
+  learnerQuest,
+  learnerSticker,
   skillState,
   starLedger,
   user,
@@ -831,7 +835,16 @@ async function gatherLearnerExport(
 ): Promise<LearnerExport> {
   const learnerId = learnerRow.id;
   // Gather all related data in parallel (no write, just reads).
-  const [enrollmentRows, skillStateRows, attemptRows] = await Promise.all([
+  const [
+    enrollmentRows,
+    skillStateRows,
+    attemptRows,
+    starBalanceRows,
+    starLedgerRows,
+    stickerRows,
+    interestRows,
+    questRows,
+  ] = await Promise.all([
     getDb().select().from(enrollment).where(eq(enrollment.learnerId, learnerId)),
     getDb().select().from(skillState).where(eq(skillState.learnerId, learnerId)),
     getDb()
@@ -839,6 +852,32 @@ async function gatherLearnerExport(
       .from(attempt)
       .where(eq(attempt.learnerId, learnerId))
       .orderBy(desc(attempt.createdAt)),
+    // Balance = sum over the WHOLE ledger (never bounded — the 500-row page
+    // below is the export's ledger detail, not the total it sums to).
+    getDb()
+      .select({ total: sum(starLedger.delta) })
+      .from(starLedger)
+      .where(eq(starLedger.learnerId, learnerId)),
+    getDb()
+      .select()
+      .from(starLedger)
+      .where(eq(starLedger.learnerId, learnerId))
+      .orderBy(desc(starLedger.createdAt))
+      .limit(500),
+    getDb().select().from(learnerSticker).where(eq(learnerSticker.learnerId, learnerId)),
+    // Both source="parent" (offered) and source="child" (picked) rows — the
+    // export is "all its data", not just the child's own picks.
+    getDb()
+      .select({ slug: interest.slug, source: learnerInterest.source })
+      .from(learnerInterest)
+      .innerJoin(interest, eq(learnerInterest.interestId, interest.id))
+      .where(eq(learnerInterest.learnerId, learnerId)),
+    getDb()
+      .select()
+      .from(learnerQuest)
+      .where(eq(learnerQuest.learnerId, learnerId))
+      .orderBy(desc(learnerQuest.assignedOn))
+      .limit(200),
   ]);
 
   return shapeLearnerExport({
@@ -876,6 +915,22 @@ async function gatherLearnerExport(
       genModel: a.genModel,
       genRoute: a.genRoute,
       genAt: a.genAt,
+    })),
+    stars: {
+      balance: Number(starBalanceRows[0]?.total ?? 0),
+      ledger: starLedgerRows.map((r) => ({
+        delta: r.delta,
+        reason: r.reason,
+        refId: r.refId,
+        createdAt: r.createdAt,
+      })),
+    },
+    stickers: stickerRows.map((s) => ({ stickerId: s.stickerId, acquiredAt: s.acquiredAt })),
+    interests: interestRows.map((i) => ({ slug: i.slug, source: i.source })),
+    quests: questRows.map((q) => ({
+      title: q.title,
+      status: q.status,
+      assignedOn: q.assignedOn,
     })),
   });
 }
@@ -957,6 +1012,8 @@ export interface DeleteAccountResultData {
  * `DELETE FROM "user" WHERE id = ?` does the work via Postgres FKs:
  *
  *   user ─┬─ learner          (cascade) ─→ enrollment, attempt, skill_state (cascade)
+ *         │                              ─→ star_ledger, learner_sticker, learner_interest,
+ *         │                                 learner_quest (cascade — Adventure 2.0 Phase A)
  *         ├─ session          (cascade, auth-schema)
  *         └─ account          (cascade, auth-schema — Better Auth credentials/oauth)
  *   publisher.ownerUserId      (set null) — a published program does NOT vanish when

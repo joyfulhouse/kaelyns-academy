@@ -31,6 +31,11 @@ export const EXPORT_CONTENTS = [
   "skillState",
   "attempts",
   "aiProvenance",
+  // Adventure 2.0 Phase A (Task 10): the motivation + choice tables.
+  "stars",
+  "stickers",
+  "interests",
+  "quests",
 ] as const;
 
 export const EXPORT_NOT_EXPORTED = [
