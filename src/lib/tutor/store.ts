@@ -1,9 +1,22 @@
 // server-only: this module opens DB connections and must never be imported into
 // a Client Component. (the `server-only` package isn't installed; this comment
 // is the guard, and only server actions / route handlers import it.)
-import { and, count, desc, eq, inArray, lt, or } from "drizzle-orm";
+import { and, count, desc, eq, inArray, lt, or, sum } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { attempt, deletionAudit, enrollment, learner, skillState, user, verification } from "@/lib/db/schema";
+import {
+  attempt,
+  deletionAudit,
+  enrollment,
+  interest,
+  learner,
+  learnerInterest,
+  learnerQuest,
+  learnerSticker,
+  skillState,
+  starLedger,
+  user,
+  verification,
+} from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
 import {
@@ -13,11 +26,13 @@ import {
   type LearnerSettings,
 } from "@/lib/content/config";
 import { getPublishedVersionId } from "@/lib/content/store";
+import { earnedStarsForAttempt } from "@/lib/rewards/logic";
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
 import { shapeLearnerExport, type LearnerExport } from "./export";
 import { shapeAccountExport, type AccountExport } from "./account-export";
 import { parseJsonbFailClosed } from "./jsonb";
 import { toLearnerRow, withOwnedLearner, type LearnerRow } from "./scope";
+import { applyAttemptToQuests } from "@/lib/quests/store";
 
 // getLearner + LearnerRow now live in ./scope (the shared account-ownership gate);
 // re-export them so existing importers of "@/lib/tutor/store" keep their paths.
@@ -142,6 +157,16 @@ export interface RecordAttemptInput {
    * Absent for authored attempts → the gen_* columns stay null.
    */
   provenance?: { model: string; route: string; at: Date };
+  /** Quest-fold context (Adventure 2.0): the containing unit id, resolved
+   *  server-side by the action from the learner's pinned tree. Null when
+   *  unresolvable — complete_n still counts; unit-targeted quests just miss. */
+  unitId?: string | null;
+  /**
+   * Server-derived in the action — TRUE only when the activityId was verified
+   * to belong to the learner's pinned authored tree. Never client-supplied.
+   * Gates the star-ledger earn; the attempt/skill folds are unaffected.
+   */
+  creditEligible: boolean;
 }
 
 /**
@@ -203,6 +228,41 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
       genAt: provenance?.at ?? null,
     });
 
+    // Star economy (Adventure 2.0): first authored completion earns score.stars
+    // into the append-only ledger, inside this same transaction (all-or-nothing
+    // with the attempt). Repeats/generated earn 0 (v1 grind-proof rule).
+    const prior = await tx
+      .select({ id: attempt.id })
+      .from(attempt)
+      .where(
+        and(
+          eq(attempt.learnerId, input.learnerId),
+          eq(attempt.activityId, input.activityId),
+          eq(attempt.generated, false),
+        ),
+      )
+      .limit(2); // the row we just inserted + any earlier one
+    // Membership witness gate (Codex critical): earnedStarsForAttempt stays pure
+    // (it never sees creditEligible); the caller here refuses to even ask for a
+    // star credit unless the action already verified activityId belongs to the
+    // learner's own pinned tree. A forged fresh activityId can no longer mint
+    // stars just because no prior attempt row exists for it.
+    const earned = input.creditEligible
+      ? earnedStarsForAttempt({
+          generated,
+          stars: input.score.stars,
+          alreadyCompleted: prior.length > 1,
+        })
+      : 0;
+    if (earned > 0) {
+      await tx.insert(starLedger).values({
+        learnerId: input.learnerId,
+        delta: earned,
+        reason: "activity_complete",
+        refId: input.activityId,
+      });
+    }
+
     // Acquire the per-skill row locks in a deterministic (skill-sorted) order:
     // two concurrent attempts for the same learner with overlapping skills would
     // otherwise be able to lock the same rows in opposite orders and deadlock —
@@ -229,6 +289,30 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
         .update(skillState)
         .set({ evidence: history, outcome, updatedAt: new Date() })
         .where(eq(skillState.id, row.id));
+    }
+
+    // Adventure 2.0: fold this attempt into today's ACTIVE quests + credit any
+    // completed quest's reward — inside this same transaction. Gated on
+    // questEligible (Codex round 2, Important #1): GENERATED practice
+    // legitimately has no authored-tree membership and still counts toward
+    // the day's active quest (any kind — complete_n, or practice_skill/try_strand
+    // via the attempt's skillEvidence; bounded ≤ daily quests, active-quest-only,
+    // once each — accepted residual, design intent unchanged). An AUTHORED
+    // attempt counts toward quests ONLY when
+    // creditEligible (server-verified tree membership) is true — otherwise the
+    // program-unresolvable branch could complete a complete_n quest and credit
+    // quest_complete stars even though the star-ledger activity_complete earn
+    // was correctly withheld above. Skipping the fold entirely (rather than
+    // passing a flag through) is correct: no quest should advance from an
+    // attempt whose membership couldn't be verified.
+    const questEligible = generated || input.creditEligible;
+    if (questEligible) {
+      await applyAttemptToQuests(tx, input.learnerId, input.programSlug, input.day, {
+        activityId: input.activityId,
+        unitId: input.unitId ?? null,
+        skills: input.score.skillEvidence.map((e) => e.skill),
+        generated,
+      });
     }
   });
 }
@@ -779,7 +863,16 @@ async function gatherLearnerExport(
 ): Promise<LearnerExport> {
   const learnerId = learnerRow.id;
   // Gather all related data in parallel (no write, just reads).
-  const [enrollmentRows, skillStateRows, attemptRows] = await Promise.all([
+  const [
+    enrollmentRows,
+    skillStateRows,
+    attemptRows,
+    starBalanceRows,
+    starLedgerRows,
+    stickerRows,
+    interestRows,
+    questRows,
+  ] = await Promise.all([
     getDb().select().from(enrollment).where(eq(enrollment.learnerId, learnerId)),
     getDb().select().from(skillState).where(eq(skillState.learnerId, learnerId)),
     getDb()
@@ -787,6 +880,36 @@ async function gatherLearnerExport(
       .from(attempt)
       .where(eq(attempt.learnerId, learnerId))
       .orderBy(desc(attempt.createdAt)),
+    // Balance = sum over the WHOLE ledger (never bounded — the 500-row page
+    // below is the export's ledger detail, not the total it sums to).
+    getDb()
+      .select({ total: sum(starLedger.delta) })
+      .from(starLedger)
+      .where(eq(starLedger.learnerId, learnerId)),
+    getDb()
+      .select()
+      .from(starLedger)
+      .where(eq(starLedger.learnerId, learnerId))
+      .orderBy(desc(starLedger.createdAt))
+      .limit(500),
+    getDb().select().from(learnerSticker).where(eq(learnerSticker.learnerId, learnerId)),
+    // Both source="parent" (offered) and source="child" (picked) rows — the
+    // export is "all its data", not just the child's own picks.
+    getDb()
+      .select({ slug: interest.slug, source: learnerInterest.source })
+      .from(learnerInterest)
+      .innerJoin(interest, eq(learnerInterest.interestId, interest.id))
+      .where(eq(learnerInterest.learnerId, learnerId)),
+    getDb()
+      .select()
+      .from(learnerQuest)
+      .where(eq(learnerQuest.learnerId, learnerId))
+      // assignedOn is a `date` (day-granularity) column with legal same-day
+      // ties, so ordering by it alone leaves rows at the 200-row boundary in a
+      // non-deterministic order across exports (Postgres makes no promises among
+      // ties). updatedAt (timestamptz) breaks the tie deterministically.
+      .orderBy(desc(learnerQuest.assignedOn), desc(learnerQuest.updatedAt))
+      .limit(200),
   ]);
 
   return shapeLearnerExport({
@@ -824,6 +947,22 @@ async function gatherLearnerExport(
       genModel: a.genModel,
       genRoute: a.genRoute,
       genAt: a.genAt,
+    })),
+    stars: {
+      balance: Number(starBalanceRows[0]?.total ?? 0),
+      ledger: starLedgerRows.map((r) => ({
+        delta: r.delta,
+        reason: r.reason,
+        refId: r.refId,
+        createdAt: r.createdAt,
+      })),
+    },
+    stickers: stickerRows.map((s) => ({ stickerId: s.stickerId, acquiredAt: s.acquiredAt })),
+    interests: interestRows.map((i) => ({ slug: i.slug, source: i.source })),
+    quests: questRows.map((q) => ({
+      title: q.title,
+      status: q.status,
+      assignedOn: q.assignedOn,
     })),
   });
 }
@@ -876,7 +1015,8 @@ export async function buildAccountExport(
  * Delete a child profile (and all its data via cascade). Returns true if the
  * learner was found and deleted, false if not owned or not found (tenancy boundary).
  *
- * FK cascade: `enrollment`, `attempt`, and `skill_state` all have
+ * FK cascade: `enrollment`, `attempt`, `skill_state`, `star_ledger`,
+ * `learner_sticker`, `learner_interest`, and `learner_quest` all have
  * `onDelete: "cascade"` on `learner.id`, so deleting the learner row removes
  * everything. No orphan cleanup needed.
  */
@@ -905,6 +1045,8 @@ export interface DeleteAccountResultData {
  * `DELETE FROM "user" WHERE id = ?` does the work via Postgres FKs:
  *
  *   user ─┬─ learner          (cascade) ─→ enrollment, attempt, skill_state (cascade)
+ *         │                              ─→ star_ledger, learner_sticker, learner_interest,
+ *         │                                 learner_quest (cascade — Adventure 2.0 Phase A)
  *         ├─ session          (cascade, auth-schema)
  *         └─ account          (cascade, auth-schema — Better Auth credentials/oauth)
  *   publisher.ownerUserId      (set null) — a published program does NOT vanish when

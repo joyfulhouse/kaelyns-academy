@@ -20,8 +20,10 @@ const config: KnipConfig = {
     "e2e/**/*.setup.ts",
     "e2e/specs/*.spec.ts",
     // CLI scripts run outside package.json: dev-only audio tools + the CI E2E-gate
-    // content seed (invoked as `bun scripts/seed-content.ts` in the Forgejo workflow).
+    // content seed (invoked as `bun scripts/seed-content.ts` in the Forgejo workflow),
+    // and the Task 12 motivation-taxonomy seed (`bun scripts/seed-motivation.ts`).
     "scripts/seed-content.ts",
+    "scripts/seed-motivation.ts",
     "scripts/generate-audio.ts",
     "scripts/warm-english-audio.ts",
   ],

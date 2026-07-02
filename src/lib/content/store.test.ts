@@ -47,6 +47,7 @@ describe("assembleProgram", () => {
           mathFocus: "Addition",
           project: "Build a number line",
           checkpoint: null,
+          branchKey: "left",
         },
         {
           id: "u1",
@@ -61,6 +62,7 @@ describe("assembleProgram", () => {
           mathFocus: null,
           project: "Book talk",
           checkpoint: null,
+          branchKey: null,
         },
       ],
       lessons: [
@@ -135,6 +137,11 @@ describe("assembleProgram", () => {
     expect(program.units[0].lessons[1].order).toBe(2);
     // Unit with no lessons (u2) has empty lessons array
     expect(program.units[1].lessons).toHaveLength(0);
+    // branchKey carries through when set (u2/"math"), and is OMITTED (not just
+    // undefined) when the row's branchKey is null (u1/"reading") — mirrors the
+    // checkpoint field's optional-property contract.
+    expect(program.units[1].branchKey).toBe("left");
+    expect("branchKey" in program.units[0]).toBe(false);
   });
 
   it("uses authored keys (unitKey/lessonKey/activityKey) as node ids, never row UUIDs", () => {
@@ -157,6 +164,7 @@ describe("assembleProgram", () => {
           mathFocus: null,
           project: "Read",
           checkpoint: null,
+          branchKey: null,
         },
       ],
       lessons: [
@@ -218,6 +226,7 @@ describe("assembleProgram", () => {
           mathFocus: "Tenframe",
           project: "Count things",
           checkpoint: null,
+          branchKey: null,
         },
       ],
       lessons: [
@@ -280,6 +289,7 @@ describe("assembleProgram", () => {
           mathFocus: null,
           project: "Count",
           checkpoint: null,
+          branchKey: null,
         },
       ],
       lessons: [
@@ -353,6 +363,7 @@ describe("assembleProgram", () => {
           mathFocus: null,
           project: "Read",
           checkpoint: null,
+          branchKey: null,
         },
       ],
       lessons: [
@@ -536,6 +547,16 @@ describe("buildVersionTreeRows", () => {
     expect(result.units).toHaveLength(0);
     expect(result.lessons).toHaveLength(0);
     expect(result.activities).toHaveLength(0);
+  });
+
+  it("persists branchKey when set, and null when absent", () => {
+    const units = [
+      { unitKey: "u1", title: "U1", world: "sunshine", branchKey: "left", lessons: [] },
+      { unitKey: "u2", title: "U2", world: "sunshine", lessons: [] },
+    ];
+    const result = buildVersionTreeRows(VERSION_ID, units);
+    expect(result.units[0].branchKey).toBe("left");
+    expect(result.units[1].branchKey).toBeNull();
   });
 });
 

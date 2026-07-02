@@ -4,6 +4,7 @@
  * module stays unit-testable without any mocks.
  */
 import type { LearnerSettings, EnrollmentConfig } from "@/lib/content/config";
+import type { LedgerEntry } from "@/lib/rewards/store";
 
 /**
  * One "what the AI made" provenance entry in the export (P6 / spec §8), derived
@@ -55,6 +56,21 @@ export interface LearnerExport {
    * child has no generated practice.
    */
   aiProvenance: AiProvenanceEntry[];
+  /** Star economy (Adventure 2.0 Phase A, spec §3.1): balance plus a bounded
+   *  (newest-500) ledger page — the same {@link LedgerEntry} shape the parent
+   *  Rewards panel reads. */
+  stars: {
+    balance: number;
+    ledger: LedgerEntry[];
+  };
+  /** Owned stickers (spec §3.2): which sticker and when it was earned/bought. */
+  stickers: { stickerId: string; acquiredAt: string }[];
+  /** Offered + picked interests (spec §3.3) — slug + source only. Never the
+   *  interest label/free text: the taxonomy is admin-authored and bounded, so
+   *  the slug alone is enough to identify it (§8, no free text ever exported). */
+  interests: { slug: string; source: string }[];
+  /** Daily quests (spec §3.4), bounded to the newest 200 upstream. */
+  quests: { title: string; status: string; assignedOn: string }[];
 }
 
 export interface ShapeInput {
@@ -89,11 +105,29 @@ export interface ShapeInput {
     genRoute?: string | null;
     genAt?: Date | string | null;
   }[];
+  stars: {
+    balance: number;
+    ledger: {
+      delta: number;
+      reason: string;
+      refId: string | null;
+      createdAt: Date | string;
+    }[];
+  };
+  stickers: { stickerId: string; acquiredAt: Date | string }[];
+  interests: { slug: string; source: string }[];
+  quests: { title: string; status: string; assignedOn: string }[];
 }
 
 /** Normalize a Date|string|null timestamp to an ISO string (or null). */
 function toIsoOrNull(value: Date | string | null | undefined): string | null {
   if (value == null) return null;
+  return typeof value === "string" ? value : value.toISOString();
+}
+
+/** Normalize a REQUIRED Date|string timestamp to an ISO string (never null;
+ *  every star-ledger/sticker timestamp is `notNull` in the schema). */
+function toIso(value: Date | string): string {
   return typeof value === "string" ? value : value.toISOString();
 }
 
@@ -148,5 +182,26 @@ export function shapeLearnerExport(input: ShapeInput): LearnerExport {
         route: a.genRoute ?? null,
         generatedAt: toIsoOrNull(a.genAt),
       })),
+    // Star economy (Task 10 / spec §3.1): balance is a whole-ledger sum (never
+    // bounded by the page below); the ledger itself is the newest-500 page.
+    stars: {
+      balance: input.stars.balance,
+      ledger: input.stars.ledger.map((l) => ({
+        delta: l.delta,
+        reason: l.reason,
+        refId: l.refId,
+        createdAt: toIso(l.createdAt),
+      })),
+    },
+    stickers: input.stickers.map((s) => ({
+      stickerId: s.stickerId,
+      acquiredAt: toIso(s.acquiredAt),
+    })),
+    interests: input.interests.map((i) => ({ slug: i.slug, source: i.source })),
+    quests: input.quests.map((q) => ({
+      title: q.title,
+      status: q.status,
+      assignedOn: q.assignedOn,
+    })),
   };
 }

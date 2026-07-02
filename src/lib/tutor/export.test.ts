@@ -35,6 +35,20 @@ function baseInput(overrides: Partial<ShapeInput> = {}): ShapeInput {
         createdAt: new Date("2026-06-20T10:00:00.000Z"),
       },
     ],
+    stars: {
+      balance: 12,
+      ledger: [
+        {
+          delta: 3,
+          reason: "activity_complete",
+          refId: "u1l1a1",
+          createdAt: new Date("2026-06-20T10:00:00.000Z"),
+        },
+      ],
+    },
+    stickers: [{ stickerId: "sticker-1", acquiredAt: new Date("2026-06-19T08:00:00.000Z") }],
+    interests: [{ slug: "dinosaurs", source: "child" }],
+    quests: [{ title: "Finish 3 activities", status: "done", assignedOn: "2026-06-20" }],
     ...overrides,
   };
 }
@@ -240,5 +254,89 @@ describe("shapeLearnerExport — aiProvenance", () => {
     expect(result.aiProvenance).toEqual([
       { activityId: "old-gen", kind: "sightword-game", model: null, route: null, generatedAt: null },
     ]);
+  });
+});
+
+// ── stars/stickers/interests/quests (Task 10: Adventure 2.0 Phase A export
+// coverage — spec §3 motivation + choice tables, all learner-scoped) ─────────
+describe("shapeLearnerExport — stars", () => {
+  it("includes the star balance and ledger (delta/reason/refId/createdAt only)", () => {
+    const result = shapeLearnerExport(baseInput());
+    expect(result.stars.balance).toBe(12);
+    expect(result.stars.ledger).toHaveLength(1);
+    const entry = result.stars.ledger[0];
+    expect(Object.keys(entry)).toEqual(["delta", "reason", "refId", "createdAt"]);
+    expect(entry.delta).toBe(3);
+    expect(entry.reason).toBe("activity_complete");
+    expect(entry.refId).toBe("u1l1a1");
+    expect(entry.createdAt).toBe("2026-06-20T10:00:00.000Z");
+  });
+
+  it("converts a string ledger createdAt without mangling it", () => {
+    const result = shapeLearnerExport(
+      baseInput({
+        stars: {
+          balance: 0,
+          ledger: [
+            { delta: -2, reason: "sticker_purchase", refId: "sticker-1", createdAt: "2026-06-18T00:00:00.000Z" },
+          ],
+        },
+      }),
+    );
+    expect(result.stars.ledger[0].createdAt).toBe("2026-06-18T00:00:00.000Z");
+  });
+
+  it("handles an empty ledger with a zero balance", () => {
+    const result = shapeLearnerExport(baseInput({ stars: { balance: 0, ledger: [] } }));
+    expect(result.stars).toEqual({ balance: 0, ledger: [] });
+  });
+});
+
+describe("shapeLearnerExport — stickers", () => {
+  it("includes owned stickers with stickerId + acquiredAt only (ISO string)", () => {
+    const result = shapeLearnerExport(baseInput());
+    expect(result.stickers).toHaveLength(1);
+    const s = result.stickers[0];
+    expect(Object.keys(s)).toEqual(["stickerId", "acquiredAt"]);
+    expect(s.stickerId).toBe("sticker-1");
+    expect(s.acquiredAt).toBe("2026-06-19T08:00:00.000Z");
+  });
+
+  it("handles an empty sticker collection", () => {
+    const result = shapeLearnerExport(baseInput({ stickers: [] }));
+    expect(result.stickers).toEqual([]);
+  });
+});
+
+describe("shapeLearnerExport — interests", () => {
+  it("includes interests with slug + source only — never free text", () => {
+    const result = shapeLearnerExport(baseInput());
+    expect(result.interests).toHaveLength(1);
+    const i = result.interests[0];
+    expect(Object.keys(i)).toEqual(["slug", "source"]);
+    expect(i.slug).toBe("dinosaurs");
+    expect(i.source).toBe("child");
+  });
+
+  it("handles no interests", () => {
+    const result = shapeLearnerExport(baseInput({ interests: [] }));
+    expect(result.interests).toEqual([]);
+  });
+});
+
+describe("shapeLearnerExport — quests", () => {
+  it("includes quests with title/status/assignedOn only", () => {
+    const result = shapeLearnerExport(baseInput());
+    expect(result.quests).toHaveLength(1);
+    const q = result.quests[0];
+    expect(Object.keys(q)).toEqual(["title", "status", "assignedOn"]);
+    expect(q.title).toBe("Finish 3 activities");
+    expect(q.status).toBe("done");
+    expect(q.assignedOn).toBe("2026-06-20");
+  });
+
+  it("handles no quests", () => {
+    const result = shapeLearnerExport(baseInput({ quests: [] }));
+    expect(result.quests).toEqual([]);
   });
 });

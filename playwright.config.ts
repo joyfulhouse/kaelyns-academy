@@ -97,7 +97,12 @@ export default defineConfig({
     },
     {
       name: "parent",
-      testMatch: /specs\/parent\.spec\.ts/,
+      // motivation.spec.ts lives here too: it's parent-authenticated by
+      // default and locally overrides to the admin storageState (via
+      // `test.use`) for its one admin-only assertion — see that file's doc
+      // comment. Both e2e/.auth/*.json files are guaranteed to exist because
+      // this project depends on `setup`, which signs in both seeded accounts.
+      testMatch: /specs\/(parent|motivation)\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: "e2e/.auth/parent.json" },
     },

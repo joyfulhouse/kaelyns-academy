@@ -32,7 +32,10 @@ First time on a machine: `bunx playwright install chromium`.
 - **setup** — signs in the two seeded accounts once, saves session state to
   `e2e/.auth/{parent,admin}.json` (gitignored). `parent`/`admin` projects depend on it.
 - **public** — signed-out specs (`smoke`, `auth`, `learner`).
-- **parent** / **admin** — reuse the saved sessions.
+- **parent** / **admin** — reuse the saved sessions. `motivation.spec.ts` lives in
+  the `parent` project (its admin-only assertion locally overrides to the admin
+  storageState via `test.use`) rather than getting its own project, since it needs
+  both auth contexts in one file.
 
 Runs serially (`workers: 1`) — the target is shared mutable state.
 
@@ -85,6 +88,15 @@ images and runs this whole suite against it before deploying:
    accounts are seeded (sign-up + role grant); `bun run test:e2e` runs against the
    app container (`E2E_BASE_URL=http://<app-container>:3000`).
 
+> **Known gap (Task 13):** `motivation.spec.ts` additionally requires
+> `scripts/seed-motivation.ts` (interests / sticker packs / quest templates) to
+> have run against the target DB — see that spec's doc comment. Step 2 above
+> only runs `seed-content.ts`. Until the Forgejo workflow adds an equivalent
+> `bun scripts/seed-motivation.ts` step for the ephemeral DB, the motivation
+> spec's quest-board / sticker-catalog / admin-quest-list assertions will fail
+> in this CI gate even though they're expected to pass against prod (seeded once
+> at Task 14 ship time).
+
 The `<sha>` is pinned into `k3s-infra` (= deployed) **only if the suite passes** —
 a failing image is pushed to Harbor but never rolled. Because the CI target is the
 app container (not `kaelyns.academy`), the prod guard and the CI-fail-closed check
@@ -108,3 +120,11 @@ KUBECONFIG=~/.kube/config-k3s bash scripts/e2e-cleanup.sh --confirm  # delete
 It deletes only E2E-tagged artifacts: learners named `E2E Kid%`, accounts
 `e2e-throwaway+%@kaelyns.test`, and draft programs slugged `e2e-draft-%`. It does
 **not** touch the two seeded accounts.
+
+`motivation.spec.ts` uses a different, intentionally-persistent learner —
+`"E2E Learner"` (see `ensurePersistentLearner` in `helpers.ts`) — that this
+sweep never matches (it doesn't start with `E2E Kid`). That learner is meant to
+accumulate real star/quest/sticker/interest state across runs and is never
+deleted by this script; its four state tables (`star_ledger`, `learner_sticker`,
+`learner_interest`, `learner_quest`) all cascade off `learner.id` regardless, so
+no separate sweep entry is needed for them.

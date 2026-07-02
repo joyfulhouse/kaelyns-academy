@@ -173,6 +173,78 @@ describe("generatePracticeItems (bounded + schema-validated)", () => {
     expect(userMsg).toContain(`<<<UNTRUSTED>>>\n${evilHint}\n<<<END>>>`);
   });
 
+  it("themes items around picked interests, fenced as untrusted (Task 9 / §8)", async () => {
+    const valid = JSON.stringify({
+      items: [
+        {
+          focus: "short a CVC",
+          instruction: "Build the word.",
+          tiles: ["c", "a", "t"],
+          words: [{ word: "cat", picture: "🐱" }],
+        },
+      ],
+    });
+    const fetchMock = vi.fn().mockResolvedValue(completion(valid));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generatePracticeItems("phonics-wordbuild", "ready", "short a", 1, {
+      interests: ["dinosaurs", "space"],
+    });
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    const userMsg = body.messages.find((m: { role: string }) => m.role === "user")?.content ?? "";
+    expect(userMsg).toContain("theme items around what this child loves");
+    expect(userMsg).toContain("<<<UNTRUSTED>>>\ndinosaurs, space\n<<<END>>>");
+  });
+
+  it("omits interest theming entirely when none are picked", async () => {
+    const valid = JSON.stringify({
+      items: [{ instruction: "Find the words.", words: ["the", "and"] }],
+    });
+    const fetchMock = vi.fn().mockResolvedValue(completion(valid));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generatePracticeItems("sightword-game", "ready", "the, and", 1);
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    const userMsg = body.messages.find((m: { role: string }) => m.role === "user")?.content ?? "";
+    expect(userMsg).not.toContain("theme items around what this child loves");
+  });
+
+  it("never themes a World-Languages prompt around interests (structurally unreachable — Task 9 / §8)", async () => {
+    // The lang-kind prompt builder (buildLangUserPrompt) takes no `interests`
+    // parameter at all, so an interest can never reach a language prompt today.
+    // This pins that: even when a picked interest is supplied, a real lang-kind
+    // generation (zhuyin, resolved via the "zhuyin.symbols.initials" skill hint —
+    // same tag `provenanceForGeneration`'s language-routing test uses) must not
+    // leak it into the outgoing prompt.
+    const valid = JSON.stringify({
+      items: [
+        {
+          locale: "zh-TW",
+          instruction: "Learn this symbol.",
+          skillTags: ["zhuyin.symbols.initials"],
+          symbols: [
+            { id: "zhuyin-b", symbol: "ㄅ", romanization: "b", spoken: "ㄅㄛ" },
+          ],
+          verify: [{ prompt: "Which one is b?", choices: ["ㄅ", "ㄆ"], answerIndex: 0 }],
+        },
+      ],
+    });
+    const fetchMock = vi.fn().mockResolvedValue(completion(valid));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generatePracticeItems("lang-symbol-intro", "ready", "zhuyin initials", 1, {
+      skillHints: ["zhuyin.symbols.initials" as SkillTag],
+      interests: ["dinosaurs"],
+    });
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    const userMsg = body.messages.find((m: { role: string }) => m.role === "user")?.content ?? "";
+    expect(userMsg).not.toContain("dinosaurs");
+    expect(userMsg).not.toContain("theme items around");
+  });
+
   it("hard-fails a lang kind with no language skill hint (never an unguarded gateway call)", async () => {
     // The guard must throw BEFORE any gateway call when the skill hints don't
     // name a language, so a lang kind can never reach the generic,

@@ -98,6 +98,7 @@ function buildUserPrompt(
   focus: string,
   n: number,
   skillHints: SkillTag[],
+  interests: string[] = [],
 ): string {
   const bandNote =
     band === "stretch"
@@ -107,6 +108,9 @@ function buildUserPrompt(
     `Create ${n} "${kind}" practice item(s) focused on this topic: ${fenceUntrusted(focus)}.`,
     skillHints.length ? `Target skills: ${fenceUntrusted(skillHints.join(", "))}.` : "",
     bandNote,
+    interests.length
+      ? `Where it fits naturally, theme items around what this child loves: ${fenceUntrusted(interests.slice(0, 5).join(", "))}. Never force a theme onto phonics/letter mechanics.`
+      : "",
     KIND_BRIEF[kind],
     `Return JSON exactly as: { "items": [ <item>, ... ] } with ${n} item(s).`,
   ]
@@ -359,6 +363,13 @@ export async function sanitizeGeneratedPhonics(
 export interface GeneratePracticeOptions {
   /** Optional canonical skill tags to steer generation (e.g. ["phonics.digraphs"]). */
   skillHints?: SkillTag[];
+  /**
+   * Optional child-picked interest labels (≤5, admin-authored preset text
+   * only — §8) to theme generation around, e.g. ["dinosaurs", "space"].
+   * Non-language kinds only: World-Languages prompts stay inventory-
+   * constrained (see {@link generatePracticeItems}).
+   */
+  interests?: string[];
   /** Abort signal for request-level timeouts. */
   signal?: AbortSignal;
 }
@@ -448,7 +459,7 @@ export async function generatePracticeItems<K extends ActivityKind>(
   const result = await chatJSON({
     model: MODEL_FOR_BAND[band],
     system: buildSystemPrompt(),
-    user: buildUserPrompt(kind, band, focus, count, skillHints),
+    user: buildUserPrompt(kind, band, focus, count, skillHints, options.interests ?? []),
     schema: envelope,
     signal: options.signal,
   });

@@ -82,6 +82,7 @@ export function UnitFields({
   const { field: mathFocusField } = useController({ control, name: `${prefix}.mathFocus` });
   const { field: projectField } = useController({ control, name: `${prefix}.project` });
   const { field: checkpointField } = useController({ control, name: `${prefix}.checkpoint` });
+  const { field: branchKeyField } = useController({ control, name: `${prefix}.branchKey` });
 
   const { fields: lessonFields, append, remove, move } = useFieldArray({
     control,
@@ -219,6 +220,24 @@ export function UnitFields({
               )}
             </Field>
           </div>
+
+          {/* Row 2.5: branch key (Adventure 2.0 forking, spec §4.4) */}
+          <Field
+            id={`${prefix}-branchKey`}
+            label="Branch key"
+            optional
+            hint="Units sharing a branch key render as parallel map paths."
+          >
+            {(fp) => (
+              <TextInput
+                {...fp}
+                value={branchKeyField.value as string}
+                onChange={branchKeyField.onChange}
+                onBlur={branchKeyField.onBlur}
+                placeholder="left"
+              />
+            )}
+          </Field>
 
           {/* Row 3: bigIdea */}
           <Field id={`${prefix}-bigIdea`} label="Big idea" optional>

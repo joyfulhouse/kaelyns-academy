@@ -12,12 +12,26 @@ const lockedSkills: string[] = [];
 // The values() payload of each `attempt` insert — lets a test assert provenance
 // (gen_model/gen_route/gen_at) is persisted for generated rows and null otherwise.
 const attemptInserts: Record<string, unknown>[] = [];
+// The values() payload of each `star_ledger` insert — lets a test assert the
+// star-economy earn (delta/reason/refId) written inside recordAttempt's tx.
+const ledgerInserts: Record<string, unknown>[] = [];
+// The set() payload of each `learner_quest` update — lets a test assert the
+// Adventure 2.0 attempt fold (progress/status) written inside recordAttempt's tx.
+const questUpdates: Record<string, unknown>[] = [];
 // Mutable canned rows the fake `tx` returns for each select target.
 const learnerRows = { value: [{ id: "L1" }] as Record<string, unknown>[] };
 const skillRows = { value: [] as Record<string, unknown>[] };
 // The in-tx active-enrollment gate read (Fix-F A4): default ACTIVE so the
 // happy-path tests persist; the gate tests override to removed/paused/none.
 const enrollmentRows = { value: [{ status: "active" }] as Record<string, unknown>[] };
+// The in-tx "prior authored completion" read (star economy): default a single
+// row (only the just-inserted attempt) so the happy path is a first completion;
+// the repeat-completion test overrides to two rows (prior + just-inserted).
+const attemptRows = { value: [{ id: "new" }] as Record<string, unknown>[] };
+// The day's learner_quest rows (Adventure 2.0 fold); applyAttemptToQuests only
+// SELECTs status="active" rows (mirroring the real query's WHERE clause) — the
+// fake filters here so "offered leaves untouched" is actually observable.
+const questRows = { value: [] as Record<string, unknown>[] };
 
 function tableName(t: unknown): string {
   return (t as { _name?: string })._name ?? "unknown";
@@ -36,7 +50,10 @@ function builder(op: string, table: string) {
     where() {
       return chain;
     },
-    set() {
+    set(v?: Record<string, unknown>) {
+      if (chain.op === "update" && chain.table === "learner_quest" && v) {
+        questUpdates.push(v);
+      }
       return chain;
     },
     values(v?: Record<string, unknown>) {
@@ -46,6 +63,9 @@ function builder(op: string, table: string) {
       if (chain.op === "insert" && chain.table === "attempt" && v) {
         attemptInserts.push(v);
       }
+      if (chain.op === "insert" && chain.table === "star_ledger" && v) {
+        ledgerInserts.push(v);
+      }
       return chain;
     },
     onConflictDoNothing() {
@@ -53,6 +73,9 @@ function builder(op: string, table: string) {
       return chain;
     },
     limit() {
+      return chain;
+    },
+    orderBy() {
       return chain;
     },
     for() {
@@ -68,7 +91,21 @@ function builder(op: string, table: string) {
             ? skillRows.value
             : chain.op === "select" && chain.table === "enrollment"
               ? enrollmentRows.value
-              : [];
+              : chain.op === "select" && chain.table === "attempt"
+                ? attemptRows.value
+                : chain.op === "select" && chain.table === "learner_quest"
+                  ? // Mirrors applyAttemptToQuests's WHERE: status="active" AND
+                    // programSlug=<the recorded attempt's program> (Finding 1: cross-
+                    // program leakage). A canned row with no programSlug is treated as
+                    // belonging to the current program (existing tests don't care about
+                    // this dimension); a row with an explicit, different programSlug is
+                    // filtered out, same as the status filter already does for "offered".
+                    questRows.value.filter(
+                      (r) =>
+                        r.status === "active" &&
+                        (r.programSlug === undefined || r.programSlug === input.programSlug),
+                    )
+                  : [];
       return Promise.resolve(rows).then(resolve);
     },
   };
@@ -92,15 +129,29 @@ const transaction = vi.fn(async (fn: (tx: unknown) => Promise<void>) => fn(tx));
 vi.mock("@/lib/db", () => ({ getDb: () => ({ transaction }) }));
 vi.mock("@/lib/db/schema", () => ({
   learner: { _name: "learner", id: {}, accountId: {} },
-  attempt: { _name: "attempt" },
+  attempt: { _name: "attempt", id: {}, learnerId: {}, activityId: {}, generated: {} },
   enrollment: { _name: "enrollment", learnerId: {}, programSlug: {}, status: {} },
   skillState: { _name: "skill_state", id: {}, learnerId: {}, skill: {} },
+  starLedger: { _name: "star_ledger" },
+  // Adventure 2.0 quest fold (applyAttemptToQuests, src/lib/quests/store.ts —
+  // imported by recordAttempt and resolved against this SAME mocked module).
+  learnerQuest: {
+    _name: "learner_quest",
+    id: {},
+    learnerId: {},
+    programSlug: {},
+    assignedOn: {},
+    status: {},
+  },
+  questTemplate: { _name: "quest_template" },
+  skill: { _name: "skill" },
 }));
 // drizzle-orm operators are used only to build opaque predicate objects here.
 vi.mock("drizzle-orm", () => ({
   and: (...a: unknown[]) => a,
   eq: (...a: unknown[]) => a,
   desc: (a: unknown) => a,
+  asc: (a: unknown) => a,
   inArray: (...a: unknown[]) => a,
 }));
 
@@ -118,17 +169,29 @@ const input = {
     skillEvidence: [{ skill: "math.add", outcome: "solid" as const }],
   },
   day: "2026-06-15",
+  creditEligible: true,
 };
+
+/** The shared happy-path input, factored to a call so quest-fold tests read
+ *  like the brief (recordAttempt("acct-1", baseInput())) without mutating the
+ *  shared `input` object other tests reuse. */
+function baseInput(): typeof input {
+  return input;
+}
 
 describe("recordAttempt (atomic persistence)", () => {
   beforeEach(() => {
     ops.length = 0;
     lockedSkills.length = 0;
     attemptInserts.length = 0;
+    ledgerInserts.length = 0;
+    questUpdates.length = 0;
     transaction.mockClear();
     learnerRows.value = [{ id: "L1" }];
     skillRows.value = [];
     enrollmentRows.value = [{ status: "active" }];
+    attemptRows.value = [{ id: "new" }];
+    questRows.value = [];
   });
 
   it("runs inside a single transaction", async () => {
@@ -274,6 +337,169 @@ describe("recordAttempt (atomic persistence)", () => {
       },
     });
     expect(lockedSkills).toEqual(["math.add", "math.count", "math.sub"]);
+  });
+
+  // ── Adventure 2.0: star-economy earn on first authored completion ───────────
+
+  it("credits the ledger inside the tx on a first authored completion", async () => {
+    // Default attemptRows.value is a single row (only the just-inserted attempt).
+    await recordAttempt("acct-1", input);
+    expect(ledgerInserts).toEqual([
+      expect.objectContaining({ delta: 3, reason: "activity_complete", refId: input.activityId }),
+    ]);
+  });
+
+  it("writes no ledger row for generated practice", async () => {
+    await recordAttempt("acct-1", { ...input, generated: true });
+    expect(ledgerInserts).toHaveLength(0);
+  });
+
+  it("writes no ledger row on a repeat completion", async () => {
+    attemptRows.value = [{ id: "prev" }, { id: "new" }]; // prior authored attempt exists
+    await recordAttempt("acct-1", input);
+    expect(ledgerInserts).toHaveLength(0);
+  });
+
+  // ── Codex critical: server-verified membership gates the star earn ─────────
+
+  it("writes no ledger row for a first authored completion when creditEligible is false", async () => {
+    // Default attemptRows.value is a single row (first authored completion) —
+    // without the membership gate this would credit the ledger. A forged
+    // fresh activityId (unresolvable/unverified against the learner's pinned
+    // tree) must mint zero stars even though it looks like a first completion.
+    skillRows.value = [{ id: "S1", evidence: [] }];
+    await recordAttempt("acct-1", { ...input, creditEligible: false });
+    expect(ledgerInserts).toHaveLength(0);
+    // The attempt row and skill fold are still written — only the star credit
+    // is withheld.
+    expect(attemptInserts).toHaveLength(1);
+    expect(ops).toContainEqual({ op: "update", table: "skill_state" });
+  });
+
+  // ── Adventure 2.0: quest fold + reward credit, INSIDE the attempt tx ────────
+
+  it("folds an active quest and credits its reward inside the attempt tx", async () => {
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+    await recordAttempt("acct-1", baseInput());
+    expect(questUpdates).toContainEqual(
+      expect.objectContaining({ status: "done", progress: { done: 1 } }),
+    );
+    expect(ledgerInserts).toContainEqual(
+      expect.objectContaining({ delta: 2, reason: "quest_complete", refId: "Q1" }),
+    );
+  });
+
+  it("leaves offered quests untouched", async () => {
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "offered",
+      },
+    ];
+    await recordAttempt("acct-1", baseInput());
+    expect(questUpdates).toHaveLength(0);
+  });
+
+  // Finding 1 (review): applyAttemptToQuests must be program-scoped — an
+  // active quest assigned for a DIFFERENT program than the recorded attempt
+  // must not fold or credit, the same way a learner enrolled in both
+  // kaelyn-adaptive and world-languages can't have one program's activity
+  // complete the other's quest.
+  it("does not fold or credit an active quest from a different program", async () => {
+    questRows.value = [
+      {
+        id: "Q1",
+        programSlug: "world-languages", // baseInput()'s attempt is for kaelyn-adaptive
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+    await recordAttempt("acct-1", baseInput());
+    expect(questUpdates).toHaveLength(0);
+    expect(ledgerInserts.some((l) => l.reason === "quest_complete")).toBe(false);
+  });
+
+  // Finding 2 (review): a corrupt jsonb column (target/progress fails its zod
+  // schema) must fail CLOSED — the row is skipped entirely, so it can never
+  // fold, complete, or credit stars off corrupt data.
+  it("does not fold, complete, or credit a quest with a corrupt target", async () => {
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: {}, // missing required `count` — fails questTargetSchema
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+    await recordAttempt("acct-1", baseInput());
+    expect(questUpdates).toHaveLength(0);
+    expect(ledgerInserts.some((l) => l.reason === "quest_complete")).toBe(false);
+  });
+
+  // ── Codex round 2, Important #1: questEligible = generated || creditEligible ──
+  // (closes the quest-credit leak on the program-unresolvable branch, while
+  // preserving generated practice's ability to fold complete_n quests).
+
+  it("does not fold or credit a quest for an AUTHORED attempt when creditEligible is false", async () => {
+    // Program-unresolvable branch: membership couldn't be verified, so the
+    // star-ledger earn is already withheld (existing test above); this asserts
+    // applyAttemptToQuests is skipped entirely too — no quest UPDATE and no
+    // quest_complete ledger insert, even though an active quest would
+    // otherwise complete on this attempt.
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+    await recordAttempt("acct-1", { ...baseInput(), generated: false, creditEligible: false });
+    expect(questUpdates).toHaveLength(0);
+    expect(ledgerInserts.some((l) => l.reason === "quest_complete")).toBe(false);
+  });
+
+  it("still folds and credits a quest for GENERATED practice when creditEligible is false", async () => {
+    // Design preserved: generated practice legitimately has no authored-tree
+    // membership (creditEligible is meaningless/false for it), and must still
+    // be able to complete a complete_n quest.
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+    await recordAttempt("acct-1", { ...baseInput(), generated: true, creditEligible: false });
+    expect(questUpdates).toContainEqual(
+      expect.objectContaining({ status: "done", progress: { done: 1 } }),
+    );
+    expect(ledgerInserts).toContainEqual(
+      expect.objectContaining({ delta: 2, reason: "quest_complete", refId: "Q1" }),
+    );
   });
 });
 

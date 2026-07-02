@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { BackLink } from "@/components/ui/BackLink";
-import { getLearnerSettingsForParent } from "@/app/(parent)/data";
+import { getLearnerInterestsForParent, getLearnerSettingsForParent } from "@/app/(parent)/data";
 import { SettingsForm } from "@/app/(parent)/parent/settings/SettingsForm";
+import { InterestsCard } from "@/components/parent/InterestsCard";
 
 // Deliberately a static, non-identifying title (matches the learner-detail page).
 // The child's display name is child PII (spec §8) and is shown only inside the
@@ -25,7 +26,10 @@ export default async function LearnerSettingsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const data = await getLearnerSettingsForParent(id);
+  const [data, interests] = await Promise.all([
+    getLearnerSettingsForParent(id),
+    getLearnerInterestsForParent(id),
+  ]);
   // 404 when the learner does not exist or is not this account's (tenancy).
   if (!data) notFound();
 
@@ -42,8 +46,16 @@ export default async function LearnerSettingsPage({
         description={`Safety, time, and the AI tutor for ${learner.displayName}. These apply to this child only.`}
       />
 
-      <div className="mt-8">
+      <div className="mt-8 flex flex-col gap-10">
         <SettingsForm learnerId={learner.id} initialSettings={settings} />
+        {interests && (
+          <InterestsCard
+            learnerId={learner.id}
+            learnerName={learner.displayName}
+            allInterests={interests.allInterests}
+            offeredIds={interests.offeredIds}
+          />
+        )}
       </div>
     </div>
   );

@@ -64,6 +64,7 @@ const unitSchema = z.object({
   mathFocus: z.string(),
   project: z.string(),
   checkpoint: z.string(),
+  branchKey: z.string().max(40, "Branch key must be 40 characters or less"),
   lessons: z.array(lessonSchema),
 });
 

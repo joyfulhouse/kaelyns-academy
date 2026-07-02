@@ -85,6 +85,9 @@ export interface Unit {
   mathFocus: string;
   project: string;
   checkpoint?: CheckpointKind;
+  /** Adventure 2.0 branching: consecutive units sharing a non-null branchKey
+   *  render as parallel map paths (spec §4.4). Undefined = the single main path. */
+  branchKey?: string;
   lessons: Lesson[];
 }
 

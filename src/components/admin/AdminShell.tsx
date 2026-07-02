@@ -5,8 +5,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BookOpenIcon,
+  HeartIcon,
   HouseIcon,
   PencilRulerIcon,
+  StickerIcon,
+  TrophyIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/a11y/SkipLink";
 import { cn } from "@/lib/cn";
@@ -23,6 +26,9 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { href: "/admin", label: "Programs", icon: BookOpenIcon },
+  { href: "/admin/stickers", label: "Stickers", icon: StickerIcon },
+  { href: "/admin/quests", label: "Quests", icon: TrophyIcon },
+  { href: "/admin/interests", label: "Interests", icon: HeartIcon },
 ];
 
 function isActive(pathname: string, href: string): boolean {

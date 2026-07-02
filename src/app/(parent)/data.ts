@@ -16,6 +16,8 @@ import {
   type RecentAttempt,
 } from "@/lib/tutor/store";
 import { withOwnedLearner } from "@/lib/tutor/scope";
+import { getLearnerInterests, listPublishedInterests, type InterestView } from "@/lib/interests/store";
+import { getStarBalance, listStarLedger, type LedgerEntry } from "@/lib/rewards/store";
 import type { LearnerSettings } from "@/lib/content/config";
 import { deriveOutcome, type SkillState } from "@/lib/tutor/mastery";
 import {
@@ -253,6 +255,110 @@ export async function getLearnerSettingsForParent(
       async (learner) => {
         const settings = await getLearnerSettings(accountId, learner.id);
         return { learner, settings };
+      },
+      null,
+    ),
+  );
+}
+
+/** The per-learner Interests card read: the requested learner + the full
+ *  published taxonomy + which ids the parent currently OFFERS. */
+export interface LearnerInterestsForParent {
+  learner: LearnerRow;
+  allInterests: InterestView[];
+  offeredIds: string[];
+}
+
+/**
+ * The per-learner Interests card read (Task 9): every published interest (so
+ * the parent can toggle any of them) plus which ones are currently offered for
+ * this learner. Returns null when the learner does not exist or is not this
+ * account's (the page turns that into a 404), matching
+ * {@link getLearnerSettingsForParent}.
+ */
+export async function getLearnerInterestsForParent(
+  learnerId: string,
+): Promise<LearnerInterestsForParent | null> {
+  return withAccount(({ accountId }) =>
+    withOwnedLearner<LearnerInterestsForParent | null>(
+      accountId,
+      learnerId,
+      async (learner) => {
+        const [allInterests, { offered }] = await Promise.all([
+          listPublishedInterests(),
+          getLearnerInterests(accountId, learner.id),
+        ]);
+        return { learner, allInterests, offeredIds: offered.map((o) => o.id) };
+      },
+      null,
+    ),
+  );
+}
+
+/* ── Rewards (Adventure 2.0 Phase A / Task 10, spec §3.1) ─────────────────── */
+
+/** Friendly copy per star-ledger reason code, for the parent Rewards panel. */
+const REASON_LABEL: Record<string, string> = {
+  activity_complete: "Finished an activity",
+  quest_complete: "Completed a quest",
+  sticker_purchase: "Got a sticker",
+  adjustment: "Bonus from you",
+};
+
+/** Plain-language label for a star-ledger reason (falls back to the raw code).
+ *  Not exported: only {@link getLearnerRewards} resolves it (into
+ *  `RewardsLedgerRow.reasonLabel`) — mirrors `ACTIVITY_KIND_LABEL`'s private
+ *  map, unlike the exported `kindLabel` (which other modules do call). */
+function reasonLabel(reason: string): string {
+  return REASON_LABEL[reason] ?? reason;
+}
+
+/** One ledger row the Rewards panel renders, enriched with friendly copy. */
+export interface RewardsLedgerRow {
+  delta: number;
+  reason: string;
+  reasonLabel: string;
+  /** ISO timestamp — carried through only as a stable React list key. */
+  createdAt: string;
+  /** Friendly relative label ("Today", "Yesterday", "3 days ago", "Jun 2"). */
+  when: string;
+}
+
+/** The per-learner Rewards panel read: current balance + the newest ledger page. */
+export interface LearnerRewards {
+  learner: LearnerRow;
+  balance: number;
+  ledger: RewardsLedgerRow[];
+}
+
+/**
+ * The parent Rewards panel read (Task 10): the requested learner's star balance
+ * plus their newest ~10 ledger entries, each enriched with friendly reason copy
+ * and a relative date. Account-scoped (withAccount); returns null when the
+ * learner does not exist or is not this account's (the page 404s), matching
+ * {@link getLearnerSettingsForParent}.
+ */
+export async function getLearnerRewards(learnerId: string): Promise<LearnerRewards | null> {
+  return withAccount(({ accountId }) =>
+    withOwnedLearner<LearnerRewards | null>(
+      accountId,
+      learnerId,
+      async (learner) => {
+        const [balance, ledger] = await Promise.all([
+          getStarBalance(accountId, learnerId),
+          listStarLedger(accountId, learnerId, 10),
+        ]);
+        return {
+          learner,
+          balance,
+          ledger: ledger.map((entry: LedgerEntry) => ({
+            delta: entry.delta,
+            reason: entry.reason,
+            reasonLabel: reasonLabel(entry.reason),
+            createdAt: entry.createdAt,
+            when: relativeDay(entry.createdAt.slice(0, 10)),
+          })),
+        };
       },
       null,
     ),

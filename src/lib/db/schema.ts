@@ -1,6 +1,7 @@
 import { pgTable, serial, timestamp, text, jsonb, date, boolean, uniqueIndex, index, integer } from "drizzle-orm/pg-core";
 import { user } from "./auth-schema";
 import type { EnrollmentConfig, LearnerSettings } from "@/lib/content/config";
+import type { QuestProgress, QuestTarget } from "@/lib/quests/config";
 
 const uuid = () => globalThis.crypto.randomUUID();
 
@@ -61,6 +62,9 @@ export const unit = pgTable("unit", {
   mathFocus: text("math_focus"),
   project: text("project"),
   checkpoint: text("checkpoint"),
+  /** Adventure 2.0 branching: consecutive units sharing a non-null branchKey
+   *  render as parallel map paths (spec §3.6). Null = the single main path. */
+  branchKey: text("branch_key"),
 }, (t) => [uniqueIndex("unit_pv_key_uq").on(t.programVersionId, t.unitKey)]);
 
 export const lesson = pgTable("lesson", {
@@ -234,6 +238,160 @@ export const deletionAudit = pgTable(
     requestedBy: text("requested_by").notNull().default("parent"),
   },
   (t) => [index("deletion_audit_user_idx").on(t.userId)],
+);
+
+// ── Adventure 2.0 Phase A: motivation + choice (spec §3) ─────────────────────
+
+/**
+ * Append-only star economy (spec §3.1). Balance = sum(delta); no mutable
+ * counter to corrupt. Earns are written inside recordAttempt's transaction;
+ * spends inside purchaseSticker's transaction (atomic with the grant).
+ */
+export const starLedger = pgTable(
+  "star_ledger",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    learnerId: text("learner_id")
+      .notNull()
+      .references(() => learner.id, { onDelete: "cascade" }),
+    delta: integer("delta").notNull(),
+    /** activity_complete | quest_complete | sticker_purchase | adjustment */
+    reason: text("reason").notNull(),
+    /** Polymorphic reference (activityId / learnerQuest.id / sticker.id). */
+    refId: text("ref_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("star_ledger_learner_created_idx").on(t.learnerId, t.createdAt)],
+);
+
+export const stickerPack = pgTable("sticker_pack", {
+  id: text("id").primaryKey().$defaultFn(uuid),
+  slug: text("slug").notNull().unique(),
+  title: text("title").notNull(),
+  theme: text("theme"),
+  /** draft | published | archived (status lifecycle, NOT version-cloned — spec §2). */
+  status: text("status").notNull().default("draft"),
+  sortKey: text("sort_key").notNull().default("a"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const sticker = pgTable(
+  "sticker",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    packId: text("pack_id")
+      .notNull()
+      .references(() => stickerPack.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    title: text("title").notNull(),
+    /** v1 format "emoji:🦄" (rendered as a big emoji tile); future "asset:/stickers/…". */
+    artRef: text("art_ref").notNull(),
+    starCost: integer("star_cost").notNull(),
+    sortKey: text("sort_key").notNull().default("a"),
+  },
+  (t) => [uniqueIndex("sticker_pack_slug_uq").on(t.packId, t.slug)],
+);
+
+export const learnerSticker = pgTable(
+  "learner_sticker",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    learnerId: text("learner_id")
+      .notNull()
+      .references(() => learner.id, { onDelete: "cascade" }),
+    stickerId: text("sticker_id")
+      .notNull()
+      .references(() => sticker.id, { onDelete: "cascade" }),
+    acquiredAt: timestamp("acquired_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("learner_sticker_uq").on(t.learnerId, t.stickerId)],
+);
+
+/** Admin-authored preset interest taxonomy (spec §3.3). Bounded vocabulary —
+ *  the ONLY interest strings that can ever reach an AI prompt (§8). */
+export const interest = pgTable("interest", {
+  id: text("id").primaryKey().$defaultFn(uuid),
+  slug: text("slug").notNull().unique(),
+  label: text("label").notNull(),
+  /** A single emoji. */
+  icon: text("icon"),
+  status: text("status").notNull().default("published"),
+});
+
+/**
+ * Two row kinds per (learner, interest): source="parent" = the parent OFFERS
+ * this chip to the picker; source="child" = the child PICKED it. Child picks
+ * are validated ⊆ the offered set (spec §4.3).
+ */
+export const learnerInterest = pgTable(
+  "learner_interest",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    learnerId: text("learner_id")
+      .notNull()
+      .references(() => learner.id, { onDelete: "cascade" }),
+    interestId: text("interest_id")
+      .notNull()
+      .references(() => interest.id, { onDelete: "cascade" }),
+    /** parent (offered) | child (picked) */
+    source: text("source").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("learner_interest_uq").on(t.learnerId, t.interestId, t.source)],
+);
+
+export const questTemplate = pgTable("quest_template", {
+  id: text("id").primaryKey().$defaultFn(uuid),
+  slug: text("slug").notNull().unique(),
+  /** May contain the "{focus}" placeholder, resolved at assignment (unit/skill name). */
+  title: text("title").notNull(),
+  /** complete_n | try_strand | practice_skill (v1; Phase C adds reach_checkpoint). */
+  kind: text("kind").notNull(),
+  params: jsonb("params").$type<unknown>().notNull().default({}),
+  rewardStars: integer("reward_stars").notNull().default(3),
+  status: text("status").notNull().default("draft"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * One offered/active/done quest for one learner on one day (spec §3.4).
+ * kind/title/target/rewardStars are DENORMALIZED from the template at
+ * assignment so a template edit never mutates an in-flight day (same
+ * philosophy as enrollment version-pinning).
+ */
+export const learnerQuest = pgTable(
+  "learner_quest",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    learnerId: text("learner_id")
+      .notNull()
+      .references(() => learner.id, { onDelete: "cascade" }),
+    templateId: text("template_id")
+      .notNull()
+      .references(() => questTemplate.id, { onDelete: "cascade" }),
+    programSlug: text("program_slug").notNull(),
+    /** Calendar day (YYYY-MM-DD, server clock) the quest belongs to. */
+    assignedOn: date("assigned_on").notNull(),
+    title: text("title").notNull(),
+    kind: text("kind").notNull(),
+    target: jsonb("target").$type<QuestTarget>().notNull(),
+    progress: jsonb("progress").$type<QuestProgress>().notNull(),
+    rewardStars: integer("reward_stars").notNull(),
+    /** offered | active | done. Yesterday's rows simply aren't today's (no "expired"). */
+    status: text("status").notNull().default("offered"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("learner_quest_learner_day_idx").on(t.learnerId, t.assignedOn),
+    // Idempotent daily generation: two racing requests insert the same drafts
+    // with onConflictDoNothing keyed here, then re-read.
+    uniqueIndex("learner_quest_day_template_uq").on(
+      t.learnerId,
+      t.programSlug,
+      t.assignedOn,
+      t.templateId,
+    ),
+  ],
 );
 
 export * from "./auth-schema";

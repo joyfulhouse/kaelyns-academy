@@ -21,6 +21,10 @@ function learnerExport(overrides: Partial<LearnerExport> = {}): LearnerExport {
     skillState: [],
     attempts: [],
     aiProvenance: [],
+    stars: { balance: 0, ledger: [] },
+    stickers: [],
+    interests: [],
+    quests: [],
     ...overrides,
   };
 }
@@ -112,6 +116,11 @@ describe("account export inventory guard", () => {
     session: null, // auth session rows — not child data, security-sensitive
     account: null, // Better Auth credential/oauth rows — passwords/tokens
     publisher: null, // marketplace ownership (set null on delete) — not child data
+    // Adventure 2.0 Phase A tables (Task 10 wires these into the export):
+    star_ledger: "stars",
+    learner_sticker: "stickers",
+    learner_interest: "interests",
+    learner_quest: "quests",
   };
 
   /** All pgTable objects exported from the schema module. */
