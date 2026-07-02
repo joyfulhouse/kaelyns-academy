@@ -75,7 +75,10 @@ test("parent learner settings shows the Interests card", async ({ page }) => {
   await page.getByRole("link", { name: E2E_PERSISTENT_LEARNER_NAME }).click();
   await expect(page).toHaveURL(/\/parent\/learners\/[^/]+$/);
 
-  await page.getByRole("link", { name: "Settings" }).click();
+  await page
+    .getByRole("navigation", { name: /^Manage/ })
+    .getByRole("link", { name: "Settings" })
+    .click();
   await expect(page).toHaveURL(/\/parent\/learners\/[^/]+\/settings$/);
   await expect(page.getByRole("heading", { name: "Interests" })).toBeVisible();
 });
