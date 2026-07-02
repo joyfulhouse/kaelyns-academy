@@ -13,6 +13,7 @@ import { registerActivityType } from "@/content/registry";
 import { phonicsWordbuild } from "./phonics-wordbuild";
 import { sightwordGame } from "./sightword-game";
 import { mathTenframe } from "./math-tenframe";
+import { mathMoney } from "./math-money";
 import { journalPrompt } from "./journal-prompt";
 import { readingComprehension } from "./reading-comprehension";
 import { mathArray } from "./math-array";
@@ -28,6 +29,7 @@ export function registerActivityTypes(): void {
   registerActivityType(phonicsWordbuild);
   registerActivityType(sightwordGame);
   registerActivityType(mathTenframe);
+  registerActivityType(mathMoney);
   registerActivityType(journalPrompt);
   registerActivityType(readingComprehension);
   registerActivityType(mathArray);

@@ -1,6 +1,11 @@
 import { mathTenframeConfig, type MathTenframeConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
-import { evenSkillEvidence, outcomeFromAccuracy, starsFromAccuracy } from "../_shared/scoring";
+import {
+  evenSkillEvidence,
+  firstTryRateFromAttempts,
+  outcomeFromAccuracy,
+  starsFromAccuracy,
+} from "../_shared/scoring";
 
 /** Server-safe schema + scoring for math-tenframe. No "use client". */
 export const schema = mathTenframeConfig;
@@ -25,8 +30,7 @@ export function score(
 ): ActivityScore {
   const goal = goalFor(config);
   const reached = response.count === goal;
-  // One activity, one check: 1 attempt → solid, 2 → emerging, 3+ → still finished (not_yet).
-  const firstTryRate = !reached ? 0 : response.attempts <= 1 ? 1 : response.attempts === 2 ? 0.5 : 0.2;
+  const firstTryRate = firstTryRateFromAttempts(reached, response.attempts);
 
   return {
     correct: reached ? 1 : 0,
