@@ -83,7 +83,7 @@ export function RewardsPanel({
         <ul className="mt-5 overflow-hidden rounded-xl border border-line">
           {ledger.map((entry, i) => (
             <li
-              key={i}
+              key={`${entry.createdAt}-${i}`}
               className={`flex items-center justify-between gap-3 px-5 py-3 ${i > 0 ? "border-t border-line" : ""}`}
             >
               <div className="min-w-0">

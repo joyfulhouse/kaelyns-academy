@@ -318,6 +318,8 @@ export interface RewardsLedgerRow {
   delta: number;
   reason: string;
   reasonLabel: string;
+  /** ISO timestamp — carried through only as a stable React list key. */
+  createdAt: string;
   /** Friendly relative label ("Today", "Yesterday", "3 days ago", "Jun 2"). */
   when: string;
 }
@@ -353,6 +355,7 @@ export async function getLearnerRewards(learnerId: string): Promise<LearnerRewar
             delta: entry.delta,
             reason: entry.reason,
             reasonLabel: reasonLabel(entry.reason),
+            createdAt: entry.createdAt,
             when: relativeDay(entry.createdAt.slice(0, 10)),
           })),
         };
