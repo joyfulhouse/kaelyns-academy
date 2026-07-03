@@ -129,6 +129,11 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
           { label: "Item 3", binId: "a" },
         ],
       };
+    case "seq-order":
+      return {
+        instruction: "Put them in order.",
+        cards: [{ label: "First" }, { label: "Second" }, { label: "Third" }],
+      };
   }
 }
 

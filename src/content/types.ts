@@ -12,6 +12,7 @@ import type {
   MathTenframeConfig,
   PhonicsWordbuildConfig,
   ReadingComprehensionConfig,
+  SeqOrderConfig,
   SightwordGameConfig,
   SortCategoriesConfig,
 } from "./activity-configs";
@@ -72,7 +73,8 @@ export type Activity =
   | ActivityOf<"math-clock", MathClockConfig>
   | ActivityOf<"math-money", MathMoneyConfig>
   | ActivityOf<"math-measure", MathMeasureConfig>
-  | ActivityOf<"sort-categories", SortCategoriesConfig>;
+  | ActivityOf<"sort-categories", SortCategoriesConfig>
+  | ActivityOf<"seq-order", SeqOrderConfig>;
 
 type CheckpointKind = "baseline" | "mid" | "final";
 

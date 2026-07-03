@@ -5,6 +5,7 @@ import {
   DotsNineIcon,
   GridFourIcon,
   HandTapIcon,
+  ListNumbersIcon,
   NotePencilIcon,
   PuzzlePieceIcon,
   RulerIcon,
@@ -32,4 +33,5 @@ export const ACTIVITY_META: Record<ActivityKind, { icon: Icon; label: string }> 
   "math-money": { icon: CoinIcon, label: "Count money" },
   "math-measure": { icon: RulerIcon, label: "Measure & compare" },
   "sort-categories": { icon: StackIcon, label: "Sort" },
+  "seq-order": { icon: ListNumbersIcon, label: "Order" },
 };
