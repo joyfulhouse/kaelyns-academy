@@ -214,17 +214,21 @@ export default async function Home() {
                       <span className="text-3xl" aria-hidden>
                         {unit.emoji}
                       </span>
-                      <span className="font-display text-sm font-semibold text-accent-deep">
-                        {unit.mathFocus}
-                      </span>
+                      {unit.mathFocus.trim() !== "" && (
+                        <span className="font-display text-sm font-semibold text-accent-deep">
+                          {unit.mathFocus}
+                        </span>
+                      )}
                     </div>
                     <h3 className="mt-3 font-display text-xl font-semibold tracking-tight">
                       {unit.title}
                     </h3>
                     <p className="mt-1 text-sm text-ink-soft">{unit.bigIdea}</p>
-                    <div className="mt-4 flex flex-wrap gap-1.5">
-                      <Pill tone="neutral">{unit.phonicsFocus}</Pill>
-                    </div>
+                    {unit.phonicsFocus.trim() !== "" && (
+                      <div className="mt-4 flex flex-wrap gap-1.5">
+                        <Pill tone="neutral">{unit.phonicsFocus}</Pill>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
