@@ -3,6 +3,7 @@ import { ACTIVITY_CONFIG_SCHEMAS } from "./activity-configs";
 import { PROGRAMS, getSkill } from "./index";
 import { getLanguage } from "./languages";
 import { kaelynAdaptive } from "./programs/kaelyn-adaptive";
+import { isActivityKindRegistered } from "@/activities";
 import { SKILLS } from "./skills";
 
 /**
@@ -85,6 +86,24 @@ describe("authored program content", () => {
     for (const a of acts) {
       const schema = ACTIVITY_CONFIG_SCHEMAS[a.kind] as { parse: (x: unknown) => unknown };
       expect(() => schema.parse(a.config), `${a.id} (${a.kind})`).not.toThrow();
+    }
+  });
+
+  it("has a baseline check-in unit per academic strand", () => {
+    const program = PROGRAMS.find((p) => p.slug === "kaelyn-adaptive")!;
+    const baselines = program.units.filter((u) => u.checkpoint === "baseline");
+    expect(baselines.map((u) => u.id).sort()).toEqual([
+      "math-baseline",
+      "reading-baseline",
+      "word-baseline",
+    ]);
+    for (const u of baselines) {
+      const acts = u.lessons.flatMap((l) => l.activities);
+      expect(acts.length, u.id).toBeGreaterThanOrEqual(5);
+      for (const a of acts) {
+        expect(isActivityKindRegistered(a.kind), `${a.id} (${a.kind})`).toBe(true);
+        for (const t of a.skillTags) expect(SKILLS.some((s) => s.slug === t), `${a.id}: ${t}`).toBe(true);
+      }
     }
   });
 });
