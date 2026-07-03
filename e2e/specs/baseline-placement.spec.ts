@@ -45,8 +45,9 @@ test("a reading-comprehension baseline activity renders and advances after a cor
   await expect(correctChoice).toBeVisible();
   await correctChoice.click();
 
-  // A correct answer advances to the next question.
-  await expect(page.getByText("Question 2 of 5")).toBeVisible();
+  // A correct answer registers (this activity has a single literal question, so
+  // it completes rather than advancing to a "Question 2").
+  await expect(page.getByText("Nice reading.")).toBeVisible();
 });
 
 test("a math-array baseline activity renders and registers a build tap", async ({ page }) => {
