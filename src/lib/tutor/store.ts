@@ -5,6 +5,7 @@ import { and, count, desc, eq, inArray, lt, or, sum } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   attempt,
+  checkpointResult,
   deletionAudit,
   enrollment,
   interest,
@@ -27,12 +28,17 @@ import {
 } from "@/lib/content/config";
 import { getPublishedVersionId } from "@/lib/content/store";
 import { earnedStarsForAttempt } from "@/lib/rewards/logic";
+import { outcomeToRate } from "@/lib/placement/placement";
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
 import { shapeLearnerExport, type LearnerExport } from "./export";
 import { shapeAccountExport, type AccountExport } from "./account-export";
 import { parseJsonbFailClosed } from "./jsonb";
 import { toLearnerRow, withOwnedLearner, type LearnerRow } from "./scope";
 import { applyAttemptToQuests } from "@/lib/quests/store";
+
+/** The transaction type recordAttempt's tx-scoped helpers share (mirrors the
+ *  same derivation in src/lib/quests/store.ts). */
+type Db = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
 
 // getLearner + LearnerRow now live in ./scope (the shared account-ownership gate);
 // re-export them so existing importers of "@/lib/tutor/store" keep their paths.
@@ -62,6 +68,47 @@ export function nextSkillRecord(
     outcome: SkillOutcome;
   }[];
   return { history, outcome: deriveOutcome({ history } as SkillRecord) };
+}
+
+/**
+ * Fold one checkpoint attempt's per-skill outcomes into the (learner, unit,
+ * phase) checkpoint_result row as first-try rates. Upserts the row (status
+ * "pending"); merges the new per-skill rates into the existing scores map. Does
+ * NOT touch skill_state (placement is parent-gated).
+ */
+async function upsertCheckpointScore(
+  tx: Db,
+  learnerId: string,
+  enrollmentId: string,
+  unitId: string,
+  phase: string,
+  evidence: { skill: string; outcome: string }[],
+): Promise<void> {
+  await tx
+    .insert(checkpointResult)
+    .values({ learnerId, enrollmentId, unitId, phase, scores: {}, status: "pending" })
+    .onConflictDoNothing({
+      target: [checkpointResult.learnerId, checkpointResult.unitId, checkpointResult.phase],
+    });
+  const rows = await tx
+    .select()
+    .from(checkpointResult)
+    .where(
+      and(
+        eq(checkpointResult.learnerId, learnerId),
+        eq(checkpointResult.unitId, unitId),
+        eq(checkpointResult.phase, phase),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  const row = rows[0];
+  if (!row) return;
+  const scores = { ...row.scores };
+  for (const ev of evidence) {
+    scores[ev.skill] = outcomeToRate(ev.outcome as SkillOutcome);
+  }
+  await tx.update(checkpointResult).set({ scores }).where(eq(checkpointResult.id, row.id));
 }
 
 export async function listLearners(accountId: string): Promise<LearnerRow[]> {
@@ -167,6 +214,13 @@ export interface RecordAttemptInput {
    * Gates the star-ledger earn; the attempt/skill folds are unaffected.
    */
   creditEligible: boolean;
+  /**
+   * When the attempt's unit is a checkpoint (baseline/mid/final), its evidence
+   * folds into checkpoint_result INSTEAD of skill_state — nothing about the
+   * learner's level changes until a parent applies the placement (§3, §7).
+   * Resolved server-side by the action from the unit's authored `checkpoint`.
+   */
+  checkpointPhase?: "baseline" | "mid" | "final" | null;
 }
 
 /**
@@ -199,7 +253,7 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
     // check above). A removed/paused/missing enrollment → no write at all; the
     // client render-block (A3) is the UX, this is the non-bypassable enforcement.
     const enrolled = await tx
-      .select({ status: enrollment.status })
+      .select({ id: enrollment.id, status: enrollment.status })
       .from(enrollment)
       .where(enrollmentKey(input.learnerId, input.programSlug))
       .limit(1)
@@ -210,6 +264,7 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
     if (enrolled[0]?.status !== "active") {
       throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
     }
+    const enrollmentId = enrolled[0].id;
 
     // Provenance is written ONLY for a generated attempt (and only when supplied),
     // so an authored row can never carry gen_* metadata even if a caller passes it.
@@ -263,56 +318,69 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
       });
     }
 
-    // Acquire the per-skill row locks in a deterministic (skill-sorted) order:
-    // two concurrent attempts for the same learner with overlapping skills would
-    // otherwise be able to lock the same rows in opposite orders and deadlock —
-    // which Postgres breaks by aborting one tx, dropping that submit's evidence.
-    const evidence = [...input.score.skillEvidence].sort((a, b) => a.skill.localeCompare(b.skill));
-    for (const ev of evidence) {
-      // Materialize the row (no-op if it already exists), then lock it FOR
-      // UPDATE so concurrent folds for the same (learner,skill) serialize on it
-      // rather than racing the read-modify-write.
-      await tx
-        .insert(skillState)
-        .values({ learnerId: input.learnerId, skill: ev.skill, evidence: [], outcome: "not_yet" })
-        .onConflictDoNothing({ target: [skillState.learnerId, skillState.skill] });
-      const locked = await tx
-        .select()
-        .from(skillState)
-        .where(and(eq(skillState.learnerId, input.learnerId), eq(skillState.skill, ev.skill)))
-        .limit(1)
-        .for("update");
-      const row = locked[0];
-      if (!row) continue;
-      const { history, outcome } = nextSkillRecord(row.evidence, ev.outcome, input.day);
-      await tx
-        .update(skillState)
-        .set({ evidence: history, outcome, updatedAt: new Date() })
-        .where(eq(skillState.id, row.id));
-    }
+    // Checkpoint attempts (baseline/mid/final) capture to checkpoint_result and
+    // do NOT advance skill_state or quests — placement is parent-gated (§3).
+    if (input.checkpointPhase) {
+      await upsertCheckpointScore(
+        tx,
+        input.learnerId,
+        enrollmentId,
+        input.unitId ?? "",
+        input.checkpointPhase,
+        input.score.skillEvidence,
+      );
+    } else {
+      // Acquire the per-skill row locks in a deterministic (skill-sorted) order:
+      // two concurrent attempts for the same learner with overlapping skills would
+      // otherwise be able to lock the same rows in opposite orders and deadlock —
+      // which Postgres breaks by aborting one tx, dropping that submit's evidence.
+      const evidence = [...input.score.skillEvidence].sort((a, b) => a.skill.localeCompare(b.skill));
+      for (const ev of evidence) {
+        // Materialize the row (no-op if it already exists), then lock it FOR
+        // UPDATE so concurrent folds for the same (learner,skill) serialize on it
+        // rather than racing the read-modify-write.
+        await tx
+          .insert(skillState)
+          .values({ learnerId: input.learnerId, skill: ev.skill, evidence: [], outcome: "not_yet" })
+          .onConflictDoNothing({ target: [skillState.learnerId, skillState.skill] });
+        const locked = await tx
+          .select()
+          .from(skillState)
+          .where(and(eq(skillState.learnerId, input.learnerId), eq(skillState.skill, ev.skill)))
+          .limit(1)
+          .for("update");
+        const row = locked[0];
+        if (!row) continue;
+        const { history, outcome } = nextSkillRecord(row.evidence, ev.outcome, input.day);
+        await tx
+          .update(skillState)
+          .set({ evidence: history, outcome, updatedAt: new Date() })
+          .where(eq(skillState.id, row.id));
+      }
 
-    // Adventure 2.0: fold this attempt into today's ACTIVE quests + credit any
-    // completed quest's reward — inside this same transaction. Gated on
-    // questEligible (Codex round 2, Important #1): GENERATED practice
-    // legitimately has no authored-tree membership and still counts toward
-    // the day's active quest (any kind — complete_n, or practice_skill/try_strand
-    // via the attempt's skillEvidence; bounded ≤ daily quests, active-quest-only,
-    // once each — accepted residual, design intent unchanged). An AUTHORED
-    // attempt counts toward quests ONLY when
-    // creditEligible (server-verified tree membership) is true — otherwise the
-    // program-unresolvable branch could complete a complete_n quest and credit
-    // quest_complete stars even though the star-ledger activity_complete earn
-    // was correctly withheld above. Skipping the fold entirely (rather than
-    // passing a flag through) is correct: no quest should advance from an
-    // attempt whose membership couldn't be verified.
-    const questEligible = generated || input.creditEligible;
-    if (questEligible) {
-      await applyAttemptToQuests(tx, input.learnerId, input.programSlug, input.day, {
-        activityId: input.activityId,
-        unitId: input.unitId ?? null,
-        skills: input.score.skillEvidence.map((e) => e.skill),
-        generated,
-      });
+      // Adventure 2.0: fold this attempt into today's ACTIVE quests + credit any
+      // completed quest's reward — inside this same transaction. Gated on
+      // questEligible (Codex round 2, Important #1): GENERATED practice
+      // legitimately has no authored-tree membership and still counts toward
+      // the day's active quest (any kind — complete_n, or practice_skill/try_strand
+      // via the attempt's skillEvidence; bounded ≤ daily quests, active-quest-only,
+      // once each — accepted residual, design intent unchanged). An AUTHORED
+      // attempt counts toward quests ONLY when
+      // creditEligible (server-verified tree membership) is true — otherwise the
+      // program-unresolvable branch could complete a complete_n quest and credit
+      // quest_complete stars even though the star-ledger activity_complete earn
+      // was correctly withheld above. Skipping the fold entirely (rather than
+      // passing a flag through) is correct: no quest should advance from an
+      // attempt whose membership couldn't be verified.
+      const questEligible = generated || input.creditEligible;
+      if (questEligible) {
+        await applyAttemptToQuests(tx, input.learnerId, input.programSlug, input.day, {
+          activityId: input.activityId,
+          unitId: input.unitId ?? null,
+          skills: input.score.skillEvidence.map((e) => e.skill),
+          generated,
+        });
+      }
     }
   });
 }

@@ -18,6 +18,7 @@ import {
 import type { EnrollmentConfig } from "@/lib/content/config";
 import {
   activityIdsForProgram,
+  getUnit,
   skillTagsForProgram,
 } from "@/content";
 import type { Program } from "@/content";
@@ -239,6 +240,8 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
         program = null;
       }
       const unitId: string | null = program ? findUnitIdOfActivity(program, data.activityId) : null;
+      const unit = program && unitId ? getUnit(program, unitId) : null;
+      const checkpointPhase = unit?.checkpoint ?? null;
 
       // An authored attempt whose activityId is NOT in the learner's resolved
       // tree is a forgery attempt (a fresh/arbitrary id) — reject before any
@@ -271,6 +274,7 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
         provenance,
         unitId,
         creditEligible,
+        checkpointPhase,
       });
       return { ok: true };
     });

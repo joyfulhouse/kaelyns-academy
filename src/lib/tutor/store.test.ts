@@ -18,12 +18,21 @@ const ledgerInserts: Record<string, unknown>[] = [];
 // The set() payload of each `learner_quest` update — lets a test assert the
 // Adventure 2.0 attempt fold (progress/status) written inside recordAttempt's tx.
 const questUpdates: Record<string, unknown>[] = [];
+// The set() payload of each `checkpoint_result` update — lets a test assert the
+// C1 checkpoint capture (scores merge) written inside recordAttempt's tx.
+const checkpointUpdates: Record<string, unknown>[] = [];
 // Mutable canned rows the fake `tx` returns for each select target.
 const learnerRows = { value: [{ id: "L1" }] as Record<string, unknown>[] };
 const skillRows = { value: [] as Record<string, unknown>[] };
 // The in-tx active-enrollment gate read (Fix-F A4): default ACTIVE so the
 // happy-path tests persist; the gate tests override to removed/paused/none.
-const enrollmentRows = { value: [{ status: "active" }] as Record<string, unknown>[] };
+const enrollmentRows = { value: [{ id: "E1", status: "active" }] as Record<string, unknown>[] };
+// The in-tx checkpoint_result upsert read (C1): default a single pending row so
+// a checkpointPhase attempt's fold has a row to update; unused by non-checkpoint
+// tests (upsertCheckpointScore is only ever called when checkpointPhase is set).
+const checkpointResultRows = {
+  value: [{ id: "CR1", scores: {} }] as Record<string, unknown>[],
+};
 // The in-tx "prior authored completion" read (star economy): default a single
 // row (only the just-inserted attempt) so the happy path is a first completion;
 // the repeat-completion test overrides to two rows (prior + just-inserted).
@@ -53,6 +62,9 @@ function builder(op: string, table: string) {
     set(v?: Record<string, unknown>) {
       if (chain.op === "update" && chain.table === "learner_quest" && v) {
         questUpdates.push(v);
+      }
+      if (chain.op === "update" && chain.table === "checkpoint_result" && v) {
+        checkpointUpdates.push(v);
       }
       return chain;
     },
@@ -93,19 +105,21 @@ function builder(op: string, table: string) {
               ? enrollmentRows.value
               : chain.op === "select" && chain.table === "attempt"
                 ? attemptRows.value
-                : chain.op === "select" && chain.table === "learner_quest"
-                  ? // Mirrors applyAttemptToQuests's WHERE: status="active" AND
-                    // programSlug=<the recorded attempt's program> (Finding 1: cross-
-                    // program leakage). A canned row with no programSlug is treated as
-                    // belonging to the current program (existing tests don't care about
-                    // this dimension); a row with an explicit, different programSlug is
-                    // filtered out, same as the status filter already does for "offered".
-                    questRows.value.filter(
-                      (r) =>
-                        r.status === "active" &&
-                        (r.programSlug === undefined || r.programSlug === input.programSlug),
-                    )
-                  : [];
+                : chain.op === "select" && chain.table === "checkpoint_result"
+                  ? checkpointResultRows.value
+                  : chain.op === "select" && chain.table === "learner_quest"
+                    ? // Mirrors applyAttemptToQuests's WHERE: status="active" AND
+                      // programSlug=<the recorded attempt's program> (Finding 1: cross-
+                      // program leakage). A canned row with no programSlug is treated as
+                      // belonging to the current program (existing tests don't care about
+                      // this dimension); a row with an explicit, different programSlug is
+                      // filtered out, same as the status filter already does for "offered".
+                      questRows.value.filter(
+                        (r) =>
+                          r.status === "active" &&
+                          (r.programSlug === undefined || r.programSlug === input.programSlug),
+                      )
+                    : [];
       return Promise.resolve(rows).then(resolve);
     },
   };
@@ -145,6 +159,15 @@ vi.mock("@/lib/db/schema", () => ({
   },
   questTemplate: { _name: "quest_template" },
   skill: { _name: "skill" },
+  // C1 checkpoint capture (upsertCheckpointScore, src/lib/tutor/store.ts).
+  checkpointResult: {
+    _name: "checkpoint_result",
+    id: {},
+    learnerId: {},
+    enrollmentId: {},
+    unitId: {},
+    phase: {},
+  },
 }));
 // drizzle-orm operators are used only to build opaque predicate objects here.
 vi.mock("drizzle-orm", () => ({
@@ -186,12 +209,14 @@ describe("recordAttempt (atomic persistence)", () => {
     attemptInserts.length = 0;
     ledgerInserts.length = 0;
     questUpdates.length = 0;
+    checkpointUpdates.length = 0;
     transaction.mockClear();
     learnerRows.value = [{ id: "L1" }];
     skillRows.value = [];
-    enrollmentRows.value = [{ status: "active" }];
+    enrollmentRows.value = [{ id: "E1", status: "active" }];
     attemptRows.value = [{ id: "new" }];
     questRows.value = [];
+    checkpointResultRows.value = [{ id: "CR1", scores: {} }];
   });
 
   it("runs inside a single transaction", async () => {
@@ -499,6 +524,34 @@ describe("recordAttempt (atomic persistence)", () => {
     );
     expect(ledgerInserts).toContainEqual(
       expect.objectContaining({ delta: 2, reason: "quest_complete", refId: "Q1" }),
+    );
+  });
+
+  // ── Adventure 2.0 C1: baseline checkpoint capture (checkpoint_result, NOT
+  // skill_state) ───────────────────────────────────────────────────────────
+
+  it("a baseline checkpoint attempt captures to checkpoint_result and NOT skill_state", async () => {
+    await recordAttempt("acct-1", { ...baseInput(), unitId: "math-baseline", checkpointPhase: "baseline" });
+
+    // skill_state is untouched: the checkpoint branch skips the fold loop
+    // entirely, so no skill_state insert/lock/update ever runs.
+    expect(ops.some((o) => o.table === "skill_state")).toBe(false);
+
+    // checkpoint_result is upserted + its scores merged: input.score's single
+    // "solid" outcome folds to rate 1 (outcomeToRate).
+    expect(ops).toContainEqual({ op: "onConflictDoNothing", table: "checkpoint_result" });
+    expect(checkpointUpdates).toContainEqual({ scores: { "math.add": 1 } });
+
+    // The quest fold is also skipped for a checkpoint attempt.
+    expect(questUpdates).toHaveLength(0);
+  });
+
+  it("still earns activity stars on a baseline checkpoint attempt", async () => {
+    // The star-ledger earn happens ABOVE the checkpoint branch — a checkpoint
+    // activity is still ordinary play to the child.
+    await recordAttempt("acct-1", { ...baseInput(), unitId: "math-baseline", checkpointPhase: "baseline" });
+    expect(ledgerInserts).toContainEqual(
+      expect.objectContaining({ delta: 3, reason: "activity_complete" }),
     );
   });
 });
