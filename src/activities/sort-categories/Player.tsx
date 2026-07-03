@@ -54,8 +54,6 @@ export function SortCategoriesPlayer({
   function tapBin(binId: string) {
     if (shake.wrong || selected === null) return;
     const item = parsed.items[selected];
-    const attemptCount = attempts + 1;
-    setAttempts(attemptCount);
 
     if (item.binId === binId) {
       const next = placements.slice();
@@ -63,9 +61,13 @@ export function SortCategoriesPlayer({
       setPlacements(next);
       setSelected(null);
       if (next.every((p) => p !== "")) {
-        setDone({ attempts: attemptCount, placements: next });
+        // attempts counts only mistakes across the whole sort; the completing
+        // placement reports mistakes + 1 (mirrors math-money's tapIdentify), so
+        // a flawless sort scores first-try (3 stars), not one increment per item.
+        setDone({ attempts: attempts + 1, placements: next });
       }
     } else {
+      setAttempts(attempts + 1);
       setWrongBin(binId);
       shake.trigger({
         speak: () => speech.speak("Try a different group."),

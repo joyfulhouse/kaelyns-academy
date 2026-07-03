@@ -32,6 +32,11 @@ describe("score", () => {
       skillEvidence: [{ skill: "science.classify", outcome: "solid" }],
     });
   });
+  it("one mistake (attempts 2) → 2 stars emerging", () => {
+    const s = score(cfg, { attempts: 2, placements: ["water", "land", "water"] });
+    expect(s.stars).toBe(2);
+    expect(s.skillEvidence[0].outcome).toBe("emerging");
+  });
   it("finished after retries still earns a star (never 0)", () => {
     const s = score(cfg, { attempts: 3, placements: ["water", "land", "water"] });
     expect(s.correct).toBe(1); expect(s.stars).toBe(1);
