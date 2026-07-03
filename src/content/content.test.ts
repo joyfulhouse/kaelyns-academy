@@ -89,14 +89,15 @@ describe("authored program content", () => {
     }
   });
 
-  it("has a baseline check-in unit per academic strand", () => {
+  it("has a baseline check-in unit per placement-enabled academic strand", () => {
     const program = PROGRAMS.find((p) => p.slug === "kaelyn-adaptive")!;
     const baselines = program.units.filter((u) => u.checkpoint === "baseline");
-    expect(baselines.map((u) => u.id).sort()).toEqual([
-      "math-baseline",
-      "reading-baseline",
-      "word-baseline",
-    ]);
+    // C1 ships Reading + Math baselines only. Word Study is deferred: its kinds
+    // (phonics-wordbuild/sightword-game) emit legacy phonics.* / reading.decodable
+    // slugs from skillsAffected(), not the word.*/vocab.* tags the recommender
+    // gates on — a pre-existing strand-wide mismatch, so a Word Study baseline
+    // would seed the wrong skills and fail to place. See the C1 follow-up.
+    expect(baselines.map((u) => u.id).sort()).toEqual(["math-baseline", "reading-baseline"]);
     for (const u of baselines) {
       const acts = u.lessons.flatMap((l) => l.activities);
       expect(acts.length, u.id).toBeGreaterThanOrEqual(5);
