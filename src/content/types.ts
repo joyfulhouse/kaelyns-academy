@@ -13,6 +13,7 @@ import type {
   PhonicsWordbuildConfig,
   ReadingComprehensionConfig,
   SightwordGameConfig,
+  SortCategoriesConfig,
 } from "./activity-configs";
 
 export type { ActivityKind };
@@ -70,7 +71,8 @@ export type Activity =
   | ActivityOf<"lang-listen-match", LangListenMatchConfig>
   | ActivityOf<"math-clock", MathClockConfig>
   | ActivityOf<"math-money", MathMoneyConfig>
-  | ActivityOf<"math-measure", MathMeasureConfig>;
+  | ActivityOf<"math-measure", MathMeasureConfig>
+  | ActivityOf<"sort-categories", SortCategoriesConfig>;
 
 type CheckpointKind = "baseline" | "mid" | "final";
 

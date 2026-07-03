@@ -24,6 +24,7 @@ import { readingComprehension } from "./reading-comprehension";
 import { mathArray } from "./math-array";
 import { langSymbolIntro } from "./lang-symbol-intro";
 import { langListenMatch } from "./lang-listen-match";
+import { sortCategories } from "./sort-categories";
 
 let registered = false;
 
@@ -42,6 +43,7 @@ export function registerActivityTypes(): void {
   registerActivityType(mathArray);
   registerActivityType(langSymbolIntro);
   registerActivityType(langListenMatch);
+  registerActivityType(sortCategories);
 }
 
 registerActivityTypes();

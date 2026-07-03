@@ -116,6 +116,19 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
         ],
         answerIndex: 0,
       };
+    case "sort-categories":
+      return {
+        instruction: "Sort the items.",
+        bins: [
+          { id: "a", label: "Group A" },
+          { id: "b", label: "Group B" },
+        ],
+        items: [
+          { label: "Item 1", binId: "a" },
+          { label: "Item 2", binId: "b" },
+          { label: "Item 3", binId: "a" },
+        ],
+      };
   }
 }
 

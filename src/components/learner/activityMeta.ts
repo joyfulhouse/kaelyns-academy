@@ -9,6 +9,7 @@ import {
   PuzzlePieceIcon,
   RulerIcon,
   SpeakerHighIcon,
+  StackIcon,
   TranslateIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import type { Icon } from "@phosphor-icons/react";
@@ -30,4 +31,5 @@ export const ACTIVITY_META: Record<ActivityKind, { icon: Icon; label: string }> 
   "math-clock": { icon: ClockIcon, label: "Tell the time" },
   "math-money": { icon: CoinIcon, label: "Count money" },
   "math-measure": { icon: RulerIcon, label: "Measure & compare" },
+  "sort-categories": { icon: StackIcon, label: "Sort" },
 };
