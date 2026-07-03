@@ -182,6 +182,10 @@ export function UnitView({
 }
 
 function FocusPill({ label, value }: { label: string; value: string }) {
+  // A unit that doesn't use this focus dimension leaves it "" (e.g. the Life
+  // Skills Math / Science units carry only a math focus) — render nothing
+  // rather than an empty "Letters:" pill.
+  if (value.trim() === "") return null;
   return (
     <div className="flex items-center gap-2">
       <Pill tone="accent">
