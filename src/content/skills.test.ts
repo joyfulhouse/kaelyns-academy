@@ -11,3 +11,14 @@ describe("Life Skills Math skills", () => {
     }
   });
 });
+
+describe("Science & Nature skills", () => {
+  it("registers classify + sequence under the science domain", () => {
+    for (const slug of ["science.classify", "science.sequence"]) {
+      const skill = SKILLS.find((s) => s.slug === slug);
+      expect(skill, slug).toBeDefined();
+      expect(skill!.domain).toBe("science");
+      expect(skill!.readyIndicator.length).toBeGreaterThan(0);
+    }
+  });
+});

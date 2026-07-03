@@ -12,7 +12,9 @@ import type {
   MathTenframeConfig,
   PhonicsWordbuildConfig,
   ReadingComprehensionConfig,
+  SeqOrderConfig,
   SightwordGameConfig,
+  SortCategoriesConfig,
 } from "./activity-configs";
 
 export type { ActivityKind };
@@ -27,6 +29,7 @@ export type SkillDomain =
   | "math"
   | "habits"
   | "lifeskills" // Life Skills Math (B1): time · money · measurement
+  | "science" // Science & Nature (B2): classify · sequence
   // World Languages — one domain per language (one parent-report row each).
   | "zhuyin"
   | "spanish"
@@ -70,7 +73,9 @@ export type Activity =
   | ActivityOf<"lang-listen-match", LangListenMatchConfig>
   | ActivityOf<"math-clock", MathClockConfig>
   | ActivityOf<"math-money", MathMoneyConfig>
-  | ActivityOf<"math-measure", MathMeasureConfig>;
+  | ActivityOf<"math-measure", MathMeasureConfig>
+  | ActivityOf<"sort-categories", SortCategoriesConfig>
+  | ActivityOf<"seq-order", SeqOrderConfig>;
 
 type CheckpointKind = "baseline" | "mid" | "final";
 

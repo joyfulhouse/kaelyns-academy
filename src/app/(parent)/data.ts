@@ -85,6 +85,8 @@ const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
   "math-clock": "Tell the time",
   "math-money": "Count money",
   "math-measure": "Measure & compare",
+  "sort-categories": "Sort",
+  "seq-order": "Order",
 };
 
 /** Plain-language label for an attempt's kind (falls back to the raw kind). */

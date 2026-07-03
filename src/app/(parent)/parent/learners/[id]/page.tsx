@@ -48,6 +48,7 @@ const DOMAIN_ORDER = [
   { key: "math", label: "Math" },
   { key: "habits", label: "Habits" },
   { key: "lifeskills", label: "Life Skills Math" },
+  { key: "science", label: "Science & Nature" },
   // World Languages
   { key: "zhuyin", label: "Zhuyin (Bopomofo)" },
   { key: "spanish", label: "Spanish" },

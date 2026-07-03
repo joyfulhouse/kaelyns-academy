@@ -406,6 +406,22 @@ export const SKILLS: Skill[] = [
     stretchIndicator: "Orders three or more objects and reasons about which unit fits",
   },
 
+  // ── Science & Nature (B2): classify · sequence ──
+  {
+    slug: "science.classify",
+    domain: "science",
+    label: "Sorting & classifying",
+    readyIndicator: "Sorts objects into groups by an observable attribute (living/nonliving, land/water, material) and explains the rule",
+    stretchIndicator: "Sorts the same set two different ways and names each rule",
+  },
+  {
+    slug: "science.sequence",
+    domain: "science",
+    label: "Ordering & life cycles",
+    readyIndicator: "Puts the stages of a familiar life cycle or a daily/seasonal sequence in the right order",
+    stretchIndicator: "Explains what comes before and after a given stage",
+  },
+
   // ── World Languages: Zhuyin / Bopomofo ──
   // Script-mapping: she already speaks Mandarin and reads pinyin, so this is
   // learning the symbols for sounds she knows, not a new language.
