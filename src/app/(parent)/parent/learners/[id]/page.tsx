@@ -22,6 +22,7 @@ import {
 import { CurriculumPanel } from "@/components/parent/CurriculumPanel";
 import { RewardsPanel } from "@/components/parent/RewardsPanel";
 import { LearnerDataControls } from "@/components/parent/LearnerDataControls";
+import { CheckpointResultsPanel } from "./CheckpointResultsPanel";
 import { programStats } from "@/content";
 import type { SkillDomain } from "@/content";
 import { cn } from "@/lib/cn";
@@ -78,7 +79,7 @@ export default async function LearnerDetailPage({
   // 404 when the learner does not exist or is not this account's (tenancy).
   if (!detail) notFound();
 
-  const { learner, program, skills, recent, hasActivity } = detail;
+  const { learner, program, skills, recent, hasActivity, checkpoints } = detail;
   const stats = program ? programStats(program) : { units: 0, lessons: 0, activities: 0 };
   const name = learner.displayName;
 
@@ -143,6 +144,8 @@ export default async function LearnerDetailPage({
           <RecentAttempts name={name} recent={recent} />
         </>
       )}
+
+      <CheckpointResultsPanel learnerId={id} checkpoints={checkpoints} />
 
       <CurriculumPanel learnerId={id} curriculum={curriculum} />
 
@@ -236,6 +239,11 @@ function SkillsByDomain({ skills }: { skills: SkillStatus[] }) {
                       {display ? (
                         <Pill tone={display.tone} icon={display.icon} className="shrink-0">
                           {display.label}
+                          {/* Honest labeling (Adventure 2.0 C1): a baseline-placed skill is
+                              never shown as indistinguishable from day-over-day mastery. */}
+                          {skill.source === "baseline" && (
+                            <span className="text-ink-faint">· placed</span>
+                          )}
                         </Pill>
                       ) : (
                         <Pill tone="neutral" className="shrink-0">

@@ -17,8 +17,9 @@ export function outcomeToRate(outcome: SkillOutcome): number {
 
 /** rate >= this → she owns the skill (seed solid). */
 export const BREEZED_MIN = 0.8;
-/** rate in [MIXED_MIN, BREEZED_MIN) → she'll practice it (do not seed). */
-export const MIXED_MIN = 0.5;
+/** rate in [MIXED_MIN, BREEZED_MIN) → she'll practice it (do not seed). Only
+ *  `bandOf` uses this threshold, so it stays module-private. */
+const MIXED_MIN = 0.5;
 
 export type PlacementBand = "breezed" | "mixed" | "not_yet";
 
