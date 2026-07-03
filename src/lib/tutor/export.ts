@@ -71,6 +71,15 @@ export interface LearnerExport {
   interests: { slug: string; source: string }[];
   /** Daily quests (spec §3.4), bounded to the newest 200 upstream. */
   quests: { title: string; status: string; assignedOn: string }[];
+  /** Baseline/mid/final check-in results (Adventure 2.0 C1, spec §3.5) — per-skill
+   *  first-try scores + the parent-confirmation status. */
+  checkpointResults: {
+    unitId: string;
+    phase: string;
+    scores: Record<string, number>;
+    status: string;
+    createdAt: string;
+  }[];
 }
 
 export interface ShapeInput {
@@ -117,6 +126,13 @@ export interface ShapeInput {
   stickers: { stickerId: string; acquiredAt: Date | string }[];
   interests: { slug: string; source: string }[];
   quests: { title: string; status: string; assignedOn: string }[];
+  checkpointResults: {
+    unitId: string;
+    phase: string;
+    scores: Record<string, number>;
+    status: string;
+    createdAt: string;
+  }[];
 }
 
 /** Normalize a Date|string|null timestamp to an ISO string (or null). */
@@ -202,6 +218,13 @@ export function shapeLearnerExport(input: ShapeInput): LearnerExport {
       title: q.title,
       status: q.status,
       assignedOn: q.assignedOn,
+    })),
+    checkpointResults: input.checkpointResults.map((c) => ({
+      unitId: c.unitId,
+      phase: c.phase,
+      scores: c.scores,
+      status: c.status,
+      createdAt: c.createdAt,
     })),
   };
 }

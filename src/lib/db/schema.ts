@@ -200,7 +200,7 @@ export const skillState = pgTable(
     outcome: text("outcome").notNull().default("not_yet"),
     /** Per-attempt outcome history stamped by day; the gate derives `outcome`. */
     evidence: jsonb("evidence")
-      .$type<{ day: string; outcome: string }[]>()
+      .$type<{ day: string; outcome: string; source?: "play" | "baseline" }[]>()
       .notNull()
       .default([]),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -212,6 +212,42 @@ export const skillState = pgTable(
     // only by prefix; a dedicated learnerId index keeps that whole-learner read
     // index-backed.
     index("skill_state_learner_idx").on(t.learnerId),
+  ],
+);
+
+/**
+ * Assessment capture (Adventure 2.0 Phase C, spec §3.5). One row per
+ * (learner, checkpoint unit, phase) — the per-skill first-try signal from a
+ * baseline/mid/final check-in. Baseline attempts fold here INSTEAD of
+ * skill_state (nothing changes about the learner's level until a parent applies
+ * the placement). `status` tracks the parent gate: pending → applied | dismissed.
+ */
+export const checkpointResult = pgTable(
+  "checkpoint_result",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    learnerId: text("learner_id")
+      .notNull()
+      .references(() => learner.id, { onDelete: "cascade" }),
+    enrollmentId: text("enrollment_id")
+      .notNull()
+      .references(() => enrollment.id, { onDelete: "cascade" }),
+    /** The authored checkpoint unit's stable id (e.g. "reading-baseline"). */
+    unitId: text("unit_id").notNull(),
+    /** baseline | mid | final. C1 only writes "baseline". */
+    phase: text("phase").notNull(),
+    /** Per-skill first-try rate 0..1, keyed by skill slug. */
+    scores: jsonb("scores").$type<Record<string, number>>().notNull().default({}),
+    /** pending | applied | dismissed — the parent-confirmation gate. */
+    status: text("status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+  },
+  (t) => [
+    // One live result per (learner, checkpoint unit, phase); Redo deletes the
+    // row so the check-in can be re-taken.
+    uniqueIndex("checkpoint_result_learner_unit_phase_uq").on(t.learnerId, t.unitId, t.phase),
+    index("checkpoint_result_learner_idx").on(t.learnerId),
   ],
 );
 

@@ -56,6 +56,19 @@ export const REQUIRED_COLUMNS: ColumnMap = {
   lesson: ["id", "unit_id", "lesson_key", "order_key", "title"],
   activity: ["id", "lesson_id", "activity_key", "order_key", "kind", "title", "config"],
   skill: ["id", "slug", "domain", "label"],
+  // Adventure 2.0 Phase C1 baseline placement (migration 0010). Drift here
+  // must 503 before checkpoint capture reads/writes a missing column.
+  checkpoint_result: [
+    "id",
+    "learner_id",
+    "enrollment_id",
+    "unit_id",
+    "phase",
+    "scores",
+    "status",
+    "created_at",
+    "applied_at",
+  ],
 };
 
 export function missingColumns(required: ColumnMap, live: ColumnMap): string[] {

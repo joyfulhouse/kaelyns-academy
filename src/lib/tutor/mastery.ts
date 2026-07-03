@@ -13,9 +13,11 @@ import type { SkillOutcome, SkillTag } from "@/content";
 /** Calendar day, e.g. "2026-06-13". Distinctness across days is the gate. */
 export type DayKey = string;
 
-/** One skill's accumulated evidence: per-attempt outcomes stamped by day. */
+/** One skill's accumulated evidence: per-attempt outcomes stamped by day.
+ *  `source` marks a "baseline" (parent-confirmed placement) entry vs. normal
+ *  "play"; absent on pre-placement rows (back-compatible). */
 export interface SkillRecord {
-  history: { day: DayKey; outcome: SkillOutcome }[];
+  history: { day: DayKey; outcome: SkillOutcome; source?: "play" | "baseline" }[];
 }
 
 export type SkillState = Record<SkillTag, SkillRecord>;
@@ -34,11 +36,18 @@ const MAX_HISTORY = 24;
  */
 export function deriveOutcome(record: SkillRecord | undefined): SkillOutcome {
   if (!record || record.history.length === 0) return "not_yet";
-  const solidDays = new Set(
-    record.history.filter((h) => h.outcome === "solid").map((h) => h.day),
-  );
+  const solid = record.history.filter((h) => h.outcome === "solid");
+  // A parent-confirmed placement asserts solid without waiting on the day-gate.
+  if (solid.some((h) => h.source === "baseline")) return "solid";
+  const solidDays = new Set(solid.map((h) => h.day));
   if (solidDays.size >= MASTERY_DISTINCT_DAYS) return "solid";
   return "emerging";
+}
+
+/** True when a skill's solid state came (at least partly) from a placement
+ *  check-in rather than day-over-day play — the report labels it "placed". */
+export function isPlaced(record: SkillRecord | undefined): boolean {
+  return !!record?.history.some((h) => h.source === "baseline");
 }
 
 /** The outcome for a skill given the whole state (convenience). */
@@ -52,13 +61,14 @@ export function outcomeOf(state: SkillState, skill: SkillTag): SkillOutcome {
  */
 export function applyEvidence(
   state: SkillState,
-  evidence: { skill: SkillTag; outcome: SkillOutcome }[],
+  evidence: { skill: SkillTag; outcome: SkillOutcome; source?: "play" | "baseline" }[],
   day: DayKey,
 ): SkillState {
   const next: SkillState = { ...state };
-  for (const { skill, outcome } of evidence) {
+  for (const { skill, outcome, source } of evidence) {
     const prior = next[skill]?.history ?? [];
-    const history = [...prior, { day, outcome }].slice(-MAX_HISTORY);
+    const entry = source ? { day, outcome, source } : { day, outcome };
+    const history = [...prior, entry].slice(-MAX_HISTORY);
     next[skill] = { history };
   }
   return next;

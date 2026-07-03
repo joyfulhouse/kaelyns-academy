@@ -6,6 +6,7 @@ import { getSessionOrNull } from "@/lib/auth";
 import { withAccount } from "@/lib/tenancy";
 import {
   getLearnerSettings,
+  getPendingCheckpointResults,
   getRecentAttempts,
   getSkillState,
   listGeneratedAttempts,
@@ -13,13 +14,14 @@ import {
   listEnrollmentsDetailed,
   skillOutcomeCounts,
   type LearnerRow,
+  type PendingCheckpoint,
   type RecentAttempt,
 } from "@/lib/tutor/store";
 import { withOwnedLearner } from "@/lib/tutor/scope";
 import { getLearnerInterests, listPublishedInterests, type InterestView } from "@/lib/interests/store";
 import { getStarBalance, listStarLedger, type LedgerEntry } from "@/lib/rewards/store";
 import type { LearnerSettings } from "@/lib/content/config";
-import { deriveOutcome, type SkillState } from "@/lib/tutor/mastery";
+import { deriveOutcome, isPlaced, type SkillState } from "@/lib/tutor/mastery";
 import {
   SKILLS,
   findActivity,
@@ -433,6 +435,22 @@ export interface SkillStatus {
   readyIndicator: string;
   /** undefined = no evidence yet (renders as "Not started", never failure). */
   outcome: SkillOutcome | undefined;
+  /** "baseline" when solid came (at least partly) from a parent-confirmed
+   *  check-in rather than day-over-day play; "play" otherwise. Drives the
+   *  honest "placed" marker on the skill pill — placed is never shown as
+   *  "mastered" (Adventure 2.0 C1, spec §3.5). */
+  source?: "play" | "baseline";
+}
+
+/** One {@link PendingCheckpoint} enriched with the friendly labels the
+ *  "Check-in results" panel renders — mirrors how {@link ActivityRow} /
+ *  {@link ProvenanceRow} wrap their raw store rows. */
+export interface CheckpointForParent extends PendingCheckpoint {
+  /** The checkpoint's unit resolved to its authored title (falls back to the
+   *  raw unit id if the unit can't be found in the current program tree). */
+  unitTitle: string;
+  /** Friendly relative label for when the check-in was taken ("Today", …). */
+  when: string;
 }
 
 /** Everything the learner-detail page needs, resolved and account-scoped. */
@@ -443,6 +461,8 @@ export interface LearnerDetail {
   recent: ActivityRow[];
   /** True when the learner has completed no activities yet (honest empty state). */
   hasActivity: boolean;
+  /** This learner's baseline check-in history, newest first (Adventure 2.0 C1). */
+  checkpoints: CheckpointForParent[];
 }
 
 /** Current outcome for a skill from its DB history (not_yet / emerging / solid). */
@@ -464,9 +484,10 @@ export async function getLearnerDetail(learnerId: string): Promise<LearnerDetail
       learnerId,
       async (learner) => {
         const program = await getProgramAsync(ADAPTIVE_PROGRAM_SLUG);
-        const [state, attempts] = await Promise.all([
+        const [state, attempts, checkpoints] = await Promise.all([
           getSkillState(accountId, learnerId),
           getRecentAttempts(accountId, learnerId, 12),
+          getPendingCheckpointResults(accountId, learnerId),
         ]);
 
         const skills: SkillStatus[] = SKILLS.map((skill) => ({
@@ -475,6 +496,7 @@ export async function getLearnerDetail(learnerId: string): Promise<LearnerDetail
           domain: skill.domain,
           readyIndicator: skill.readyIndicator,
           outcome: outcomeFor(state, skill.slug),
+          source: isPlaced(state[skill.slug]) ? "baseline" : "play",
         }));
 
         return {
@@ -483,6 +505,11 @@ export async function getLearnerDetail(learnerId: string): Promise<LearnerDetail
           skills,
           recent: await Promise.all(attempts.map((a) => toActivityRow(program, a))),
           hasActivity: attempts.length > 0,
+          checkpoints: checkpoints.map((c) => ({
+            ...c,
+            unitTitle: program?.units.find((u) => u.id === c.unitId)?.title ?? c.unitId,
+            when: relativeDay(c.createdAt.slice(0, 10)),
+          })),
         };
       },
       null,

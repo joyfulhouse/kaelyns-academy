@@ -36,6 +36,8 @@ export const EXPORT_CONTENTS = [
   "stickers",
   "interests",
   "quests",
+  // Adventure 2.0 Phase C1 (Task 6): baseline/mid/final check-in results.
+  "checkpointResults",
 ] as const;
 
 export const EXPORT_NOT_EXPORTED = [

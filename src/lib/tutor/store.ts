@@ -5,6 +5,7 @@ import { and, count, desc, eq, inArray, lt, or, sum } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   attempt,
+  checkpointResult,
   deletionAudit,
   enrollment,
   interest,
@@ -27,12 +28,17 @@ import {
 } from "@/lib/content/config";
 import { getPublishedVersionId } from "@/lib/content/store";
 import { earnedStarsForAttempt } from "@/lib/rewards/logic";
+import { computePlacement, outcomeToRate, type PlacementVerdict } from "@/lib/placement/placement";
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
 import { shapeLearnerExport, type LearnerExport } from "./export";
 import { shapeAccountExport, type AccountExport } from "./account-export";
 import { parseJsonbFailClosed } from "./jsonb";
-import { toLearnerRow, withOwnedLearner, type LearnerRow } from "./scope";
+import { getLearner, toLearnerRow, withOwnedLearner, type LearnerRow } from "./scope";
 import { applyAttemptToQuests } from "@/lib/quests/store";
+
+/** The transaction type recordAttempt's tx-scoped helpers share (mirrors the
+ *  same derivation in src/lib/quests/store.ts). */
+type Db = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
 
 // getLearner + LearnerRow now live in ./scope (the shared account-ownership gate);
 // re-export them so existing importers of "@/lib/tutor/store" keep their paths.
@@ -51,17 +57,69 @@ export type { LearnerRow };
 const MAX_HISTORY = 24;
 
 /** Pure: fold one attempt's evidence for a skill into its prior history and
- *  re-derive the outcome. Extracted so the gate logic is unit-testable. */
+ *  re-derive the outcome. Extracted so the gate logic is unit-testable.
+ *  `source` defaults to "play" (the existing recordAttempt fold below passes
+ *  none); applyPlacement (Adventure 2.0 C1) passes "baseline" so the
+ *  source-aware gate in mastery.ts locks the entry solid immediately. */
 export function nextSkillRecord(
-  prior: { day: string; outcome: string }[] | undefined,
+  prior: { day: string; outcome: string; source?: string }[] | undefined,
   outcome: SkillOutcome,
   day: DayKey,
-): { history: { day: string; outcome: SkillOutcome }[]; outcome: SkillOutcome } {
-  const history = [...(prior ?? []), { day, outcome }].slice(-MAX_HISTORY) as {
+  source: "play" | "baseline" = "play",
+): { history: { day: string; outcome: SkillOutcome; source?: "play" | "baseline" }[]; outcome: SkillOutcome } {
+  const entry = source === "baseline" ? { day, outcome, source } : { day, outcome };
+  const history = [...(prior ?? []), entry].slice(-MAX_HISTORY) as {
     day: string;
     outcome: SkillOutcome;
+    source?: "play" | "baseline";
   }[];
   return { history, outcome: deriveOutcome({ history } as SkillRecord) };
+}
+
+/**
+ * Fold one checkpoint attempt's per-skill outcomes into the (learner, unit,
+ * phase) checkpoint_result row as first-try rates. Upserts the row (status
+ * "pending"); merges the new per-skill rates into the existing scores map. Does
+ * NOT touch skill_state (placement is parent-gated).
+ */
+async function upsertCheckpointScore(
+  tx: Db,
+  learnerId: string,
+  enrollmentId: string,
+  unitId: string,
+  phase: string,
+  evidence: { skill: string; outcome: string }[],
+): Promise<void> {
+  await tx
+    .insert(checkpointResult)
+    .values({ learnerId, enrollmentId, unitId, phase, scores: {}, status: "pending" })
+    .onConflictDoNothing({
+      target: [checkpointResult.learnerId, checkpointResult.unitId, checkpointResult.phase],
+    });
+  const rows = await tx
+    .select()
+    .from(checkpointResult)
+    .where(
+      and(
+        eq(checkpointResult.learnerId, learnerId),
+        eq(checkpointResult.unitId, unitId),
+        eq(checkpointResult.phase, phase),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  const row = rows[0];
+  if (!row) return;
+  const scores = { ...row.scores };
+  for (const ev of evidence) {
+    // First-write-wins: a baseline captures each skill's FIRST-try signal from the
+    // first probe that touches it. Later attempts (incl. a replay, and area-mode's
+    // incidental mult.facts side-emit) must NOT clobber it — otherwise a stumble on
+    // a harder later task erases a clean earlier demonstration. checkpoint_result
+    // scores are placement evidence, not appended history.
+    if (!(ev.skill in scores)) scores[ev.skill] = outcomeToRate(ev.outcome as SkillOutcome);
+  }
+  await tx.update(checkpointResult).set({ scores }).where(eq(checkpointResult.id, row.id));
 }
 
 export async function listLearners(accountId: string): Promise<LearnerRow[]> {
@@ -167,6 +225,13 @@ export interface RecordAttemptInput {
    * Gates the star-ledger earn; the attempt/skill folds are unaffected.
    */
   creditEligible: boolean;
+  /**
+   * When the attempt's unit is a checkpoint (baseline/mid/final), its evidence
+   * folds into checkpoint_result INSTEAD of skill_state — nothing about the
+   * learner's level changes until a parent applies the placement (§3, §7).
+   * Resolved server-side by the action from the unit's authored `checkpoint`.
+   */
+  checkpointPhase?: "baseline" | "mid" | "final" | null;
 }
 
 /**
@@ -199,7 +264,7 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
     // check above). A removed/paused/missing enrollment → no write at all; the
     // client render-block (A3) is the UX, this is the non-bypassable enforcement.
     const enrolled = await tx
-      .select({ status: enrollment.status })
+      .select({ id: enrollment.id, status: enrollment.status })
       .from(enrollment)
       .where(enrollmentKey(input.learnerId, input.programSlug))
       .limit(1)
@@ -210,6 +275,7 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
     if (enrolled[0]?.status !== "active") {
       throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
     }
+    const enrollmentId = enrolled[0].id;
 
     // Provenance is written ONLY for a generated attempt (and only when supplied),
     // so an authored row can never carry gen_* metadata even if a caller passes it.
@@ -263,56 +329,69 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
       });
     }
 
-    // Acquire the per-skill row locks in a deterministic (skill-sorted) order:
-    // two concurrent attempts for the same learner with overlapping skills would
-    // otherwise be able to lock the same rows in opposite orders and deadlock —
-    // which Postgres breaks by aborting one tx, dropping that submit's evidence.
-    const evidence = [...input.score.skillEvidence].sort((a, b) => a.skill.localeCompare(b.skill));
-    for (const ev of evidence) {
-      // Materialize the row (no-op if it already exists), then lock it FOR
-      // UPDATE so concurrent folds for the same (learner,skill) serialize on it
-      // rather than racing the read-modify-write.
-      await tx
-        .insert(skillState)
-        .values({ learnerId: input.learnerId, skill: ev.skill, evidence: [], outcome: "not_yet" })
-        .onConflictDoNothing({ target: [skillState.learnerId, skillState.skill] });
-      const locked = await tx
-        .select()
-        .from(skillState)
-        .where(and(eq(skillState.learnerId, input.learnerId), eq(skillState.skill, ev.skill)))
-        .limit(1)
-        .for("update");
-      const row = locked[0];
-      if (!row) continue;
-      const { history, outcome } = nextSkillRecord(row.evidence, ev.outcome, input.day);
-      await tx
-        .update(skillState)
-        .set({ evidence: history, outcome, updatedAt: new Date() })
-        .where(eq(skillState.id, row.id));
-    }
+    // Checkpoint attempts (baseline/mid/final) capture to checkpoint_result and
+    // do NOT advance skill_state or quests — placement is parent-gated (§3).
+    if (input.checkpointPhase) {
+      await upsertCheckpointScore(
+        tx,
+        input.learnerId,
+        enrollmentId,
+        input.unitId ?? "",
+        input.checkpointPhase,
+        input.score.skillEvidence,
+      );
+    } else {
+      // Acquire the per-skill row locks in a deterministic (skill-sorted) order:
+      // two concurrent attempts for the same learner with overlapping skills would
+      // otherwise be able to lock the same rows in opposite orders and deadlock —
+      // which Postgres breaks by aborting one tx, dropping that submit's evidence.
+      const evidence = [...input.score.skillEvidence].sort((a, b) => a.skill.localeCompare(b.skill));
+      for (const ev of evidence) {
+        // Materialize the row (no-op if it already exists), then lock it FOR
+        // UPDATE so concurrent folds for the same (learner,skill) serialize on it
+        // rather than racing the read-modify-write.
+        await tx
+          .insert(skillState)
+          .values({ learnerId: input.learnerId, skill: ev.skill, evidence: [], outcome: "not_yet" })
+          .onConflictDoNothing({ target: [skillState.learnerId, skillState.skill] });
+        const locked = await tx
+          .select()
+          .from(skillState)
+          .where(and(eq(skillState.learnerId, input.learnerId), eq(skillState.skill, ev.skill)))
+          .limit(1)
+          .for("update");
+        const row = locked[0];
+        if (!row) continue;
+        const { history, outcome } = nextSkillRecord(row.evidence, ev.outcome, input.day);
+        await tx
+          .update(skillState)
+          .set({ evidence: history, outcome, updatedAt: new Date() })
+          .where(eq(skillState.id, row.id));
+      }
 
-    // Adventure 2.0: fold this attempt into today's ACTIVE quests + credit any
-    // completed quest's reward — inside this same transaction. Gated on
-    // questEligible (Codex round 2, Important #1): GENERATED practice
-    // legitimately has no authored-tree membership and still counts toward
-    // the day's active quest (any kind — complete_n, or practice_skill/try_strand
-    // via the attempt's skillEvidence; bounded ≤ daily quests, active-quest-only,
-    // once each — accepted residual, design intent unchanged). An AUTHORED
-    // attempt counts toward quests ONLY when
-    // creditEligible (server-verified tree membership) is true — otherwise the
-    // program-unresolvable branch could complete a complete_n quest and credit
-    // quest_complete stars even though the star-ledger activity_complete earn
-    // was correctly withheld above. Skipping the fold entirely (rather than
-    // passing a flag through) is correct: no quest should advance from an
-    // attempt whose membership couldn't be verified.
-    const questEligible = generated || input.creditEligible;
-    if (questEligible) {
-      await applyAttemptToQuests(tx, input.learnerId, input.programSlug, input.day, {
-        activityId: input.activityId,
-        unitId: input.unitId ?? null,
-        skills: input.score.skillEvidence.map((e) => e.skill),
-        generated,
-      });
+      // Adventure 2.0: fold this attempt into today's ACTIVE quests + credit any
+      // completed quest's reward — inside this same transaction. Gated on
+      // questEligible (Codex round 2, Important #1): GENERATED practice
+      // legitimately has no authored-tree membership and still counts toward
+      // the day's active quest (any kind — complete_n, or practice_skill/try_strand
+      // via the attempt's skillEvidence; bounded ≤ daily quests, active-quest-only,
+      // once each — accepted residual, design intent unchanged). An AUTHORED
+      // attempt counts toward quests ONLY when
+      // creditEligible (server-verified tree membership) is true — otherwise the
+      // program-unresolvable branch could complete a complete_n quest and credit
+      // quest_complete stars even though the star-ledger activity_complete earn
+      // was correctly withheld above. Skipping the fold entirely (rather than
+      // passing a flag through) is correct: no quest should advance from an
+      // attempt whose membership couldn't be verified.
+      const questEligible = generated || input.creditEligible;
+      if (questEligible) {
+        await applyAttemptToQuests(tx, input.learnerId, input.programSlug, input.day, {
+          activityId: input.activityId,
+          unitId: input.unitId ?? null,
+          skills: input.score.skillEvidence.map((e) => e.skill),
+          generated,
+        });
+      }
     }
   });
 }
@@ -333,6 +412,147 @@ export async function getSkillState(accountId: string, learnerId: string): Promi
     },
     {},
   );
+}
+
+// ── Adventure 2.0 C1: baseline placement (checkpoint_result → skill_state) ───
+//
+// A checkpoint attempt captures to checkpoint_result (upsertCheckpointScore
+// above) WITHOUT touching skill_state — nothing about the learner's level
+// changes until a parent reviews the per-skill verdicts and applies the
+// placement (spec §3.5). The three functions below are that parent-gated flow.
+
+/** One checkpoint result, its per-skill placement verdicts, and the seed set —
+ *  everything the parent panel needs to show + confirm/redo a check-in. */
+export interface PendingCheckpoint {
+  id: string;
+  unitId: string;
+  phase: string;
+  status: string;
+  createdAt: string;
+  verdicts: PlacementVerdict[];
+  seed: SkillTag[];
+}
+
+/** All of a learner's checkpoint results (owned-by-account), each with its
+ *  computed placement verdicts + seed set, newest first. */
+export async function getPendingCheckpointResults(
+  accountId: string,
+  learnerId: string,
+): Promise<PendingCheckpoint[]> {
+  return withOwnedLearner<PendingCheckpoint[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select()
+        .from(checkpointResult)
+        .where(eq(checkpointResult.learnerId, learnerId))
+        .orderBy(desc(checkpointResult.createdAt));
+      return rows.map((r) => {
+        const { seed, verdicts } = computePlacement(r.scores);
+        return {
+          id: r.id,
+          unitId: r.unitId,
+          phase: r.phase,
+          status: r.status,
+          createdAt: r.createdAt.toISOString(),
+          verdicts,
+          seed,
+        };
+      });
+    },
+    [],
+  );
+}
+
+/**
+ * Apply a baseline placement: seed skill_state solid (source "baseline") for
+ * the breezed skills and flip the checkpoint result to "applied". Tenancy is
+ * re-checked INSIDE the transaction (mirrors recordAttempt) so the ownership
+ * gate and the seeding commit atomically. Idempotent — re-applying an
+ * already-"applied" row is a no-op (checked after the row lock, before any
+ * seeding write). One baseline-sourced solid entry per skill is enough: the
+ * source-aware deriveOutcome (mastery.ts) locks it solid without waiting on
+ * the day-gate. The seeded entry's day is the checkpoint result's own creation
+ * day (not "today") so the evidence trail reflects when the check-in happened.
+ */
+export async function applyPlacement(accountId: string, checkpointResultId: string): Promise<void> {
+  await getDb().transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(checkpointResult)
+      .where(eq(checkpointResult.id, checkpointResultId))
+      .limit(1)
+      .for("update");
+    const row = rows[0];
+    if (!row) return;
+
+    // Tenancy boundary, re-checked inside the tx (same pattern as recordAttempt).
+    const owned = await tx
+      .select({ id: learner.id })
+      .from(learner)
+      .where(and(eq(learner.id, row.learnerId), eq(learner.accountId, accountId)))
+      .limit(1);
+    if (!owned[0]) throw new Error("learner not found for account");
+
+    if (row.status === "applied") return; // idempotent: nothing left to do
+
+    const day = row.createdAt.toISOString().slice(0, 10); // YYYY-MM-DD
+    const { seed } = computePlacement(row.scores);
+    // Lock skill_state rows in a deterministic (alphabetical) order — same
+    // deadlock-avoidance as recordAttempt's fold — so a concurrent recordAttempt
+    // touching overlapping skills in a different order can't deadlock the two txs.
+    const orderedSeed = [...seed].sort((a, b) => a.localeCompare(b));
+    for (const skillTag of orderedSeed) {
+      // Materialize the row (no-op if it already exists), then lock it FOR
+      // UPDATE — same read-lock-then-update shape as recordAttempt's fold.
+      await tx
+        .insert(skillState)
+        .values({ learnerId: row.learnerId, skill: skillTag, evidence: [], outcome: "not_yet" })
+        .onConflictDoNothing({ target: [skillState.learnerId, skillState.skill] });
+      const locked = await tx
+        .select()
+        .from(skillState)
+        .where(and(eq(skillState.learnerId, row.learnerId), eq(skillState.skill, skillTag)))
+        .limit(1)
+        .for("update");
+      const s = locked[0];
+      if (!s) continue;
+      const folded = nextSkillRecord(s.evidence, "solid", day, "baseline");
+      await tx
+        .update(skillState)
+        .set({ evidence: folded.history, outcome: folded.outcome, updatedAt: new Date() })
+        .where(eq(skillState.id, s.id));
+    }
+
+    await tx
+      .update(checkpointResult)
+      .set({ status: "applied", appliedAt: new Date() })
+      .where(eq(checkpointResult.id, row.id));
+  });
+}
+
+/** Redo: delete the checkpoint result so the check-in is offered again.
+ *  Tenancy-checked via getLearner (the row has no accountId of its own, so
+ *  ownership is resolved through the learner it belongs to). No-ops when the
+ *  row doesn't exist, isn't owned by this account, or is no longer "pending"
+ *  (an already-`applied` row's audit trail must survive a stray redo call —
+ *  the `status = "pending"` predicate is repeated on the DELETE itself so an
+ *  applied row is never removed even if it flips status between the read
+ *  above and this statement). */
+export async function redoCheckpoint(accountId: string, checkpointResultId: string): Promise<void> {
+  const rows = await getDb()
+    .select()
+    .from(checkpointResult)
+    .where(eq(checkpointResult.id, checkpointResultId))
+    .limit(1);
+  const row = rows[0];
+  if (!row || row.status !== "pending") return;
+  const owned = await getLearner(accountId, row.learnerId);
+  if (!owned) return;
+  await getDb()
+    .delete(checkpointResult)
+    .where(and(eq(checkpointResult.id, checkpointResultId), eq(checkpointResult.status, "pending")));
 }
 
 export interface RecentAttempt {
@@ -872,6 +1092,7 @@ async function gatherLearnerExport(
     stickerRows,
     interestRows,
     questRows,
+    checkpointResultRows,
   ] = await Promise.all([
     getDb().select().from(enrollment).where(eq(enrollment.learnerId, learnerId)),
     getDb().select().from(skillState).where(eq(skillState.learnerId, learnerId)),
@@ -910,6 +1131,12 @@ async function gatherLearnerExport(
       // ties). updatedAt (timestamptz) breaks the tie deterministically.
       .orderBy(desc(learnerQuest.assignedOn), desc(learnerQuest.updatedAt))
       .limit(200),
+    // Adventure 2.0 C1 (Task 6): baseline/mid/final check-in results.
+    getDb()
+      .select()
+      .from(checkpointResult)
+      .where(eq(checkpointResult.learnerId, learnerId))
+      .orderBy(desc(checkpointResult.createdAt)),
   ]);
 
   return shapeLearnerExport({
@@ -964,6 +1191,13 @@ async function gatherLearnerExport(
       status: q.status,
       assignedOn: q.assignedOn,
     })),
+    checkpointResults: checkpointResultRows.map((r) => ({
+      unitId: r.unitId,
+      phase: r.phase,
+      scores: r.scores,
+      status: r.status,
+      createdAt: r.createdAt.toISOString(),
+    })),
   });
 }
 
@@ -1016,9 +1250,9 @@ export async function buildAccountExport(
  * learner was found and deleted, false if not owned or not found (tenancy boundary).
  *
  * FK cascade: `enrollment`, `attempt`, `skill_state`, `star_ledger`,
- * `learner_sticker`, `learner_interest`, and `learner_quest` all have
- * `onDelete: "cascade"` on `learner.id`, so deleting the learner row removes
- * everything. No orphan cleanup needed.
+ * `learner_sticker`, `learner_interest`, `learner_quest`, and `checkpoint_result`
+ * all have `onDelete: "cascade"` on `learner.id`, so deleting the learner row
+ * removes everything. No orphan cleanup needed.
  */
 export async function deleteLearner(
   accountId: string,

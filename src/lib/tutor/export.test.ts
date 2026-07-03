@@ -49,6 +49,15 @@ function baseInput(overrides: Partial<ShapeInput> = {}): ShapeInput {
     stickers: [{ stickerId: "sticker-1", acquiredAt: new Date("2026-06-19T08:00:00.000Z") }],
     interests: [{ slug: "dinosaurs", source: "child" }],
     quests: [{ title: "Finish 3 activities", status: "done", assignedOn: "2026-06-20" }],
+    checkpointResults: [
+      {
+        unitId: "reading-baseline",
+        phase: "baseline",
+        scores: { "rs.a": 0.8 },
+        status: "applied",
+        createdAt: "2026-06-15T09:00:00.000Z",
+      },
+    ],
     ...overrides,
   };
 }
@@ -338,5 +347,25 @@ describe("shapeLearnerExport — quests", () => {
   it("handles no quests", () => {
     const result = shapeLearnerExport(baseInput({ quests: [] }));
     expect(result.quests).toEqual([]);
+  });
+});
+
+// ── checkpointResults (Adventure 2.0 C1: baseline/mid/final check-in export) ──
+describe("shapeLearnerExport — checkpointResults", () => {
+  it("includes unitId/phase/scores/status/createdAt only (no enrollmentId or id)", () => {
+    const result = shapeLearnerExport(baseInput());
+    expect(result.checkpointResults).toHaveLength(1);
+    const c = result.checkpointResults[0];
+    expect(Object.keys(c)).toEqual(["unitId", "phase", "scores", "status", "createdAt"]);
+    expect(c.unitId).toBe("reading-baseline");
+    expect(c.phase).toBe("baseline");
+    expect(c.scores).toEqual({ "rs.a": 0.8 });
+    expect(c.status).toBe("applied");
+    expect(c.createdAt).toBe("2026-06-15T09:00:00.000Z");
+  });
+
+  it("handles no checkpoint results", () => {
+    const result = shapeLearnerExport(baseInput({ checkpointResults: [] }));
+    expect(result.checkpointResults).toEqual([]);
   });
 });

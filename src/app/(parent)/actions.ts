@@ -12,6 +12,7 @@ import { findActivity, getSkill, type SkillTag } from "@/content";
 import { getProgramAsync, listProgramsAsync } from "@/lib/content/repository";
 import { getPublishedVersionId } from "@/lib/content/store";
 import {
+  applyPlacement,
   assignProgram,
   buildAccountExport,
   buildLearnerExport,
@@ -22,6 +23,7 @@ import {
   getRecentAttempts,
   getSkillState,
   listLearners,
+  redoCheckpoint,
   saveLearnerSettings,
   setEnrollmentConfig,
   setEnrollmentStatus,
@@ -424,6 +426,69 @@ export async function saveLearnerSettingsAction(
     return { ok: true };
   } catch (error) {
     return mapActionError(error, "saveLearnerSettingsAction failed", "Could not save settings. Please try again.");
+  }
+}
+
+/* ── Baseline placement (Adventure 2.0 C1, spec §3.5) ─────────────────────── */
+
+/**
+ * Apply a pending baseline check-in: seeds the breezed skills solid (source
+ * "baseline") and flips the checkpoint result to "applied". Nothing about the
+ * learner's skill_state changes until the parent explicitly confirms here —
+ * never auto-applied. Mirrors {@link saveLearnerSettingsAction}'s
+ * parse/withAccount/revalidate shape; `learnerId` isn't needed by the store
+ * call (tenancy is resolved from the checkpoint row itself) but is taken here
+ * so the specific learner page can be revalidated, matching every other
+ * enrollment action in this file.
+ */
+export async function applyPlacementAction(
+  learnerId: string,
+  checkpointResultId: string,
+): Promise<EnrollmentActionResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  const idParsed = z.string().min(1).safeParse(checkpointResultId);
+  if (!learnerIdParsed.success || !idParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner or check-in." };
+  }
+
+  try {
+    await withAccount(({ accountId }) => applyPlacement(accountId, checkpointResultId));
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    return mapActionError(
+      error,
+      "applyPlacementAction failed",
+      "Could not apply the check-in. Please try again.",
+    );
+  }
+}
+
+/**
+ * Decline a pending baseline check-in for now: deletes the checkpoint result
+ * so the check-in is offered again later. Same shape as
+ * {@link applyPlacementAction}.
+ */
+export async function redoCheckpointAction(
+  learnerId: string,
+  checkpointResultId: string,
+): Promise<EnrollmentActionResult> {
+  const learnerIdParsed = z.string().min(1).safeParse(learnerId);
+  const idParsed = z.string().min(1).safeParse(checkpointResultId);
+  if (!learnerIdParsed.success || !idParsed.success) {
+    return { ok: false, reason: "invalid", message: "Invalid learner or check-in." };
+  }
+
+  try {
+    await withAccount(({ accountId }) => redoCheckpoint(accountId, checkpointResultId));
+    revalidateEnrollmentPaths(learnerId);
+    return { ok: true };
+  } catch (error) {
+    return mapActionError(
+      error,
+      "redoCheckpointAction failed",
+      "Could not update the check-in. Please try again.",
+    );
   }
 }
 
