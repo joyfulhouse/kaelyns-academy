@@ -581,6 +581,32 @@ describe("recordAttempt (atomic persistence)", () => {
       expect.objectContaining({ delta: 3, reason: "activity_complete" }),
     );
   });
+
+  it("first-write-wins: an already-scored skill is not clobbered by a later attempt", async () => {
+    // Simulates a2's clean math.mult.facts probe (rate 1) already captured, then
+    // a5 (math-array's area mode) coming in with a stumble on the SAME skill
+    // (rate 0.5) plus a brand-new skill it also probes. The prior clean score
+    // must survive; the new skill must still be added.
+    checkpointResultRows.value = [{ id: "CR1", scores: { "math.mult.facts": 1 } }];
+    await recordAttempt("acct-1", {
+      ...baseInput(),
+      unitId: "math-baseline",
+      checkpointPhase: "baseline",
+      score: {
+        correct: 1,
+        total: 2,
+        stars: 1 as const,
+        skillEvidence: [
+          { skill: "math.mult.facts", outcome: "emerging" as const },
+          { skill: "math.geometry.area-arrays", outcome: "solid" as const },
+        ],
+      },
+    });
+
+    expect(checkpointUpdates).toContainEqual({
+      scores: { "math.mult.facts": 1, "math.geometry.area-arrays": 1 },
+    });
+  });
 });
 
 describe("nextSkillRecord (DB evidence fold)", () => {
@@ -741,7 +767,7 @@ describe("redoCheckpoint (tenancy-checked delete)", () => {
   beforeEach(() => {
     ops.length = 0;
     learnerRows.value = [{ id: "L1" }];
-    checkpointResultRows.value = [{ id: "CR1", learnerId: "L1" }];
+    checkpointResultRows.value = [{ id: "CR1", learnerId: "L1", status: "pending" }];
   });
 
   it("deletes the checkpoint result row when owned by the account", async () => {
@@ -752,6 +778,12 @@ describe("redoCheckpoint (tenancy-checked delete)", () => {
   it("does not delete when the learner is not owned by the account", async () => {
     learnerRows.value = []; // simulates a foreign account
     await redoCheckpoint("acct-2", "CR1");
+    expect(ops.some((o) => o.op === "delete" && o.table === "checkpoint_result")).toBe(false);
+  });
+
+  it("does not delete an already-applied row (the audit record must survive a stray redo)", async () => {
+    checkpointResultRows.value = [{ id: "CR1", learnerId: "L1", status: "applied" }];
+    await redoCheckpoint("acct-1", "CR1");
     expect(ops.some((o) => o.op === "delete" && o.table === "checkpoint_result")).toBe(false);
   });
 

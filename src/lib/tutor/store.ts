@@ -112,7 +112,12 @@ async function upsertCheckpointScore(
   if (!row) return;
   const scores = { ...row.scores };
   for (const ev of evidence) {
-    scores[ev.skill] = outcomeToRate(ev.outcome as SkillOutcome);
+    // First-write-wins: a baseline captures each skill's FIRST-try signal from the
+    // first probe that touches it. Later attempts (incl. a replay, and area-mode's
+    // incidental mult.facts side-emit) must NOT clobber it — otherwise a stumble on
+    // a harder later task erases a clean earlier demonstration. checkpoint_result
+    // scores are placement evidence, not appended history.
+    if (!(ev.skill in scores)) scores[ev.skill] = outcomeToRate(ev.outcome as SkillOutcome);
   }
   await tx.update(checkpointResult).set({ scores }).where(eq(checkpointResult.id, row.id));
 }
@@ -494,7 +499,11 @@ export async function applyPlacement(accountId: string, checkpointResultId: stri
 
     const day = row.createdAt.toISOString().slice(0, 10); // YYYY-MM-DD
     const { seed } = computePlacement(row.scores);
-    for (const skillTag of seed) {
+    // Lock skill_state rows in a deterministic (alphabetical) order — same
+    // deadlock-avoidance as recordAttempt's fold — so a concurrent recordAttempt
+    // touching overlapping skills in a different order can't deadlock the two txs.
+    const orderedSeed = [...seed].sort((a, b) => a.localeCompare(b));
+    for (const skillTag of orderedSeed) {
       // Materialize the row (no-op if it already exists), then lock it FOR
       // UPDATE — same read-lock-then-update shape as recordAttempt's fold.
       await tx
@@ -526,7 +535,11 @@ export async function applyPlacement(accountId: string, checkpointResultId: stri
 /** Redo: delete the checkpoint result so the check-in is offered again.
  *  Tenancy-checked via getLearner (the row has no accountId of its own, so
  *  ownership is resolved through the learner it belongs to). No-ops when the
- *  row doesn't exist or isn't owned by this account. */
+ *  row doesn't exist, isn't owned by this account, or is no longer "pending"
+ *  (an already-`applied` row's audit trail must survive a stray redo call —
+ *  the `status = "pending"` predicate is repeated on the DELETE itself so an
+ *  applied row is never removed even if it flips status between the read
+ *  above and this statement). */
 export async function redoCheckpoint(accountId: string, checkpointResultId: string): Promise<void> {
   const rows = await getDb()
     .select()
@@ -534,10 +547,12 @@ export async function redoCheckpoint(accountId: string, checkpointResultId: stri
     .where(eq(checkpointResult.id, checkpointResultId))
     .limit(1);
   const row = rows[0];
-  if (!row) return;
+  if (!row || row.status !== "pending") return;
   const owned = await getLearner(accountId, row.learnerId);
   if (!owned) return;
-  await getDb().delete(checkpointResult).where(eq(checkpointResult.id, checkpointResultId));
+  await getDb()
+    .delete(checkpointResult)
+    .where(and(eq(checkpointResult.id, checkpointResultId), eq(checkpointResult.status, "pending")));
 }
 
 export interface RecentAttempt {

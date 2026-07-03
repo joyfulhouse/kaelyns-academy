@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Activity, ActivityScore, Program } from "@/content";
-import { getProgram } from "@/content";
+import { getProgram, getUnit } from "@/content";
 import { applyEvidence, type SkillState } from "@/lib/tutor";
+import { findUnitIdOfActivity } from "@/lib/quests/logic";
 import type { EnrollmentConfig } from "@/lib/content/config";
 import {
   ensureHouseholdLearner,
@@ -281,8 +282,23 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       const generated = opts?.generated ?? false;
       if (mode === "account" && selectedLearnerId) {
         const day = today();
-        // Optimistic merge so the reward + map update immediately…
-        setAccountSkill((prev) => applyEvidence(prev, score.skillEvidence, day));
+        // Optimistic merge so the reward + map update immediately… EXCEPT the
+        // skill_state merge for a checkpoint-unit activity: the server
+        // deliberately does NOT write skill_state for a checkpoint attempt (it
+        // folds into checkpoint_result instead, gated behind a parent applying
+        // the placement), so merging it here would flash a fabricated
+        // solid/emerging skill until the reconcile fetch below corrects it back
+        // down — a visible violation of "nothing changes until a parent applies."
+        // Resolved from the loaded program tree with the SAME resolver the
+        // server action uses (findUnitIdOfActivity + getUnit); when the tree
+        // hasn't resolved yet, fall back to merging — the reconcile still
+        // corrects it either way.
+        const unitId = accountProgram ? findUnitIdOfActivity(accountProgram, activity.id) : null;
+        const unit = accountProgram && unitId ? getUnit(accountProgram, unitId) : undefined;
+        const isCheckpointActivity = unit?.checkpoint != null;
+        if (!isCheckpointActivity) {
+          setAccountSkill((prev) => applyEvidence(prev, score.skillEvidence, day));
+        }
         if (!generated) {
           setAccountCompleted((prev) =>
             prev.has(activity.id) ? prev : new Set(prev).add(activity.id),
@@ -321,7 +337,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       guestRecord(score.skillEvidence);
       if (!generated) guestComplete(activity.id, score.stars);
     },
-    [mode, selectedLearnerId, programSlug, loadAccountState, guestRecord, guestComplete],
+    [mode, selectedLearnerId, programSlug, accountProgram, loadAccountState, guestRecord, guestComplete],
   );
 
   // ── Project the active view based on mode ─────────────────────────────────
