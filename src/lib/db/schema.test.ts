@@ -45,6 +45,10 @@ describe("account-delete cascade map (FK ON DELETE)", () => {
     expect(fkOnDelete(skillState, "learner_id")).toBe("cascade");
   });
 
+  it("cascades checkpoint_result off learner (Adventure 2.0 C1 baseline/mid/final results)", () => {
+    expect(fkOnDelete(checkpointResult, "learner_id")).toBe("cascade");
+  });
+
   it("cascades the Better Auth session + account credential rows off user", () => {
     expect(fkOnDelete(session, "user_id")).toBe("cascade");
     expect(fkOnDelete(account, "user_id")).toBe("cascade");

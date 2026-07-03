@@ -37,6 +37,7 @@ const rows: Record<string, Record<string, unknown>[]> = {
   learner_sticker: [],
   learner_interest: [],
   learner_quest: [],
+  checkpoint_result: [],
 };
 // Canned scalar count() results, consumed in order by the count selects.
 const counts: number[] = [];
@@ -124,6 +125,9 @@ const tx = {
 const db = {
   select: (proj?: Record<string, unknown>) => selectChain().markCount(proj),
   transaction: vi.fn(async (fn: (t: unknown) => Promise<unknown>) => fn(tx)),
+  // deleteLearner issues its delete directly on getDb() (no transaction), unlike
+  // deleteAccount's tx-scoped delete — so the top-level db needs its own `delete`.
+  delete: tx.delete,
 };
 
 vi.mock("@/lib/db", () => ({ getDb: () => db }));
@@ -140,6 +144,7 @@ vi.mock("@/lib/db/schema", () => ({
   interest: { _name: "interest", id: {}, slug: {} },
   learnerInterest: { _name: "learner_interest", learnerId: {}, interestId: {}, source: {} },
   learnerQuest: { _name: "learner_quest", learnerId: {}, assignedOn: {}, updatedAt: {} },
+  checkpointResult: { _name: "checkpoint_result", learnerId: {}, createdAt: {} },
 }));
 vi.mock("drizzle-orm", () => ({
   and: (...a: unknown[]) => a,
@@ -151,12 +156,18 @@ vi.mock("drizzle-orm", () => ({
   sum: (a: unknown) => ["sum", a],
 }));
 
-import { buildAccountExport, deleteAccount, listGeneratedAttempts } from "./store";
+import {
+  buildAccountExport,
+  buildLearnerExport,
+  deleteAccount,
+  deleteLearner,
+  listGeneratedAttempts,
+} from "./store";
 // The (mocked) schema table refs themselves, so the orderBy assertions below can
 // compare by reference against what gatherLearnerExport actually passed to
 // `.orderBy(...)` — not just count columns, which would pass even if the wrong
 // column were swapped in.
-import { learnerQuest, starLedger } from "@/lib/db/schema";
+import { checkpointResult, learnerQuest, starLedger } from "@/lib/db/schema";
 
 beforeEach(() => {
   ops.length = 0;
@@ -238,6 +249,66 @@ describe("gatherLearnerExport bounds + ordering (via buildAccountExport)", () =>
     await buildAccountExport("U1", "2026-06-26T00:00:00.000Z");
     const ledgerOrder = ops.find((o) => o.op === "select.orderBy" && o.table === "star_ledger");
     expect(ledgerOrder?.cols).toEqual([starLedger.createdAt]);
+  });
+
+  it("orders the checkpoint_result read by createdAt desc (Adventure 2.0 C1, Task 6)", async () => {
+    await buildAccountExport("U1", "2026-06-26T00:00:00.000Z");
+    const checkpointOrder = ops.find((o) => o.op === "select.orderBy" && o.table === "checkpoint_result");
+    expect(checkpointOrder?.cols).toEqual([checkpointResult.createdAt]);
+  });
+});
+
+// COPPA round-trip for the checkpoint_result table (Task 6): the export must
+// carry a learner's checkpoint results, and deleting the learner must remove
+// them (via the FK cascade asserted separately in schema.test.ts).
+describe("checkpoint_result COPPA round-trip (buildLearnerExport + deleteLearner)", () => {
+  const owned = { id: "L1", accountId: "U1", displayName: "A", birthMonth: null, settings: {}, createdAt: new Date() };
+
+  it("buildLearnerExport includes the learner's checkpoint_result rows", async () => {
+    rows.learner = [owned];
+    rows.checkpoint_result = [
+      {
+        unitId: "reading-baseline",
+        phase: "baseline",
+        scores: { "rs.a": 0.8 },
+        status: "applied",
+        createdAt: new Date("2026-06-15T09:00:00.000Z"),
+      },
+    ];
+    const result = await buildLearnerExport("U1", "L1", "2026-06-26T00:00:00.000Z");
+    expect(result).not.toBeNull();
+    expect(result!.checkpointResults).toEqual([
+      {
+        unitId: "reading-baseline",
+        phase: "baseline",
+        scores: { "rs.a": 0.8 },
+        status: "applied",
+        createdAt: "2026-06-15T09:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("buildLearnerExport returns null when the learner is not owned by the account (tenancy)", async () => {
+    rows.learner = [];
+    const result = await buildLearnerExport("U1", "L1", "2026-06-26T00:00:00.000Z");
+    expect(result).toBeNull();
+  });
+
+  it("deleteLearner deletes the learner scoped by (id, accountId) — the single statement checkpoint_result's FK cascade hangs off", async () => {
+    rows.learner = [owned];
+    deleteReturning.value = [{ id: "L1" }];
+    const deleted = await deleteLearner("U1", "L1");
+    expect(deleted).toBe(true);
+    const del = ops.find((o) => o.op === "delete.returning" && o.table === "learner");
+    expect(del).toBeDefined();
+    expect(JSON.stringify(del!.where)).toContain("L1");
+    expect(JSON.stringify(del!.where)).toContain("U1");
+  });
+
+  it("deleteLearner returns false when not owned by the account (no delete)", async () => {
+    deleteReturning.value = [];
+    const deleted = await deleteLearner("U1", "L1");
+    expect(deleted).toBe(false);
   });
 });
 

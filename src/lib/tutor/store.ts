@@ -1077,6 +1077,7 @@ async function gatherLearnerExport(
     stickerRows,
     interestRows,
     questRows,
+    checkpointResultRows,
   ] = await Promise.all([
     getDb().select().from(enrollment).where(eq(enrollment.learnerId, learnerId)),
     getDb().select().from(skillState).where(eq(skillState.learnerId, learnerId)),
@@ -1115,6 +1116,12 @@ async function gatherLearnerExport(
       // ties). updatedAt (timestamptz) breaks the tie deterministically.
       .orderBy(desc(learnerQuest.assignedOn), desc(learnerQuest.updatedAt))
       .limit(200),
+    // Adventure 2.0 C1 (Task 6): baseline/mid/final check-in results.
+    getDb()
+      .select()
+      .from(checkpointResult)
+      .where(eq(checkpointResult.learnerId, learnerId))
+      .orderBy(desc(checkpointResult.createdAt)),
   ]);
 
   return shapeLearnerExport({
@@ -1169,6 +1176,13 @@ async function gatherLearnerExport(
       status: q.status,
       assignedOn: q.assignedOn,
     })),
+    checkpointResults: checkpointResultRows.map((r) => ({
+      unitId: r.unitId,
+      phase: r.phase,
+      scores: r.scores,
+      status: r.status,
+      createdAt: r.createdAt.toISOString(),
+    })),
   });
 }
 
@@ -1221,9 +1235,9 @@ export async function buildAccountExport(
  * learner was found and deleted, false if not owned or not found (tenancy boundary).
  *
  * FK cascade: `enrollment`, `attempt`, `skill_state`, `star_ledger`,
- * `learner_sticker`, `learner_interest`, and `learner_quest` all have
- * `onDelete: "cascade"` on `learner.id`, so deleting the learner row removes
- * everything. No orphan cleanup needed.
+ * `learner_sticker`, `learner_interest`, `learner_quest`, and `checkpoint_result`
+ * all have `onDelete: "cascade"` on `learner.id`, so deleting the learner row
+ * removes everything. No orphan cleanup needed.
  */
 export async function deleteLearner(
   accountId: string,
