@@ -19,8 +19,12 @@ const ledgerInserts: Record<string, unknown>[] = [];
 // Adventure 2.0 attempt fold (progress/status) written inside recordAttempt's tx.
 const questUpdates: Record<string, unknown>[] = [];
 // The set() payload of each `checkpoint_result` update — lets a test assert the
-// C1 checkpoint capture (scores merge) written inside recordAttempt's tx.
+// C1 checkpoint capture (scores merge) written inside recordAttempt's tx, AND
+// the applyPlacement status flip (status: "applied", appliedAt).
 const checkpointUpdates: Record<string, unknown>[] = [];
+// The set() payload of each `skill_state` update — lets a test assert
+// applyPlacement's baseline seed write (evidence/outcome).
+const skillStateUpdates: Record<string, unknown>[] = [];
 // Mutable canned rows the fake `tx` returns for each select target.
 const learnerRows = { value: [{ id: "L1" }] as Record<string, unknown>[] };
 const skillRows = { value: [] as Record<string, unknown>[] };
@@ -65,6 +69,9 @@ function builder(op: string, table: string) {
       }
       if (chain.op === "update" && chain.table === "checkpoint_result" && v) {
         checkpointUpdates.push(v);
+      }
+      if (chain.op === "update" && chain.table === "skill_state" && v) {
+        skillStateUpdates.push(v);
       }
       return chain;
     },
@@ -126,21 +133,33 @@ function builder(op: string, table: string) {
   return chain;
 }
 
-const tx = {
-  select(_proj?: unknown) {
-    return builder("select", "unknown");
-  },
-  insert(t: unknown) {
-    return builder("insert", tableName(t));
-  },
-  update(t: unknown) {
-    return builder("update", tableName(t));
-  },
-};
+/** The four verbs a fake connection exposes — shared by the tx object AND the
+ *  top-level `db` (getPendingCheckpointResults/redoCheckpoint/getLearner run
+ *  OUTSIDE a transaction, so getDb() itself must answer select/delete too). */
+function connection() {
+  return {
+    select(_proj?: unknown) {
+      return builder("select", "unknown");
+    },
+    insert(t: unknown) {
+      return builder("insert", tableName(t));
+    },
+    update(t: unknown) {
+      return builder("update", tableName(t));
+    },
+    delete(t: unknown) {
+      return builder("delete", tableName(t));
+    },
+  };
+}
+
+const tx = connection();
 
 const transaction = vi.fn(async (fn: (tx: unknown) => Promise<void>) => fn(tx));
 
-vi.mock("@/lib/db", () => ({ getDb: () => ({ transaction }) }));
+const db = { ...connection(), transaction };
+
+vi.mock("@/lib/db", () => ({ getDb: () => db }));
 vi.mock("@/lib/db/schema", () => ({
   learner: { _name: "learner", id: {}, accountId: {} },
   attempt: { _name: "attempt", id: {}, learnerId: {}, activityId: {}, generated: {} },
@@ -167,6 +186,7 @@ vi.mock("@/lib/db/schema", () => ({
     enrollmentId: {},
     unitId: {},
     phase: {},
+    createdAt: {},
   },
 }));
 // drizzle-orm operators are used only to build opaque predicate objects here.
@@ -178,7 +198,14 @@ vi.mock("drizzle-orm", () => ({
   inArray: (...a: unknown[]) => a,
 }));
 
-import { EnrollmentNotActiveError, nextSkillRecord, recordAttempt } from "./store";
+import {
+  applyPlacement,
+  EnrollmentNotActiveError,
+  getPendingCheckpointResults,
+  nextSkillRecord,
+  recordAttempt,
+  redoCheckpoint,
+} from "./store";
 
 const input = {
   learnerId: "L1",
@@ -586,5 +613,151 @@ describe("nextSkillRecord (DB evidence fold)", () => {
       history = r.history as { day: string; outcome: "solid" }[];
     }
     expect(history.length).toBeLessThanOrEqual(24);
+  });
+
+  // ── Adventure 2.0 C1: source threading (default "play" stays back-compatible) ─
+
+  it("defaults to source \"play\" implicitly (no source field on the entry)", () => {
+    const r = nextSkillRecord(undefined, "solid", "2026-06-13");
+    expect(r.history[0]).not.toHaveProperty("source");
+  });
+
+  it("a baseline entry locks to solid immediately, without a second distinct day", () => {
+    const r = nextSkillRecord(undefined, "solid", "2026-06-20", "baseline");
+    expect(r.history).toEqual([{ day: "2026-06-20", outcome: "solid", source: "baseline" }]);
+    expect(r.outcome).toBe("solid");
+  });
+});
+
+describe("getPendingCheckpointResults (owned-by-account read)", () => {
+  beforeEach(() => {
+    learnerRows.value = [{ id: "L1" }];
+    checkpointResultRows.value = [];
+  });
+
+  it("maps each checkpoint result to its computed placement verdicts + seed", async () => {
+    checkpointResultRows.value = [
+      {
+        id: "CR1",
+        unitId: "math-baseline",
+        phase: "baseline",
+        status: "pending",
+        createdAt: new Date("2026-06-20T10:00:00.000Z"),
+        scores: { "math.add": 1, "math.sub": 0.4 },
+      },
+    ];
+    const result = await getPendingCheckpointResults("acct-1", "L1");
+    expect(result).toEqual([
+      {
+        id: "CR1",
+        unitId: "math-baseline",
+        phase: "baseline",
+        status: "pending",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        seed: ["math.add"],
+        verdicts: [
+          { skill: "math.add", rate: 1, band: "breezed" },
+          { skill: "math.sub", rate: 0.4, band: "not_yet" },
+        ],
+      },
+    ]);
+  });
+
+  it("returns empty when the learner is not owned by the account", async () => {
+    learnerRows.value = [];
+    checkpointResultRows.value = [{ id: "CR1", unitId: "u", phase: "baseline", status: "pending", createdAt: new Date(), scores: {} }];
+    expect(await getPendingCheckpointResults("acct-2", "L1")).toEqual([]);
+  });
+});
+
+describe("applyPlacement (parent-gated baseline seed)", () => {
+  beforeEach(() => {
+    ops.length = 0;
+    lockedSkills.length = 0;
+    checkpointUpdates.length = 0;
+    skillStateUpdates.length = 0;
+    transaction.mockClear();
+    learnerRows.value = [{ id: "L1" }];
+    skillRows.value = [];
+    checkpointResultRows.value = [
+      {
+        id: "CR1",
+        learnerId: "L1",
+        unitId: "math-baseline",
+        phase: "baseline",
+        status: "pending",
+        createdAt: new Date("2026-06-20T10:00:00.000Z"),
+        scores: { "math.add": 1, "math.sub": 0.6, "math.count": 0.2 },
+      },
+    ];
+  });
+
+  it("seeds ONLY the breezed skill(s) as solid with source \"baseline\"", async () => {
+    // Only math.add clears BREEZED_MIN (1 >= 0.8); math.sub is "mixed" and
+    // math.count is "not_yet" — neither should be seeded.
+    skillRows.value = [{ id: "S-add", evidence: [] }];
+    await applyPlacement("acct-1", "CR1");
+
+    expect(lockedSkills).toEqual(["math.add"]);
+    expect(skillStateUpdates).toHaveLength(1);
+    expect(skillStateUpdates[0]).toMatchObject({
+      outcome: "solid",
+      evidence: [{ day: "2026-06-20", outcome: "solid", source: "baseline" }],
+    });
+
+    // The checkpoint result flips to applied.
+    expect(checkpointUpdates).toContainEqual(
+      expect.objectContaining({ status: "applied", appliedAt: expect.any(Date) }),
+    );
+  });
+
+  it("re-applying an already-applied row is a no-op", async () => {
+    checkpointResultRows.value[0]!.status = "applied";
+    await applyPlacement("acct-1", "CR1");
+
+    expect(lockedSkills).toHaveLength(0);
+    expect(skillStateUpdates).toHaveLength(0);
+    expect(checkpointUpdates).toHaveLength(0);
+  });
+
+  it("rejects when the checkpoint result's learner is not owned by the account", async () => {
+    learnerRows.value = []; // simulates a foreign account
+    await expect(applyPlacement("acct-2", "CR1")).rejects.toThrow("learner not found");
+
+    expect(lockedSkills).toHaveLength(0);
+    expect(skillStateUpdates).toHaveLength(0);
+    expect(checkpointUpdates).toHaveLength(0);
+  });
+
+  it("no-ops when the checkpoint result does not exist", async () => {
+    checkpointResultRows.value = [];
+    await applyPlacement("acct-1", "CR-missing");
+    expect(skillStateUpdates).toHaveLength(0);
+    expect(checkpointUpdates).toHaveLength(0);
+  });
+});
+
+describe("redoCheckpoint (tenancy-checked delete)", () => {
+  beforeEach(() => {
+    ops.length = 0;
+    learnerRows.value = [{ id: "L1" }];
+    checkpointResultRows.value = [{ id: "CR1", learnerId: "L1" }];
+  });
+
+  it("deletes the checkpoint result row when owned by the account", async () => {
+    await redoCheckpoint("acct-1", "CR1");
+    expect(ops).toContainEqual({ op: "delete", table: "checkpoint_result" });
+  });
+
+  it("does not delete when the learner is not owned by the account", async () => {
+    learnerRows.value = []; // simulates a foreign account
+    await redoCheckpoint("acct-2", "CR1");
+    expect(ops.some((o) => o.op === "delete" && o.table === "checkpoint_result")).toBe(false);
+  });
+
+  it("no-ops when the checkpoint result does not exist", async () => {
+    checkpointResultRows.value = [];
+    await redoCheckpoint("acct-1", "CR-missing");
+    expect(ops.some((o) => o.op === "delete")).toBe(false);
   });
 });

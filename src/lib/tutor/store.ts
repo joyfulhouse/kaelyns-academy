@@ -28,12 +28,12 @@ import {
 } from "@/lib/content/config";
 import { getPublishedVersionId } from "@/lib/content/store";
 import { earnedStarsForAttempt } from "@/lib/rewards/logic";
-import { outcomeToRate } from "@/lib/placement/placement";
+import { computePlacement, outcomeToRate, type PlacementVerdict } from "@/lib/placement/placement";
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
 import { shapeLearnerExport, type LearnerExport } from "./export";
 import { shapeAccountExport, type AccountExport } from "./account-export";
 import { parseJsonbFailClosed } from "./jsonb";
-import { toLearnerRow, withOwnedLearner, type LearnerRow } from "./scope";
+import { getLearner, toLearnerRow, withOwnedLearner, type LearnerRow } from "./scope";
 import { applyAttemptToQuests } from "@/lib/quests/store";
 
 /** The transaction type recordAttempt's tx-scoped helpers share (mirrors the
@@ -57,15 +57,21 @@ export type { LearnerRow };
 const MAX_HISTORY = 24;
 
 /** Pure: fold one attempt's evidence for a skill into its prior history and
- *  re-derive the outcome. Extracted so the gate logic is unit-testable. */
+ *  re-derive the outcome. Extracted so the gate logic is unit-testable.
+ *  `source` defaults to "play" (the existing recordAttempt fold below passes
+ *  none); applyPlacement (Adventure 2.0 C1) passes "baseline" so the
+ *  source-aware gate in mastery.ts locks the entry solid immediately. */
 export function nextSkillRecord(
-  prior: { day: string; outcome: string }[] | undefined,
+  prior: { day: string; outcome: string; source?: string }[] | undefined,
   outcome: SkillOutcome,
   day: DayKey,
-): { history: { day: string; outcome: SkillOutcome }[]; outcome: SkillOutcome } {
-  const history = [...(prior ?? []), { day, outcome }].slice(-MAX_HISTORY) as {
+  source: "play" | "baseline" = "play",
+): { history: { day: string; outcome: SkillOutcome; source?: "play" | "baseline" }[]; outcome: SkillOutcome } {
+  const entry = source === "baseline" ? { day, outcome, source } : { day, outcome };
+  const history = [...(prior ?? []), entry].slice(-MAX_HISTORY) as {
     day: string;
     outcome: SkillOutcome;
+    source?: "play" | "baseline";
   }[];
   return { history, outcome: deriveOutcome({ history } as SkillRecord) };
 }
@@ -401,6 +407,137 @@ export async function getSkillState(accountId: string, learnerId: string): Promi
     },
     {},
   );
+}
+
+// ── Adventure 2.0 C1: baseline placement (checkpoint_result → skill_state) ───
+//
+// A checkpoint attempt captures to checkpoint_result (upsertCheckpointScore
+// above) WITHOUT touching skill_state — nothing about the learner's level
+// changes until a parent reviews the per-skill verdicts and applies the
+// placement (spec §3.5). The three functions below are that parent-gated flow.
+
+/** One checkpoint result, its per-skill placement verdicts, and the seed set —
+ *  everything the parent panel needs to show + confirm/redo a check-in. */
+export interface PendingCheckpoint {
+  id: string;
+  unitId: string;
+  phase: string;
+  status: string;
+  createdAt: string;
+  verdicts: PlacementVerdict[];
+  seed: SkillTag[];
+}
+
+/** All of a learner's checkpoint results (owned-by-account), each with its
+ *  computed placement verdicts + seed set, newest first. */
+export async function getPendingCheckpointResults(
+  accountId: string,
+  learnerId: string,
+): Promise<PendingCheckpoint[]> {
+  return withOwnedLearner<PendingCheckpoint[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select()
+        .from(checkpointResult)
+        .where(eq(checkpointResult.learnerId, learnerId))
+        .orderBy(desc(checkpointResult.createdAt));
+      return rows.map((r) => {
+        const { seed, verdicts } = computePlacement(r.scores);
+        return {
+          id: r.id,
+          unitId: r.unitId,
+          phase: r.phase,
+          status: r.status,
+          createdAt: r.createdAt.toISOString(),
+          verdicts,
+          seed,
+        };
+      });
+    },
+    [],
+  );
+}
+
+/**
+ * Apply a baseline placement: seed skill_state solid (source "baseline") for
+ * the breezed skills and flip the checkpoint result to "applied". Tenancy is
+ * re-checked INSIDE the transaction (mirrors recordAttempt) so the ownership
+ * gate and the seeding commit atomically. Idempotent — re-applying an
+ * already-"applied" row is a no-op (checked after the row lock, before any
+ * seeding write). One baseline-sourced solid entry per skill is enough: the
+ * source-aware deriveOutcome (mastery.ts) locks it solid without waiting on
+ * the day-gate. The seeded entry's day is the checkpoint result's own creation
+ * day (not "today") so the evidence trail reflects when the check-in happened.
+ */
+export async function applyPlacement(accountId: string, checkpointResultId: string): Promise<void> {
+  await getDb().transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(checkpointResult)
+      .where(eq(checkpointResult.id, checkpointResultId))
+      .limit(1)
+      .for("update");
+    const row = rows[0];
+    if (!row) return;
+
+    // Tenancy boundary, re-checked inside the tx (same pattern as recordAttempt).
+    const owned = await tx
+      .select({ id: learner.id })
+      .from(learner)
+      .where(and(eq(learner.id, row.learnerId), eq(learner.accountId, accountId)))
+      .limit(1);
+    if (!owned[0]) throw new Error("learner not found for account");
+
+    if (row.status === "applied") return; // idempotent: nothing left to do
+
+    const day = row.createdAt.toISOString().slice(0, 10); // YYYY-MM-DD
+    const { seed } = computePlacement(row.scores);
+    for (const skillTag of seed) {
+      // Materialize the row (no-op if it already exists), then lock it FOR
+      // UPDATE — same read-lock-then-update shape as recordAttempt's fold.
+      await tx
+        .insert(skillState)
+        .values({ learnerId: row.learnerId, skill: skillTag, evidence: [], outcome: "not_yet" })
+        .onConflictDoNothing({ target: [skillState.learnerId, skillState.skill] });
+      const locked = await tx
+        .select()
+        .from(skillState)
+        .where(and(eq(skillState.learnerId, row.learnerId), eq(skillState.skill, skillTag)))
+        .limit(1)
+        .for("update");
+      const s = locked[0];
+      if (!s) continue;
+      const folded = nextSkillRecord(s.evidence, "solid", day, "baseline");
+      await tx
+        .update(skillState)
+        .set({ evidence: folded.history, outcome: folded.outcome, updatedAt: new Date() })
+        .where(eq(skillState.id, s.id));
+    }
+
+    await tx
+      .update(checkpointResult)
+      .set({ status: "applied", appliedAt: new Date() })
+      .where(eq(checkpointResult.id, row.id));
+  });
+}
+
+/** Redo: delete the checkpoint result so the check-in is offered again.
+ *  Tenancy-checked via getLearner (the row has no accountId of its own, so
+ *  ownership is resolved through the learner it belongs to). No-ops when the
+ *  row doesn't exist or isn't owned by this account. */
+export async function redoCheckpoint(accountId: string, checkpointResultId: string): Promise<void> {
+  const rows = await getDb()
+    .select()
+    .from(checkpointResult)
+    .where(eq(checkpointResult.id, checkpointResultId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return;
+  const owned = await getLearner(accountId, row.learnerId);
+  if (!owned) return;
+  await getDb().delete(checkpointResult).where(eq(checkpointResult.id, checkpointResultId));
 }
 
 export interface RecentAttempt {
