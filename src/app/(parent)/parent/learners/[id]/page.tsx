@@ -242,7 +242,7 @@ function SkillsByDomain({ skills }: { skills: SkillStatus[] }) {
                           {/* Honest labeling (Adventure 2.0 C1): a baseline-placed skill is
                               never shown as indistinguishable from day-over-day mastery. */}
                           {skill.source === "baseline" && (
-                            <span className="text-ink-faint">· placed</span>
+                            <span className="text-ink-soft">· placed</span>
                           )}
                         </Pill>
                       ) : (

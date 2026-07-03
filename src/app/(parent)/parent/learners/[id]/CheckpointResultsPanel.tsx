@@ -57,26 +57,31 @@ export function CheckpointResultsPanel({
   const router = useRouter();
   const { run, pending } = useAsyncAction();
   const [actionState, setActionState] = useState<ActionState>({ status: "idle" });
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // Track BOTH which card AND which action is in flight, so only the button
+  // that was clicked reads "Applying…"/"Redoing…" — not its sibling.
+  const [activeAction, setActiveAction] = useState<{ id: string; kind: "apply" | "redo" } | null>(
+    null,
+  );
 
   if (checkpoints.length === 0) return null;
 
   function callAction(
     id: string,
+    kind: "apply" | "redo",
     action: (learnerId: string, checkpointResultId: string) => Promise<CheckpointActionResult>,
   ) {
     if (pending) return;
     setActionState({ status: "idle" });
-    setActiveId(id);
+    setActiveAction({ id, kind });
 
     run(() => action(learnerId, id), {
       onSuccess: () => {
-        setActiveId(null);
+        setActiveAction(null);
         router.refresh();
       },
       errorMessage: (result) => result.message ?? "Something went wrong.",
       onError: (message) => {
-        setActiveId(null);
+        setActiveAction(null);
         setActionState({ status: "error", id, message });
       },
       fallbackMessage: "Could not update the check-in. Please try again.",
@@ -96,7 +101,7 @@ export function CheckpointResultsPanel({
             return (
               <Surface key={checkpoint.id} tone="sunk" className="px-5 py-3.5">
                 <p className="text-sm text-ink-soft">
-                  Placed from check-in on {checkpoint.when}.
+                  Placed from this check-in {checkpoint.when}.
                 </p>
               </Surface>
             );
@@ -106,7 +111,10 @@ export function CheckpointResultsPanel({
             actionState.status === "error" && actionState.id === checkpoint.id
               ? actionState.message
               : undefined;
-          const isActive = pending && activeId === checkpoint.id;
+          const isApplying =
+            pending && activeAction?.id === checkpoint.id && activeAction.kind === "apply";
+          const isRedoing =
+            pending && activeAction?.id === checkpoint.id && activeAction.kind === "redo";
 
           return (
             <Surface key={checkpoint.id} tone="raised" className="border border-line p-5">
@@ -118,7 +126,7 @@ export function CheckpointResultsPanel({
                   <p className="mt-0.5 text-xs text-ink-faint">Checked in {checkpoint.when}</p>
                 </div>
                 <Pill tone="accent" className="shrink-0">
-                  {checkpoint.seed.length} to skip
+                  {checkpoint.seed.length} to skip ahead
                 </Pill>
               </div>
 
@@ -137,21 +145,23 @@ export function CheckpointResultsPanel({
                   type="button"
                   variant="accent"
                   size="md"
-                  onClick={() => callAction(checkpoint.id, applyPlacementAction)}
+                  onClick={() => callAction(checkpoint.id, "apply", applyPlacementAction)}
                   disabled={pending}
+                  aria-label={`Apply check-in for ${checkpoint.unitTitle}`}
                 >
                   <CheckCircleIcon weight="regular" className="size-4" />
-                  {isActive ? "Applying…" : "Apply — start her here"}
+                  {isApplying ? "Applying…" : "Apply — start her here"}
                 </Button>
                 <Button
                   type="button"
                   variant="soft"
                   size="md"
-                  onClick={() => callAction(checkpoint.id, redoCheckpointAction)}
+                  onClick={() => callAction(checkpoint.id, "redo", redoCheckpointAction)}
                   disabled={pending}
+                  aria-label={`Redo check-in for ${checkpoint.unitTitle}`}
                 >
                   <ArrowCounterClockwiseIcon weight="regular" className="size-4" />
-                  {isActive ? "Redoing…" : "Not now / Redo"}
+                  {isRedoing ? "Redoing…" : "Not now / Redo"}
                 </Button>
 
                 {err && <StatusMessage tone="error">{err}</StatusMessage>}
