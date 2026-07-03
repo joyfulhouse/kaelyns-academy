@@ -29,6 +29,7 @@ export type SkillDomain =
   | "math"
   | "habits"
   | "lifeskills" // Life Skills Math (B1): time · money · measurement
+  | "science" // Science & Nature (B2): classify · sequence
   // World Languages — one domain per language (one parent-report row each).
   | "zhuyin"
   | "spanish"
