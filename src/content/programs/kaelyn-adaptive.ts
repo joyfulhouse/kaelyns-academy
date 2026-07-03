@@ -1583,7 +1583,7 @@ export const kaelynAdaptive: Program = {
               band: "ready",
               skillTags: ["math.mult.facts"],
               config: {
-                instruction: "Build 4 rows of 2. Say it as 2 + 2 + 2 + 2, then as 4 x 2, and find the product.",
+                instruction: "Look at 4 rows of 2. Say it as 2 + 2 + 2 + 2, then as 4 x 2, and find the product.",
                 mode: "multiply",
                 rows: 4,
                 cols: 2,
@@ -1634,7 +1634,7 @@ export const kaelynAdaptive: Program = {
               band: "ready",
               skillTags: ["math.geometry.area-arrays", "math.mult.facts"],
               config: {
-                instruction: "Share this pizza among 5 friends. Build it as a 1 by 5 row of equal parts, then point to one part.",
+                instruction: "This strip is split into 5 equal parts in a row. How many parts in all?",
                 mode: "area",
                 rows: 1,
                 cols: 5,
