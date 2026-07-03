@@ -68,6 +68,25 @@ describe("authored program content", () => {
     const skills = new Set(SKILLS.map((s) => s.slug));
     expect(acts.every((a) => a.skillTags.every((t) => skills.has(t)))).toBe(true);
   });
+
+  it("Science & Nature unit uses registered kinds + real skills", () => {
+    const unit = kaelynAdaptive.units.find((u) => u.id === "science-nature");
+    expect(unit).toBeDefined();
+    expect(unit!.world).toBe("ocean");
+    const acts = unit!.lessons.flatMap((l) => l.activities);
+    expect(acts.length).toBeGreaterThanOrEqual(9);
+    // Only registered kinds — the new science kinds plus the reused reading kind.
+    const kinds = new Set(["sort-categories", "seq-order", "reading-comprehension"]);
+    expect(acts.every((a) => kinds.has(a.kind))).toBe(true);
+    // Exercises the science skills (the point of this unit) — every tag resolves.
+    const skills = new Set(SKILLS.map((s) => s.slug));
+    expect(acts.every((a) => a.skillTags.every((t) => skills.has(t)))).toBe(true);
+    // Every sort-categories/seq-order config parses (incl. the bin-id refine).
+    for (const a of acts) {
+      const schema = ACTIVITY_CONFIG_SCHEMAS[a.kind] as { parse: (x: unknown) => unknown };
+      expect(() => schema.parse(a.config), `${a.id} (${a.kind})`).not.toThrow();
+    }
+  });
 });
 
 describe("World Languages content matches the canonical inventory", () => {
