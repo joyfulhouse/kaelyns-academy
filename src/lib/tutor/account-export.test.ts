@@ -121,6 +121,8 @@ describe("account export inventory guard", () => {
     learner_sticker: "stickers",
     learner_interest: "interests",
     learner_quest: "quests",
+    // Adventure 2.0 Phase C1 (Task 6 wires the export read):
+    checkpoint_result: "checkpointResults",
   };
 
   /** All pgTable objects exported from the schema module. */

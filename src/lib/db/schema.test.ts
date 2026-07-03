@@ -4,6 +4,7 @@ import { getTableName } from "drizzle-orm";
 import {
   account,
   attempt,
+  checkpointResult,
   deletionAudit,
   enrollment,
   learner,
@@ -62,5 +63,24 @@ describe("account-delete cascade map (FK ON DELETE)", () => {
       targets.has(getTableName(fk.reference().foreignTable)),
     );
     expect(refsUserOrLearner).toBe(false);
+  });
+});
+
+describe("checkpoint_result schema", () => {
+  it("exposes the Phase C capture columns", () => {
+    const cols = Object.keys(checkpointResult);
+    for (const c of [
+      "id",
+      "learnerId",
+      "enrollmentId",
+      "unitId",
+      "phase",
+      "scores",
+      "status",
+      "createdAt",
+      "appliedAt",
+    ]) {
+      expect(cols).toContain(c);
+    }
   });
 });
