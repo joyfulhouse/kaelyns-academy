@@ -1419,6 +1419,7 @@ async function gatherLearnerExport(
     interestRows,
     questRows,
     checkpointResultRows,
+    generatedActivityRows,
   ] = await Promise.all([
     getDb().select().from(enrollment).where(eq(enrollment.learnerId, learnerId)),
     getDb().select().from(skillState).where(eq(skillState.learnerId, learnerId)),
@@ -1463,6 +1464,12 @@ async function gatherLearnerExport(
       .from(checkpointResult)
       .where(eq(checkpointResult.learnerId, learnerId))
       .orderBy(desc(checkpointResult.createdAt)),
+    // Adventure 2.0 B3 (Task 6): AI-generated practice items (the child's shelf).
+    getDb()
+      .select()
+      .from(generatedActivity)
+      .where(eq(generatedActivity.learnerId, learnerId))
+      .orderBy(desc(generatedActivity.createdAt)),
   ]);
 
   return shapeLearnerExport({
@@ -1523,6 +1530,18 @@ async function gatherLearnerExport(
       scores: r.scores,
       status: r.status,
       createdAt: r.createdAt.toISOString(),
+    })),
+    generatedActivities: generatedActivityRows.map((g) => ({
+      unitKey: g.unitKey,
+      lessonId: g.lessonId,
+      kind: g.kind,
+      title: g.title,
+      config: g.config,
+      skillTags: g.skillTags,
+      genModel: g.genModel,
+      genRoute: g.genRoute,
+      genAt: g.genAt.toISOString(),
+      createdAt: g.createdAt.toISOString(),
     })),
   });
 }

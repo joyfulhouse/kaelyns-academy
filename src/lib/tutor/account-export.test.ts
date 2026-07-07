@@ -26,6 +26,7 @@ function learnerExport(overrides: Partial<LearnerExport> = {}): LearnerExport {
     interests: [],
     quests: [],
     checkpointResults: [],
+    generatedActivities: [],
     ...overrides,
   };
 }
