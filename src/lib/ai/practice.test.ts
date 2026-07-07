@@ -278,14 +278,51 @@ describe("generatePracticeItems (bounded + schema-validated)", () => {
     expect(items[0].say).toEqual({ c: "k", t: "t" }); // bogus "a":"z" dropped
   });
 
-  it("refuses to generate an authored-only kind (no KIND_BRIEF entry) without calling the gateway", async () => {
+  it("refuses a kind with no generation brief without calling the gateway (defensive guard)", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
+    // Every real ActivityKind is generable after B3, so synthesize an unknown kind
+    // to exercise the defensive authored-only guard (no KIND_BRIEF, not a lang kind).
+    const fakeKind = "__not-a-real-kind__" as unknown as Parameters<
+      typeof generatePracticeItems
+    >[0];
+    await expect(generatePracticeItems(fakeKind, "ready", "telling time", 1)).rejects.toThrow(
+      /authored-only/,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("drops a generated item whose answer key is inconsistent, keeping the valid one (B3 filter)", async () => {
+    // math-clock is now generable; the model returns one internally-consistent read
+    // item (choices[answerIndex] === the stated time) and one whose marked choice is
+    // the WRONG time. The deterministic answer-key filter must drop only the bad one.
+    const mixed = JSON.stringify({
+      items: [
+        { mode: "read", instruction: "What time?", hour: 3, minute: 0, choices: ["3:00", "4:00"], answerIndex: 0 },
+        { mode: "read", instruction: "What time?", hour: 3, minute: 0, choices: ["4:00", "5:00"], answerIndex: 0 },
+      ],
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(completion(mixed)));
+
+    const items = await generatePracticeItems("math-clock", "ready", "telling time", 2);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ hour: 3, minute: 0, answerIndex: 0, choices: ["3:00", "4:00"] });
+  });
+
+  it("throws when EVERY generated item fails answer-key validation (B3 filter)", async () => {
+    // Both items are schema-valid but answer-key-inconsistent (marked choice is the
+    // wrong time), so none survive → throw (route turns it into a 502 → authored fallback).
+    const allBad = JSON.stringify({
+      items: [
+        { mode: "read", instruction: "What time?", hour: 3, minute: 0, choices: ["4:00", "5:00"], answerIndex: 0 },
+      ],
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(completion(allBad)));
+
     await expect(
       generatePracticeItems("math-clock", "ready", "telling time", 1),
-    ).rejects.toThrow(/authored-only/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    ).rejects.toThrow(/failed answer-key validation/);
   });
 });
 
@@ -300,10 +337,16 @@ describe("KIND_BRIEF", () => {
     expect(brief).toContain('"c":"k"');
   });
 
-  it("has no brief for the authored-only new math kinds (spec §9 non-goal)", () => {
-    expect(KIND_BRIEF["math-clock"]).toBeUndefined();
-    expect(KIND_BRIEF["math-money"]).toBeUndefined();
-    expect(KIND_BRIEF["math-measure"]).toBeUndefined();
+  it("now has briefs for the five formerly-authored-only kinds (B3)", () => {
+    for (const kind of [
+      "math-clock",
+      "math-money",
+      "math-measure",
+      "sort-categories",
+      "seq-order",
+    ] as const) {
+      expect(KIND_BRIEF[kind]).toBeDefined();
+    }
   });
 });
 
@@ -315,10 +358,12 @@ describe("isGenerableKind (single source of truth for authored-only gating)", ()
     expect(isGenerableKind("lang-listen-match")).toBe(true);
   });
 
-  it("is false for the authored-only new math kinds", () => {
-    expect(isGenerableKind("math-clock")).toBe(false);
-    expect(isGenerableKind("math-money")).toBe(false);
-    expect(isGenerableKind("math-measure")).toBe(false);
+  it("is now true for the five formerly-authored-only kinds (B3)", () => {
+    expect(isGenerableKind("math-clock")).toBe(true);
+    expect(isGenerableKind("math-money")).toBe(true);
+    expect(isGenerableKind("math-measure")).toBe(true);
+    expect(isGenerableKind("sort-categories")).toBe(true);
+    expect(isGenerableKind("seq-order")).toBe(true);
   });
 });
 

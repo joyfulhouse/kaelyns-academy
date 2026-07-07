@@ -139,4 +139,11 @@ export interface ActivityType<Config = unknown, Response = unknown> {
   Player: ComponentType<ActivityPlayerProps<Config, Response>>;
   score: (config: Config, response: Response) => ActivityScore;
   skillsAffected: (config: Config) => SkillTag[];
+  /**
+   * Optional deterministic answer-key check for AI-GENERATED configs (B3 §6):
+   * returns null when internally consistent, else a short reason. Run
+   * server-side after zod parse, before an item is persisted or returned.
+   * Authored content is validated by review + content tests, not this.
+   */
+  validateGenerated?: (config: Config) => string | null;
 }

@@ -40,3 +40,14 @@ export function score(config: MathClockConfig, response: MathClockResponse): Act
 export function skillsAffected(_config: MathClockConfig): SkillTag[] {
   return ["math.time"];
 }
+
+/** B3 §6: the marked choice must render the stated time; choices unique. */
+export function validateGenerated(config: MathClockConfig): string | null {
+  if (config.mode === "set") return null; // no answer key beyond the schema
+  if (config.answerIndex >= config.choices.length) return "answerIndex out of range";
+  if (new Set(config.choices).size !== config.choices.length) return "duplicate choices";
+  const want = `${config.hour}:${config.minute === 0 ? "00" : "30"}`;
+  return config.choices[config.answerIndex] === want
+    ? null
+    : `answer choice "${config.choices[config.answerIndex]}" is not ${want}`;
+}

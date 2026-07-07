@@ -35,3 +35,19 @@ export function score(config: MathMeasureConfig, response: MathMeasureResponse):
 export function skillsAffected(_config: MathMeasureConfig): SkillTag[] {
   return ["math.measure"];
 }
+
+/** B3 §6: the marked answer must be the true (unique) extreme / true length. */
+export function validateGenerated(config: MathMeasureConfig): string | null {
+  if (config.mode === "compare") {
+    if (config.answerIndex >= config.items.length) return "answerIndex out of range";
+    const sizes = config.items.map((i) => i.size);
+    const extreme = config.question === "most" ? Math.max(...sizes) : Math.min(...sizes);
+    if (sizes.filter((s) => s === extreme).length !== 1) return "extreme is not unique";
+    return sizes[config.answerIndex] === extreme ? null : "answer is not the extreme";
+  }
+  if (config.answerIndex >= config.choices.length) return "answerIndex out of range";
+  if (new Set(config.choices).size !== config.choices.length) return "duplicate choices";
+  return config.choices[config.answerIndex] === config.length
+    ? null
+    : "answer choice does not equal the true length";
+}

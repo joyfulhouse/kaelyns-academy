@@ -36,3 +36,13 @@ export function score(config: SortCategoriesConfig, response: SortCategoriesResp
 export function skillsAffected(_config: SortCategoriesConfig): SkillTag[] {
   return ["science.classify"];
 }
+
+/** B3 §6: bins unique, every bin used (binId integrity is the schema refine). */
+export function validateGenerated(config: SortCategoriesConfig): string | null {
+  const ids = config.bins.map((b) => b.id);
+  if (new Set(ids).size !== ids.length) return "duplicate bin ids";
+  for (const bin of config.bins) {
+    if (!config.items.some((it) => it.binId === bin.id)) return `bin "${bin.id}" has no items`;
+  }
+  return null;
+}

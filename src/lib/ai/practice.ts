@@ -14,6 +14,7 @@ import { prewarmTexts } from "@/lib/audio/spokenFields";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import type { LanguageDef, ScriptEntry } from "@/content/languages";
 import type { Band, SkillTag } from "@/content/types";
+import { validateGeneratedFor } from "./generated-validators";
 import { chatJSON, fenceUntrusted, TUTOR_FAST, TUTOR_RICH, type TutorModel } from "./models";
 import {
   JSON_ONLY_RULE,
@@ -44,11 +45,13 @@ const MAX_ITEMS = 8;
 
 /**
  * Plain-language guidance per kind so the model emits the right config shape.
- * Partial, NOT exhaustive: a kind with no entry is authored-only (spec §9) —
- * {@link isGenerableKind} / {@link generatePracticeItems} refuse to generate it.
- * The 3 math-clock/money/measure kinds are deliberately absent: their config
- * schemas defer answerIndex/bounds validation to plugin logic assuming
- * hand-authored, content-validated input, so they must never be AI-generable.
+ * Partial by type, but currently exhaustive: a kind with no entry would be
+ * authored-only (spec §9) and {@link isGenerableKind} / {@link generatePracticeItems}
+ * would refuse it. The 5 formerly-authored-only kinds (math-clock/money/measure,
+ * sort-categories, seq-order) are now generable (B3): each pairs its brief with a
+ * deterministic answer-key validator ({@link validateGeneratedFor}) run
+ * server-side after the zod parse, so an item whose generated answer key is
+ * internally inconsistent is dropped before it can reach a child.
  */
 export const KIND_BRIEF: Partial<Record<ActivityKind, string>> = {
   "phonics-wordbuild":
@@ -80,6 +83,24 @@ export const KIND_BRIEF: Partial<Record<ActivityKind, string>> = {
   "lang-listen-match":
     "Listening-discrimination items. Each: {locale, instruction, skillTags:[...], items:[{spoken, audioKey?, choices:[2-6 symbols/words], choiceLabels?:[romanization], answerIndex}]}. " +
     "The child hears `spoken` and taps the matching choice. Every choice and the answer MUST come from the authored inventory. 2 to 8 items.",
+  "sort-categories":
+    'Sort-into-bins items. Each: {instruction, bins:[{id,label,emoji?}] (2-4), items:[{label,emoji?,binId}] (3-8)}. ' +
+    "Every item.binId MUST equal one bins[].id; every bin gets at least one item; bin ids are short lowercase slugs. " +
+    "Categories must be observably, factually correct for a 6-year-old (living/nonliving, animal groups, materials, land/water).",
+  "seq-order":
+    'Put-in-order items. Each: {instruction, cards:[{label,emoji?}] (3-6)}. ARRAY ORDER IS THE ANSWER KEY. ' +
+    "ONLY common-knowledge sequences a young child verifies from daily life: counting, size order, daily routine (wake→dress→school→sleep), " +
+    "plant growth, simple life cycles. NEVER historical dates, niche facts, or anything debatable. Labels unique.",
+  "math-clock":
+    'Clock items. Each: {mode:"read", instruction, hour:1-12, minute:0 or 30, choices:["h:mm" strings, 2-4], answerIndex}. ' +
+    'choices[answerIndex] MUST be exactly the stated time formatted "H:00" or "H:30"; other choices are plausible near-times; choices unique.',
+  "math-money":
+    'Coin items. Each: {mode:"identify", instruction, coins:[2-6 of penny|nickel|dime|quarter], targetCoin} — targetCoin MUST appear in coins; ' +
+    'or {mode:"count", instruction, palette:[1-4 coin types], targetCents:1-100} — targetCents MUST be payable exactly with the palette coins.',
+  "math-measure":
+    'Measuring items. Each: {mode:"compare", instruction, attribute:"length"|"height"|"weight", question:"most"|"least", ' +
+    "items:[{label,emoji,size:0-100}] (2-4), answerIndex} — items[answerIndex].size MUST be the UNIQUE max (most) or min (least); " +
+    'or {mode:"units", instruction, unit:"cube"|"paperclip"|"block"|"hand", length:1-12, choices:[ints,2-4], answerIndex} — choices[answerIndex] MUST equal length.',
 };
 
 /**
@@ -508,11 +529,24 @@ export async function generatePracticeItems<K extends ActivityKind>(
     await sanitizeGeneratedPhonics(phonics, phonemize);
   }
 
+  // B3 §6: deterministic answer-key filter. For a kind with a generated-config
+  // validator (math-clock/money/measure, sort-categories, seq-order), drop any
+  // item whose answer key is internally inconsistent — a wrong generated key would
+  // mark a capable child wrong. A kind with no validator passes through unchanged
+  // (validateGeneratedFor returns null for it), so already-generable kinds are
+  // untouched. Throw only when the WHOLE batch is invalid (a short surviving batch
+  // is fine → authored content covers the shortfall); the route turns the throw
+  // into a 502 -> authored-content fallback.
+  const validated = items.filter((item) => validateGeneratedFor(kind, item) === null);
+  if (validated.length === 0) {
+    throw new Error(`generatePracticeItems: all ${kind} items failed answer-key validation`);
+  }
+
   // Fire-and-forget: warm the durable narration cache for everything the child will
   // hear, so the speaker button is an instant hit. Never blocks/breaks the response
   // (ensureNarration swallows its own errors). prewarmTexts dedupes + hard-caps the
   // set; mapWithConcurrency bounds in-flight synths to 4 so one response can't burst
   // many concurrent Kokoro/MinIO ops.
-  void mapWithConcurrency(prewarmTexts(items), 4, (text) => ensureNarration(text));
-  return items;
+  void mapWithConcurrency(prewarmTexts(validated), 4, (text) => ensureNarration(text));
+  return validated;
 }
