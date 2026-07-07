@@ -115,9 +115,8 @@ export function isGenerableKind(kind: ActivityKind): boolean {
   return isLangKind(kind) || KIND_BRIEF[kind] !== undefined;
 }
 
-/** Band → tutor route (B3 §3). Exported so the shelf action can stamp the same
- *  provenance model the generator routes on (genRoute is "shelf" there). */
-export const MODEL_FOR_BAND: Record<Band, TutorModel> = {
+/** Band → tutor route (B3 §3). */
+const MODEL_FOR_BAND: Record<Band, TutorModel> = {
   ready: TUTOR_FAST,
   stretch: TUTOR_RICH,
 };

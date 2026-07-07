@@ -39,9 +39,12 @@ vi.mock("@/lib/quests/logic", () => ({
 // The heavy AI + shelf modules are mocked so the action tests stay pure: we
 // assert the action's derivation (gates, witness, bounds, provenance) — not the
 // generator's or the picker's internals (those have their own unit tests).
-vi.mock("@/lib/ai/practice", () => ({
+// Only the heavy generator call is stubbed; the REAL provenanceForGeneration is
+// kept (partial mock) so the shelf-stamp assertions exercise its actual, lang-
+// aware model routing rather than a re-implemented stand-in.
+vi.mock("@/lib/ai/practice", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/ai/practice")>()),
   generatePracticeItems: vi.fn(),
-  MODEL_FOR_BAND: { ready: "ds4-fast", stretch: "ds4" },
 }));
 
 vi.mock("@/lib/tutor/shelf", () => ({
@@ -258,6 +261,27 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     );
     const rows = vi.mocked(insertGeneratedActivities).mock.calls[0][2];
     expect(rows[0]).toMatchObject({ genModel: "ds4" });
+  });
+
+  it("stamps the lang-aware model for a World-Languages target (stretch lang → ds4-fast, not ds4)", async () => {
+    // A World-Languages kind routes on MODEL_FOR_LANGUAGE (ds4-fast) regardless
+    // of band, so the shelf provenance must record ds4-fast even at stretch band —
+    // NOT the band model (ds4). Guards against re-introducing a flat band stamp.
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: { band: "stretch" } });
+    vi.mocked(pickGenerationTargets).mockReturnValue([
+      {
+        kind: "lang-symbol-intro",
+        focus: "symbols",
+        skillTags: ["zhuyin.symbols.initials"],
+        sourceTitle: "Act a1",
+        n: 4,
+      },
+    ]);
+
+    await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
+
+    const rows = vi.mocked(insertGeneratedActivities).mock.calls[0][2];
+    expect(rows[0]).toMatchObject({ genModel: "ds4-fast" });
   });
 
   it("refuses a foreign learner (ok:false) and writes nothing", async () => {

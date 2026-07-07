@@ -28,7 +28,7 @@ import {
   skillTagsForProgram,
 } from "@/content";
 import type { Band, Lesson, Program, Unit } from "@/content";
-import { generatePracticeItems, MODEL_FOR_BAND } from "@/lib/ai/practice";
+import { generatePracticeItems, provenanceForGeneration } from "@/lib/ai/practice";
 import { pickGenerationTargets, SHELF_BATCH, SHELF_LESSON_CAP } from "@/lib/tutor/shelf";
 import { resolveLearnerProgram } from "@/lib/content/repository";
 import { findUnitIdOfActivity } from "@/lib/quests/logic";
@@ -522,7 +522,6 @@ export async function ensureLessonPractice(
       // 6. Generate per target. generatePracticeItems returns only validator-
       //    passing items (Task 2) and throws when zero survive — a throwing target
       //    is SKIPPED (a short batch is fine; authored content covers the rest).
-      const genModel = MODEL_FOR_BAND[band];
       const genAt = new Date();
       const newRows: NewGeneratedActivity[] = [];
       for (const target of targets) {
@@ -539,7 +538,9 @@ export async function ensureLessonPractice(
               title: `Fresh: ${target.sourceTitle}`,
               config,
               skillTags: target.skillTags,
-              genModel,
+              // Mirror the generator's real route: World-Languages kinds use the
+              // per-language model, so stamp the lang-aware model, not just the band.
+              genModel: provenanceForGeneration(target.kind, band, target.skillTags).model,
               genRoute: "shelf",
               genAt,
             });
