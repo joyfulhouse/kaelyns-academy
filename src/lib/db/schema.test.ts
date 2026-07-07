@@ -7,6 +7,7 @@ import {
   checkpointResult,
   deletionAudit,
   enrollment,
+  generatedActivity,
   learner,
   publisher,
   session,
@@ -83,6 +84,29 @@ describe("checkpoint_result schema", () => {
       "status",
       "createdAt",
       "appliedAt",
+    ]) {
+      expect(cols).toContain(c);
+    }
+  });
+});
+
+describe("generated_activity schema", () => {
+  it("exposes the B3 shelf columns", () => {
+    const cols = Object.keys(generatedActivity);
+    for (const c of [
+      "id",
+      "learnerId",
+      "programSlug",
+      "unitKey",
+      "lessonId",
+      "kind",
+      "title",
+      "config",
+      "skillTags",
+      "genModel",
+      "genRoute",
+      "genAt",
+      "createdAt",
     ]) {
       expect(cols).toContain(c);
     }
