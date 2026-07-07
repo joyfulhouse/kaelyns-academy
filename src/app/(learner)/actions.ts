@@ -10,18 +10,32 @@ import {
   getCompletedActivityIds,
   getEnrollmentConfig,
   getEnrollmentForGate,
+  getGeneratedActivity,
+  getGeneratedCompletions,
+  getLearner,
   getLearnerSettings,
   getSkillState,
   listEnrollmentsDetailed,
+  listGeneratedShelf,
   recordAttempt,
+  withLessonGenerationLock,
+  type NewGeneratedActivity,
+  type ShelfItem,
 } from "@/lib/tutor/store";
 import type { EnrollmentConfig } from "@/lib/content/config";
 import {
   activityIdsForProgram,
+  findActivity,
   getUnit,
   skillTagsForProgram,
 } from "@/content";
-import type { Program } from "@/content";
+import type { Band, Lesson, Program, Unit } from "@/content";
+import { generatePracticeItems, provenanceForGeneration } from "@/lib/ai/practice";
+import {
+  pickGenerationTargets,
+  shelfCompletions,
+  SHELF_LESSON_CAP,
+} from "@/lib/tutor/shelf";
 import { resolveLearnerProgram } from "@/lib/content/repository";
 import { findUnitIdOfActivity } from "@/lib/quests/logic";
 import type { SkillState } from "@/lib/tutor";
@@ -243,6 +257,26 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
       const unit = program && unitId ? getUnit(program, unitId) : null;
       const checkpointPhase = unit?.checkpoint ?? null;
 
+      // Generated shelf witness (Adventure 2.0 B3): a GENERATED attempt whose
+      // activityId is a real shelf row OWNED BY THIS LEARNER is a legitimate
+      // one-time star earner. The ownership-checked read is the witness (scoped
+      // to accountId AND learnerId), exactly like `creditEligible` is for
+      // authored activities — a forged shelf id from another learner returns null
+      // and earns nothing. A found row also gives the containing unit (for
+      // unit-targeted quests). The in-session "More" practice path (generated but
+      // activityId = an AUTHORED id) finds no shelf row → shelfEligible stays
+      // false, unchanged. Only queried for generated attempts (authored ids are
+      // never on the shelf).
+      let shelfEligible = false;
+      let shelfUnitId: string | null = null;
+      if (generated) {
+        const shelfRow = await getGeneratedActivity(accountId, data.learnerId, data.activityId);
+        if (shelfRow) {
+          shelfEligible = true;
+          shelfUnitId = shelfRow.unitKey;
+        }
+      }
+
       // An authored attempt whose activityId is NOT in the learner's resolved
       // tree is a forgery attempt (a fresh/arbitrary id) — reject before any
       // write. A generated (AI practice) attempt is exempt: synthetic practice
@@ -272,8 +306,12 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
         score: data.score,
         day: new Date().toISOString().slice(0, 10),
         provenance,
-        unitId,
+        // A verified shelf item carries its own unit (for unit-targeted quests);
+        // otherwise the authored-tree unit (null when unresolvable / generated
+        // in-session practice keeps its authored unit).
+        unitId: shelfEligible ? shelfUnitId : unitId,
         creditEligible,
+        shelfEligible,
         checkpointPhase,
       });
       return { ok: true };
@@ -288,10 +326,24 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
 
 export interface LearnerStateResult {
   skillState: SkillState;
-  /** Distinct authored activity ids the learner has completed. */
+  /**
+   * Distinct activity ids the learner has completed: authored activity ids PLUS
+   * the ids of any played generated shelf item (a durable, one-time earner).
+   */
   completedActivityIds: string[];
-  /** Best stars (0..3) per completed authored activity (for star glyphs). */
+  /**
+   * Best stars (0..3) per completed activity (for star glyphs). Keyed by authored
+   * activity id AND by generated shelf id — a shelf item is a durable, one-time
+   * earner, so its stars must survive the reconcile like an authored activity's.
+   */
   starsByActivity: Record<string, number>;
+  /**
+   * The learner's durable AI-generated "fresh practice" shelf for this program
+   * (Adventure 2.0 B3), oldest-first. Empty when unauthenticated / on failure /
+   * guest mode; the kid surface renders it as the per-lesson "made for you"
+   * section + the next-thing fallback.
+   */
+  generatedShelf: ShelfItem[];
   /** Per-child, per-program enrollment config set by the parent (empty object if none). */
   config: EnrollmentConfig;
   /**
@@ -317,6 +369,7 @@ const EMPTY_STATE: LearnerStateResult = {
   skillState: {},
   completedActivityIds: [],
   starsByActivity: {},
+  generatedShelf: [],
   config: {},
   program: null,
   available: false,
@@ -361,12 +414,15 @@ export async function getLearnerStateAction(
       const activityIds = new Set(activityIdsForProgram(program));
       const skillTags = new Set(skillTagsForProgram(program));
 
-      const [fullSkillState, completed, config, settings] = await Promise.all([
-        getSkillState(accountId, learnerId),
-        getCompletedActivityIds(accountId, learnerId),
-        getEnrollmentConfig(accountId, learnerId, programSlug),
-        getLearnerSettings(accountId, learnerId),
-      ]);
+      const [fullSkillState, completed, config, settings, generatedShelf, generatedCompletions] =
+        await Promise.all([
+          getSkillState(accountId, learnerId),
+          getCompletedActivityIds(accountId, learnerId),
+          getEnrollmentConfig(accountId, learnerId, programSlug),
+          getLearnerSettings(accountId, learnerId),
+          listGeneratedShelf(accountId, learnerId, programSlug),
+          getGeneratedCompletions(accountId, learnerId),
+        ]);
 
       // Scope skill_state to this program's skills.
       const skillState: SkillState = {};
@@ -383,6 +439,17 @@ export async function getLearnerStateAction(
         starsByActivity[c.activityId] = c.stars;
       }
 
+      // Durable shelf credit (B3): a played generated shelf item is a one-time,
+      // trackable earner, so fold its completion + best stars in too — scoped to
+      // THIS program's live shelf ids (shelfCompletions), so ephemeral in-session
+      // "More" one-shots stay excluded and the reconcile can't wipe shelf credit
+      // nor let nextGeneratedPick re-offer a played item. Shelf ids are UUIDs, a
+      // disjoint namespace from authored ids, so there is no key collision.
+      for (const c of shelfCompletions(generatedShelf, generatedCompletions)) {
+        completedActivityIds.push(c.activityId);
+        starsByActivity[c.activityId] = c.stars;
+      }
+
       // Effective config: the per-learner Settings kill-switch (all-programs)
       // overrides the per-program flag, so the client hides "More, made just for
       // me" whenever EITHER level disables AI — matching the server gate, which
@@ -394,6 +461,7 @@ export async function getLearnerStateAction(
         skillState,
         completedActivityIds,
         starsByActivity,
+        generatedShelf,
         config: effectiveConfig,
         program,
         available: true,
@@ -404,5 +472,179 @@ export async function getLearnerStateAction(
       captureNonCritical("getLearnerStateAction failed", error);
     }
     return EMPTY_STATE;
+  }
+}
+
+// ── Adaptive generation shelf (Adventure 2.0 B3) ─────────────────────────────
+
+const ensureLessonPracticeSchema = z.object({
+  learnerId: z.string().min(1).max(100),
+  programSlug: z.string().min(1).max(100),
+  activityId: z.string().min(1).max(100).optional(),
+  lessonId: z.string().min(1).max(100).optional(),
+  more: z.boolean().optional(),
+});
+
+/** Locate the lesson (and its unit) to generate for: by explicit lessonId, else
+ *  the lesson that contains activityId. Pure over the resolved tree. */
+function locateLesson(
+  program: Program,
+  where: { lessonId?: string; activityId?: string },
+): { unit: Unit; lesson: Lesson } | null {
+  if (where.lessonId) {
+    for (const unit of program.units) {
+      const lesson = unit.lessons.find((l) => l.id === where.lessonId);
+      if (lesson) return { unit, lesson };
+    }
+    return null;
+  }
+  if (where.activityId) {
+    const ctx = findActivity(program, where.activityId);
+    if (ctx) return { unit: ctx.unit, lesson: ctx.lesson };
+  }
+  return null;
+}
+
+/**
+ * Eager, bounded, idempotent generation of a lesson's "fresh practice" shelf
+ * (Adventure 2.0 B3 / spec §4). Called by the client after every completion; the
+ * calm `{ ok: false, items: [] }` posture means an unauthenticated visitor or any
+ * failure just yields no shelf (the surface falls back to authored content).
+ *
+ * Everything the model is steered by is SERVER-derived (§8): the band, focus, and
+ * skill hints come from the resolved authored tree + the parent's enrollment
+ * config — never from the client, which supplies only identifiers. The §8 gate
+ * mirrors /api/practice exactly (owned learner, ACTIVE enrollment, and NEITHER
+ * aiPractice kill-switch off), and generation is bounded (SHELF_BATCH per call,
+ * SHELF_LESSON_CAP per lesson). A lesson only generates once its authored
+ * activities are all complete (the completion witness), and re-calls are no-ops
+ * unless `more` is set — so the shelf grows deliberately, never on every render.
+ *
+ * A baseline/mid/final CHECK-IN unit never grows a shelf (final review Critical):
+ * its derivatives would carry the probe's real skill tags and, when played, fold
+ * into skill_state (a shelf UUID resolves no checkpoint phase), silently changing
+ * the learner's level from evidence whose own placement is parent-gated (C1). The
+ * recount→generate→insert spend is also serialized per (learner, lesson) by an
+ * advisory lock (withLessonGenerationLock), so concurrent completions can't each
+ * burn an LLM batch (final review Fix 2).
+ */
+export async function ensureLessonPractice(
+  input: z.infer<typeof ensureLessonPracticeSchema>,
+): Promise<{ ok: boolean; items: ShelfItem[] }> {
+  const parsed = ensureLessonPracticeSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, items: [] };
+  const { learnerId, programSlug, activityId, lessonId, more } = parsed.data;
+
+  try {
+    return await withAccount(async ({ accountId }): Promise<{ ok: boolean; items: ShelfItem[] }> => {
+      // 1. §8 gate — mirrors /api/practice (fail-closed). Ownership first, then
+      //    the resolved tree, then ACTIVE enrollment + BOTH aiPractice flags.
+      const owned = await getLearner(accountId, learnerId);
+      if (!owned) return { ok: false, items: [] };
+
+      const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
+      if (!program) return { ok: false, items: [] };
+
+      const [settings, gate] = await Promise.all([
+        getLearnerSettings(accountId, learnerId),
+        getEnrollmentForGate(accountId, learnerId, programSlug),
+      ]);
+      const aiOff =
+        settings?.aiPractice === false ||
+        !gate ||
+        gate.status !== "active" ||
+        gate.config.aiPractice === false;
+      if (aiOff) return { ok: false, items: [] };
+
+      // 2. Locate the lesson on the pinned tree (by lessonId, else the lesson
+      //    containing activityId). Unknown → calm no-op.
+      const located = locateLesson(program, { lessonId, activityId });
+      if (!located) return { ok: false, items: [] };
+      const { unit, lesson } = located;
+
+      // 2a. Placement-integrity guard (final review Critical): a baseline/mid/final
+      //    check-in unit must NEVER grow a shelf. Its authored attempts insert
+      //    generated=false rows before the checkpoint branch, so the completion
+      //    witness below would pass — but a derivative carries the probe's real
+      //    skill tags and, when played, folds straight into skill_state (a shelf
+      //    UUID resolves no checkpoint phase in recordAttemptAction), silently
+      //    changing the learner's level from evidence whose placement is
+      //    parent-gated (C1's core invariant). No-op calmly — `items` is [] because
+      //    no checkpoint shelf can ever have been generated post-fix.
+      if (unit.checkpoint) return { ok: true, items: [] };
+
+      // The existing shelf for this lesson (needed by both the incomplete no-op
+      // and the idempotency/cap returns below).
+      const shelf = await listGeneratedShelf(accountId, learnerId, programSlug);
+      const existing = shelf.filter((s) => s.lessonId === lesson.id);
+
+      // 3. Completion witness: every AUTHORED activity in the lesson must be a
+      //    (non-generated) completion. Incomplete → calm no-op returning existing
+      //    (the client calls this after each completion, before the lesson is done).
+      const completed = await getCompletedActivityIds(accountId, learnerId);
+      const completedIds = new Set(completed.map((c) => c.activityId));
+      const allComplete = lesson.activities.every((a) => completedIds.has(a.id));
+      if (!allComplete) return { ok: true, items: existing };
+
+      // 4. Idempotency + cap (cheap pre-check on the pre-lock read; re-verified
+      //    race-safe under the advisory lock in withLessonGenerationLock below, so
+      //    the common "already filled" case avoids opening a tx at all).
+      if (!more && existing.length > 0) return { ok: true, items: existing };
+      if (existing.length >= SHELF_LESSON_CAP) return { ok: true, items: existing };
+
+      const band: Band = gate.config.band ?? "ready";
+      const genAt = new Date();
+
+      // 5. Claim the room BEFORE the LLM spend (final review Fix 2): the
+      //    recount→generate→insert critical section is serialized per (learner,
+      //    lesson) by a pg advisory xact lock, so N concurrent completions can't
+      //    each burn an LLM batch — the losers see the winner's rows under the lock
+      //    and return them without a model call. Everything the model is steered by
+      //    stays SERVER-derived: the band, targets, and skill hints come from the
+      //    authored tree + the parent's config. generatePracticeItems returns only
+      //    validator-passing items and throws when zero survive — a throwing target
+      //    is SKIPPED (a short batch is fine; authored content covers the rest).
+      const items = await withLessonGenerationLock(
+        accountId,
+        learnerId,
+        lesson.id,
+        more ?? false,
+        async (room): Promise<NewGeneratedActivity[]> => {
+          const targets = pickGenerationTargets(lesson, room);
+          if (targets.length === 0) return [];
+          const newRows: NewGeneratedActivity[] = [];
+          for (const target of targets) {
+            try {
+              const generated = await generatePracticeItems(target.kind, band, target.focus, target.n, {
+                skillHints: target.skillTags,
+              });
+              for (const config of generated) {
+                newRows.push({
+                  programSlug,
+                  unitKey: unit.id,
+                  lessonId: lesson.id,
+                  kind: target.kind,
+                  title: `Fresh: ${target.sourceTitle}`,
+                  config,
+                  skillTags: target.skillTags,
+                  // Mirror the generator's real route: World-Languages kinds use the
+                  // per-language model, so stamp the lang-aware model, not just the band.
+                  genModel: provenanceForGeneration(target.kind, band, target.skillTags).model,
+                  genRoute: "shelf",
+                  genAt,
+                });
+              }
+            } catch (error) {
+              captureNonCritical(`ensureLessonPractice: generation failed for kind=${target.kind}`, error);
+            }
+          }
+          return newRows;
+        },
+      );
+      return { ok: true, items };
+    });
+  } catch (error) {
+    captureNonCritical("ensureLessonPractice failed", error);
+    return { ok: false, items: [] };
   }
 }

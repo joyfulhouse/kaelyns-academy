@@ -46,3 +46,23 @@ export function score(config: MathMoneyConfig, response: MathMoneyResponse): Act
 export function skillsAffected(_config: MathMoneyConfig): SkillTag[] {
   return ["math.money"];
 }
+
+/** B3 §6: deterministic answer-key consistency for generated money items. */
+export function validateGenerated(config: MathMoneyConfig): string | null {
+  if (config.mode === "identify") {
+    if (!config.coins.includes(config.targetCoin)) return "targetCoin not among coins";
+    return null;
+  }
+  // count mode: targetCents must be reachable from the palette (bounded DP).
+  const reachable = new Set<number>([0]);
+  for (let c = 1; c <= config.targetCents; c++) {
+    for (const coin of config.palette) {
+      const v = COIN_CENTS[coin];
+      if (c - v >= 0 && reachable.has(c - v)) {
+        reachable.add(c);
+        break;
+      }
+    }
+  }
+  return reachable.has(config.targetCents) ? null : "targetCents unreachable from palette";
+}

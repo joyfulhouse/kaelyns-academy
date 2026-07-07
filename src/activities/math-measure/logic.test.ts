@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isCorrect, score, skillsAffected } from "./logic";
+import { isCorrect, score, skillsAffected, validateGenerated } from "./logic";
 
 const compareCfg = {
   mode: "compare" as const,
@@ -60,5 +60,22 @@ describe("skillsAffected", () => {
   it("is always math.measure", () => {
     expect(skillsAffected(unitsCfg)).toEqual(["math.measure"]);
     expect(skillsAffected(compareCfg)).toEqual(["math.measure"]);
+  });
+});
+
+describe("validateGenerated (B3 answer-key net)", () => {
+  it("accepts a valid compare/units item and rejects a tied compare extreme", () => {
+    expect(validateGenerated(compareCfg)).toBeNull(); // 3 is the unique max at index 0
+    expect(validateGenerated(unitsCfg)).toBeNull(); // choices[1] === length 5
+    expect(
+      validateGenerated({ ...compareCfg, items: [
+        { label: "a", emoji: "🅰️", size: 3 },
+        { label: "b", emoji: "🅱️", size: 3 },
+      ] }),
+    ).not.toBeNull(); // tied max → ambiguous
+  });
+
+  it("rejects a units item whose marked choice is not the true length", () => {
+    expect(validateGenerated({ ...unitsCfg, answerIndex: 0 })).not.toBeNull(); // choices[0]=4 !== 5
   });
 });

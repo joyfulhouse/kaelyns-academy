@@ -6,6 +6,7 @@ import {
   isCorrect,
   score,
   skillsAffected,
+  validateGenerated,
 } from "./logic";
 
 describe("coinsTotal + COIN_CENTS", () => {
@@ -83,5 +84,19 @@ describe("skillsAffected", () => {
       targetCoin: "dime",
     };
     expect(skillsAffected(c)).toEqual(["math.money"]);
+  });
+});
+
+describe("validateGenerated (B3 answer-key net)", () => {
+  it("accepts a reachable count target and rejects an unreachable one", () => {
+    const base = { mode: "count" as const, instruction: "", palette: ["nickel" as const] };
+    expect(validateGenerated({ ...base, targetCents: 10 })).toBeNull(); // 5+5
+    expect(validateGenerated({ ...base, targetCents: 7 })).not.toBeNull(); // only multiples of 5
+  });
+
+  it("rejects an identify target that is not among the offered coins", () => {
+    expect(
+      validateGenerated({ mode: "identify", instruction: "", coins: ["penny"], targetCoin: "dime" }),
+    ).not.toBeNull();
   });
 });

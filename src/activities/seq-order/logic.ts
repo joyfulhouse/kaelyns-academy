@@ -38,3 +38,9 @@ export function score(config: SeqOrderConfig, response: SeqOrderResponse): Activ
 export function skillsAffected(_config: SeqOrderConfig): SkillTag[] {
   return ["science.sequence"];
 }
+
+/** B3 §6: structural only — labels unique (factuality is constrained by the brief). */
+export function validateGenerated(config: SeqOrderConfig): string | null {
+  const labels = config.cards.map((c) => c.label.trim().toLowerCase());
+  return new Set(labels).size === labels.length ? null : "duplicate card labels";
+}

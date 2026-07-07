@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isCorrect, score, skillsAffected } from "./logic";
+import { isCorrect, score, skillsAffected, validateGenerated } from "./logic";
 import type { SortCategoriesConfig } from "@/content/activity-configs";
 
 const cfg: SortCategoriesConfig = {
@@ -47,5 +47,28 @@ describe("score", () => {
 describe("skillsAffected", () => {
   it("is always science.classify", () => {
     expect(skillsAffected(cfg)).toEqual(["science.classify"]);
+  });
+});
+
+describe("validateGenerated (B3 answer-key net)", () => {
+  it("accepts unique, fully-used bins", () => {
+    expect(validateGenerated(cfg)).toBeNull();
+  });
+  it("rejects a bin left empty (a valid drop target with no answer)", () => {
+    const emptyWater: SortCategoriesConfig = {
+      ...cfg,
+      items: cfg.items.map((it) => ({ ...it, binId: "land" })),
+    };
+    expect(validateGenerated(emptyWater)).not.toBeNull();
+  });
+  it("rejects duplicate bin ids", () => {
+    const dupe: SortCategoriesConfig = {
+      ...cfg,
+      bins: [
+        { id: "land", label: "Land", emoji: "🌳" },
+        { id: "land", label: "Ground", emoji: "🪨" },
+      ],
+    };
+    expect(validateGenerated(dupe)).not.toBeNull();
   });
 });

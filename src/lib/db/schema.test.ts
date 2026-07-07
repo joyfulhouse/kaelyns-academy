@@ -7,6 +7,7 @@ import {
   checkpointResult,
   deletionAudit,
   enrollment,
+  generatedActivity,
   learner,
   publisher,
   session,
@@ -49,6 +50,10 @@ describe("account-delete cascade map (FK ON DELETE)", () => {
     expect(fkOnDelete(checkpointResult, "learner_id")).toBe("cascade");
   });
 
+  it("cascades generated_activity off learner (Adventure 2.0 B3 AI-generated shelf items)", () => {
+    expect(fkOnDelete(generatedActivity, "learner_id")).toBe("cascade");
+  });
+
   it("cascades the Better Auth session + account credential rows off user", () => {
     expect(fkOnDelete(session, "user_id")).toBe("cascade");
     expect(fkOnDelete(account, "user_id")).toBe("cascade");
@@ -83,6 +88,29 @@ describe("checkpoint_result schema", () => {
       "status",
       "createdAt",
       "appliedAt",
+    ]) {
+      expect(cols).toContain(c);
+    }
+  });
+});
+
+describe("generated_activity schema", () => {
+  it("exposes the B3 shelf columns", () => {
+    const cols = Object.keys(generatedActivity);
+    for (const c of [
+      "id",
+      "learnerId",
+      "programSlug",
+      "unitKey",
+      "lessonId",
+      "kind",
+      "title",
+      "config",
+      "skillTags",
+      "genModel",
+      "genRoute",
+      "genAt",
+      "createdAt",
     ]) {
       expect(cols).toContain(c);
     }

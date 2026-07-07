@@ -1,13 +1,14 @@
 // server-only: this module opens DB connections and must never be imported into
 // a Client Component. (the `server-only` package isn't installed; this comment
 // is the guard, and only server actions / route handlers import it.)
-import { and, count, desc, eq, inArray, lt, or, sum } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, lt, or, sql, sum } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   attempt,
   checkpointResult,
   deletionAudit,
   enrollment,
+  generatedActivity,
   interest,
   learner,
   learnerInterest,
@@ -19,6 +20,8 @@ import {
   verification,
 } from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
+import type { ActivityKind } from "@/content/activity-configs";
+import { SHELF_BATCH, SHELF_LESSON_CAP } from "./shelf";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
 import {
   enrollmentConfigSchema,
@@ -226,6 +229,15 @@ export interface RecordAttemptInput {
    */
   creditEligible: boolean;
   /**
+   * Server-derived in the action (Adventure 2.0 B3) — TRUE only when a GENERATED
+   * attempt's activityId was verified to be a real shelf row owned by the learner
+   * (getGeneratedActivity). Never client-supplied — same contract as
+   * creditEligible. Lets a generated shelf item earn ledger stars exactly once;
+   * the first-completion dedupe then counts prior GENERATED attempts for the id.
+   * Falsy leaves the authored/in-session-practice earn byte-identical.
+   */
+  shelfEligible?: boolean;
+  /**
    * When the attempt's unit is a checkpoint (baseline/mid/final), its evidence
    * folds into checkpoint_result INSTEAD of skill_state — nothing about the
    * learner's level changes until a parent applies the placement (§3, §7).
@@ -296,7 +308,15 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
 
     // Star economy (Adventure 2.0): first authored completion earns score.stars
     // into the append-only ledger, inside this same transaction (all-or-nothing
-    // with the attempt). Repeats/generated earn 0 (v1 grind-proof rule).
+    // with the attempt). Repeats/generated earn 0 (v1 grind-proof rule) — EXCEPT
+    // a server-verified generated shelf item (B3), which earns exactly once.
+    const shelfEligible = input.shelfEligible === true;
+    // The "already completed once" witness. An AUTHORED attempt dedupes against
+    // prior AUTHORED (generated=false) rows for this activity; a GENERATED shelf
+    // item dedupes against prior GENERATED (generated=true) rows for the same
+    // generated id — so it too earns exactly once. Both counts include the row we
+    // just inserted, so >1 means a repeat. (For an authored attempt shelfEligible
+    // is false → predicate is generated=false → byte-identical to before.)
     const prior = await tx
       .select({ id: attempt.id })
       .from(attempt)
@@ -304,22 +324,25 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
         and(
           eq(attempt.learnerId, input.learnerId),
           eq(attempt.activityId, input.activityId),
-          eq(attempt.generated, false),
+          eq(attempt.generated, shelfEligible),
         ),
       )
       .limit(2); // the row we just inserted + any earlier one
     // Membership witness gate (Codex critical): earnedStarsForAttempt stays pure
     // (it never sees creditEligible); the caller here refuses to even ask for a
     // star credit unless the action already verified activityId belongs to the
-    // learner's own pinned tree. A forged fresh activityId can no longer mint
-    // stars just because no prior attempt row exists for it.
-    const earned = input.creditEligible
-      ? earnedStarsForAttempt({
-          generated,
-          stars: input.score.stars,
-          alreadyCompleted: prior.length > 1,
-        })
-      : 0;
+    // learner's own pinned tree (authored) OR is a real shelf row owned by the
+    // learner (generated, B3). A forged fresh activityId can no longer mint stars
+    // just because no prior attempt row exists for it.
+    const earned =
+      input.creditEligible || shelfEligible
+        ? earnedStarsForAttempt({
+            generated,
+            stars: input.score.stars,
+            alreadyCompleted: prior.length > 1,
+            shelfEligible,
+          })
+        : 0;
     if (earned > 0) {
       await tx.insert(starLedger).values({
         learnerId: input.learnerId,
@@ -677,6 +700,19 @@ function clampStars(value: number): number {
   return Math.max(0, Math.min(3, Math.round(value)));
 }
 
+/** Fold a set of attempt rows into best (highest) clamped stars per activityId. */
+function foldBestStars(
+  rows: readonly { activityId: string; score: { stars: number } }[],
+): CompletedActivity[] {
+  const best = new Map<string, number>();
+  for (const r of rows) {
+    const stars = clampStars(r.score.stars);
+    const prior = best.get(r.activityId) ?? 0;
+    if (stars > prior || !best.has(r.activityId)) best.set(r.activityId, Math.max(prior, stars));
+  }
+  return [...best.entries()].map(([activityId, stars]) => ({ activityId, stars }));
+}
+
 /**
  * Authored activities the learner has completed (generated practice excluded),
  * each with the best stars earned. This is the account-mode equivalent of the
@@ -705,16 +741,326 @@ export async function getCompletedActivityIds(
         // attempts) rather than an arbitrary set; index-backed by attempt_learner_created_idx.
         .orderBy(desc(attempt.createdAt))
         .limit(5000);
-      const best = new Map<string, number>();
-      for (const r of rows) {
-        const stars = clampStars(r.score.stars);
-        const prior = best.get(r.activityId) ?? 0;
-        if (stars > prior || !best.has(r.activityId)) best.set(r.activityId, Math.max(prior, stars));
-      }
-      return [...best.entries()].map(([activityId, stars]) => ({ activityId, stars }));
+      return foldBestStars(rows);
     },
     [],
   );
+}
+
+/**
+ * Best stars (0..3) per GENERATED attempt (generated=true), folded like
+ * {@link getCompletedActivityIds}. A generated SHELF item is a durable, one-time
+ * star earner whose completion must survive the learner surface's post-record
+ * reconcile — so its best stars are read here and the caller scopes them to the
+ * learner's live shelf ids (via {@link import("./shelf").shelfCompletions}); an
+ * ephemeral in-session "More" attempt (activityId = an authored id, never a shelf
+ * row) has no matching shelf id and is naturally excluded. Bounded + newest-first
+ * exactly like the authored read.
+ */
+export async function getGeneratedCompletions(
+  accountId: string,
+  learnerId: string,
+): Promise<CompletedActivity[]> {
+  return withOwnedLearner<CompletedActivity[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select({ activityId: attempt.activityId, score: attempt.score })
+        .from(attempt)
+        .where(and(eq(attempt.learnerId, learnerId), eq(attempt.generated, true)))
+        .orderBy(desc(attempt.createdAt))
+        .limit(5000);
+      return foldBestStars(rows);
+    },
+    [],
+  );
+}
+
+// ── Adaptive generation shelf (Adventure 2.0 B3, spec §4) ────────────────────
+//
+// Durable, learner-private AI-generated practice. One generated_activity row per
+// item, persisted only after the item passed schema + kind validation upstream
+// (generatePracticeItems). Never part of the shared authored curriculum, so it
+// lives in its own table and is always account-scoped like every other read.
+
+/** A shelf item as the learner surface + the action need it (client-safe). */
+export interface ShelfItem {
+  id: string;
+  lessonId: string;
+  unitKey: string;
+  kind: ActivityKind;
+  title: string;
+  skillTags: string[];
+  /** ISO creation time (the deterministic shelf sort key). */
+  createdAt: string;
+}
+
+/** One row to persist: everything but the (account-derived) learnerId, which
+ *  {@link withLessonGenerationLock} stamps from the ownership-checked call. */
+export interface NewGeneratedActivity {
+  programSlug: string;
+  unitKey: string;
+  lessonId: string;
+  kind: ActivityKind;
+  title: string;
+  /** The validated kind config (zod + kind-validated before it reached here). */
+  config: unknown;
+  skillTags: string[];
+  genModel: string;
+  genRoute: string;
+  genAt: Date;
+}
+
+/** A single generated activity incl. its playable config + kind (Task 4 reads
+ *  this to render/score a generated item). */
+export interface GeneratedActivityRow {
+  id: string;
+  lessonId: string;
+  unitKey: string;
+  programSlug: string;
+  kind: ActivityKind;
+  title: string;
+  config: unknown;
+  skillTags: string[];
+}
+
+/**
+ * A shelf item resolved for PLAY by account + program (Task 4). Carries the
+ * playable `config`/`kind` PLUS the stored generation provenance as an ISO
+ * string (`gen`), so the client host can relay it onto the recorded attempt
+ * exactly like ActivityHost's practice path (P6 / §8). Client-safe: no learner
+ * id, no Date objects — everything crosses the server→client boundary cleanly.
+ */
+export interface PlayableShelfItem {
+  id: string;
+  lessonId: string;
+  unitKey: string;
+  programSlug: string;
+  kind: ActivityKind;
+  title: string;
+  config: unknown;
+  skillTags: string[];
+  gen: { model: string; route: string; at: string };
+}
+
+/** Project a generated_activity row into the client-safe {@link ShelfItem}. */
+function toShelfItem(r: typeof generatedActivity.$inferSelect): ShelfItem {
+  return {
+    id: r.id,
+    lessonId: r.lessonId,
+    unitKey: r.unitKey,
+    kind: r.kind as ActivityKind,
+    title: r.title,
+    skillTags: r.skillTags,
+    createdAt: r.createdAt.toISOString(),
+  };
+}
+
+/**
+ * Serialize a lesson's recount → generate → insert critical section behind a
+ * per-(learner, lesson) transaction-scoped advisory lock, so the LLM spend is
+ * claimed BEFORE the model call (final review Fix 2). Without this, N concurrent
+ * completions each pass a pre-lock cap check and each burn an LLM batch; the rows
+ * stay capped (the in-tx recount + slice below does that), but the SPEND does
+ * not. Here the lock is taken first, then the shelf is re-read INSIDE it: the
+ * winner generates + inserts; every loser sees the winner's rows and returns them
+ * WITHOUT calling `generate` (no model call). Mirrors the codebase's advisory-lock
+ * precedent (scripts/migrate.ts's `pg_advisory_lock` around migrations).
+ *
+ * `generate(room)` runs INSIDE the tx (its LLM await holds the lock) and returns
+ * the rows to persist; it is invoked only when there is room under the cap and the
+ * shelf is not already satisfied. Holding the tx across the await is acceptable at
+ * pilot scale: the lock scope is one learner's one lesson, so only self-races
+ * contend. Tenancy is re-checked inside the tx (same pattern as recordAttempt) so
+ * a foreign account writes nothing. Returns the full lesson shelf (existing +
+ * freshly inserted), oldest-first.
+ * @throws when the learner is not owned by the account (tenancy).
+ */
+export async function withLessonGenerationLock(
+  accountId: string,
+  learnerId: string,
+  lessonId: string,
+  more: boolean,
+  generate: (room: number) => Promise<NewGeneratedActivity[]>,
+): Promise<ShelfItem[]> {
+  return getDb().transaction(async (tx) => {
+    // Serialize per (learner, lesson): concurrent completions for the SAME lesson
+    // wait here until the holder's tx commits (the lock auto-releases at commit).
+    // hashtextextended folds the composite key to the bigint pg_advisory takes.
+    const key = `${learnerId}:${lessonId}`;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+
+    // Tenancy boundary, re-checked inside the tx (same pattern as recordAttempt).
+    const owned = await tx
+      .select({ id: learner.id })
+      .from(learner)
+      .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
+      .limit(1);
+    if (!owned[0]) throw new Error("learner not found for account");
+
+    // Re-read this lesson's shelf INSIDE the lock so the idempotency + cap
+    // decisions (and the room passed to generate) race against the SAME snapshot
+    // as the insert below — this is the recount that makes the spend claim atomic.
+    const existingRows = await tx
+      .select()
+      .from(generatedActivity)
+      .where(and(eq(generatedActivity.learnerId, learnerId), eq(generatedActivity.lessonId, lessonId)))
+      .orderBy(asc(generatedActivity.createdAt));
+    const existing = existingRows.map(toShelfItem);
+
+    // Idempotency + cap, now serialized: a filled shelf is returned as-is unless
+    // `more`; a capped shelf never grows. A loser of the race lands here with the
+    // winner's rows already present → returns them, `generate` never runs.
+    if (!more && existing.length > 0) return existing;
+    if (existing.length >= SHELF_LESSON_CAP) return existing;
+
+    const room = Math.min(SHELF_BATCH, SHELF_LESSON_CAP - existing.length);
+    const newRows = await generate(room);
+    if (newRows.length === 0) return existing;
+
+    // Re-cap against the same snapshot before inserting (defense-in-depth: never
+    // exceed the room computed under the lock even if generate over-produced).
+    const inserted = await tx
+      .insert(generatedActivity)
+      .values(
+        newRows.slice(0, room).map((r) => ({
+          learnerId,
+          programSlug: r.programSlug,
+          unitKey: r.unitKey,
+          lessonId: r.lessonId,
+          kind: r.kind,
+          title: r.title,
+          config: r.config,
+          skillTags: r.skillTags,
+          genModel: r.genModel,
+          genRoute: r.genRoute,
+          genAt: r.genAt,
+        })),
+      )
+      .returning();
+    return [...existing, ...inserted.map(toShelfItem)];
+  });
+}
+
+/**
+ * The learner's generated shelf for one program (owned-by-account), oldest-first
+ * so the client renders a stable order. Completion is derived from attempts
+ * client-side, so it is NOT stored on the shelf row.
+ */
+export async function listGeneratedShelf(
+  accountId: string,
+  learnerId: string,
+  programSlug: string,
+): Promise<ShelfItem[]> {
+  return withOwnedLearner<ShelfItem[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select()
+        .from(generatedActivity)
+        .where(
+          and(
+            eq(generatedActivity.learnerId, learnerId),
+            eq(generatedActivity.programSlug, programSlug),
+          ),
+        )
+        .orderBy(asc(generatedActivity.createdAt));
+      return rows.map(toShelfItem);
+    },
+    [],
+  );
+}
+
+/**
+ * One generated activity by id, ownership-checked (owned-by-account) AND scoped
+ * to the learner so a foreign/mismatched id returns null. Carries the playable
+ * `config` + `kind` (Task 4 renders/scores from it). Returns null when the
+ * learner is not owned or the row doesn't exist / isn't this learner's.
+ */
+export async function getGeneratedActivity(
+  accountId: string,
+  learnerId: string,
+  id: string,
+): Promise<GeneratedActivityRow | null> {
+  return withOwnedLearner<GeneratedActivityRow | null>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select()
+        .from(generatedActivity)
+        .where(and(eq(generatedActivity.id, id), eq(generatedActivity.learnerId, learnerId)))
+        .limit(1);
+      const r = rows[0];
+      if (!r) return null;
+      return {
+        id: r.id,
+        lessonId: r.lessonId,
+        unitKey: r.unitKey,
+        programSlug: r.programSlug,
+        kind: r.kind as ActivityKind,
+        title: r.title,
+        config: r.config,
+        skillTags: r.skillTags,
+      };
+    },
+    null,
+  );
+}
+
+/**
+ * One shelf item resolved for PLAY, scoped by ACCOUNT + PROGRAM (Task 4). Unlike
+ * {@link getGeneratedActivity} (which needs a known learnerId), the play route
+ * only has the account (session) + programSlug + the shelf id, so ownership is
+ * resolved through the JOIN to the owning learner: the row is returned only when
+ * its learner belongs to `accountId` AND its programSlug matches. A
+ * foreign/mismatched/unknown id → null (the host renders the calm "moved" state).
+ * Carries the generation provenance as an ISO string for the client relay.
+ */
+export async function getGeneratedActivityForAccount(
+  accountId: string,
+  programSlug: string,
+  id: string,
+): Promise<PlayableShelfItem | null> {
+  const rows = await getDb()
+    .select({
+      id: generatedActivity.id,
+      lessonId: generatedActivity.lessonId,
+      unitKey: generatedActivity.unitKey,
+      programSlug: generatedActivity.programSlug,
+      kind: generatedActivity.kind,
+      title: generatedActivity.title,
+      config: generatedActivity.config,
+      skillTags: generatedActivity.skillTags,
+      genModel: generatedActivity.genModel,
+      genRoute: generatedActivity.genRoute,
+      genAt: generatedActivity.genAt,
+    })
+    .from(generatedActivity)
+    .innerJoin(learner, eq(generatedActivity.learnerId, learner.id))
+    .where(
+      and(
+        eq(generatedActivity.id, id),
+        eq(generatedActivity.programSlug, programSlug),
+        eq(learner.accountId, accountId),
+      ),
+    )
+    .limit(1);
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    id: r.id,
+    lessonId: r.lessonId,
+    unitKey: r.unitKey,
+    programSlug: r.programSlug,
+    kind: r.kind as ActivityKind,
+    title: r.title,
+    config: r.config,
+    skillTags: r.skillTags,
+    gen: { model: r.genModel, route: r.genRoute, at: r.genAt.toISOString() },
+  };
 }
 
 /** Outcome tally across a learner's skills (for the dashboard summary). */
@@ -1093,6 +1439,7 @@ async function gatherLearnerExport(
     interestRows,
     questRows,
     checkpointResultRows,
+    generatedActivityRows,
   ] = await Promise.all([
     getDb().select().from(enrollment).where(eq(enrollment.learnerId, learnerId)),
     getDb().select().from(skillState).where(eq(skillState.learnerId, learnerId)),
@@ -1137,6 +1484,12 @@ async function gatherLearnerExport(
       .from(checkpointResult)
       .where(eq(checkpointResult.learnerId, learnerId))
       .orderBy(desc(checkpointResult.createdAt)),
+    // Adventure 2.0 B3 (Task 6): AI-generated practice items (the child's shelf).
+    getDb()
+      .select()
+      .from(generatedActivity)
+      .where(eq(generatedActivity.learnerId, learnerId))
+      .orderBy(desc(generatedActivity.createdAt)),
   ]);
 
   return shapeLearnerExport({
@@ -1197,6 +1550,18 @@ async function gatherLearnerExport(
       scores: r.scores,
       status: r.status,
       createdAt: r.createdAt.toISOString(),
+    })),
+    generatedActivities: generatedActivityRows.map((g) => ({
+      unitKey: g.unitKey,
+      lessonId: g.lessonId,
+      kind: g.kind,
+      title: g.title,
+      config: g.config,
+      skillTags: g.skillTags,
+      genModel: g.genModel,
+      genRoute: g.genRoute,
+      genAt: g.genAt.toISOString(),
+      createdAt: g.createdAt.toISOString(),
     })),
   });
 }

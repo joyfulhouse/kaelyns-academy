@@ -1,7 +1,13 @@
 import type { SeqOrderConfig } from "@/content/activity-configs";
 import type { ActivityType } from "@/content/types";
 import { SeqOrderPlayer } from "./Player";
-import { schema, score, skillsAffected, type SeqOrderResponse } from "./logic";
+import {
+  schema,
+  score,
+  skillsAffected,
+  validateGenerated,
+  type SeqOrderResponse,
+} from "./logic";
 
 /** seq-order activity-type plugin: tap cards into their correct sequence. */
 export const seqOrder: ActivityType<SeqOrderConfig, SeqOrderResponse> = {
@@ -11,5 +17,6 @@ export const seqOrder: ActivityType<SeqOrderConfig, SeqOrderResponse> = {
   Player: SeqOrderPlayer,
   score,
   skillsAffected,
+  validateGenerated,
 };
 export type { SeqOrderResponse };

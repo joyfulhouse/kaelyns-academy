@@ -69,6 +69,23 @@ export const REQUIRED_COLUMNS: ColumnMap = {
     "created_at",
     "applied_at",
   ],
+  // Adventure 2.0 B3 adaptive-generation shelf (spec §4). Drift here must 503
+  // before the generation loop reads/writes a missing column.
+  generated_activity: [
+    "id",
+    "learner_id",
+    "program_slug",
+    "unit_key",
+    "lesson_id",
+    "kind",
+    "title",
+    "config",
+    "skill_tags",
+    "gen_model",
+    "gen_route",
+    "gen_at",
+    "created_at",
+  ],
 };
 
 export function missingColumns(required: ColumnMap, live: ColumnMap): string[] {

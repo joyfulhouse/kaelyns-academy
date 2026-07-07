@@ -1,7 +1,13 @@
 import type { MathMoneyConfig } from "@/content/activity-configs";
 import type { ActivityType } from "@/content/types";
 import { MathMoneyPlayer } from "./Player";
-import { schema, score, skillsAffected, type MathMoneyResponse } from "./logic";
+import {
+  schema,
+  score,
+  skillsAffected,
+  validateGenerated,
+  type MathMoneyResponse,
+} from "./logic";
 
 /** math-money activity-type plugin: identify coins / count coins to a total. */
 export const mathMoney: ActivityType<MathMoneyConfig, MathMoneyResponse> = {
@@ -11,5 +17,6 @@ export const mathMoney: ActivityType<MathMoneyConfig, MathMoneyResponse> = {
   Player: MathMoneyPlayer,
   score,
   skillsAffected,
+  validateGenerated,
 };
 export type { MathMoneyResponse };

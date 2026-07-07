@@ -78,6 +78,13 @@
       "when": 1783073512432,
       "tag": "0010_colossal_grim_reaper",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1783443224689,
+      "tag": "0011_thankful_franklin_richards",
+      "breakpoints": true
     }
   ]
 }

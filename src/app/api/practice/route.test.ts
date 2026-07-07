@@ -9,9 +9,10 @@ vi.mock("@/lib/ai/practice", () => ({
     model: "ha-assist",
     route: String(band),
   }),
-  // Stub isGenerableKind to identify which kinds can be AI-generated (true for
-  // generable kinds like phonics-wordbuild/math-tenframe, false for authored-only
-  // like math-clock/money/measure). Uses KIND_BRIEF as its source of truth.
+  // Stub isGenerableKind to identify which kinds can be AI-generated. After B3
+  // every real kind is generable (the 5 formerly-authored-only kinds each pair a
+  // brief with a deterministic answer-key validator); only a non-existent kind is
+  // rejected. Mirrors the real function's source of truth (KIND_BRIEF + lang kinds).
   isGenerableKind: (kind: string) => {
     const GENERABLE_KINDS = [
       "phonics-wordbuild",
@@ -22,6 +23,11 @@ vi.mock("@/lib/ai/practice", () => ({
       "math-array",
       "lang-symbol-intro",
       "lang-listen-match",
+      "math-clock",
+      "math-money",
+      "math-measure",
+      "sort-categories",
+      "seq-order",
     ];
     return GENERABLE_KINDS.includes(kind);
   },
@@ -162,13 +168,25 @@ describe("POST /api/practice", () => {
     });
   });
 
-  it("400s when kind is authored-only (not generable) in explore request", async () => {
+  it("400s when kind is not a generable kind in an explore request", async () => {
+    // After B3 every real kind is generable, so the enum only rejects a bogus kind;
+    // GENERABLE_KINDS (derived from isGenerableKind) now includes math-clock et al.
     vi.mocked(getAccountOrNull).mockResolvedValue(null);
     const res = await POST(
-      post({ kind: "math-clock", band: "ready", focus: "counting" }, { "cf-connecting-ip": "203.0.113.7" }),
+      post({ kind: "not-a-real-kind", band: "ready", focus: "counting" }, { "cf-connecting-ip": "203.0.113.7" }),
     );
     expect(res.status).toBe(400);
     expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("accepts a formerly-authored-only kind in an explore request (GENERABLE_KINDS includes it — B3)", async () => {
+    vi.mocked(getAccountOrNull).mockResolvedValue(null);
+    vi.mocked(generatePracticeItems).mockResolvedValue([]);
+    const res = await POST(
+      post({ kind: "math-clock", band: "ready", focus: "telling time" }, { "cf-connecting-ip": "203.0.113.7" }),
+    );
+    expect(res.status).toBe(200);
+    expect(generatePracticeItems).toHaveBeenCalledOnce();
   });
 
   it("keys signed-in callers by account with a more generous window", async () => {

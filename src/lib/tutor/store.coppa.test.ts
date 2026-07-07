@@ -38,6 +38,7 @@ const rows: Record<string, Record<string, unknown>[]> = {
   learner_interest: [],
   learner_quest: [],
   checkpoint_result: [],
+  generated_activity: [],
 };
 // Canned scalar count() results, consumed in order by the count selects.
 const counts: number[] = [];
@@ -145,6 +146,7 @@ vi.mock("@/lib/db/schema", () => ({
   learnerInterest: { _name: "learner_interest", learnerId: {}, interestId: {}, source: {} },
   learnerQuest: { _name: "learner_quest", learnerId: {}, assignedOn: {}, updatedAt: {} },
   checkpointResult: { _name: "checkpoint_result", learnerId: {}, createdAt: {} },
+  generatedActivity: { _name: "generated_activity", learnerId: {}, createdAt: {} },
 }));
 vi.mock("drizzle-orm", () => ({
   and: (...a: unknown[]) => a,
@@ -167,7 +169,7 @@ import {
 // compare by reference against what gatherLearnerExport actually passed to
 // `.orderBy(...)` — not just count columns, which would pass even if the wrong
 // column were swapped in.
-import { checkpointResult, learnerQuest, starLedger } from "@/lib/db/schema";
+import { checkpointResult, generatedActivity, learnerQuest, starLedger } from "@/lib/db/schema";
 
 beforeEach(() => {
   ops.length = 0;
@@ -256,6 +258,12 @@ describe("gatherLearnerExport bounds + ordering (via buildAccountExport)", () =>
     const checkpointOrder = ops.find((o) => o.op === "select.orderBy" && o.table === "checkpoint_result");
     expect(checkpointOrder?.cols).toEqual([checkpointResult.createdAt]);
   });
+
+  it("orders the generated_activity read by createdAt desc (Adventure 2.0 B3, Task 6)", async () => {
+    await buildAccountExport("U1", "2026-06-26T00:00:00.000Z");
+    const genOrder = ops.find((o) => o.op === "select.orderBy" && o.table === "generated_activity");
+    expect(genOrder?.cols).toEqual([generatedActivity.createdAt]);
+  });
 });
 
 // COPPA round-trip for the checkpoint_result table (Task 6): the export must
@@ -309,6 +317,69 @@ describe("checkpoint_result COPPA round-trip (buildLearnerExport + deleteLearner
     deleteReturning.value = [];
     const deleted = await deleteLearner("U1", "L1");
     expect(deleted).toBe(false);
+  });
+});
+
+// COPPA round-trip for the generated_activity table (Adventure 2.0 B3, Task 6):
+// the export must carry a learner's AI-generated shelf items with full generation
+// provenance, and deleting the learner must remove them (via the FK cascade
+// asserted separately in schema.test.ts's cascade map).
+describe("generated_activity COPPA round-trip (buildLearnerExport + deleteLearner)", () => {
+  const owned = { id: "L1", accountId: "U1", displayName: "A", birthMonth: null, settings: {}, createdAt: new Date() };
+
+  it("buildLearnerExport includes the learner's generated_activity rows with provenance", async () => {
+    rows.learner = [owned];
+    rows.generated_activity = [
+      {
+        unitKey: "unit-life-skills-math",
+        lessonId: "lesson-counting-coins",
+        kind: "math-tenframe",
+        title: "Coin Count",
+        config: { a: 1 },
+        skillTags: ["math.count"],
+        genModel: "ha-assist",
+        genRoute: "ready",
+        genAt: new Date("2026-06-26T08:00:00.000Z"),
+        createdAt: new Date("2026-06-26T08:00:01.000Z"),
+      },
+    ];
+    const result = await buildLearnerExport("U1", "L1", "2026-06-26T00:00:00.000Z");
+    expect(result).not.toBeNull();
+    expect(result!.generatedActivities).toEqual([
+      {
+        unitKey: "unit-life-skills-math",
+        lessonId: "lesson-counting-coins",
+        kind: "math-tenframe",
+        title: "Coin Count",
+        config: { a: 1 },
+        skillTags: ["math.count"],
+        genModel: "ha-assist",
+        genRoute: "ready",
+        genAt: "2026-06-26T08:00:00.000Z",
+        createdAt: "2026-06-26T08:00:01.000Z",
+      },
+    ]);
+  });
+
+  it("deleteLearner deletes the learner scoped by (id, accountId) — the single statement generated_activity's FK cascade hangs off", async () => {
+    rows.learner = [owned];
+    deleteReturning.value = [{ id: "L1" }];
+    const deleted = await deleteLearner("U1", "L1");
+    expect(deleted).toBe(true);
+    const del = ops.find((o) => o.op === "delete.returning" && o.table === "learner");
+    expect(del).toBeDefined();
+    expect(JSON.stringify(del!.where)).toContain("L1");
+    expect(JSON.stringify(del!.where)).toContain("U1");
+  });
+
+  it("export carries no generated_activity rows once the cascade has removed them (post-delete emptiness)", async () => {
+    rows.learner = [owned];
+    // After the learner delete, the FK cascade has removed every generated_activity
+    // row — model that here by leaving the table empty; the export shows an empty shelf.
+    rows.generated_activity = [];
+    const result = await buildLearnerExport("U1", "L1", "2026-06-26T00:00:00.000Z");
+    expect(result).not.toBeNull();
+    expect(result!.generatedActivities).toEqual([]);
   });
 });
 

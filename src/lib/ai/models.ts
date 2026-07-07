@@ -10,19 +10,19 @@ import { getEnv } from "@/lib/env";
  */
 
 /**
- * Tutor routes on the homelab LiteLLM gateway. Both point at `ha-assist`
- * (Qwen3.6-35B on dgx0 with reasoning DISABLED): sub-second, direct, reliable
- * JSON. We deliberately do NOT use a reasoning route (e.g. `chat-default`) here
- * because chatJSON requires clean structured output, and a reasoning model's
- * thinking tokens corrupt/slow the JSON path (observed: stretch-band practice
- * 502'd at ~31s via chat-default; ha-assist returns valid items in ~4s).
+ * Tutor routes on the homelab LiteLLM gateway (DeepSeek V4, B3 §3). `ds4-fast`
+ * serves the READY band (sub-second, direct JSON); `ds4` serves the STRETCH
+ * band (the same model at a fuller budget for richer prose). Both are the
+ * NON-reasoning DeepSeek routes: chatJSON needs clean structured output, and a
+ * reasoning model's thinking tokens corrupt/slow the JSON path (a prior route
+ * 502'd at ~31s), so we deliberately avoid the reasoning routes here.
  *
- * `RICH` is kept as a distinct name so a genuinely stronger route (a Claude
- * route added to LiteLLM + an Anthropic key sealed-secret, or a reasoning-off
- * larger model) can be slotted in for richer prose later. Model names are config.
+ * `ha-assist` (the former tutor route) remains configured on the gateway but is
+ * no longer used by the tutor. Model names are config: swapping a route here is
+ * the only change needed to re-point either band.
  */
-export const TUTOR_FAST = "ha-assist" as const;
-export const TUTOR_RICH = "ha-assist" as const;
+export const TUTOR_FAST = "ds4-fast" as const;
+export const TUTOR_RICH = "ds4" as const;
 
 export type TutorModel = typeof TUTOR_FAST | typeof TUTOR_RICH | (string & {});
 
@@ -30,8 +30,9 @@ export type TutorModel = typeof TUTOR_FAST | typeof TUTOR_RICH | (string & {});
  * Default server-side request budget for a gateway call. A hung LiteLLM upstream
  * must not pin a Next.js request handler open indefinitely: server callers don't
  * pass a `signal`, so without this every stalled call would leak a handler (a
- * prior incident saw chat-default stall ~31s before a 502). 20s is comfortably
- * above ha-assist's ~4s JSON path while still bounding the worst case.
+ * prior incident saw a reasoning route stall ~31s before a 502). 20s is
+ * comfortably above the ds4 JSON path's few-second latency while still bounding
+ * the worst case.
  */
 const DEFAULT_MS = 20_000;
 

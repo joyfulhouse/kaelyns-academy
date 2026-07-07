@@ -1,9 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { CaretRightIcon, FlagIcon, MapTrifoldIcon } from "@phosphor-icons/react/dist/ssr";
+import {
+  CaretRightIcon,
+  FlagIcon,
+  MapTrifoldIcon,
+  SparkleIcon,
+} from "@phosphor-icons/react/dist/ssr";
 import type { Activity, Unit } from "@/content";
 import { getUnit } from "@/content";
+import { ensureLessonPractice } from "@/app/(learner)/actions";
+import { SHELF_LESSON_CAP } from "@/lib/tutor/shelf";
+import type { ShelfItem } from "@/lib/tutor/store";
 import { cn } from "@/lib/cn";
 import { Mascot } from "@/components/art/Mascot";
 import { Pill } from "@/components/ui/Pill";
@@ -42,10 +51,17 @@ export function UnitView({
   // in account mode, localStorage guest otherwise. The mock learner id only
   // matters in guest mode; state is scoped to the active program by its slug.
   // `mode`/`available`/`config` drive the account-mode curation gate (Fix-F A3).
-  const { getStars, ready, program, mode, available, config } = useLearnerState(
-    learner.id,
-    programSlug,
-  );
+  const {
+    getStars,
+    ready,
+    program,
+    mode,
+    available,
+    config,
+    generatedShelf,
+    refreshShelf,
+    selectedLearnerId,
+  } = useLearnerState(learner.id, programSlug);
 
   // Account-mode curation gate (Fix-F A3). Enforced ONLY in account mode and
   // ONLY once state has loaded (`ready`) — so guest mode is unaffected and the
@@ -172,12 +188,170 @@ export function UnitView({
           })}
         </ul>
 
+        {/* Fresh practice shelf (Adventure 2.0 B3): account mode only, once the
+            server has generated items for a completed lesson in THIS unit. Guest
+            mode never renders it (generatedShelf is always [] there, §8). */}
+        {mode === "account" && ready && selectedLearnerId && (
+          <FreshPracticeShelf
+            programSlug={programSlug}
+            unit={unit}
+            shelf={generatedShelf}
+            getStars={getStars}
+            learnerId={selectedLearnerId}
+            refreshShelf={refreshShelf}
+          />
+        )}
+
         <div className="mt-10 flex flex-col items-center gap-2 text-center">
           <Mascot mood="happy" size={56} />
           <p className="text-base text-ink-faint">Tap anything. You can always try again.</p>
         </div>
       </AppShellKid>
     </div>
+  );
+}
+
+/* ── Fresh practice shelf (Adventure 2.0 B3) ─────────────────────────────────
+   The learner's durable AI-generated practice for this unit, grouped by the
+   lesson it was made from. Each group offers ONE gentle "More like this" that
+   asks the server for another bounded batch, up to SHELF_LESSON_CAP. Account
+   mode only (the parent hook returns an empty shelf in guest mode). */
+
+function FreshPracticeShelf({
+  programSlug,
+  unit,
+  shelf,
+  getStars,
+  learnerId,
+  refreshShelf,
+}: {
+  programSlug: string;
+  unit: Unit;
+  shelf: ShelfItem[];
+  getStars: (activityId: string) => 0 | 1 | 2 | 3;
+  learnerId: string;
+  refreshShelf: () => Promise<void>;
+}) {
+  // The lessonId currently generating "more" (null = idle); disables that group's
+  // button and shows the calm "cooking" copy while the bounded call is in flight.
+  const [pendingLesson, setPendingLesson] = useState<string | null>(null);
+  // Announced via the sr-only status region below — a disabled button's label
+  // swap ("Making more…") isn't reliably read out, and new shelf items appear
+  // silently otherwise (mirrors ActivityHost's GeneratingScreen live region).
+  const [liveStatus, setLiveStatus] = useState("");
+
+  const shelfForUnit = shelf.filter((s) => s.unitKey === unit.id);
+  if (shelfForUnit.length === 0) return null;
+
+  // Group by lessonId, keeping the unit's authored lesson order (then any stray
+  // lesson id not on the current tree, defensively, so nothing is dropped).
+  const titleByLesson = new Map(unit.lessons.map((l) => [l.id, l.title]));
+  const itemsByLesson = new Map<string, ShelfItem[]>();
+  for (const item of shelfForUnit) {
+    const arr = itemsByLesson.get(item.lessonId);
+    if (arr) arr.push(item);
+    else itemsByLesson.set(item.lessonId, [item]);
+  }
+  const orderedLessonIds = [
+    ...unit.lessons.map((l) => l.id).filter((id) => itemsByLesson.has(id)),
+    ...[...itemsByLesson.keys()].filter((id) => !titleByLesson.has(id)),
+  ];
+
+  async function handleMore(lessonId: string) {
+    setPendingLesson(lessonId);
+    setLiveStatus("Making more practice");
+    try {
+      await ensureLessonPractice({ learnerId, programSlug, lessonId, more: true });
+      await refreshShelf();
+      setLiveStatus("New practice ready");
+    } catch {
+      // Forgiving: the button simply re-enables; the server logged the failure.
+      setLiveStatus("");
+    } finally {
+      setPendingLesson(null);
+    }
+  }
+
+  return (
+    <section className="mt-10">
+      <h2 className="mb-3 flex items-center gap-2 px-1 font-display text-xl font-semibold tracking-tight">
+        <SparkleIcon weight="fill" className="size-5 text-honey-deep" aria-hidden />
+        Fresh practice, made for you
+      </h2>
+
+      {/* Screen-reader announcement for the More-like-this flow. */}
+      <p role="status" aria-live="polite" className="sr-only">
+        {liveStatus}
+      </p>
+
+      <div className="flex flex-col gap-7">
+        {orderedLessonIds.map((lessonId) => {
+          const items = itemsByLesson.get(lessonId) ?? [];
+          const capped = items.length >= SHELF_LESSON_CAP;
+          const busy = pendingLesson === lessonId;
+          const title = titleByLesson.get(lessonId);
+          return (
+            <div key={lessonId}>
+              {title && (
+                <h3 className="mb-2 px-1 font-display text-base font-semibold text-ink-soft">
+                  {title}
+                </h3>
+              )}
+              <ul className="flex flex-col gap-4">
+                {items.map((item) => {
+                  const meta = ACTIVITY_META[item.kind];
+                  const Icon = meta.icon;
+                  const stars = getStars(item.id);
+                  return (
+                    <li key={item.id}>
+                      <a
+                        href={`/learn/${programSlug}/generated/${item.id}`}
+                        aria-label={`${item.title}. ${meta.label}.${stars > 0 ? ` ${stars} of 3 stars.` : ""}`}
+                        className={cn(
+                          "flex min-h-24 w-full items-center gap-4 rounded-2xl px-4 py-4",
+                          "border-[3px] border-ink bg-paper-raised shadow-pop transition",
+                          "active:translate-y-1 active:shadow-none motion-safe:hover:-translate-y-0.5",
+                        )}
+                      >
+                        <span
+                          aria-hidden
+                          className="grid size-16 shrink-0 place-items-center rounded-xl border-[3px] border-ink bg-honey/20"
+                        >
+                          <Icon weight="duotone" className="size-9 text-ink" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-display text-xl font-semibold tracking-tight">
+                            {item.title}
+                          </span>
+                          <span className="mt-1.5 block">
+                            <Stars value={stars} size="sm" />
+                          </span>
+                        </span>
+                        <CaretRightIcon weight="bold" className="size-7 shrink-0 text-ink/60" />
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
+              {!capped && (
+                <div className="mt-3 px-1">
+                  <Button
+                    type="button"
+                    variant="soft"
+                    size="kid"
+                    onClick={() => void handleMore(lessonId)}
+                    disabled={busy}
+                  >
+                    <SparkleIcon weight="fill" className="size-5 text-honey-deep" aria-hidden />
+                    {busy ? "Making more…" : "More like this"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

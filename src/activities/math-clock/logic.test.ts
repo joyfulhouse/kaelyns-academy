@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MathClockConfig } from "@/content/activity-configs";
-import { isCorrect, score, skillsAffected } from "./logic";
+import { isCorrect, score, skillsAffected, validateGenerated } from "./logic";
 
 describe("isCorrect", () => {
   it("read matches the chosen digital time index", () => {
@@ -63,5 +63,20 @@ describe("skillsAffected", () => {
     expect(skillsAffected({ mode: "set", instruction: "", targetHour: 1, targetMinute: 0 })).toEqual([
       "math.time",
     ]);
+  });
+});
+
+describe("validateGenerated (B3 answer-key net)", () => {
+  const read = { mode: "read" as const, instruction: "", hour: 3, minute: 0 as const };
+  it("accepts a read item whose marked choice is the true time", () => {
+    expect(validateGenerated({ ...read, choices: ["3:00", "4:00"], answerIndex: 0 })).toBeNull();
+  });
+  it("rejects a read item whose marked choice is the wrong time", () => {
+    expect(validateGenerated({ ...read, choices: ["4:00", "3:00"], answerIndex: 0 })).not.toBeNull();
+  });
+  it("has no answer key to check in set mode", () => {
+    expect(
+      validateGenerated({ mode: "set", instruction: "", targetHour: 1, targetMinute: 0 }),
+    ).toBeNull();
   });
 });

@@ -252,6 +252,42 @@ export const checkpointResult = pgTable(
 );
 
 /**
+ * Adaptive generation (Adventure 2.0 B3, spec §4): durable, learner-private
+ * AI-generated practice. One row per generated item, persisted only after
+ * schema + kind validation. Never part of the shared authored curriculum.
+ */
+export const generatedActivity = pgTable(
+  "generated_activity",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    learnerId: text("learner_id")
+      .notNull()
+      .references(() => learner.id, { onDelete: "cascade" }),
+    programSlug: text("program_slug").notNull(),
+    /** Stable authored unit key (locates the shelf on the map). */
+    unitKey: text("unit_key").notNull(),
+    /** Stable authored lesson id the batch was generated for. */
+    lessonId: text("lesson_id").notNull(),
+    kind: text("kind").notNull(),
+    title: text("title").notNull(),
+    /** Kind config — zod-parsed AND kind-validated before insert. */
+    config: jsonb("config").$type<unknown>().notNull(),
+    skillTags: jsonb("skill_tags").$type<string[]>().notNull().default([]),
+    /** Gen provenance (same trio as attempt.gen_*). */
+    genModel: text("gen_model").notNull(),
+    genRoute: text("gen_route").notNull(),
+    genAt: timestamp("gen_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // The shelf read + the per-lesson cap count.
+    index("generated_activity_learner_lesson_idx").on(t.learnerId, t.lessonId),
+    // COPPA whole-learner reads (export/delete verification).
+    index("generated_activity_learner_idx").on(t.learnerId),
+  ],
+);
+
+/**
  * Account-deletion audit (P6 / spec §8 retention). One row is written
  * immediately BEFORE an account's hard delete cascades, recording who/when and
  * the counts that were removed.

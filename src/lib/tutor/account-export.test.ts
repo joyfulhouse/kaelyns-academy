@@ -26,6 +26,7 @@ function learnerExport(overrides: Partial<LearnerExport> = {}): LearnerExport {
     interests: [],
     quests: [],
     checkpointResults: [],
+    generatedActivities: [],
     ...overrides,
   };
 }
@@ -124,6 +125,8 @@ describe("account export inventory guard", () => {
     learner_quest: "quests",
     // Adventure 2.0 Phase C1 (Task 6 wires the export read):
     checkpoint_result: "checkpointResults",
+    // Adventure 2.0 B3 (Task 6 wires the export read):
+    generated_activity: "generatedActivities",
   };
 
   /** All pgTable objects exported from the schema module. */

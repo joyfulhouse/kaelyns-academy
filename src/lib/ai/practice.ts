@@ -14,6 +14,8 @@ import { prewarmTexts } from "@/lib/audio/spokenFields";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import type { LanguageDef, ScriptEntry } from "@/content/languages";
 import type { Band, SkillTag } from "@/content/types";
+import { validateGeneratedFor } from "./generated-validators";
+import { KIND_BRIEF, isGenerableKind } from "./generable";
 import { chatJSON, fenceUntrusted, TUTOR_FAST, TUTOR_RICH, type TutorModel } from "./models";
 import {
   JSON_ONLY_RULE,
@@ -42,58 +44,14 @@ import {
 /** Cap generation so a bad prompt can't ask for an unbounded batch. */
 const MAX_ITEMS = 8;
 
-/**
- * Plain-language guidance per kind so the model emits the right config shape.
- * Partial, NOT exhaustive: a kind with no entry is authored-only (spec §9) —
- * {@link isGenerableKind} / {@link generatePracticeItems} refuse to generate it.
- * The 3 math-clock/money/measure kinds are deliberately absent: their config
- * schemas defer answerIndex/bounds validation to plugin logic assuming
- * hand-authored, content-validated input, so they must never be AI-generable.
- */
-export const KIND_BRIEF: Partial<Record<ActivityKind, string>> = {
-  "phonics-wordbuild":
-    'Build-a-word items. Each: {focus, instruction, tiles:[letters/digraphs], say:{tile:IPA}, words:[{word, picture?}]}. ' +
-    "Every target word MUST be spellable from the provided tiles. `picture` is a single emoji. " +
-    "Keep words decodable for the focus; 2 to 4 words per item. " +
-    "Each tile is tapped and spoken ALONE, so a bare letter mis-reads (lone \"c\" says its name \"see\", \"ble\" says \"blee\"). " +
-    "In `say`, map EVERY tile to its IPA SOUND as pronounced INSIDE the word, NOT the letter name (stress mark ˈ optional). " +
-    'For "table"=ta+ble use {"ta":"teɪ","ble":"bəl"}; for "cat"=c+a+t use {"c":"k","a":"æ","t":"t"}. ' +
-    'The same letter can differ by word: "a" is /æ/ in cat but /eɪ/ in cake; "c" is /k/ in cat but /s/ in city.',
-  "sightword-game":
-    "Sight-word hunt items. Each: {instruction, words:[real sight words], decoys:[similar-looking non-targets]}. " +
-    "Decoys must be plausible but clearly not the target words. 3 to 6 words, 2 to 5 decoys.",
-  "math-tenframe":
-    'Ten-frame items. Each: {instruction, mode:"represent"|"add", target:0-20, addend?:0-20, frames:1|2}. ' +
-    'For "add", include addend and set frames so target+addend fits (≤10 per frame). Numbers age-appropriate.',
-  "journal-prompt":
-    "Draw-or-compose prompts. Each: {prompt, sentenceStarter?, drawing, mode:'draw'|'compose', frames:[sentence frames], wordBank:[words], allowModes:['scribe'|'type'|'dictate']}. " +
-    "For 'compose', supply 1 to 3 sentence frames and a small word bank; the child supplies ideas, not handwriting. Warm, concrete, open-ended.",
-  "reading-comprehension":
-    'Reading items. Each: {instruction, title?, passage, questions:[{prompt, choices:[2-4 strings], answerIndex, kind:"literal"|"inference"|"main-idea"|"vocabulary"|"author"}], retellPrompt?}. ' +
-    "Passage is 3 to 6 short, knowledge-rich sentences at an early-chapter-book level. answerIndex is the 0-based correct choice. 1 to 3 questions.",
-  "math-array":
-    'Array items. Each: {instruction, mode:"build"|"multiply"|"divide"|"area", rows:1-12, cols:1-12, answer?, emoji?}. ' +
-    "answer defaults to rows*cols (the product/area; for divide, rows*cols is the total shared). emoji is one symbol to tile the array. Keep factors friendly.",
-  "lang-symbol-intro":
-    "Symbol-introduction items. Each: {locale, instruction, skillTags:[...], symbols:[{id, symbol, romanization, spoken, audioKey?, example?, exampleSpoken?, meaning?}], verify:[{prompt, spokenPrompt?, choices:[2-6], answerIndex}]}. " +
-    "Introduce 1 to 6 symbols the learner is studying, then 1 to 4 quick checks. Use ONLY symbols from the language's authored inventory; never invent glyphs. `spoken` is the text TTS says; `id` is the inventory id.",
-  "lang-listen-match":
-    "Listening-discrimination items. Each: {locale, instruction, skillTags:[...], items:[{spoken, audioKey?, choices:[2-6 symbols/words], choiceLabels?:[romanization], answerIndex}]}. " +
-    "The child hears `spoken` and taps the matching choice. Every choice and the answer MUST come from the authored inventory. 2 to 8 items.",
-};
+// KIND_BRIEF (the per-kind generation briefs) and isGenerableKind (the
+// authored-only gate) moved to the pure, client-safe `./generable` module so
+// the kid surface can share the gate without dragging this server-only
+// generator into the client bundle. Re-exported here so existing importers
+// (the /api/practice route, tests) keep resolving them from `@/lib/ai/practice`.
+export { KIND_BRIEF, isGenerableKind };
 
-/**
- * Whether `kind` may be AI-generated at all (spec §9 authored-only non-goal).
- * True for the World-Languages kinds (their own inventory-guarded path) and
- * for any kind with a {@link KIND_BRIEF} entry; false otherwise (authored-only,
- * e.g. math-clock/math-money/math-measure). Single source of truth used by
- * both {@link generatePracticeItems}'s refusal and any caller that wants to
- * offer/accept generation only for generable kinds.
- */
-export function isGenerableKind(kind: ActivityKind): boolean {
-  return isLangKind(kind) || KIND_BRIEF[kind] !== undefined;
-}
-
+/** Band → tutor route (B3 §3). */
 const MODEL_FOR_BAND: Record<Band, TutorModel> = {
   ready: TUTOR_FAST,
   stretch: TUTOR_RICH,
@@ -508,11 +466,39 @@ export async function generatePracticeItems<K extends ActivityKind>(
     await sanitizeGeneratedPhonics(phonics, phonemize);
   }
 
+  // B3 §6: deterministic answer-key filter. For a kind with a generated-config
+  // validator (math-clock/money/measure, sort-categories, seq-order), drop any
+  // item whose answer key is internally inconsistent — a wrong generated key would
+  // mark a capable child wrong. A kind with no validator passes through unchanged
+  // (validateGeneratedFor returns null for it), so already-generable kinds are
+  // untouched. Throw only when the WHOLE batch is invalid (a short surviving batch
+  // is fine → authored content covers the shortfall); the route turns the throw
+  // into a 502 -> authored-content fallback.
+  const validated = items.filter((item) => validateGeneratedFor(kind, item) === null);
+  if (validated.length === 0) {
+    throw new Error(`generatePracticeItems: all ${kind} items failed answer-key validation`);
+  }
+
+  // Server-derived skill attribution (final review Fix 3, §8): a generated
+  // sightword-game carries an optional `skillTag` that skillsAffected() returns
+  // verbatim — so the model could route mastery evidence to an ARBITRARY skill.
+  // Overwrite it with the server's first skill hint (derived from the authored
+  // tree, never the client), or strip it when there is no hint so the game falls
+  // back to the legacy reading.decodable. Central here → covers BOTH the shelf
+  // and the ephemeral "More" button paths. The model must not control routing.
+  if (kind === "sightword-game") {
+    const hint = skillHints[0];
+    for (const item of validated as unknown as { skillTag?: string }[]) {
+      if (hint) item.skillTag = hint;
+      else delete item.skillTag;
+    }
+  }
+
   // Fire-and-forget: warm the durable narration cache for everything the child will
   // hear, so the speaker button is an instant hit. Never blocks/breaks the response
   // (ensureNarration swallows its own errors). prewarmTexts dedupes + hard-caps the
   // set; mapWithConcurrency bounds in-flight synths to 4 so one response can't burst
   // many concurrent Kokoro/MinIO ops.
-  void mapWithConcurrency(prewarmTexts(items), 4, (text) => ensureNarration(text));
-  return items;
+  void mapWithConcurrency(prewarmTexts(validated), 4, (text) => ensureNarration(text));
+  return validated;
 }

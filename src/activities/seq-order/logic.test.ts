@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isCorrect, score, skillsAffected } from "./logic";
+import { isCorrect, score, skillsAffected, validateGenerated } from "./logic";
 import type { SeqOrderConfig } from "@/content/activity-configs";
 
 const cfg: SeqOrderConfig = {
@@ -41,5 +41,18 @@ describe("score", () => {
 describe("skillsAffected", () => {
   it("is always science.sequence", () => {
     expect(skillsAffected(cfg)).toEqual(["science.sequence"]);
+  });
+});
+
+describe("validateGenerated (B3 answer-key net)", () => {
+  it("accepts unique card labels", () => {
+    expect(validateGenerated(cfg)).toBeNull();
+  });
+  it("rejects duplicate card labels (case/space-insensitive)", () => {
+    const dupe: SeqOrderConfig = {
+      instruction: "Put them in order.",
+      cards: [{ label: "Egg" }, { label: " egg " }, { label: "Butterfly" }],
+    };
+    expect(validateGenerated(dupe)).not.toBeNull();
   });
 });

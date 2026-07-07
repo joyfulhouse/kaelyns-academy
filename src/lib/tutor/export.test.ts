@@ -58,6 +58,20 @@ function baseInput(overrides: Partial<ShapeInput> = {}): ShapeInput {
         createdAt: "2026-06-15T09:00:00.000Z",
       },
     ],
+    generatedActivities: [
+      {
+        unitKey: "unit-life-skills-math",
+        lessonId: "lesson-counting-coins",
+        kind: "math-tenframe",
+        title: "Coin Count",
+        config: { a: 1 },
+        skillTags: ["math.count"],
+        genModel: "ha-assist",
+        genRoute: "ready",
+        genAt: "2026-06-26T08:00:00.000Z",
+        createdAt: "2026-06-26T08:00:01.000Z",
+      },
+    ],
     ...overrides,
   };
 }
@@ -367,5 +381,41 @@ describe("shapeLearnerExport — checkpointResults", () => {
   it("handles no checkpoint results", () => {
     const result = shapeLearnerExport(baseInput({ checkpointResults: [] }));
     expect(result.checkpointResults).toEqual([]);
+  });
+});
+
+// ── generatedActivities (Adventure 2.0 B3: AI-generated practice export) ──────
+describe("shapeLearnerExport — generatedActivities", () => {
+  it("includes unitKey/lessonId/kind/title/config/skillTags + full gen provenance (no learnerId or id)", () => {
+    const result = shapeLearnerExport(baseInput());
+    expect(result.generatedActivities).toHaveLength(1);
+    const g = result.generatedActivities[0];
+    expect(Object.keys(g)).toEqual([
+      "unitKey",
+      "lessonId",
+      "kind",
+      "title",
+      "config",
+      "skillTags",
+      "genModel",
+      "genRoute",
+      "genAt",
+      "createdAt",
+    ]);
+    expect(g.unitKey).toBe("unit-life-skills-math");
+    expect(g.lessonId).toBe("lesson-counting-coins");
+    expect(g.kind).toBe("math-tenframe");
+    expect(g.title).toBe("Coin Count");
+    expect(g.config).toEqual({ a: 1 });
+    expect(g.skillTags).toEqual(["math.count"]);
+    expect(g.genModel).toBe("ha-assist");
+    expect(g.genRoute).toBe("ready");
+    expect(g.genAt).toBe("2026-06-26T08:00:00.000Z");
+    expect(g.createdAt).toBe("2026-06-26T08:00:01.000Z");
+  });
+
+  it("handles no generated activities", () => {
+    const result = shapeLearnerExport(baseInput({ generatedActivities: [] }));
+    expect(result.generatedActivities).toEqual([]);
   });
 });

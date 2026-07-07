@@ -32,7 +32,11 @@ export function score(
   };
 }
 
-/** Sight-word recognition feeds decodable reading fluency. */
-export function skillsAffected(_config: SightwordGameConfig): SkillTag[] {
-  return ["reading.decodable"];
+/**
+ * Sight-word recognition feeds decodable reading fluency by default. Word Study
+ * games override `skillTag` so the evidence lands on the authored word/vocab
+ * skill the recommender gates on instead of the generic reading.decodable.
+ */
+export function skillsAffected(config: SightwordGameConfig): SkillTag[] {
+  return [config.skillTag ?? "reading.decodable"];
 }

@@ -24,6 +24,10 @@ vi.mock("@/lib/tutor/store", () => ({
   getCompletedActivityIds: vi.fn(),
   getEnrollmentConfig: vi.fn(),
   getLearnerSettings: vi.fn(),
+  // B3 shelf reads: the durable "fresh practice" list + the generated-attempt
+  // best-stars the action folds into completed/stars (durable shelf credit).
+  listGeneratedShelf: vi.fn(),
+  getGeneratedCompletions: vi.fn(),
 }));
 
 // The resolver for the learner's pinned tree.
@@ -45,8 +49,10 @@ import {
   getCompletedActivityIds,
   getEnrollmentConfig,
   getEnrollmentForGate,
+  getGeneratedCompletions,
   getLearnerSettings,
   getSkillState,
+  listGeneratedShelf,
 } from "@/lib/tutor/store";
 import { getLearnerStateAction } from "./actions";
 
@@ -58,6 +64,8 @@ beforeEach(() => {
   vi.mocked(getEnrollmentConfig).mockResolvedValue({});
   vi.mocked(getLearnerSettings).mockResolvedValue({});
   vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+  vi.mocked(listGeneratedShelf).mockResolvedValue([]);
+  vi.mocked(getGeneratedCompletions).mockResolvedValue([]);
   // Default: an active enrollment → playable.
   vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
 });
@@ -112,5 +120,35 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();
+  });
+
+  it("surfaces the generated shelf AND credits a played shelf attempt (durable credit, B3)", async () => {
+    const shelfItem = {
+      id: "gen-1",
+      lessonId: "lsn-1",
+      unitKey: "unit-1",
+      kind: "math-tenframe" as const,
+      title: "Fresh: Count it",
+      skillTags: [],
+      createdAt: "2026-06-30T00:00:00.000Z",
+    };
+    vi.mocked(listGeneratedShelf).mockResolvedValue([shelfItem]);
+    // A played shelf attempt (generated=true) earned 2 stars; an ephemeral "More"
+    // one-shot recorded against an authored id also shows up here but must NOT be
+    // credited (it isn't on the shelf).
+    vi.mocked(getGeneratedCompletions).mockResolvedValue([
+      { activityId: "gen-1", stars: 2 },
+      { activityId: "authored-more", stars: 3 },
+    ]);
+
+    const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
+
+    expect(res.generatedShelf).toEqual([shelfItem]);
+    // The shelf attempt survives the reconcile: its id ∈ completed, stars in the map.
+    expect(res.completedActivityIds).toContain("gen-1");
+    expect(res.starsByActivity["gen-1"]).toBe(2);
+    // The ephemeral "More" one-shot is excluded (not on the shelf).
+    expect(res.completedActivityIds).not.toContain("authored-more");
+    expect(res.starsByActivity["authored-more"]).toBeUndefined();
   });
 });

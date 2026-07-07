@@ -38,6 +38,8 @@ export const EXPORT_CONTENTS = [
   "quests",
   // Adventure 2.0 Phase C1 (Task 6): baseline/mid/final check-in results.
   "checkpointResults",
+  // Adventure 2.0 B3 (Task 6): durable AI-generated practice items.
+  "generatedActivities",
 ] as const;
 
 export const EXPORT_NOT_EXPORTED = [
