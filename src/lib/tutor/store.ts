@@ -700,6 +700,19 @@ function clampStars(value: number): number {
   return Math.max(0, Math.min(3, Math.round(value)));
 }
 
+/** Fold a set of attempt rows into best (highest) clamped stars per activityId. */
+function foldBestStars(
+  rows: readonly { activityId: string; score: { stars: number } }[],
+): CompletedActivity[] {
+  const best = new Map<string, number>();
+  for (const r of rows) {
+    const stars = clampStars(r.score.stars);
+    const prior = best.get(r.activityId) ?? 0;
+    if (stars > prior || !best.has(r.activityId)) best.set(r.activityId, Math.max(prior, stars));
+  }
+  return [...best.entries()].map(([activityId, stars]) => ({ activityId, stars }));
+}
+
 /**
  * Authored activities the learner has completed (generated practice excluded),
  * each with the best stars earned. This is the account-mode equivalent of the
@@ -728,13 +741,37 @@ export async function getCompletedActivityIds(
         // attempts) rather than an arbitrary set; index-backed by attempt_learner_created_idx.
         .orderBy(desc(attempt.createdAt))
         .limit(5000);
-      const best = new Map<string, number>();
-      for (const r of rows) {
-        const stars = clampStars(r.score.stars);
-        const prior = best.get(r.activityId) ?? 0;
-        if (stars > prior || !best.has(r.activityId)) best.set(r.activityId, Math.max(prior, stars));
-      }
-      return [...best.entries()].map(([activityId, stars]) => ({ activityId, stars }));
+      return foldBestStars(rows);
+    },
+    [],
+  );
+}
+
+/**
+ * Best stars (0..3) per GENERATED attempt (generated=true), folded like
+ * {@link getCompletedActivityIds}. A generated SHELF item is a durable, one-time
+ * star earner whose completion must survive the learner surface's post-record
+ * reconcile — so its best stars are read here and the caller scopes them to the
+ * learner's live shelf ids (via {@link import("./shelf").shelfCompletions}); an
+ * ephemeral in-session "More" attempt (activityId = an authored id, never a shelf
+ * row) has no matching shelf id and is naturally excluded. Bounded + newest-first
+ * exactly like the authored read.
+ */
+export async function getGeneratedCompletions(
+  accountId: string,
+  learnerId: string,
+): Promise<CompletedActivity[]> {
+  return withOwnedLearner<CompletedActivity[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select({ activityId: attempt.activityId, score: attempt.score })
+        .from(attempt)
+        .where(and(eq(attempt.learnerId, learnerId), eq(attempt.generated, true)))
+        .orderBy(desc(attempt.createdAt))
+        .limit(5000);
+      return foldBestStars(rows);
     },
     [],
   );

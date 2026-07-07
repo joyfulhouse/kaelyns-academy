@@ -11,6 +11,7 @@ import {
   getEnrollmentConfig,
   getEnrollmentForGate,
   getGeneratedActivity,
+  getGeneratedCompletions,
   getLearner,
   getLearnerSettings,
   getSkillState,
@@ -30,7 +31,12 @@ import {
 } from "@/content";
 import type { Band, Lesson, Program, Unit } from "@/content";
 import { generatePracticeItems, provenanceForGeneration } from "@/lib/ai/practice";
-import { pickGenerationTargets, SHELF_BATCH, SHELF_LESSON_CAP } from "@/lib/tutor/shelf";
+import {
+  pickGenerationTargets,
+  shelfCompletions,
+  SHELF_BATCH,
+  SHELF_LESSON_CAP,
+} from "@/lib/tutor/shelf";
 import { resolveLearnerProgram } from "@/lib/content/repository";
 import { findUnitIdOfActivity } from "@/lib/quests/logic";
 import type { SkillState } from "@/lib/tutor";
@@ -321,10 +327,24 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
 
 export interface LearnerStateResult {
   skillState: SkillState;
-  /** Distinct authored activity ids the learner has completed. */
+  /**
+   * Distinct activity ids the learner has completed: authored activity ids PLUS
+   * the ids of any played generated shelf item (a durable, one-time earner).
+   */
   completedActivityIds: string[];
-  /** Best stars (0..3) per completed authored activity (for star glyphs). */
+  /**
+   * Best stars (0..3) per completed activity (for star glyphs). Keyed by authored
+   * activity id AND by generated shelf id — a shelf item is a durable, one-time
+   * earner, so its stars must survive the reconcile like an authored activity's.
+   */
   starsByActivity: Record<string, number>;
+  /**
+   * The learner's durable AI-generated "fresh practice" shelf for this program
+   * (Adventure 2.0 B3), oldest-first. Empty when unauthenticated / on failure /
+   * guest mode; the kid surface renders it as the per-lesson "made for you"
+   * section + the next-thing fallback.
+   */
+  generatedShelf: ShelfItem[];
   /** Per-child, per-program enrollment config set by the parent (empty object if none). */
   config: EnrollmentConfig;
   /**
@@ -350,6 +370,7 @@ const EMPTY_STATE: LearnerStateResult = {
   skillState: {},
   completedActivityIds: [],
   starsByActivity: {},
+  generatedShelf: [],
   config: {},
   program: null,
   available: false,
@@ -394,12 +415,15 @@ export async function getLearnerStateAction(
       const activityIds = new Set(activityIdsForProgram(program));
       const skillTags = new Set(skillTagsForProgram(program));
 
-      const [fullSkillState, completed, config, settings] = await Promise.all([
-        getSkillState(accountId, learnerId),
-        getCompletedActivityIds(accountId, learnerId),
-        getEnrollmentConfig(accountId, learnerId, programSlug),
-        getLearnerSettings(accountId, learnerId),
-      ]);
+      const [fullSkillState, completed, config, settings, generatedShelf, generatedCompletions] =
+        await Promise.all([
+          getSkillState(accountId, learnerId),
+          getCompletedActivityIds(accountId, learnerId),
+          getEnrollmentConfig(accountId, learnerId, programSlug),
+          getLearnerSettings(accountId, learnerId),
+          listGeneratedShelf(accountId, learnerId, programSlug),
+          getGeneratedCompletions(accountId, learnerId),
+        ]);
 
       // Scope skill_state to this program's skills.
       const skillState: SkillState = {};
@@ -416,6 +440,17 @@ export async function getLearnerStateAction(
         starsByActivity[c.activityId] = c.stars;
       }
 
+      // Durable shelf credit (B3): a played generated shelf item is a one-time,
+      // trackable earner, so fold its completion + best stars in too — scoped to
+      // THIS program's live shelf ids (shelfCompletions), so ephemeral in-session
+      // "More" one-shots stay excluded and the reconcile can't wipe shelf credit
+      // nor let nextGeneratedPick re-offer a played item. Shelf ids are UUIDs, a
+      // disjoint namespace from authored ids, so there is no key collision.
+      for (const c of shelfCompletions(generatedShelf, generatedCompletions)) {
+        completedActivityIds.push(c.activityId);
+        starsByActivity[c.activityId] = c.stars;
+      }
+
       // Effective config: the per-learner Settings kill-switch (all-programs)
       // overrides the per-program flag, so the client hides "More, made just for
       // me" whenever EITHER level disables AI — matching the server gate, which
@@ -427,6 +462,7 @@ export async function getLearnerStateAction(
         skillState,
         completedActivityIds,
         starsByActivity,
+        generatedShelf,
         config: effectiveConfig,
         program,
         available: true,

@@ -27,6 +27,7 @@ vi.mock("@/lib/tutor/store", () => ({
   getLearnerSettings: vi.fn(),
   getEnrollmentForGate: vi.fn(),
   getCompletedActivityIds: vi.fn(),
+  getGeneratedCompletions: vi.fn(),
   listGeneratedShelf: vi.fn(),
   insertGeneratedActivities: vi.fn(),
 }));
@@ -52,6 +53,7 @@ vi.mock("@/lib/ai/practice", async (importActual) => ({
 
 vi.mock("@/lib/tutor/shelf", () => ({
   pickGenerationTargets: vi.fn(),
+  shelfCompletions: vi.fn(() => []),
   SHELF_BATCH: 4,
   SHELF_LESSON_CAP: 8,
 }));

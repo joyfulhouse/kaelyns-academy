@@ -12,14 +12,13 @@ import { getSkill } from "@/content/skills";
 import type { SkillTag } from "@/content/types";
 import type { TutorModel } from "./models";
 import { TUTOR_FAST } from "./models";
+// The lang-kind guard is a pure literal check; it lives in the client-safe
+// `./generable` module (the single source of truth shared with the More gate).
+// Re-exported here so existing importers/tests keep resolving it from this module.
+import { isLangKind, type LangActivityKind } from "./generable";
 
-/** The activity kinds this module governs (the two World-Languages kinds). */
-export type LangActivityKind = Extract<ActivityKind, "lang-symbol-intro" | "lang-listen-match">;
-
-/** Type guard: is this a World-Languages activity kind? */
-export function isLangKind(kind: ActivityKind): kind is LangActivityKind {
-  return kind === "lang-symbol-intro" || kind === "lang-listen-match";
-}
+export { isLangKind };
+export type { LangActivityKind };
 
 /**
  * Cap how many inventory entries we inline into a prompt. Keeps the constraint

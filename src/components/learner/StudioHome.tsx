@@ -12,8 +12,9 @@ import {
   SparkleIcon,
   StarIcon,
 } from "@phosphor-icons/react/dist/ssr";
-import type { Program } from "@/content";
-import { nextBest, strandProgress, type Recommendation } from "@/lib/tutor";
+import type { ActivityKind, Program, World } from "@/content";
+import { nextBest, strandProgress } from "@/lib/tutor";
+import { nextGeneratedPick } from "@/lib/tutor/shelf";
 import { cn } from "@/lib/cn";
 import { Mascot } from "@/components/art/Mascot";
 import { Sun } from "@/components/art/Decorations";
@@ -311,7 +312,8 @@ function WorldMap({
   onSwitchLearner: () => void;
 }) {
   const reduce = useReducedMotion();
-  const { skillState, completed, getStars, ready, config, mode, selectedLearnerId } = state;
+  const { skillState, completed, getStars, ready, config, mode, selectedLearnerId, generatedShelf } =
+    state;
 
   // Both the sticker shop (spec §3.7) and Today's Adventures (spec §4.1) are
   // account-mode only; guest mode never calls the rewards/quest actions, so the
@@ -356,6 +358,12 @@ function WorldMap({
         : undefined,
     [program, skillState, ready, completedKey],
   );
+  // Next-thing fallback (B3 §4.1): when the tutor has no authored recommendation
+  // left (finished the map), offer the oldest not-yet-played generated shelf item
+  // so there's always a warm next thing. `completed` already includes played
+  // shelf ids (durable credit), so a done generated item is never re-offered.
+  // Empty in guest mode (generatedShelf is always []), so guests see no card here.
+  const generatedPick = topPick ? undefined : nextGeneratedPick(generatedShelf, completed);
 
   // activeUnitKeys curation: when set (non-empty), only those unit ids are shown.
   const activeUnitKeys =
@@ -484,9 +492,26 @@ function WorldMap({
           spec §4.1 — a hard requirement, no regression). */}
       {quests ? (
         <TodaysAdventures quests={quests} onActivate={activate} reduce={Boolean(reduce)} />
-      ) : (
-        topPick && <NextThingCard pick={topPick} programSlug={program.slug} reduce={Boolean(reduce)} />
-      )}
+      ) : topPick ? (
+        <NextThingCard
+          kind={topPick.activity.kind}
+          title={topPick.activity.title}
+          href={`/learn/${program.slug}/${topPick.unit.id}/${topPick.activity.id}`}
+          reason={topPick.reason}
+          world={topPick.unit.world}
+          isPractice={topPick.isPractice}
+          reduce={Boolean(reduce)}
+        />
+      ) : generatedPick ? (
+        <NextThingCard
+          kind={generatedPick.kind}
+          title={generatedPick.title}
+          href={`/learn/${program.slug}/generated/${generatedPick.id}`}
+          reason="Fresh practice, made for you"
+          isPractice
+          reduce={Boolean(reduce)}
+        />
+      ) : null}
 
       {/* The path of worlds (curated by activeUnitKeys when set). Fork groups
           (spec §4.4) stay single-column in v1: a divider announces the choice
@@ -550,17 +575,25 @@ function WorldMap({
    kind icon, and reads aloud as a warm invitation. */
 
 function NextThingCard({
-  pick,
-  programSlug,
+  kind,
+  title,
+  href,
+  reason,
+  world,
+  isPractice,
   reduce,
 }: {
-  pick: Recommendation;
-  programSlug: string;
+  kind: ActivityKind;
+  title: string;
+  href: string;
+  reason: string;
+  /** Themes the card by world; omitted for a generated pick (no authored unit). */
+  world?: World;
+  isPractice: boolean;
   reduce: boolean;
 }) {
-  const meta = ACTIVITY_META[pick.activity.kind];
+  const meta = ACTIVITY_META[kind];
   const Icon = meta.icon;
-  const href = `/learn/${programSlug}/${pick.unit.id}/${pick.activity.id}`;
 
   const motionProps = reduce
     ? {}
@@ -574,8 +607,8 @@ function NextThingCard({
     <motion.a
       {...motionProps}
       href={href}
-      data-world={pick.unit.world}
-      aria-label={`Your next thing: ${pick.activity.title}. ${meta.label}. ${pick.reason}.`}
+      data-world={world}
+      aria-label={`Your next thing: ${title}. ${meta.label}. ${reason}.`}
       className={cn(
         "group relative mb-8 flex w-full items-center gap-4 overflow-hidden rounded-2xl px-5 py-5",
         "border-[3px] border-ink bg-accent/15 shadow-pop transition",
@@ -592,12 +625,12 @@ function NextThingCard({
       <div className="min-w-0 flex-1">
         <div className="inline-flex items-center gap-1.5 font-display text-sm font-semibold text-accent-deep">
           <SparkleIcon weight="fill" className="size-4" />
-          {pick.isPractice ? "A little more practice" : "Your next thing"}
+          {isPractice ? "A little more practice" : "Your next thing"}
         </div>
         <div className="mt-0.5 truncate font-display text-2xl font-semibold tracking-tight">
-          {pick.activity.title}
+          {title}
         </div>
-        <p className="mt-1 truncate text-base text-ink-soft">{pick.reason}</p>
+        <p className="mt-1 truncate text-base text-ink-soft">{reason}</p>
       </div>
 
       <span

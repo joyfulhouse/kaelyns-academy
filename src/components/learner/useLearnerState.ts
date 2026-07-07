@@ -6,6 +6,10 @@ import { getProgram, getUnit } from "@/content";
 import { applyEvidence, type SkillState } from "@/lib/tutor";
 import { findUnitIdOfActivity } from "@/lib/quests/logic";
 import type { EnrollmentConfig } from "@/lib/content/config";
+// Type-only import (erased at build): the store is server-only, but its
+// client-safe ShelfItem shape crosses the server→client boundary via
+// getLearnerStateAction — same pattern as GeneratedPracticeHost (Task 4).
+import type { ShelfItem } from "@/lib/tutor/store";
 import {
   ensureHouseholdLearner,
   getLearnerStateAction,
@@ -50,7 +54,8 @@ export interface UseLearnerState {
   skillState: SkillState;
   /** Authored activity ids the active learner has completed. */
   completed: Set<string>;
-  /** Best stars earned for an authored activity (0 if never completed). */
+  /** Best stars earned for an activity — authored OR a played generated shelf
+   *  item (0 if never completed). */
   getStars: (activityId: string) => 0 | 1 | 2 | 3;
   /** True once the active learner's state has been read (SSR/async-safe gate). */
   ready: boolean;
@@ -122,6 +127,18 @@ export interface UseLearnerState {
    * loads (paired with the `loadedForActive` guard).
    */
   available: boolean;
+  /**
+   * The active learner's durable AI-generated "fresh practice" shelf for this
+   * program (Adventure 2.0 B3), oldest-first. Account mode only; always `[]` in
+   * guest/loading mode (§8: guests never fetch or render a shelf).
+   */
+  generatedShelf: ShelfItem[];
+  /**
+   * Re-read the account state (incl. the shelf) so the surface picks up freshly
+   * generated items — called after a "More like this" generation resolves. No-op
+   * outside account mode.
+   */
+  refreshShelf: () => Promise<void>;
 }
 
 /** Remembered account-learner choice (distinct from the guest active-learner key). */
@@ -129,6 +146,8 @@ const ACCOUNT_LEARNER_KEY = "ka:account-learner";
 
 const EMPTY_STATE: SkillState = Object.freeze({}) as SkillState;
 const EMPTY_COMPLETED: ReadonlySet<string> = new Set();
+/** Stable empty shelf so guest/loading returns keep a referentially-stable []. */
+const EMPTY_SHELF: ShelfItem[] = Object.freeze([]) as unknown as ShelfItem[];
 
 function clampStars(value: number): 0 | 1 | 2 | 3 {
   if (!Number.isFinite(value)) return 0;
@@ -177,6 +196,9 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const [accountCompleted, setAccountCompleted] = useState<Set<string>>(new Set());
   const [accountStars, setAccountStars] = useState<Record<string, 0 | 1 | 2 | 3>>({});
   const [accountConfig, setAccountConfig] = useState<EnrollmentConfig>({});
+  // The active learner's generated "fresh practice" shelf (B3), set from the same
+  // action result. Empty until account state loads / in guest mode.
+  const [accountShelf, setAccountShelf] = useState<ShelfItem[]>(EMPTY_SHELF);
   // The resolved (version-pinned) program tree for the loaded (learner, program).
   // Set from the same action result as the state above, so the rendered map and
   // the scoped progress are guaranteed the same version (C#5).
@@ -239,8 +261,15 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const loadAccountState = useCallback(
     async (learnerId: string, slug: string) => {
       const token = ++reloadToken.current;
-      const { skillState, completedActivityIds, starsByActivity, config, program, available } =
-        await getLearnerStateAction(learnerId, slug);
+      const {
+        skillState,
+        completedActivityIds,
+        starsByActivity,
+        generatedShelf,
+        config,
+        program,
+        available,
+      } = await getLearnerStateAction(learnerId, slug);
       // Stale-response guard: ignore all but the latest in-flight load.
       if (!mountedRef.current || token !== reloadToken.current) return;
       setAccountSkill(skillState);
@@ -248,6 +277,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       // Server best-stars become the source of truth on load; this also clears
       // any optimistic stars from a prior learner/program so glyphs match.
       setAccountStars(starsByActivity as Record<string, 0 | 1 | 2 | 3>);
+      setAccountShelf(generatedShelf);
       setAccountConfig(config);
       // The resolved (pinned) tree for this load. Null on unauth/failure/unknown
       // slug → the caller keeps showing the server-passed published prop.
@@ -284,6 +314,16 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
     await refreshSession();
     return true;
   }, [refreshSession]);
+
+  // Re-read account state (incl. the shelf) after a "More like this" generation
+  // resolves, so freshly generated items appear. No-op outside account mode
+  // (guests never fetch a shelf, §8). Reuses the same reconcile as the initial
+  // load, so it also refreshes completion/stars — harmless, and keeps one path.
+  const refreshShelf = useCallback<UseLearnerState["refreshShelf"]>(async () => {
+    if (mode === "account" && selectedLearnerId) {
+      await loadAccountState(selectedLearnerId, programSlug);
+    }
+  }, [mode, selectedLearnerId, programSlug, loadAccountState]);
 
   // ── Unified record ────────────────────────────────────────────────────────
   const record = useCallback<UseLearnerState["record"]>(
@@ -384,6 +424,10 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       // `true` so the surface shows the loading beat, not a flash of the block
       // (paired with `ready` above); once loaded, the server's signal governs.
       available: loadedForActive ? accountAvailable : true,
+      // The shelf, gated to the active (learner, program) like the state above so
+      // a learner/world switch never flashes the prior shelf.
+      generatedShelf: loadedForActive ? accountShelf : EMPTY_SHELF,
+      refreshShelf,
     };
   }
 
@@ -411,6 +455,9 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       // Guests have no enrollments and play every published program — curation
       // is account-mode only, so guest mode is always available.
       available: true,
+      // Guests never fetch or render a shelf (§8: no child↔account data).
+      generatedShelf: EMPTY_SHELF,
+      refreshShelf,
     };
   }
 
@@ -432,6 +479,8 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
     // During the loading beat, report available so the surface shows the loading
     // state — not a flash of the "ask a grown-up" block — until mode resolves.
     available: true,
+    generatedShelf: EMPTY_SHELF,
+    refreshShelf,
   };
 }
 

@@ -12,6 +12,8 @@ import {
 } from "@phosphor-icons/react/dist/ssr";
 import type { Activity, ActivityScore, Unit, World } from "@/content";
 import { findActivity, getSkill, getUnit } from "@/content";
+import { ensureLessonPractice } from "@/app/(learner)/actions";
+import { isGenerableKind } from "@/lib/ai/generable";
 import { outcomeOf } from "@/lib/tutor";
 import "@/activities"; // side-effect: registers every available activity-type plugin
 import { getActivityType } from "@/activities";
@@ -151,8 +153,19 @@ export function ActivityHost({
       stopSpeaking();
       record(effectiveActivity, response, score);
       setPhase({ kind: "reward", stars: score.stars });
+      // Eager shelf warm-up (B3 §4): once an authored activity is done, nudge the
+      // server to fill this lesson's "fresh practice" shelf. Fire-and-forget and
+      // idempotent — the server no-ops unless this completion finished the lesson,
+      // so the kid never waits and repeat completions don't over-generate.
+      if (signedIn && selectedLearnerId) {
+        void ensureLessonPractice({
+          learnerId: selectedLearnerId,
+          programSlug,
+          activityId: effectiveActivity.id,
+        }).catch(() => {});
+      }
     },
-    [effectiveActivity, record],
+    [effectiveActivity, record, signedIn, selectedLearnerId, programSlug],
   );
 
   // A generated practice item records skill evidence too (it exercises the same
@@ -278,8 +291,15 @@ export function ActivityHost({
   // Additionally, if the parent has set aiPractice === false for this child's
   // program, hide the button (defense-in-depth: the server also returns 403).
   const aiPracticeEnabled = config.aiPractice !== false;
+  // Only offer "more" for a kind the generator will actually produce — an
+  // authored-only kind (isGenerableKind === false) would 502 every time, so the
+  // button must never render for it (matches /api/practice's own refusal).
   const canGenerate =
-    Boolean(activityType) && generatedCount < MAX_GENERATED && signedIn && aiPracticeEnabled;
+    Boolean(activityType) &&
+    generatedCount < MAX_GENERATED &&
+    signedIn &&
+    aiPracticeEnabled &&
+    isGenerableKind(activity.kind);
   const autoOffer =
     canGenerate && primarySkill !== undefined && outcomeOf(skillState, primarySkill) === "emerging";
 
