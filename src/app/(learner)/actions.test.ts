@@ -29,7 +29,9 @@ vi.mock("@/lib/tutor/store", () => ({
   getCompletedActivityIds: vi.fn(),
   getGeneratedCompletions: vi.fn(),
   listGeneratedShelf: vi.fn(),
-  insertGeneratedActivities: vi.fn(),
+  // Fix 2: ensureLessonPractice serializes recount→generate→insert behind this
+  // advisory-lock helper; its DB-level ordering test lives in shelf-lock.test.ts.
+  withLessonGenerationLock: vi.fn(),
 }));
 
 vi.mock("@/lib/content/repository", () => ({
@@ -66,8 +68,9 @@ import {
   getEnrollmentForGate,
   getCompletedActivityIds,
   listGeneratedShelf,
-  insertGeneratedActivities,
+  withLessonGenerationLock,
   type ShelfItem,
+  type NewGeneratedActivity,
 } from "@/lib/tutor/store";
 import { resolveLearnerProgram } from "@/lib/content/repository";
 import { findUnitIdOfActivity } from "@/lib/quests/logic";
@@ -248,6 +251,12 @@ function fakeItems(count: number): GenItem[] {
   return Array.from({ length: count }, (_, i) => ({ q: i }) as unknown as GenItem);
 }
 
+// The rows the action built inside withLessonGenerationLock's `generate` callback
+// on the last call — captured by the mock below so these action tests can still
+// assert the exact rows the action produces (provenance, unitKey, short batches)
+// without a live tx. Reset per test.
+let lastGeneratedRows: NewGeneratedActivity[] | null = null;
+
 describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
   beforeEach(() => {
     // Happy-path defaults: owned learner, resolved 2-activity lesson, AI enabled,
@@ -269,8 +278,16 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     vi.mocked(listGeneratedShelf).mockResolvedValue([]);
     vi.mocked(pickGenerationTargets).mockReturnValue(ONE_TARGET);
     vi.mocked(generatePracticeItems).mockResolvedValue(fakeItems(4));
-    vi.mocked(insertGeneratedActivities).mockImplementation(async (_a, _l, rows) =>
-      rows.map((_r, i) => shelfItem(`new${i}`)),
+    // Run the action's `generate` callback (the rows it builds) and echo them back
+    // as shelf items — so `generate`/generatePracticeItems is the witness that the
+    // model was (or wasn't) called, and lastGeneratedRows holds the built rows. The
+    // room mirrors the real helper's empty-shelf case (min(SHELF_BATCH, cap)).
+    lastGeneratedRows = null;
+    vi.mocked(withLessonGenerationLock).mockImplementation(
+      async (_accountId, _learnerId, _lessonId, _more, generate) => {
+        lastGeneratedRows = await generate(4);
+        return lastGeneratedRows.map((_r, i) => shelfItem(`new${i}`));
+      },
     );
   });
 
@@ -287,7 +304,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
       { skillHints: [] },
     );
     // One row per generated item, stamped with server-derived provenance.
-    const rows = vi.mocked(insertGeneratedActivities).mock.calls[0][2];
+    const rows = lastGeneratedRows!;
     expect(rows).toHaveLength(4);
     expect(rows[0]).toMatchObject({
       unitKey: UNIT_ID,
@@ -310,7 +327,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
       expect.any(Number),
       expect.anything(),
     );
-    const rows = vi.mocked(insertGeneratedActivities).mock.calls[0][2];
+    const rows = lastGeneratedRows!;
     expect(rows[0]).toMatchObject({ genModel: "ds4" });
   });
 
@@ -331,7 +348,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
 
     await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
 
-    const rows = vi.mocked(insertGeneratedActivities).mock.calls[0][2];
+    const rows = lastGeneratedRows!;
     expect(rows[0]).toMatchObject({ genModel: "ds4-fast" });
   });
 
@@ -342,7 +359,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
 
     expect(result).toEqual({ ok: false, items: [] });
     expect(generatePracticeItems).not.toHaveBeenCalled();
-    expect(insertGeneratedActivities).not.toHaveBeenCalled();
+    expect(withLessonGenerationLock).not.toHaveBeenCalled();
   });
 
   it("fails closed when the per-learner settings kill-switch is off", async () => {
@@ -381,7 +398,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
 
     expect(result).toEqual({ ok: true, items: [shelfItem("existing")] });
     expect(generatePracticeItems).not.toHaveBeenCalled();
-    expect(insertGeneratedActivities).not.toHaveBeenCalled();
+    expect(withLessonGenerationLock).not.toHaveBeenCalled();
   });
 
   it("is idempotent: a filled shelf without `more` returns as-is, no new generation", async () => {
@@ -391,7 +408,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
 
     expect(result.items).toEqual([shelfItem("e1"), shelfItem("e2")]);
     expect(generatePracticeItems).not.toHaveBeenCalled();
-    expect(insertGeneratedActivities).not.toHaveBeenCalled();
+    expect(withLessonGenerationLock).not.toHaveBeenCalled();
   });
 
   it("honors the per-lesson cap: a full shelf never grows, even with `more`", async () => {
@@ -407,7 +424,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
 
     expect(result.items).toEqual(full);
     expect(generatePracticeItems).not.toHaveBeenCalled();
-    expect(insertGeneratedActivities).not.toHaveBeenCalled();
+    expect(withLessonGenerationLock).not.toHaveBeenCalled();
   });
 
   it("still persists surviving targets when one generation target throws", async () => {
@@ -424,7 +441,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
 
     expect(result.ok).toBe(true);
     // Only the surviving target's single item is persisted (short batch is fine).
-    const rows = vi.mocked(insertGeneratedActivities).mock.calls[0][2];
+    const rows = lastGeneratedRows!;
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ kind: "math-array", title: "Fresh: Act a2" });
   });
@@ -439,7 +456,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     expect(result.ok).toBe(true);
     expect(pickGenerationTargets).toHaveBeenCalled();
     // The located lesson drives unitKey/lessonId on the persisted rows.
-    const rows = vi.mocked(insertGeneratedActivities).mock.calls[0][2];
+    const rows = lastGeneratedRows!;
     expect(rows[0]).toMatchObject({ unitKey: UNIT_ID, lessonId: LESSON_ID });
   });
 
@@ -459,5 +476,25 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
 
     expect(result).toEqual({ ok: false, items: [] });
     expect(getLearner).not.toHaveBeenCalled();
+  });
+
+  it("never grows a shelf for a baseline CHECK-IN unit (C1 placement integrity): no model call, no generation", async () => {
+    // The lesson lives in a checkpoint unit. Even fully completed (the happy-path
+    // fixtures), ensureLessonPractice must no-op: a check-in's derivatives would
+    // carry the probe's real skill tags and, when played, fold into skill_state,
+    // silently moving the learner's level off parent-gated evidence (C1). The guard
+    // fires BEFORE the shelf read and the generate/insert lock, so nothing is spent
+    // or written.
+    const program = makeProgram(["a1", "a2"]);
+    (program.units[0] as unknown as { checkpoint: string }).checkpoint = "baseline";
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(program);
+
+    const result = await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
+
+    expect(result).toEqual({ ok: true, items: [] });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+    expect(withLessonGenerationLock).not.toHaveBeenCalled();
+    // The guard precedes the shelf read entirely — a check-in never even looks.
+    expect(listGeneratedShelf).not.toHaveBeenCalled();
   });
 });

@@ -157,7 +157,11 @@ export function ActivityHost({
       // server to fill this lesson's "fresh practice" shelf. Fire-and-forget and
       // idempotent — the server no-ops unless this completion finished the lesson,
       // so the kid never waits and repeat completions don't over-generate.
-      if (signedIn && selectedLearnerId) {
+      // Belt-and-suspenders (final review Critical): never even ask on a
+      // baseline/mid/final CHECK-IN unit — a check-in must not grow practice whose
+      // evidence folds into skill_state (C1 placement integrity). The server guard
+      // in ensureLessonPractice is authoritative; this just skips the round-trip.
+      if (signedIn && selectedLearnerId && !effectiveUnit?.checkpoint) {
         void ensureLessonPractice({
           learnerId: selectedLearnerId,
           programSlug,
@@ -165,7 +169,7 @@ export function ActivityHost({
         }).catch(() => {});
       }
     },
-    [effectiveActivity, record, signedIn, selectedLearnerId, programSlug],
+    [effectiveActivity, effectiveUnit, record, signedIn, selectedLearnerId, programSlug],
   );
 
   // A generated practice item records skill evidence too (it exercises the same

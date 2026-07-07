@@ -121,6 +121,44 @@ describe("generatePracticeItems (bounded + schema-validated)", () => {
     expect(items[0].decoys).toEqual([]); // .default([]) applied by the schema
   });
 
+  // Final review Fix 3 (§8): evidence routing for a generated sightword-game is
+  // SERVER-derived. The model may emit a `skillTag`, but the generator overwrites
+  // it with the server's first skill hint (or strips it), so a hallucinated tag
+  // can never misattribute mastery to an arbitrary skill.
+  it("overwrites a generated sightword-game skillTag with the server's skill hint", async () => {
+    const valid = JSON.stringify({
+      items: [{ instruction: "Find the words.", words: ["pre", "un"], skillTag: "totally.made.up" }],
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(completion(valid)));
+
+    const items = await generatePracticeItems("sightword-game", "ready", "prefixes", 1, {
+      skillHints: ["word.morphology.prefixes"] as SkillTag[],
+    });
+    expect(items[0].skillTag).toBe("word.morphology.prefixes");
+  });
+
+  it("strips a hallucinated sightword-game skillTag when no skill hint is given (→ reading.decodable)", async () => {
+    const valid = JSON.stringify({
+      items: [{ instruction: "Find the words.", words: ["the", "and"], skillTag: "totally.made.up" }],
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(completion(valid)));
+
+    const items = await generatePracticeItems("sightword-game", "ready", "the, and", 1);
+    expect(items[0].skillTag).toBeUndefined();
+  });
+
+  it("does not touch skillTag on a non-sightword generated kind", async () => {
+    const valid = JSON.stringify({
+      items: [{ instruction: "Show 5.", mode: "represent", target: 5, frames: 1 }],
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(completion(valid)));
+
+    const items = await generatePracticeItems("math-tenframe", "ready", "count to 5", 1, {
+      skillHints: ["word.morphology.prefixes"] as SkillTag[],
+    });
+    expect(items[0]).not.toHaveProperty("skillTag");
+  });
+
   it("fences the untrusted focus in delimiters and instructs the model to treat it as data", async () => {
     const valid = JSON.stringify({
       items: [

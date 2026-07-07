@@ -479,6 +479,21 @@ export async function generatePracticeItems<K extends ActivityKind>(
     throw new Error(`generatePracticeItems: all ${kind} items failed answer-key validation`);
   }
 
+  // Server-derived skill attribution (final review Fix 3, §8): a generated
+  // sightword-game carries an optional `skillTag` that skillsAffected() returns
+  // verbatim — so the model could route mastery evidence to an ARBITRARY skill.
+  // Overwrite it with the server's first skill hint (derived from the authored
+  // tree, never the client), or strip it when there is no hint so the game falls
+  // back to the legacy reading.decodable. Central here → covers BOTH the shelf
+  // and the ephemeral "More" button paths. The model must not control routing.
+  if (kind === "sightword-game") {
+    const hint = skillHints[0];
+    for (const item of validated as unknown as { skillTag?: string }[]) {
+      if (hint) item.skillTag = hint;
+      else delete item.skillTag;
+    }
+  }
+
   // Fire-and-forget: warm the durable narration cache for everything the child will
   // hear, so the speaker button is an instant hit. Never blocks/breaks the response
   // (ensureNarration swallows its own errors). prewarmTexts dedupes + hard-caps the

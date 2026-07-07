@@ -1,7 +1,7 @@
 // server-only: this module opens DB connections and must never be imported into
 // a Client Component. (the `server-only` package isn't installed; this comment
 // is the guard, and only server actions / route handlers import it.)
-import { and, asc, count, desc, eq, inArray, lt, or, sum } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, lt, or, sql, sum } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   attempt,
@@ -21,7 +21,7 @@ import {
 } from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
 import type { ActivityKind } from "@/content/activity-configs";
-import { SHELF_LESSON_CAP } from "./shelf";
+import { SHELF_BATCH, SHELF_LESSON_CAP } from "./shelf";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
 import {
   enrollmentConfigSchema,
@@ -797,7 +797,7 @@ export interface ShelfItem {
 }
 
 /** One row to persist: everything but the (account-derived) learnerId, which
- *  {@link insertGeneratedActivities} stamps from the ownership-checked call. */
+ *  {@link withLessonGenerationLock} stamps from the ownership-checked call. */
 export interface NewGeneratedActivity {
   programSlug: string;
   unitKey: string;
@@ -857,33 +857,40 @@ function toShelfItem(r: typeof generatedActivity.$inferSelect): ShelfItem {
   };
 }
 
-/** Count the generated rows already on a lesson's shelf. Takes the tx so the
- *  cap can be enforced against the same snapshot as the insert below. */
-async function countGeneratedForLesson(db: Db, learnerId: string, lessonId: string): Promise<number> {
-  const rows = await db
-    .select({ value: count() })
-    .from(generatedActivity)
-    .where(and(eq(generatedActivity.learnerId, learnerId), eq(generatedActivity.lessonId, lessonId)));
-  return rows[0]?.value ?? 0;
-}
-
 /**
- * Persist a batch of generated items in ONE transaction. Tenancy is re-checked
- * inside the tx (mirrors recordAttempt/applyPlacement) so ownership and the
- * write share the snapshot; a foreign account writes nothing. The per-lesson cap
- * ({@link SHELF_LESSON_CAP}) is enforced against the SAME snapshot — a count read
- * then a slice — so two concurrent ensureLessonPractice calls can't push a
- * lesson's shelf past the cap. Returns the inserted rows as ShelfItems (the batch
- * is single-lesson, keyed off rows[0]).
+ * Serialize a lesson's recount → generate → insert critical section behind a
+ * per-(learner, lesson) transaction-scoped advisory lock, so the LLM spend is
+ * claimed BEFORE the model call (final review Fix 2). Without this, N concurrent
+ * completions each pass a pre-lock cap check and each burn an LLM batch; the rows
+ * stay capped (the in-tx recount + slice below does that), but the SPEND does
+ * not. Here the lock is taken first, then the shelf is re-read INSIDE it: the
+ * winner generates + inserts; every loser sees the winner's rows and returns them
+ * WITHOUT calling `generate` (no model call). Mirrors the codebase's advisory-lock
+ * precedent (scripts/migrate.ts's `pg_advisory_lock` around migrations).
+ *
+ * `generate(room)` runs INSIDE the tx (its LLM await holds the lock) and returns
+ * the rows to persist; it is invoked only when there is room under the cap and the
+ * shelf is not already satisfied. Holding the tx across the await is acceptable at
+ * pilot scale: the lock scope is one learner's one lesson, so only self-races
+ * contend. Tenancy is re-checked inside the tx (same pattern as recordAttempt) so
+ * a foreign account writes nothing. Returns the full lesson shelf (existing +
+ * freshly inserted), oldest-first.
  * @throws when the learner is not owned by the account (tenancy).
  */
-export async function insertGeneratedActivities(
+export async function withLessonGenerationLock(
   accountId: string,
   learnerId: string,
-  rows: NewGeneratedActivity[],
+  lessonId: string,
+  more: boolean,
+  generate: (room: number) => Promise<NewGeneratedActivity[]>,
 ): Promise<ShelfItem[]> {
-  if (rows.length === 0) return [];
   return getDb().transaction(async (tx) => {
+    // Serialize per (learner, lesson): concurrent completions for the SAME lesson
+    // wait here until the holder's tx commits (the lock auto-releases at commit).
+    // hashtextextended folds the composite key to the bigint pg_advisory takes.
+    const key = `${learnerId}:${lessonId}`;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+
     // Tenancy boundary, re-checked inside the tx (same pattern as recordAttempt).
     const owned = await tx
       .select({ id: learner.id })
@@ -892,19 +899,32 @@ export async function insertGeneratedActivities(
       .limit(1);
     if (!owned[0]) throw new Error("learner not found for account");
 
-    // Race-safe cap: the batch is single-lesson, so count THIS lesson's existing
-    // shelf inside the tx and only insert up to the remaining room. A concurrent
-    // call that already filled the shelf leaves room <= 0 → nothing is inserted.
-    const lessonId = rows[0]!.lessonId;
-    const current = await countGeneratedForLesson(tx, learnerId, lessonId);
-    const room = SHELF_LESSON_CAP - current;
-    if (room <= 0) return [];
-    const toInsert = rows.slice(0, room);
+    // Re-read this lesson's shelf INSIDE the lock so the idempotency + cap
+    // decisions (and the room passed to generate) race against the SAME snapshot
+    // as the insert below — this is the recount that makes the spend claim atomic.
+    const existingRows = await tx
+      .select()
+      .from(generatedActivity)
+      .where(and(eq(generatedActivity.learnerId, learnerId), eq(generatedActivity.lessonId, lessonId)))
+      .orderBy(asc(generatedActivity.createdAt));
+    const existing = existingRows.map(toShelfItem);
 
+    // Idempotency + cap, now serialized: a filled shelf is returned as-is unless
+    // `more`; a capped shelf never grows. A loser of the race lands here with the
+    // winner's rows already present → returns them, `generate` never runs.
+    if (!more && existing.length > 0) return existing;
+    if (existing.length >= SHELF_LESSON_CAP) return existing;
+
+    const room = Math.min(SHELF_BATCH, SHELF_LESSON_CAP - existing.length);
+    const newRows = await generate(room);
+    if (newRows.length === 0) return existing;
+
+    // Re-cap against the same snapshot before inserting (defense-in-depth: never
+    // exceed the room computed under the lock even if generate over-produced).
     const inserted = await tx
       .insert(generatedActivity)
       .values(
-        toInsert.map((r) => ({
+        newRows.slice(0, room).map((r) => ({
           learnerId,
           programSlug: r.programSlug,
           unitKey: r.unitKey,
@@ -919,7 +939,7 @@ export async function insertGeneratedActivities(
         })),
       )
       .returning();
-    return inserted.map(toShelfItem);
+    return [...existing, ...inserted.map(toShelfItem)];
   });
 }
 

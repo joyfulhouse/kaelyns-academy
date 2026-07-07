@@ -15,10 +15,10 @@ import {
   getLearner,
   getLearnerSettings,
   getSkillState,
-  insertGeneratedActivities,
   listEnrollmentsDetailed,
   listGeneratedShelf,
   recordAttempt,
+  withLessonGenerationLock,
   type NewGeneratedActivity,
   type ShelfItem,
 } from "@/lib/tutor/store";
@@ -34,7 +34,6 @@ import { generatePracticeItems, provenanceForGeneration } from "@/lib/ai/practic
 import {
   pickGenerationTargets,
   shelfCompletions,
-  SHELF_BATCH,
   SHELF_LESSON_CAP,
 } from "@/lib/tutor/shelf";
 import { resolveLearnerProgram } from "@/lib/content/repository";
@@ -520,6 +519,14 @@ function locateLesson(
  * SHELF_LESSON_CAP per lesson). A lesson only generates once its authored
  * activities are all complete (the completion witness), and re-calls are no-ops
  * unless `more` is set — so the shelf grows deliberately, never on every render.
+ *
+ * A baseline/mid/final CHECK-IN unit never grows a shelf (final review Critical):
+ * its derivatives would carry the probe's real skill tags and, when played, fold
+ * into skill_state (a shelf UUID resolves no checkpoint phase), silently changing
+ * the learner's level from evidence whose own placement is parent-gated (C1). The
+ * recount→generate→insert spend is also serialized per (learner, lesson) by an
+ * advisory lock (withLessonGenerationLock), so concurrent completions can't each
+ * burn an LLM batch (final review Fix 2).
  */
 export async function ensureLessonPractice(
   input: z.infer<typeof ensureLessonPracticeSchema>,
@@ -555,6 +562,17 @@ export async function ensureLessonPractice(
       if (!located) return { ok: false, items: [] };
       const { unit, lesson } = located;
 
+      // 2a. Placement-integrity guard (final review Critical): a baseline/mid/final
+      //    check-in unit must NEVER grow a shelf. Its authored attempts insert
+      //    generated=false rows before the checkpoint branch, so the completion
+      //    witness below would pass — but a derivative carries the probe's real
+      //    skill tags and, when played, folds straight into skill_state (a shelf
+      //    UUID resolves no checkpoint phase in recordAttemptAction), silently
+      //    changing the learner's level from evidence whose placement is
+      //    parent-gated (C1's core invariant). No-op calmly — `items` is [] because
+      //    no checkpoint shelf can ever have been generated post-fix.
+      if (unit.checkpoint) return { ok: true, items: [] };
+
       // The existing shelf for this lesson (needed by both the incomplete no-op
       // and the idempotency/cap returns below).
       const shelf = await listGeneratedShelf(accountId, learnerId, programSlug);
@@ -568,54 +586,62 @@ export async function ensureLessonPractice(
       const allComplete = lesson.activities.every((a) => completedIds.has(a.id));
       if (!allComplete) return { ok: true, items: existing };
 
-      // 4. Idempotency + cap: a filled shelf is returned as-is unless `more`; a
-      //    capped shelf never grows further.
+      // 4. Idempotency + cap (cheap pre-check on the pre-lock read; re-verified
+      //    race-safe under the advisory lock in withLessonGenerationLock below, so
+      //    the common "already filled" case avoids opening a tx at all).
       if (!more && existing.length > 0) return { ok: true, items: existing };
       if (existing.length >= SHELF_LESSON_CAP) return { ok: true, items: existing };
 
-      // 5. Targets + band — both server-derived. Never asks for more than the
-      //    remaining room under the cap.
-      const room = Math.min(SHELF_BATCH, SHELF_LESSON_CAP - existing.length);
-      const targets = pickGenerationTargets(lesson, room);
-      if (targets.length === 0) return { ok: true, items: existing };
       const band: Band = gate.config.band ?? "ready";
-
-      // 6. Generate per target. generatePracticeItems returns only validator-
-      //    passing items (Task 2) and throws when zero survive — a throwing target
-      //    is SKIPPED (a short batch is fine; authored content covers the rest).
       const genAt = new Date();
-      const newRows: NewGeneratedActivity[] = [];
-      for (const target of targets) {
-        try {
-          const items = await generatePracticeItems(target.kind, band, target.focus, target.n, {
-            skillHints: target.skillTags,
-          });
-          for (const config of items) {
-            newRows.push({
-              programSlug,
-              unitKey: unit.id,
-              lessonId: lesson.id,
-              kind: target.kind,
-              title: `Fresh: ${target.sourceTitle}`,
-              config,
-              skillTags: target.skillTags,
-              // Mirror the generator's real route: World-Languages kinds use the
-              // per-language model, so stamp the lang-aware model, not just the band.
-              genModel: provenanceForGeneration(target.kind, band, target.skillTags).model,
-              genRoute: "shelf",
-              genAt,
-            });
-          }
-        } catch (error) {
-          captureNonCritical(`ensureLessonPractice: generation failed for kind=${target.kind}`, error);
-        }
-      }
 
-      // 7. Persist (one tx, tenancy + cap re-checked inside). 8. Return the whole
-      //    shelf (existing + freshly inserted).
-      const inserted =
-        newRows.length > 0 ? await insertGeneratedActivities(accountId, learnerId, newRows) : [];
-      return { ok: true, items: [...existing, ...inserted] };
+      // 5. Claim the room BEFORE the LLM spend (final review Fix 2): the
+      //    recount→generate→insert critical section is serialized per (learner,
+      //    lesson) by a pg advisory xact lock, so N concurrent completions can't
+      //    each burn an LLM batch — the losers see the winner's rows under the lock
+      //    and return them without a model call. Everything the model is steered by
+      //    stays SERVER-derived: the band, targets, and skill hints come from the
+      //    authored tree + the parent's config. generatePracticeItems returns only
+      //    validator-passing items and throws when zero survive — a throwing target
+      //    is SKIPPED (a short batch is fine; authored content covers the rest).
+      const items = await withLessonGenerationLock(
+        accountId,
+        learnerId,
+        lesson.id,
+        more ?? false,
+        async (room): Promise<NewGeneratedActivity[]> => {
+          const targets = pickGenerationTargets(lesson, room);
+          if (targets.length === 0) return [];
+          const newRows: NewGeneratedActivity[] = [];
+          for (const target of targets) {
+            try {
+              const generated = await generatePracticeItems(target.kind, band, target.focus, target.n, {
+                skillHints: target.skillTags,
+              });
+              for (const config of generated) {
+                newRows.push({
+                  programSlug,
+                  unitKey: unit.id,
+                  lessonId: lesson.id,
+                  kind: target.kind,
+                  title: `Fresh: ${target.sourceTitle}`,
+                  config,
+                  skillTags: target.skillTags,
+                  // Mirror the generator's real route: World-Languages kinds use the
+                  // per-language model, so stamp the lang-aware model, not just the band.
+                  genModel: provenanceForGeneration(target.kind, band, target.skillTags).model,
+                  genRoute: "shelf",
+                  genAt,
+                });
+              }
+            } catch (error) {
+              captureNonCritical(`ensureLessonPractice: generation failed for kind=${target.kind}`, error);
+            }
+          }
+          return newRows;
+        },
+      );
+      return { ok: true, items };
     });
   } catch (error) {
     captureNonCritical("ensureLessonPractice failed", error);
