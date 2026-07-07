@@ -40,6 +40,15 @@ export function score(
  */
 export function skillsAffected(config: PhonicsWordbuildConfig): SkillTag[] {
   const focus = config.focus.toLowerCase();
+  // Word Study (grade-1 ramp) focus strings → the authored word.* slugs
+  // (B3 §7 — the recommender gates on these; the legacy phonics.* defaults miss
+  // them). Most-specific first. No Program-01 phonics focus contains these
+  // substrings (syllable/divid/prefix/root), so its evidence is byte-identical.
+  if (focus.includes("syllable") && focus.includes("divid")) return ["word.syllables.division"];
+  if (focus.includes("syllable")) return ["word.syllables.types"];
+  if (focus.includes("prefix")) return ["word.morphology.prefixes"];
+  if (focus.includes("root")) return ["word.morphology.roots"];
+  // Program-01 phonics (unchanged):
   if (focus.includes("digraph")) return ["phonics.digraphs"];
   if (focus.includes("final") && focus.includes("blend")) return ["phonics.blends.final"];
   if (focus.includes("blend")) return ["phonics.blends.initial"];

@@ -3,7 +3,7 @@ import { ACTIVITY_CONFIG_SCHEMAS } from "./activity-configs";
 import { PROGRAMS, getSkill } from "./index";
 import { getLanguage } from "./languages";
 import { kaelynAdaptive } from "./programs/kaelyn-adaptive";
-import { isActivityKindRegistered } from "@/activities";
+import { getActivityType, isActivityKindRegistered } from "@/activities";
 import { SKILLS } from "./skills";
 
 /**
@@ -92,11 +92,11 @@ describe("authored program content", () => {
   it("has a baseline check-in unit per placement-enabled academic strand", () => {
     const program = PROGRAMS.find((p) => p.slug === "kaelyn-adaptive")!;
     const baselines = program.units.filter((u) => u.checkpoint === "baseline");
-    // C1 ships Reading + Math baselines only. Word Study is deferred: its kinds
-    // (phonics-wordbuild/sightword-game) emit legacy phonics.* / reading.decodable
-    // slugs from skillsAffected(), not the word.*/vocab.* tags the recommender
-    // gates on — a pre-existing strand-wide mismatch, so a Word Study baseline
-    // would seed the wrong skills and fail to place. See the C1 follow-up.
+    // C1 ships Reading + Math baselines only. Word Study is still deferred: B3
+    // fixed the phonics-wordbuild/sightword-game evidence (see the invariant test
+    // below), but the strand's reading-comprehension activities still emit the
+    // reading.* rubric skills — disjoint from their authored word.*/vocab.* tags —
+    // so a Word Study baseline would seed the wrong skills and fail to place.
     expect(baselines.map((u) => u.id).sort()).toEqual(["math-baseline", "reading-baseline"]);
     for (const u of baselines) {
       const acts = u.lessons.flatMap((l) => l.activities);
@@ -106,6 +106,30 @@ describe("authored program content", () => {
         for (const t of a.skillTags) expect(SKILLS.some((s) => s.slug === t), `${a.id}: ${t}`).toBe(true);
       }
     }
+  });
+
+  it("Word Study wordbuild/sightword runtime skill evidence targets their authored skillTags", () => {
+    const program = PROGRAMS.find((p) => p.slug === "kaelyn-adaptive")!;
+    const unit = program.units.find((u) => u.id === "word-study")!;
+    // B3 fixed these two kinds so their evidence lands on the authored word.*/
+    // vocab.* skills the recommender gates on. reading-comprehension is excluded:
+    // it emits the reading.* rubric skills by design (a separate, out-of-scope
+    // mismatch tracked for its own fix — see the baseline check-in test above).
+    const scoped = new Set(["phonics-wordbuild", "sightword-game"]);
+    let checked = 0;
+    for (const lesson of unit.lessons) {
+      for (const a of lesson.activities) {
+        if (!scoped.has(a.kind)) continue;
+        const type = getActivityType(a.kind)!;
+        const emitted = type.skillsAffected(a.config as never);
+        for (const s of emitted) {
+          expect(a.skillTags, `${a.id} emits ${s}`).toContain(s);
+        }
+        checked += 1;
+      }
+    }
+    // Guard against the loop silently matching nothing (unit re-id, kind rename).
+    expect(checked).toBeGreaterThanOrEqual(6);
   });
 });
 

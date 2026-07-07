@@ -49,4 +49,30 @@ describe("phonics-wordbuild score", () => {
     ]);
     expect(skillsAffected({ ...config, focus: "short vowels CVC" })).toEqual(["phonics.cvc"]);
   });
+
+  it("maps Word Study focus strings to their authored word.* skills", () => {
+    // The real Program-02 (kaelyn-adaptive) Word Study focus strings.
+    expect(
+      skillsAffected({
+        ...config,
+        focus: "the six syllable types (closed, open, silent-e, vowel team, r-controlled, consonant-le)",
+      }),
+    ).toEqual(["word.syllables.types"]);
+    expect(
+      skillsAffected({ ...config, focus: "dividing multisyllable words (VC/CV, V/CV, C+le)" }),
+    ).toEqual(["word.syllables.division"]);
+    expect(
+      skillsAffected({ ...config, focus: "prefixes that change meaning (un-, re-, pre-, dis-, mis-, non-)" }),
+    ).toEqual(["word.morphology.prefixes"]);
+    expect(
+      skillsAffected({ ...config, focus: "Greek and Latin roots (tele = far, graph = write)" }),
+    ).toEqual(["word.morphology.roots"]);
+  });
+
+  it("leaves Program-01 phonics focus strings byte-identical", () => {
+    // A legacy string that must NOT be captured by the new Word Study checks.
+    expect(skillsAffected({ ...config, focus: "digraphs sh / ch / th" })).toEqual([
+      "phonics.digraphs",
+    ]);
+  });
 });

@@ -29,7 +29,16 @@ describe("sightword-game score", () => {
     expect(result.skillEvidence[0].outcome).toBe("not_yet");
   });
 
-  it("reports the single decodable reading skill", () => {
+  it("reports the single decodable reading skill by default", () => {
     expect(skillsAffected(config)).toEqual(["reading.decodable"]);
+  });
+
+  it("targets the authored skill when skillTag is set (Word Study override)", () => {
+    expect(skillsAffected({ ...config, skillTag: "word.morphology.prefixes" })).toEqual([
+      "word.morphology.prefixes",
+    ]);
+    expect(skillsAffected({ ...config, skillTag: "vocab.shades-of-meaning" })).toEqual([
+      "vocab.shades-of-meaning",
+    ]);
   });
 });

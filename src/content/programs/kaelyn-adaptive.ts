@@ -428,6 +428,7 @@ export const kaelynAdaptive: Program = {
                 instruction: "Tap every word part that means \"again.\" Watch out for the ones that mean something else.",
                 words: ["re-", "redo", "rebuild"],
                 decoys: ["un-", "pre-", "dis-", "mis-"],
+                skillTag: "word.morphology.prefixes",
               },
             },
           ],
@@ -502,6 +503,7 @@ export const kaelynAdaptive: Program = {
                 instruction: "Tap every word that means almost the same as \"enormous.\" Leave the opposites alone.",
                 words: ["gigantic", "huge", "massive"],
                 decoys: ["tiny", "small", "little"],
+                skillTag: "vocab.shades-of-meaning",
               },
             },
             {
