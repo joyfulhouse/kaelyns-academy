@@ -80,12 +80,21 @@ export interface UseLearnerState {
    * but are not tracked as authored star progress / completion. For a generated
    * item, pass `gen` (the provenance echoed by /api/practice) so the attempt
    * records which model/route/when produced it (P6 / §8). Ignored in guest mode.
+   *
+   * A generated SHELF item (Adventure 2.0 B3) passes `{ generated: true, gen,
+   * shelfItemId }`: `shelfItemId` is the generated id, and its presence ALSO
+   * drives the optimistic completed/best-stars update keyed by that id (a shelf
+   * item is a durable, one-time earner — unlike in-session "More" practice).
    */
   record: (
     activity: Activity,
     response: unknown,
     score: ActivityScore,
-    opts?: { generated?: boolean; gen?: { model: string; route: string; at: string } },
+    opts?: {
+      generated?: boolean;
+      gen?: { model: string; route: string; at: string };
+      shelfItemId?: string;
+    },
   ) => void;
   /**
    * The parent-set per-child, per-program enrollment config. Empty object in
@@ -299,7 +308,13 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
         if (!isCheckpointActivity) {
           setAccountSkill((prev) => applyEvidence(prev, score.skillEvidence, day));
         }
-        if (!generated) {
+        // Authored completion OR a generated SHELF item (B3, signalled by
+        // opts.shelfItemId) optimistically flips completed + best-stars, keyed by
+        // activity.id (which IS the generated id for a shelf item). In-session
+        // "More" practice (generated, no shelfItemId) folds evidence only — it is
+        // not a durable, trackable completion. The C1 checkpoint-skip guard above
+        // is untouched: a shelf item is never in a checkpoint unit.
+        if (!generated || opts?.shelfItemId) {
           setAccountCompleted((prev) =>
             prev.has(activity.id) ? prev : new Set(prev).add(activity.id),
           );

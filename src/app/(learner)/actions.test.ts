@@ -19,6 +19,9 @@ vi.mock("@/lib/tenancy", async (importActual) => ({
 
 vi.mock("@/lib/tutor/store", () => ({
   recordAttempt: vi.fn(),
+  // The generated-shelf star witness (B3): recordAttemptAction reads this for a
+  // generated attempt to decide shelfEligible + the shelf unit.
+  getGeneratedActivity: vi.fn(),
   // ensureLessonPractice gate + shelf reads/writes (all account-scoped store fns).
   getLearner: vi.fn(),
   getLearnerSettings: vi.fn(),
@@ -55,6 +58,7 @@ vi.mock("@/lib/tutor/shelf", () => ({
 
 import {
   recordAttempt,
+  getGeneratedActivity,
   getLearner,
   getLearnerSettings,
   getEnrollmentForGate,
@@ -123,6 +127,51 @@ describe("recordAttemptAction membership witness (star-mint exploit boundary)", 
     expect(recordAttempt).toHaveBeenCalledWith(
       "acc-1",
       expect.objectContaining({ unitId: null, creditEligible: false }),
+    );
+  });
+});
+
+// ── Adventure 2.0 B3: the generated-shelf star witness ───────────────────────
+
+describe("recordAttemptAction generated-shelf witness (earn-once boundary)", () => {
+  it("does NOT set shelfEligible for a generated id owned by another learner (records, earns nothing)", async () => {
+    // A forged shelf id: the account/learner-scoped read misses, so shelfEligible
+    // stays false. The attempt still records (generated practice is forgiving),
+    // but recordAttempt is told not to grant the one-time earn.
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(findUnitIdOfActivity).mockReturnValue(null);
+    vi.mocked(getGeneratedActivity).mockResolvedValue(null);
+
+    const result = await recordAttemptAction({ ...BASE_INPUT, generated: true, activityId: "gen-foreign" });
+
+    expect(result).toEqual({ ok: true });
+    expect(getGeneratedActivity).toHaveBeenCalledWith("acc-1", "L1", "gen-foreign");
+    expect(recordAttempt).toHaveBeenCalledWith(
+      "acc-1",
+      expect.objectContaining({ generated: true, shelfEligible: false, creditEligible: false }),
+    );
+  });
+
+  it("sets shelfEligible + the shelf's unit for a generated id owned by this learner", async () => {
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(findUnitIdOfActivity).mockReturnValue(null);
+    vi.mocked(getGeneratedActivity).mockResolvedValue({
+      id: "gen-1",
+      lessonId: "u1-l1",
+      unitKey: "u1",
+      programSlug: "kaelyn-adaptive",
+      kind: "phonics-wordbuild",
+      title: "Fresh: X",
+      config: {},
+      skillTags: [],
+    });
+
+    const result = await recordAttemptAction({ ...BASE_INPUT, generated: true, activityId: "gen-1" });
+
+    expect(result).toEqual({ ok: true });
+    expect(recordAttempt).toHaveBeenCalledWith(
+      "acc-1",
+      expect.objectContaining({ generated: true, shelfEligible: true, unitId: "u1" }),
     );
   });
 });

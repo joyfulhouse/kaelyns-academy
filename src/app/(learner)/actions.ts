@@ -10,6 +10,7 @@ import {
   getCompletedActivityIds,
   getEnrollmentConfig,
   getEnrollmentForGate,
+  getGeneratedActivity,
   getLearner,
   getLearnerSettings,
   getSkillState,
@@ -251,6 +252,26 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
       const unit = program && unitId ? getUnit(program, unitId) : null;
       const checkpointPhase = unit?.checkpoint ?? null;
 
+      // Generated shelf witness (Adventure 2.0 B3): a GENERATED attempt whose
+      // activityId is a real shelf row OWNED BY THIS LEARNER is a legitimate
+      // one-time star earner. The ownership-checked read is the witness (scoped
+      // to accountId AND learnerId), exactly like `creditEligible` is for
+      // authored activities — a forged shelf id from another learner returns null
+      // and earns nothing. A found row also gives the containing unit (for
+      // unit-targeted quests). The in-session "More" practice path (generated but
+      // activityId = an AUTHORED id) finds no shelf row → shelfEligible stays
+      // false, unchanged. Only queried for generated attempts (authored ids are
+      // never on the shelf).
+      let shelfEligible = false;
+      let shelfUnitId: string | null = null;
+      if (generated) {
+        const shelfRow = await getGeneratedActivity(accountId, data.learnerId, data.activityId);
+        if (shelfRow) {
+          shelfEligible = true;
+          shelfUnitId = shelfRow.unitKey;
+        }
+      }
+
       // An authored attempt whose activityId is NOT in the learner's resolved
       // tree is a forgery attempt (a fresh/arbitrary id) — reject before any
       // write. A generated (AI practice) attempt is exempt: synthetic practice
@@ -280,8 +301,12 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
         score: data.score,
         day: new Date().toISOString().slice(0, 10),
         provenance,
-        unitId,
+        // A verified shelf item carries its own unit (for unit-targeted quests);
+        // otherwise the authored-tree unit (null when unresolvable / generated
+        // in-session practice keeps its authored unit).
+        unitId: shelfEligible ? shelfUnitId : unitId,
         creditEligible,
+        shelfEligible,
         checkpointPhase,
       });
       return { ok: true };

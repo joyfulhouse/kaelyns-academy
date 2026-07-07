@@ -229,6 +229,15 @@ export interface RecordAttemptInput {
    */
   creditEligible: boolean;
   /**
+   * Server-derived in the action (Adventure 2.0 B3) — TRUE only when a GENERATED
+   * attempt's activityId was verified to be a real shelf row owned by the learner
+   * (getGeneratedActivity). Never client-supplied — same contract as
+   * creditEligible. Lets a generated shelf item earn ledger stars exactly once;
+   * the first-completion dedupe then counts prior GENERATED attempts for the id.
+   * Falsy leaves the authored/in-session-practice earn byte-identical.
+   */
+  shelfEligible?: boolean;
+  /**
    * When the attempt's unit is a checkpoint (baseline/mid/final), its evidence
    * folds into checkpoint_result INSTEAD of skill_state — nothing about the
    * learner's level changes until a parent applies the placement (§3, §7).
@@ -299,7 +308,15 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
 
     // Star economy (Adventure 2.0): first authored completion earns score.stars
     // into the append-only ledger, inside this same transaction (all-or-nothing
-    // with the attempt). Repeats/generated earn 0 (v1 grind-proof rule).
+    // with the attempt). Repeats/generated earn 0 (v1 grind-proof rule) — EXCEPT
+    // a server-verified generated shelf item (B3), which earns exactly once.
+    const shelfEligible = input.shelfEligible === true;
+    // The "already completed once" witness. An AUTHORED attempt dedupes against
+    // prior AUTHORED (generated=false) rows for this activity; a GENERATED shelf
+    // item dedupes against prior GENERATED (generated=true) rows for the same
+    // generated id — so it too earns exactly once. Both counts include the row we
+    // just inserted, so >1 means a repeat. (For an authored attempt shelfEligible
+    // is false → predicate is generated=false → byte-identical to before.)
     const prior = await tx
       .select({ id: attempt.id })
       .from(attempt)
@@ -307,22 +324,25 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
         and(
           eq(attempt.learnerId, input.learnerId),
           eq(attempt.activityId, input.activityId),
-          eq(attempt.generated, false),
+          eq(attempt.generated, shelfEligible),
         ),
       )
       .limit(2); // the row we just inserted + any earlier one
     // Membership witness gate (Codex critical): earnedStarsForAttempt stays pure
     // (it never sees creditEligible); the caller here refuses to even ask for a
     // star credit unless the action already verified activityId belongs to the
-    // learner's own pinned tree. A forged fresh activityId can no longer mint
-    // stars just because no prior attempt row exists for it.
-    const earned = input.creditEligible
-      ? earnedStarsForAttempt({
-          generated,
-          stars: input.score.stars,
-          alreadyCompleted: prior.length > 1,
-        })
-      : 0;
+    // learner's own pinned tree (authored) OR is a real shelf row owned by the
+    // learner (generated, B3). A forged fresh activityId can no longer mint stars
+    // just because no prior attempt row exists for it.
+    const earned =
+      input.creditEligible || shelfEligible
+        ? earnedStarsForAttempt({
+            generated,
+            stars: input.score.stars,
+            alreadyCompleted: prior.length > 1,
+            shelfEligible,
+          })
+        : 0;
     if (earned > 0) {
       await tx.insert(starLedger).values({
         learnerId: input.learnerId,
@@ -768,6 +788,25 @@ export interface GeneratedActivityRow {
   skillTags: string[];
 }
 
+/**
+ * A shelf item resolved for PLAY by account + program (Task 4). Carries the
+ * playable `config`/`kind` PLUS the stored generation provenance as an ISO
+ * string (`gen`), so the client host can relay it onto the recorded attempt
+ * exactly like ActivityHost's practice path (P6 / §8). Client-safe: no learner
+ * id, no Date objects — everything crosses the server→client boundary cleanly.
+ */
+export interface PlayableShelfItem {
+  id: string;
+  lessonId: string;
+  unitKey: string;
+  programSlug: string;
+  kind: ActivityKind;
+  title: string;
+  config: unknown;
+  skillTags: string[];
+  gen: { model: string; route: string; at: string };
+}
+
 /** Project a generated_activity row into the client-safe {@link ShelfItem}. */
 function toShelfItem(r: typeof generatedActivity.$inferSelect): ShelfItem {
   return {
@@ -912,6 +951,59 @@ export async function getGeneratedActivity(
     },
     null,
   );
+}
+
+/**
+ * One shelf item resolved for PLAY, scoped by ACCOUNT + PROGRAM (Task 4). Unlike
+ * {@link getGeneratedActivity} (which needs a known learnerId), the play route
+ * only has the account (session) + programSlug + the shelf id, so ownership is
+ * resolved through the JOIN to the owning learner: the row is returned only when
+ * its learner belongs to `accountId` AND its programSlug matches. A
+ * foreign/mismatched/unknown id → null (the host renders the calm "moved" state).
+ * Carries the generation provenance as an ISO string for the client relay.
+ */
+export async function getGeneratedActivityForAccount(
+  accountId: string,
+  programSlug: string,
+  id: string,
+): Promise<PlayableShelfItem | null> {
+  const rows = await getDb()
+    .select({
+      id: generatedActivity.id,
+      lessonId: generatedActivity.lessonId,
+      unitKey: generatedActivity.unitKey,
+      programSlug: generatedActivity.programSlug,
+      kind: generatedActivity.kind,
+      title: generatedActivity.title,
+      config: generatedActivity.config,
+      skillTags: generatedActivity.skillTags,
+      genModel: generatedActivity.genModel,
+      genRoute: generatedActivity.genRoute,
+      genAt: generatedActivity.genAt,
+    })
+    .from(generatedActivity)
+    .innerJoin(learner, eq(generatedActivity.learnerId, learner.id))
+    .where(
+      and(
+        eq(generatedActivity.id, id),
+        eq(generatedActivity.programSlug, programSlug),
+        eq(learner.accountId, accountId),
+      ),
+    )
+    .limit(1);
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    id: r.id,
+    lessonId: r.lessonId,
+    unitKey: r.unitKey,
+    programSlug: r.programSlug,
+    kind: r.kind as ActivityKind,
+    title: r.title,
+    config: r.config,
+    skillTags: r.skillTags,
+    gen: { model: r.genModel, route: r.genRoute, at: r.genAt.toISOString() },
+  };
 }
 
 /** Outcome tally across a learner's skills (for the dashboard summary). */

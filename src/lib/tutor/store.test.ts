@@ -412,6 +412,43 @@ describe("recordAttempt (atomic persistence)", () => {
     expect(ledgerInserts).toHaveLength(0);
   });
 
+  // ── Adventure 2.0 B3: a generated SHELF item earns exactly once ────────────
+
+  it("credits the ledger for a generated shelf item's FIRST completion (shelfEligible)", async () => {
+    // A generated attempt would normally earn 0, but a server-verified shelf item
+    // (shelfEligible) is a one-time earner. creditEligible is false (it is not an
+    // authored-tree activity); shelfEligible alone opens the earn.
+    await recordAttempt("acct-1", {
+      ...input,
+      generated: true,
+      creditEligible: false,
+      shelfEligible: true,
+    });
+    expect(ledgerInserts).toEqual([
+      expect.objectContaining({ delta: 3, reason: "activity_complete", refId: input.activityId }),
+    ]);
+  });
+
+  it("writes no ledger row on a REPEAT generated shelf completion (earns exactly once)", async () => {
+    // The dedupe counts prior GENERATED attempts for the same id: a prior row +
+    // the just-inserted one → alreadyCompleted → no second earn.
+    attemptRows.value = [{ id: "prev" }, { id: "new" }];
+    await recordAttempt("acct-1", {
+      ...input,
+      generated: true,
+      creditEligible: false,
+      shelfEligible: true,
+    });
+    expect(ledgerInserts).toHaveLength(0);
+  });
+
+  it("a generated NON-shelf attempt still earns nothing (shelfEligible absent)", async () => {
+    // Guards the byte-identical authored/in-session-practice path: without the
+    // shelf witness, generated practice earns 0 even on a first completion.
+    await recordAttempt("acct-1", { ...input, generated: true, creditEligible: true });
+    expect(ledgerInserts).toHaveLength(0);
+  });
+
   // ── Codex critical: server-verified membership gates the star earn ─────────
 
   it("writes no ledger row for a first authored completion when creditEligible is false", async () => {
