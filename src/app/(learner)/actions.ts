@@ -10,18 +10,26 @@ import {
   getCompletedActivityIds,
   getEnrollmentConfig,
   getEnrollmentForGate,
+  getLearner,
   getLearnerSettings,
   getSkillState,
+  insertGeneratedActivities,
   listEnrollmentsDetailed,
+  listGeneratedShelf,
   recordAttempt,
+  type NewGeneratedActivity,
+  type ShelfItem,
 } from "@/lib/tutor/store";
 import type { EnrollmentConfig } from "@/lib/content/config";
 import {
   activityIdsForProgram,
+  findActivity,
   getUnit,
   skillTagsForProgram,
 } from "@/content";
-import type { Program } from "@/content";
+import type { Band, Lesson, Program, Unit } from "@/content";
+import { generatePracticeItems, MODEL_FOR_BAND } from "@/lib/ai/practice";
+import { pickGenerationTargets, SHELF_BATCH, SHELF_LESSON_CAP } from "@/lib/tutor/shelf";
 import { resolveLearnerProgram } from "@/lib/content/repository";
 import { findUnitIdOfActivity } from "@/lib/quests/logic";
 import type { SkillState } from "@/lib/tutor";
@@ -404,5 +412,151 @@ export async function getLearnerStateAction(
       captureNonCritical("getLearnerStateAction failed", error);
     }
     return EMPTY_STATE;
+  }
+}
+
+// ── Adaptive generation shelf (Adventure 2.0 B3) ─────────────────────────────
+
+const ensureLessonPracticeSchema = z.object({
+  learnerId: z.string().min(1).max(100),
+  programSlug: z.string().min(1).max(100),
+  activityId: z.string().min(1).max(100).optional(),
+  lessonId: z.string().min(1).max(100).optional(),
+  more: z.boolean().optional(),
+});
+
+/** Locate the lesson (and its unit) to generate for: by explicit lessonId, else
+ *  the lesson that contains activityId. Pure over the resolved tree. */
+function locateLesson(
+  program: Program,
+  where: { lessonId?: string; activityId?: string },
+): { unit: Unit; lesson: Lesson } | null {
+  if (where.lessonId) {
+    for (const unit of program.units) {
+      const lesson = unit.lessons.find((l) => l.id === where.lessonId);
+      if (lesson) return { unit, lesson };
+    }
+    return null;
+  }
+  if (where.activityId) {
+    const ctx = findActivity(program, where.activityId);
+    if (ctx) return { unit: ctx.unit, lesson: ctx.lesson };
+  }
+  return null;
+}
+
+/**
+ * Eager, bounded, idempotent generation of a lesson's "fresh practice" shelf
+ * (Adventure 2.0 B3 / spec §4). Called by the client after every completion; the
+ * calm `{ ok: false, items: [] }` posture means an unauthenticated visitor or any
+ * failure just yields no shelf (the surface falls back to authored content).
+ *
+ * Everything the model is steered by is SERVER-derived (§8): the band, focus, and
+ * skill hints come from the resolved authored tree + the parent's enrollment
+ * config — never from the client, which supplies only identifiers. The §8 gate
+ * mirrors /api/practice exactly (owned learner, ACTIVE enrollment, and NEITHER
+ * aiPractice kill-switch off), and generation is bounded (SHELF_BATCH per call,
+ * SHELF_LESSON_CAP per lesson). A lesson only generates once its authored
+ * activities are all complete (the completion witness), and re-calls are no-ops
+ * unless `more` is set — so the shelf grows deliberately, never on every render.
+ */
+export async function ensureLessonPractice(
+  input: z.infer<typeof ensureLessonPracticeSchema>,
+): Promise<{ ok: boolean; items: ShelfItem[] }> {
+  const parsed = ensureLessonPracticeSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, items: [] };
+  const { learnerId, programSlug, activityId, lessonId, more } = parsed.data;
+
+  try {
+    return await withAccount(async ({ accountId }): Promise<{ ok: boolean; items: ShelfItem[] }> => {
+      // 1. §8 gate — mirrors /api/practice (fail-closed). Ownership first, then
+      //    the resolved tree, then ACTIVE enrollment + BOTH aiPractice flags.
+      const owned = await getLearner(accountId, learnerId);
+      if (!owned) return { ok: false, items: [] };
+
+      const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
+      if (!program) return { ok: false, items: [] };
+
+      const [settings, gate] = await Promise.all([
+        getLearnerSettings(accountId, learnerId),
+        getEnrollmentForGate(accountId, learnerId, programSlug),
+      ]);
+      const aiOff =
+        settings?.aiPractice === false ||
+        !gate ||
+        gate.status !== "active" ||
+        gate.config.aiPractice === false;
+      if (aiOff) return { ok: false, items: [] };
+
+      // 2. Locate the lesson on the pinned tree (by lessonId, else the lesson
+      //    containing activityId). Unknown → calm no-op.
+      const located = locateLesson(program, { lessonId, activityId });
+      if (!located) return { ok: false, items: [] };
+      const { unit, lesson } = located;
+
+      // The existing shelf for this lesson (needed by both the incomplete no-op
+      // and the idempotency/cap returns below).
+      const shelf = await listGeneratedShelf(accountId, learnerId, programSlug);
+      const existing = shelf.filter((s) => s.lessonId === lesson.id);
+
+      // 3. Completion witness: every AUTHORED activity in the lesson must be a
+      //    (non-generated) completion. Incomplete → calm no-op returning existing
+      //    (the client calls this after each completion, before the lesson is done).
+      const completed = await getCompletedActivityIds(accountId, learnerId);
+      const completedIds = new Set(completed.map((c) => c.activityId));
+      const allComplete = lesson.activities.every((a) => completedIds.has(a.id));
+      if (!allComplete) return { ok: true, items: existing };
+
+      // 4. Idempotency + cap: a filled shelf is returned as-is unless `more`; a
+      //    capped shelf never grows further.
+      if (!more && existing.length > 0) return { ok: true, items: existing };
+      if (existing.length >= SHELF_LESSON_CAP) return { ok: true, items: existing };
+
+      // 5. Targets + band — both server-derived. Never asks for more than the
+      //    remaining room under the cap.
+      const room = Math.min(SHELF_BATCH, SHELF_LESSON_CAP - existing.length);
+      const targets = pickGenerationTargets(lesson, room);
+      if (targets.length === 0) return { ok: true, items: existing };
+      const band: Band = gate.config.band ?? "ready";
+
+      // 6. Generate per target. generatePracticeItems returns only validator-
+      //    passing items (Task 2) and throws when zero survive — a throwing target
+      //    is SKIPPED (a short batch is fine; authored content covers the rest).
+      const genModel = MODEL_FOR_BAND[band];
+      const genAt = new Date();
+      const newRows: NewGeneratedActivity[] = [];
+      for (const target of targets) {
+        try {
+          const items = await generatePracticeItems(target.kind, band, target.focus, target.n, {
+            skillHints: target.skillTags,
+          });
+          for (const config of items) {
+            newRows.push({
+              programSlug,
+              unitKey: unit.id,
+              lessonId: lesson.id,
+              kind: target.kind,
+              title: `Fresh: ${target.sourceTitle}`,
+              config,
+              skillTags: target.skillTags,
+              genModel,
+              genRoute: "shelf",
+              genAt,
+            });
+          }
+        } catch (error) {
+          captureNonCritical(`ensureLessonPractice: generation failed for kind=${target.kind}`, error);
+        }
+      }
+
+      // 7. Persist (one tx, tenancy + cap re-checked inside). 8. Return the whole
+      //    shelf (existing + freshly inserted).
+      const inserted =
+        newRows.length > 0 ? await insertGeneratedActivities(accountId, learnerId, newRows) : [];
+      return { ok: true, items: [...existing, ...inserted] };
+    });
+  } catch (error) {
+    captureNonCritical("ensureLessonPractice failed", error);
+    return { ok: false, items: [] };
   }
 }

@@ -1,13 +1,14 @@
 // server-only: this module opens DB connections and must never be imported into
 // a Client Component. (the `server-only` package isn't installed; this comment
 // is the guard, and only server actions / route handlers import it.)
-import { and, count, desc, eq, inArray, lt, or, sum } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, lt, or, sum } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   attempt,
   checkpointResult,
   deletionAudit,
   enrollment,
+  generatedActivity,
   interest,
   learner,
   learnerInterest,
@@ -19,6 +20,8 @@ import {
   verification,
 } from "@/lib/db/schema";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
+import type { ActivityKind } from "@/content/activity-configs";
+import { SHELF_LESSON_CAP } from "./shelf";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
 import {
   enrollmentConfigSchema,
@@ -714,6 +717,200 @@ export async function getCompletedActivityIds(
       return [...best.entries()].map(([activityId, stars]) => ({ activityId, stars }));
     },
     [],
+  );
+}
+
+// ── Adaptive generation shelf (Adventure 2.0 B3, spec §4) ────────────────────
+//
+// Durable, learner-private AI-generated practice. One generated_activity row per
+// item, persisted only after the item passed schema + kind validation upstream
+// (generatePracticeItems). Never part of the shared authored curriculum, so it
+// lives in its own table and is always account-scoped like every other read.
+
+/** A shelf item as the learner surface + the action need it (client-safe). */
+export interface ShelfItem {
+  id: string;
+  lessonId: string;
+  unitKey: string;
+  kind: ActivityKind;
+  title: string;
+  skillTags: string[];
+  /** ISO creation time (the deterministic shelf sort key). */
+  createdAt: string;
+}
+
+/** One row to persist: everything but the (account-derived) learnerId, which
+ *  {@link insertGeneratedActivities} stamps from the ownership-checked call. */
+export interface NewGeneratedActivity {
+  programSlug: string;
+  unitKey: string;
+  lessonId: string;
+  kind: ActivityKind;
+  title: string;
+  /** The validated kind config (zod + kind-validated before it reached here). */
+  config: unknown;
+  skillTags: string[];
+  genModel: string;
+  genRoute: string;
+  genAt: Date;
+}
+
+/** A single generated activity incl. its playable config + kind (Task 4 reads
+ *  this to render/score a generated item). */
+export interface GeneratedActivityRow {
+  id: string;
+  lessonId: string;
+  unitKey: string;
+  programSlug: string;
+  kind: ActivityKind;
+  title: string;
+  config: unknown;
+  skillTags: string[];
+}
+
+/** Project a generated_activity row into the client-safe {@link ShelfItem}. */
+function toShelfItem(r: typeof generatedActivity.$inferSelect): ShelfItem {
+  return {
+    id: r.id,
+    lessonId: r.lessonId,
+    unitKey: r.unitKey,
+    kind: r.kind as ActivityKind,
+    title: r.title,
+    skillTags: r.skillTags,
+    createdAt: r.createdAt.toISOString(),
+  };
+}
+
+/** Count the generated rows already on a lesson's shelf. Takes the tx so the
+ *  cap can be enforced against the same snapshot as the insert below. */
+async function countGeneratedForLesson(db: Db, learnerId: string, lessonId: string): Promise<number> {
+  const rows = await db
+    .select({ value: count() })
+    .from(generatedActivity)
+    .where(and(eq(generatedActivity.learnerId, learnerId), eq(generatedActivity.lessonId, lessonId)));
+  return rows[0]?.value ?? 0;
+}
+
+/**
+ * Persist a batch of generated items in ONE transaction. Tenancy is re-checked
+ * inside the tx (mirrors recordAttempt/applyPlacement) so ownership and the
+ * write share the snapshot; a foreign account writes nothing. The per-lesson cap
+ * ({@link SHELF_LESSON_CAP}) is enforced against the SAME snapshot — a count read
+ * then a slice — so two concurrent ensureLessonPractice calls can't push a
+ * lesson's shelf past the cap. Returns the inserted rows as ShelfItems (the batch
+ * is single-lesson, keyed off rows[0]).
+ * @throws when the learner is not owned by the account (tenancy).
+ */
+export async function insertGeneratedActivities(
+  accountId: string,
+  learnerId: string,
+  rows: NewGeneratedActivity[],
+): Promise<ShelfItem[]> {
+  if (rows.length === 0) return [];
+  return getDb().transaction(async (tx) => {
+    // Tenancy boundary, re-checked inside the tx (same pattern as recordAttempt).
+    const owned = await tx
+      .select({ id: learner.id })
+      .from(learner)
+      .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
+      .limit(1);
+    if (!owned[0]) throw new Error("learner not found for account");
+
+    // Race-safe cap: the batch is single-lesson, so count THIS lesson's existing
+    // shelf inside the tx and only insert up to the remaining room. A concurrent
+    // call that already filled the shelf leaves room <= 0 → nothing is inserted.
+    const lessonId = rows[0]!.lessonId;
+    const current = await countGeneratedForLesson(tx, learnerId, lessonId);
+    const room = SHELF_LESSON_CAP - current;
+    if (room <= 0) return [];
+    const toInsert = rows.slice(0, room);
+
+    const inserted = await tx
+      .insert(generatedActivity)
+      .values(
+        toInsert.map((r) => ({
+          learnerId,
+          programSlug: r.programSlug,
+          unitKey: r.unitKey,
+          lessonId: r.lessonId,
+          kind: r.kind,
+          title: r.title,
+          config: r.config,
+          skillTags: r.skillTags,
+          genModel: r.genModel,
+          genRoute: r.genRoute,
+          genAt: r.genAt,
+        })),
+      )
+      .returning();
+    return inserted.map(toShelfItem);
+  });
+}
+
+/**
+ * The learner's generated shelf for one program (owned-by-account), oldest-first
+ * so the client renders a stable order. Completion is derived from attempts
+ * client-side, so it is NOT stored on the shelf row.
+ */
+export async function listGeneratedShelf(
+  accountId: string,
+  learnerId: string,
+  programSlug: string,
+): Promise<ShelfItem[]> {
+  return withOwnedLearner<ShelfItem[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select()
+        .from(generatedActivity)
+        .where(
+          and(
+            eq(generatedActivity.learnerId, learnerId),
+            eq(generatedActivity.programSlug, programSlug),
+          ),
+        )
+        .orderBy(asc(generatedActivity.createdAt));
+      return rows.map(toShelfItem);
+    },
+    [],
+  );
+}
+
+/**
+ * One generated activity by id, ownership-checked (owned-by-account) AND scoped
+ * to the learner so a foreign/mismatched id returns null. Carries the playable
+ * `config` + `kind` (Task 4 renders/scores from it). Returns null when the
+ * learner is not owned or the row doesn't exist / isn't this learner's.
+ */
+export async function getGeneratedActivity(
+  accountId: string,
+  learnerId: string,
+  id: string,
+): Promise<GeneratedActivityRow | null> {
+  return withOwnedLearner<GeneratedActivityRow | null>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select()
+        .from(generatedActivity)
+        .where(and(eq(generatedActivity.id, id), eq(generatedActivity.learnerId, learnerId)))
+        .limit(1);
+      const r = rows[0];
+      if (!r) return null;
+      return {
+        id: r.id,
+        lessonId: r.lessonId,
+        unitKey: r.unitKey,
+        programSlug: r.programSlug,
+        kind: r.kind as ActivityKind,
+        title: r.title,
+        config: r.config,
+        skillTags: r.skillTags,
+      };
+    },
+    null,
   );
 }
 
