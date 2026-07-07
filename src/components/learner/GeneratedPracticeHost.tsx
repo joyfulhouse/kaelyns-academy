@@ -240,14 +240,18 @@ function ShelfItemMoved({ programSlug, backHref }: { programSlug: string; backHr
         </h1>
         <p className="mt-3 text-lg text-ink-soft">Let&rsquo;s head back to the map.</p>
         <div className="mt-9 flex w-full flex-col items-stretch gap-3">
+          {/* With no row, backHref already IS the program map — render one
+              button, not two identical destinations with different labels. */}
           <Button href={backHref} variant="primary" size="kid">
             <MapTrifoldIcon weight="duotone" className="size-6" />
-            Back to the world
+            {backHref === `/learn/${programSlug}` ? "Back to the map" : "Back to the world"}
           </Button>
-          <Button href={`/learn/${programSlug}`} variant="soft" size="kid">
-            <MapTrifoldIcon weight="duotone" className="size-6" />
-            Back to the map
-          </Button>
+          {backHref !== `/learn/${programSlug}` && (
+            <Button href={`/learn/${programSlug}`} variant="soft" size="kid">
+              <MapTrifoldIcon weight="duotone" className="size-6" />
+              Back to the map
+            </Button>
+          )}
         </div>
       </motion.div>
     </AppShellKid>

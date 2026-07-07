@@ -235,6 +235,10 @@ function FreshPracticeShelf({
   // The lessonId currently generating "more" (null = idle); disables that group's
   // button and shows the calm "cooking" copy while the bounded call is in flight.
   const [pendingLesson, setPendingLesson] = useState<string | null>(null);
+  // Announced via the sr-only status region below — a disabled button's label
+  // swap ("Making more…") isn't reliably read out, and new shelf items appear
+  // silently otherwise (mirrors ActivityHost's GeneratingScreen live region).
+  const [liveStatus, setLiveStatus] = useState("");
 
   const shelfForUnit = shelf.filter((s) => s.unitKey === unit.id);
   if (shelfForUnit.length === 0) return null;
@@ -255,9 +259,14 @@ function FreshPracticeShelf({
 
   async function handleMore(lessonId: string) {
     setPendingLesson(lessonId);
+    setLiveStatus("Making more practice");
     try {
       await ensureLessonPractice({ learnerId, programSlug, lessonId, more: true });
       await refreshShelf();
+      setLiveStatus("New practice ready");
+    } catch {
+      // Forgiving: the button simply re-enables; the server logged the failure.
+      setLiveStatus("");
     } finally {
       setPendingLesson(null);
     }
@@ -269,6 +278,11 @@ function FreshPracticeShelf({
         <SparkleIcon weight="fill" className="size-5 text-honey-deep" aria-hidden />
         Fresh practice, made for you
       </h2>
+
+      {/* Screen-reader announcement for the More-like-this flow. */}
+      <p role="status" aria-live="polite" className="sr-only">
+        {liveStatus}
+      </p>
 
       <div className="flex flex-col gap-7">
         {orderedLessonIds.map((lessonId) => {
@@ -324,10 +338,9 @@ function FreshPracticeShelf({
                   <Button
                     type="button"
                     variant="soft"
-                    size="md"
+                    size="kid"
                     onClick={() => void handleMore(lessonId)}
                     disabled={busy}
-                    aria-label={busy ? "Making more practice" : "More practice like this"}
                   >
                     <SparkleIcon weight="fill" className="size-5 text-honey-deep" aria-hidden />
                     {busy ? "Making more…" : "More like this"}
