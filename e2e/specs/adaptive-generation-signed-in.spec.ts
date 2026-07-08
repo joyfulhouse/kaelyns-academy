@@ -66,7 +66,7 @@ test("a signed-in learner is offered AI 'More' practice on the reward screen", a
     // On the host reward screen (anchored by its stable "Back to the map"
     // button), the account-only affordance IS offered. Do NOT click it — the
     // gate env has no LiteLLM, so a click would fire a real generation.
-    await expect(page.getByRole("button", { name: "Back to the map" })).toBeVisible({
+    await expect(page.getByRole("link", { name: "Back to the map" })).toBeVisible({
       timeout: 20_000,
     });
     await expect(page.getByRole("button", { name: "More, made just for me" })).toBeVisible();
