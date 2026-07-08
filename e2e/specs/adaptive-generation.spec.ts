@@ -55,7 +55,7 @@ test("a guest finishes a generable activity but the reward screen offers no AI '
   // We're on the host reward screen once its stable "Back to the map" button
   // renders (the reward headline varies with star count, so it's not a reliable
   // anchor). Then assert the account-only affordance is absent for a guest.
-  await expect(page.getByRole("button", { name: "Back to the map" })).toBeVisible({
+  await expect(page.getByRole("link", { name: "Back to the map" })).toBeVisible({
     timeout: 20_000,
   });
   await expect(page.getByRole("button", { name: "More, made just for me" })).toHaveCount(0);
