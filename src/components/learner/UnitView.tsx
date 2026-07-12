@@ -23,6 +23,9 @@ import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner } from "./learners";
 import { useLearnerState } from "./useLearnerState";
 import { ACTIVITY_META } from "./activityMeta";
+import { accountLearnerSelectionRequired } from "./learnerAccess";
+import { AccountLearnerPicker } from "./AccountLearnerPicker";
+import { AccountSessionError } from "./AccountSessionError";
 
 /**
  * A unit (the week's world): theme, big idea, phonics/math focus + project,
@@ -52,6 +55,7 @@ export function UnitView({
   // in account mode, localStorage guest otherwise. The mock learner id only
   // matters in guest mode; state is scoped to the active program by its slug.
   // `mode`/`available`/`config` drive the account-mode curation gate (Fix-F A3).
+  const learnerState = useLearnerState(learner.id, programSlug);
   const {
     getStars,
     skillState,
@@ -64,7 +68,15 @@ export function UnitView({
     generatedShelf,
     refreshShelf,
     selectedLearnerId,
-  } = useLearnerState(learner.id, programSlug);
+  } = learnerState;
+
+  if (mode === "error") {
+    return <AccountSessionError backHref={`/learn/${programSlug}`} retry={learnerState.retrySession} />;
+  }
+
+  if (accountLearnerSelectionRequired(mode, selectedLearnerId)) {
+    return <AccountLearnerPicker state={learnerState} />;
+  }
 
   // Account-mode curation gate (Fix-F A3). Enforced ONLY in account mode and
   // ONLY once state has loaded (`ready`) — so guest mode is unaffected and the
@@ -105,15 +117,18 @@ export function UnitView({
       summary: "",
       units: [unit],
     };
-  const recommendation = nextBest(recommendationProgram, skillState, completed).find(
-    (pick) => pick.unit.id === unit.id,
-  );
-  const generatedRecommendation = recommendation
-    ? undefined
-    : nextGeneratedPick(
-        generatedShelf.filter((item) => item.unitKey === unit.id),
-        completed,
-      );
+  const recommendation = ready
+    ? nextBest(recommendationProgram, skillState, completed).find(
+        (pick) => pick.unit.id === unit.id,
+      )
+    : undefined;
+  const generatedRecommendation =
+    ready && !recommendation
+      ? nextGeneratedPick(
+          generatedShelf.filter((item) => item.unitKey === unit.id),
+          completed,
+        )
+      : undefined;
 
   return (
     <div data-world={unit.world}>
@@ -284,7 +299,7 @@ function RecommendedActivity({
         <span className="mt-0.5 block font-display text-2xl font-semibold tracking-tight">
           {activity.title}
         </span>
-        <span className="mt-1 block truncate text-base text-on-accent/80">{reason}</span>
+        <span className="mt-1 block truncate text-base text-on-accent">{reason}</span>
       </span>
       <CaretRightIcon weight="bold" className="size-8 shrink-0" aria-hidden />
     </motion.a>

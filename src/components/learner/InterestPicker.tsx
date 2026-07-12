@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { AppShellKid } from "./AppShellKid";
 import { useInterests } from "./useInterests";
 import { speak } from "./speak";
+import { AccountSessionError } from "./AccountSessionError";
 
 const MAX_PICKS = 5;
 
@@ -27,7 +28,7 @@ const MAX_PICKS = 5;
  */
 export function InterestPicker() {
   const router = useRouter();
-  const { mode, state, settled, save } = useInterests();
+  const { mode, state, settled, selectionRequired, save, retrySession } = useInterests();
   // The working pick set starts as null (not yet touched) and is seeded from
   // the server's `picked` once it settles; after the first toggle it is fully
   // local until Save. Deriving instead of syncing via effect avoids
@@ -38,6 +39,27 @@ export function InterestPicker() {
   const reduce = useReducedMotion();
 
   const workingPicked = picked ?? new Set((state?.picked ?? []).map((p) => p.id));
+
+  if (mode === "error") {
+    return <AccountSessionError backHref="/learn" retry={retrySession} />;
+  }
+
+  if (selectionRequired) {
+    // Multi-learner household with no resolved learner: the home surface owns
+    // the picker (it writes the remembered-learner key), so send the child
+    // there instead of an endless loading state.
+    return (
+      <AppShellKid backHref="/learn" readAloud="First, let's pick who is playing today.">
+        <div className="mx-auto flex max-w-2xl flex-col items-center gap-6 pt-10 text-center">
+          <Mascot mood="happy" size={64} />
+          <p className="text-lg text-ink-soft">First, let&apos;s pick who is playing today!</p>
+          <Button href="/learn" variant="primary" size="kid">
+            Choose who&apos;s playing
+          </Button>
+        </div>
+      </AppShellKid>
+    );
+  }
 
   if (mode === "loading" || (mode === "account" && !settled)) {
     return (

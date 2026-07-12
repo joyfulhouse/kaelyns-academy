@@ -28,6 +28,9 @@ import { ACTIVITY_META } from "./activityMeta";
 import { stopSpeaking } from "./speak";
 import { ReadAloudDefaultProvider } from "@/activities/_shared/useSpeakOnce";
 import { shouldAutoRead } from "@/lib/content/config";
+import { accountLearnerSelectionRequired } from "./learnerAccess";
+import { AccountLearnerPicker } from "./AccountLearnerPicker";
+import { AccountSessionError } from "./AccountSessionError";
 
 /** How many AI-generated items may be played back to back, so the loop stays
  *  bounded no matter how much a child taps "more". */
@@ -114,8 +117,9 @@ export function ActivityHost({
   // mode; in account mode the hook resolves the selected account learner. State
   // is scoped to the active program by its slug, and `program` is the learner's
   // RESOLVED (version-pinned) tree (null in guest/loading).
+  const learnerState = useLearnerState(learner.id, programSlug);
   const { record, signedIn, config, selectedLearnerId, program, mode, available, ready } =
-    useLearnerState(learner.id, programSlug);
+    learnerState;
   const [phase, setPhase] = useState<Phase>({ kind: "play" });
   const [generatedCount, setGeneratedCount] = useState(0);
 
@@ -264,6 +268,14 @@ export function ActivityHost({
       clearTimeout(timer);
     }
   }, [effectiveActivity, signedIn, selectedLearnerId, programSlug, config.band]);
+
+  if (mode === "error") {
+    return <AccountSessionError backHref={backHref} retry={learnerState.retrySession} />;
+  }
+
+  if (accountLearnerSelectionRequired(mode, selectedLearnerId)) {
+    return <AccountLearnerPicker state={learnerState} />;
+  }
 
   // Account-mode curation gate (Fix-F A3), checked AFTER every hook above so hook
   // order stays stable. Enforced ONLY in account mode and ONLY once state has
@@ -446,7 +458,7 @@ function RewardScreen({
 
       <div className="mt-6 flex w-full flex-col items-stretch gap-3">
         {nextHref && (
-          <Button href={nextHref} variant="primary" size="kid" className="w-full text-2xl">
+          <Button href={nextHref} variant="primary" size="kid" className="w-full">
             Keep going
             <ArrowRightIcon weight="bold" className="size-6" />
           </Button>

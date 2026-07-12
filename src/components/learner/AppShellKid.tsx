@@ -62,7 +62,7 @@ export function AppShellKid({
               "motion-safe:hover:-translate-y-0.5",
             )}
           >
-              <ArrowLeftIcon weight="bold" className="size-10" />
+            <ArrowLeftIcon weight="bold" className="size-10" />
           </button>
 
           <span className="mx-auto flex items-center gap-2.5">

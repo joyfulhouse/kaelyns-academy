@@ -15,7 +15,10 @@ import {
 import type { ActivityKind, Program, World } from "@/content";
 import { nextBest, strandProgress } from "@/lib/tutor";
 import { nextGeneratedPick } from "@/lib/tutor/shelf";
-import { questActivityHref } from "@/lib/quests/logic";
+import {
+  authoredQuestCandidates as buildAuthoredQuestCandidates,
+  questActivityHref,
+} from "@/lib/quests/logic";
 import { cn } from "@/lib/cn";
 import { Mascot } from "@/components/art/Mascot";
 import { Sun } from "@/components/art/Decorations";
@@ -24,7 +27,10 @@ import { Stars } from "@/components/ui/Stars";
 import { Button } from "@/components/ui/Button";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner, learnerPickerTransition, LEARNERS } from "./learners";
-import { useLearnerState, type SurfaceLearner, type UseLearnerState } from "./useLearnerState";
+import { useLearnerState, type UseLearnerState } from "./useLearnerState";
+import { accountLearnerSelectionRequired } from "./learnerAccess";
+import { AccountLearnerPicker } from "./AccountLearnerPicker";
+import { AccountSessionError } from "./AccountSessionError";
 import { useRewards } from "./useRewards";
 import { useQuests } from "./useQuests";
 import { TodaysAdventures } from "./TodaysAdventures";
@@ -66,8 +72,11 @@ export function StudioHome({ program }: { program: Program }) {
   if (state.mode === "loading") {
     return <ResolvingSurface />;
   }
+  if (state.mode === "error") {
+    return <AccountSessionError backHref="/" retry={state.retrySession} />;
+  }
 
-  const pickerRequired = state.mode === "account" && state.selectedLearnerId === null;
+  const pickerRequired = accountLearnerSelectionRequired(state.mode, state.selectedLearnerId);
   if (!pickerOpen && !pickerRequired) {
     // Account-mode curation gate (Fix-F A3): once a learner has picked, block a
     // program a grown-up hasn't added (removed/paused/not-assigned → available
@@ -92,21 +101,20 @@ export function StudioHome({ program }: { program: Program }) {
     );
   }
 
+  if (state.mode === "account") {
+    return (
+      <AccountLearnerPicker
+        state={state}
+        onSelected={() => setPickerOpen((open) => learnerPickerTransition(open, "pick"))}
+      />
+    );
+  }
+
   return (
     <LearnerPicker
-      state={state}
       onPickGuest={(id) => {
         setLearnerId(id);
         setPickerOpen((open) => learnerPickerTransition(open, "pick"));
-      }}
-      onPickAccount={(id) => {
-        state.selectLearner(id);
-        setPickerOpen((open) => learnerPickerTransition(open, "pick"));
-      }}
-      onSetupProfile={async () => {
-        const ok = await state.setupProfile();
-        if (ok) setPickerOpen((open) => learnerPickerTransition(open, "pick"));
-        return ok;
       }}
     />
   );
@@ -179,22 +187,11 @@ function ResolvingSurface() {
 /* ── Pick a learner ─────────────────────────────────────────────────────── */
 
 function LearnerPicker({
-  state,
   onPickGuest,
-  onPickAccount,
-  onSetupProfile,
 }: {
-  state: UseLearnerState;
   onPickGuest: (id: string) => void;
-  onPickAccount: (id: string) => void;
-  onSetupProfile: () => Promise<boolean>;
 }) {
   const reduce = useReducedMotion();
-
-  // Account mode: real learners (with avatars). Guest mode: the mock learners.
-  // Signed in but no profile yet: a gentle "set up a profile" tile.
-  const accountTiles: SurfaceLearner[] = state.mode === "account" ? state.learners : [];
-  const showSetup = state.mode === "guest" && state.signedIn;
 
   return (
     <AppShellKid backHref="/" readAloud="Who is learning today? Tap your picture.">
@@ -205,18 +202,7 @@ function LearnerPicker({
         </h1>
 
         <ul className="mt-10 flex w-full flex-wrap items-stretch justify-center gap-6">
-          {accountTiles.length > 0
-            ? accountTiles.map((l, i) => (
-                <LearnerTile
-                  key={l.id}
-                  index={i}
-                  name={l.displayName}
-                  avatar={l.avatar}
-                  reduce={Boolean(reduce)}
-                  onClick={() => onPickAccount(l.id)}
-                />
-              ))
-            : LEARNERS.map((l, i) => (
+          {LEARNERS.map((l, i) => (
                 <LearnerTile
                   key={l.id}
                   index={i}
@@ -228,11 +214,7 @@ function LearnerPicker({
               ))}
         </ul>
 
-        {showSetup ? (
-          <SetupProfile onSetupProfile={onSetupProfile} />
-        ) : (
-          <p className="mt-8 text-base text-ink-faint">Tap your picture to start.</p>
-        )}
+        <p className="mt-8 text-base text-ink-faint">Tap your picture to start.</p>
       </div>
     </AppShellKid>
   );
@@ -276,35 +258,6 @@ function LearnerTile({
         <span className="font-display text-xl font-semibold">{name}</span>
       </button>
     </motion.li>
-  );
-}
-
-/* A signed-in household with no child profile yet: one warm tap to create a
-   default learner and start playing (DB-backed). Falls back silently to guest
-   if it can't be created. */
-function SetupProfile({ onSetupProfile }: { onSetupProfile: () => Promise<boolean> }) {
-  const [busy, setBusy] = useState(false);
-  return (
-    <div className="mt-8 flex flex-col items-center gap-3">
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => {
-          setBusy(true);
-          void onSetupProfile().finally(() => setBusy(false));
-        }}
-        className={cn(
-          "inline-flex min-h-24 items-center gap-2 rounded-pill px-6",
-          "border-[3px] border-ink bg-accent/15 font-display text-xl font-semibold text-ink shadow-pop",
-          "transition active:translate-y-1 active:shadow-none motion-safe:hover:-translate-y-0.5",
-          busy && "opacity-70",
-        )}
-      >
-        <SparkleIcon weight="fill" className="size-6" />
-        {busy ? "Setting up..." : "Set up my studio"}
-      </button>
-      <p className="text-base text-ink-faint">We will save your progress.</p>
-    </div>
   );
 }
 
@@ -361,10 +314,13 @@ function WorldMap({
   const completedKey = [...completed].sort().join("|");
   // activeUnitKeys curation applies to every playable surface: path tiles,
   // hero picks, generated fallbacks, and quest destinations.
-  const activeUnitKeys =
-    config.activeUnitKeys && config.activeUnitKeys.length > 0
-      ? new Set(config.activeUnitKeys)
-      : null;
+  const activeUnitKeys = useMemo(
+    () =>
+      config.activeUnitKeys && config.activeUnitKeys.length > 0
+        ? new Set(config.activeUnitKeys)
+        : null,
+    [config.activeUnitKeys],
+  );
   const visibleUnits = activeUnitKeys
     ? program.units.filter((u) => activeUnitKeys.has(u.id))
     : program.units;
@@ -376,10 +332,9 @@ function WorldMap({
         : [],
     [program, skillState, ready, completedKey],
   );
-  const { recommendations, generated: curatedGeneratedShelf } = curateAdventureCandidates(
-    globalRecommendations,
-    generatedShelf,
-    activeUnitKeys,
+  const { recommendations, generated: curatedGeneratedShelf } = useMemo(
+    () => curateAdventureCandidates(globalRecommendations, generatedShelf, activeUnitKeys),
+    [activeUnitKeys, generatedShelf, globalRecommendations],
   );
   const topPick = recommendations[0];
   // Next-thing fallback (B3 §4.1): when the tutor has no authored recommendation
@@ -387,23 +342,41 @@ function WorldMap({
   // so there's always a warm next thing. `completed` already includes played
   // shelf ids (durable credit), so a done generated item is never re-offered.
   // Empty in guest mode (generatedShelf is always []), so guests see no card here.
-  const playableGeneratedCandidates = [...curatedGeneratedShelf]
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    .filter((item) => !completed.has(item.id));
   const questGeneratedPick = nextGeneratedPick(curatedGeneratedShelf, completed);
   const generatedPick = topPick ? undefined : questGeneratedPick;
-  const questCandidates = [
-    ...recommendations.map((recommendation) => ({
-      href: `/learn/${program.slug}/${recommendation.unit.id}/${recommendation.activity.id}`,
-      unitId: recommendation.unit.id,
-      skills: [...recommendation.activity.skillTags],
-    })),
-    ...playableGeneratedCandidates.map((item) => ({
-      href: `/learn/${program.slug}/generated/${item.id}`,
-      unitId: item.unitKey,
-      skills: [...item.skillTags],
-    })),
-  ];
+  const authoredQuestCandidates = useMemo(
+    () => buildAuthoredQuestCandidates(program, activeUnitKeys),
+    [program, activeUnitKeys],
+  );
+  const rankedAuthoredQuestCandidates = useMemo(
+    () =>
+      recommendations.map((recommendation) => ({
+        href: `/learn/${program.slug}/${recommendation.unit.id}/${recommendation.activity.id}`,
+        unitId: recommendation.unit.id,
+        skills: [...recommendation.activity.skillTags],
+      })),
+    [program.slug, recommendations],
+  );
+  const questCandidates = useMemo(() => {
+    const rankedAuthoredHrefs = new Set(
+      rankedAuthoredQuestCandidates.map((candidate) => candidate.href),
+    );
+    const completedIds = new Set(completedKey ? completedKey.split("|") : []);
+    return [
+      ...rankedAuthoredQuestCandidates,
+      ...curatedGeneratedShelf
+        .filter((item) => !completedIds.has(item.id))
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .map((item) => ({
+          href: `/learn/${program.slug}/generated/${item.id}`,
+          unitId: item.unitKey,
+          skills: [...item.skillTags],
+        })),
+      ...authoredQuestCandidates.filter(
+        (candidate) => !rankedAuthoredHrefs.has(candidate.href),
+      ),
+    ];
+  }, [authoredQuestCandidates, completedKey, curatedGeneratedShelf, program.slug, rankedAuthoredQuestCandidates]);
 
   // Fork-aware unlock (spec §4.4): a unit is "started" once it has any
   // completion, same "forgiving" posture as the old prevDone gate — but routed
@@ -652,16 +625,16 @@ function NextThingCard({
             }
       }
       className={cn(
-        "group relative mb-8 flex min-h-28 w-full items-center gap-4 overflow-hidden rounded-2xl px-5 py-5",
+        "group relative mb-8 flex min-h-28 w-full items-center gap-3 overflow-hidden rounded-2xl px-4 py-4 sm:gap-4 sm:px-5 sm:py-5",
         "border-[3px] border-ink bg-coral-deep text-on-accent shadow-pop transition",
         "active:translate-y-1 active:shadow-none motion-safe:hover:-translate-y-0.5",
       )}
     >
       <span
         aria-hidden
-        className="grid size-24 shrink-0 place-items-center rounded-2xl border-[3px] border-ink bg-paper-raised"
+        className="grid size-16 shrink-0 place-items-center rounded-xl border-[3px] border-ink bg-paper-raised sm:size-24 sm:rounded-2xl"
       >
-        <Icon weight="duotone" className="size-11 text-ink" />
+        <Icon weight="duotone" className="size-8 text-ink sm:size-11" />
       </span>
 
       <div className="min-w-0 flex-1">
@@ -669,17 +642,17 @@ function NextThingCard({
           <SparkleIcon weight="fill" className="size-4" />
           Continue today&apos;s adventure
         </div>
-        <div className="mt-0.5 truncate font-display text-2xl font-semibold tracking-tight">
+        <div className="mt-0.5 break-words font-display text-2xl font-semibold tracking-tight sm:truncate">
           {title}
         </div>
-        <p className="mt-1 truncate text-base text-on-accent/80">
+        <p className="mt-1 truncate text-base text-on-accent">
           {isPractice ? "A little more practice" : reason}
         </p>
       </div>
 
       <span
         aria-hidden
-        className="grid size-20 shrink-0 place-items-center rounded-full border-[3px] border-ink bg-honey text-ink shadow-pop"
+        className="hidden size-20 shrink-0 place-items-center rounded-full border-[3px] border-ink bg-honey text-ink shadow-pop sm:grid"
       >
         <CompassIcon weight="bold" className="size-7" />
       </span>

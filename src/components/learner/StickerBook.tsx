@@ -11,6 +11,7 @@ import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner } from "./learners";
 import { useLearnerState } from "./useLearnerState";
 import { useRewards } from "./useRewards";
+import { AccountSessionError } from "./AccountSessionError";
 
 type PurchaseReason = Extract<PurchaseResult, { ok: false }>["reason"];
 
@@ -32,12 +33,17 @@ export function StickerBook({ programSlug }: { programSlug: string }) {
   // drives guest mode, while `mode`/`selectedLearnerId` from useLearnerState
   // report the real account learner once a household is signed in.
   const { learner } = useActiveLearner();
-  const { mode, selectedLearnerId } = useLearnerState(learner.id, programSlug);
+  const learnerState = useLearnerState(learner.id, programSlug);
+  const { mode, selectedLearnerId } = learnerState;
   const { state, settled, refresh, purchase } = useRewards(
     mode === "account" ? selectedLearnerId : null,
   );
   const [message, setMessage] = useState<string | null>(null);
   const reduce = useReducedMotion();
+
+  if (mode === "error") {
+    return <AccountSessionError backHref={`/learn/${programSlug}`} retry={learnerState.retrySession} />;
+  }
 
   // While the session resolves, OR while a confirmed account learner's rewards
   // fetch hasn't settled yet, show a calm loading beat — same posture as

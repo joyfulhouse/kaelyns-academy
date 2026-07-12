@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/tenancy", async (importActual) => ({
   ...(await importActual<typeof import("@/lib/tenancy")>()),
+  requireAccount: vi.fn(),
   withAccount: vi.fn(async (fn: (ctx: { accountId: string; userId: string }) => unknown) =>
     fn({ accountId: "acc-1", userId: "acc-1" }),
   ),
@@ -19,6 +20,7 @@ vi.mock("@/lib/tenancy", async (importActual) => ({
 
 vi.mock("@/lib/tutor/store", () => ({
   recordAttempt: vi.fn(),
+  listLearners: vi.fn(),
   // The generated-shelf star witness (B3): recordAttemptAction reads this for a
   // generated attempt to decide shelfEligible + the shelf unit.
   getGeneratedActivity: vi.fn(),
@@ -64,6 +66,7 @@ vi.mock("@/lib/tutor/shelf", () => ({
 
 import {
   recordAttempt,
+  listLearners,
   getGeneratedActivity,
   getLearner,
   getLearnerSettings,
@@ -77,6 +80,7 @@ import {
   type ShelfItem,
   type NewGeneratedActivity,
 } from "@/lib/tutor/store";
+import { requireAccount, UnauthenticatedError } from "@/lib/tenancy";
 import { resolveLearnerProgram } from "@/lib/content/repository";
 import { findUnitIdOfActivity } from "@/lib/quests/logic";
 import { generatePracticeItems } from "@/lib/ai/practice";
@@ -85,6 +89,7 @@ import {
   recordAttemptAction,
   ensureLessonPractice,
   getLearnerStateAction,
+  getTutorSession,
   type RecordAttemptInput,
 } from "./actions";
 import type { Program } from "@/content";
@@ -99,6 +104,20 @@ const BASE_INPUT: RecordAttemptInput = {
   generated: false,
   score: { correct: 1, total: 1, stars: 3, skillEvidence: [] },
 };
+
+describe("getTutorSession", () => {
+  it("distinguishes an unauthenticated visitor from an operational failure", async () => {
+    vi.mocked(requireAccount).mockRejectedValueOnce(new UnauthenticatedError());
+    await expect(getTutorSession()).resolves.toEqual({
+      status: "unauthenticated",
+      learners: [],
+    });
+
+    vi.mocked(requireAccount).mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(getTutorSession()).resolves.toEqual({ status: "error", learners: [] });
+    expect(listLearners).not.toHaveBeenCalled();
+  });
+});
 
 describe("getLearnerStateAction learner defaults", () => {
   it("propagates readAloud and keeps the learner AI kill switch authoritative", async () => {

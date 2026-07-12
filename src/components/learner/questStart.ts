@@ -11,9 +11,10 @@ export async function activateOfferedQuest({
   activate: (id: string) => Promise<void>;
   navigate: (href: string) => void;
 }): Promise<boolean> {
+  if (!href) return false;
   try {
     await activate(id);
-    if (href) navigate(href);
+    navigate(href);
     return true;
   } catch (error) {
     captureNonCritical("Quest activation failed", error);

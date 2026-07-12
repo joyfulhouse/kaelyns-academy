@@ -18,6 +18,9 @@ import { useLearnerState } from "./useLearnerState";
 import { stopSpeaking } from "./speak";
 import { ReadAloudDefaultProvider } from "@/activities/_shared/useSpeakOnce";
 import { shouldAutoRead } from "@/lib/content/config";
+import { accountLearnerSelectionRequired } from "./learnerAccess";
+import { AccountLearnerPicker } from "./AccountLearnerPicker";
+import { AccountSessionError } from "./AccountSessionError";
 
 /**
  * The play host for a generated SHELF item (Adventure 2.0 B3). A minimal mirror
@@ -46,7 +49,8 @@ export function GeneratedPracticeHost({
   const { learner } = useActiveLearner();
   // One state seam (DB-backed in account mode); the shelf route requires a
   // session, so `record` always takes the account path here.
-  const { record, config, mode, ready } = useLearnerState(learner.id, programSlug);
+  const learnerState = useLearnerState(learner.id, programSlug);
+  const { record, config, mode, ready, selectedLearnerId } = learnerState;
   const [phase, setPhase] = useState<Phase>({ kind: "playing" });
 
   // Resolve the plugin + re-validate the stored config at the render boundary
@@ -97,6 +101,14 @@ export function GeneratedPracticeHost({
     stopSpeaking();
     router.push(backHref);
   }, [router, backHref]);
+
+  if (mode === "error") {
+    return <AccountSessionError backHref={backHref} retry={learnerState.retrySession} />;
+  }
+
+  if (accountLearnerSelectionRequired(mode, selectedLearnerId)) {
+    return <AccountLearnerPicker state={learnerState} />;
+  }
 
   // Declared AFTER every hook above so hook order stays stable: a missing row,
   // an unregistered kind, or a config that fails its schema → the calm moved

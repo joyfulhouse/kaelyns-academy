@@ -31,13 +31,27 @@ export function ReadAloudDefaultProvider({
  * tap that re-voices the tapped choice) can't replay the prompt. Omit `key` for a
  * plain once-on-mount effect.
  */
-export function useEffectOncePerKey(effect: () => void, key: unknown = ONCE): void {
+export function shouldRunOneShotEffect(
+  readAloudEnabled: boolean,
+  essentialContentAudio: boolean,
+): boolean {
+  return readAloudEnabled || essentialContentAudio;
+}
+
+export function useEffectOncePerKey(
+  effect: () => void,
+  key: unknown = ONCE,
+  options: { essentialContentAudio?: boolean } = {},
+): void {
+  const enabled = useContext(ReadAloudDefaultContext);
+  const essentialContentAudio = options.essentialContentAudio ?? false;
   const seen = useRef<unknown>(UNSEEN);
   useEffect(() => {
+    if (!shouldRunOneShotEffect(enabled, essentialContentAudio)) return;
     if (seen.current === key) return;
     seen.current = key;
     effect();
-  }, [key, effect]);
+  }, [key, effect, enabled, essentialContentAudio]);
 }
 
 /**

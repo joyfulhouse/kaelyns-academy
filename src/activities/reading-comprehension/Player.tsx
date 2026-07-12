@@ -274,7 +274,7 @@ function RetellPanel({
       </div>
       <div className="flex justify-center">
         <Button variant="soft" size="kid" onClick={onSkip}>
-          Skip for now
+          Continue
           <ArrowRightIcon weight="bold" aria-hidden="true" />
         </Button>
       </div>

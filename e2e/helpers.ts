@@ -69,6 +69,14 @@ export async function ensurePersistentLearner(page: Page): Promise<void> {
   await expect(page.getByRole("status")).toContainText(/enrolled/i);
 }
 
+/** Seed the account learner choice deterministically before entering kid routes. */
+export async function selectAccountLearner(page: Page, displayName: string): Promise<void> {
+  const href = await page.getByRole("link", { name: displayName }).first().getAttribute("href");
+  const learnerId = href?.match(/\/parent\/learners\/([^/?#]+)$/)?.[1];
+  if (!learnerId) throw new Error(`Could not resolve learner id for ${displayName}`);
+  await page.evaluate((id) => localStorage.setItem("ka:account-learner", id), learnerId);
+}
+
 export async function signIn(page: Page, email: string, password: string): Promise<void> {
   await page.goto("/sign-in");
   await page.getByLabel("Email", { exact: true }).fill(email);

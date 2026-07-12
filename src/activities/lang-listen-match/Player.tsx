@@ -41,7 +41,7 @@ export function LangListenMatchPlayer({
 
   // Auto-play the prompt once per item — keyed on the step so a re-render (or a
   // choice tap that voices the choice) can't clobber it with a prompt replay.
-  useEffectOncePerKey(play, step);
+  useEffectOncePerKey(play, step, { essentialContentAudio: true });
 
   if (done) {
     const result = score(parsed, done);

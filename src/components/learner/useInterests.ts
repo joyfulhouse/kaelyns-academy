@@ -8,6 +8,7 @@ import {
   type InterestsState,
 } from "@/app/(learner)/rewards-actions";
 import { getKeySnapshot, subscribeKey } from "./localStore";
+import { resolveAccountLearnerId } from "./learners";
 
 /**
  * The interests picker's own account-mode resolution + board state. Unlike
@@ -27,7 +28,7 @@ import { getKeySnapshot, subscribeKey } from "./localStore";
 
 const ACCOUNT_LEARNER_KEY = "ka:account-learner";
 
-type Mode = "loading" | "account" | "guest";
+type Mode = "loading" | "account" | "guest" | "error";
 
 /** Coerce a stored value to a remembered learner id, or null. Pure. */
 function parseRemembered(raw: string | null): string | null {
@@ -35,16 +36,25 @@ function parseRemembered(raw: string | null): string | null {
 }
 
 export function useInterests() {
-  const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<
+    "loading" | "authenticated" | "unauthenticated" | "error"
+  >("loading");
   const [learnerIds, setLearnerIds] = useState<string[]>([]);
   const [state, setState] = useState<InterestsState | null>(null);
   const [settledFor, setSettledFor] = useState<string | null>(null);
 
   useEffect(() => {
     void getTutorSession().then((session) => {
-      setSignedIn(session.signedIn);
-      setLearnerIds(session.learners.map((l) => l.id));
+      setSessionStatus(session.status);
+      setLearnerIds(session.status === "authenticated" ? session.learners.map((l) => l.id) : []);
     });
+  }, []);
+
+  const retrySession = useCallback(async () => {
+    setSessionStatus("loading");
+    const session = await getTutorSession();
+    setSessionStatus(session.status);
+    setLearnerIds(session.status === "authenticated" ? session.learners.map((l) => l.id) : []);
   }, []);
 
   const remembered = useSyncExternalStore(
@@ -54,9 +64,11 @@ export function useInterests() {
   );
 
   let mode: Mode;
-  if (signedIn === null) {
+  if (sessionStatus === "loading") {
     mode = "loading";
-  } else if (signedIn && learnerIds.length > 0) {
+  } else if (sessionStatus === "error") {
+    mode = "error";
+  } else if (sessionStatus === "authenticated" && learnerIds.length > 0) {
     mode = "account";
   } else {
     mode = "guest";
@@ -64,7 +76,10 @@ export function useInterests() {
 
   let learnerId: string | null = null;
   if (mode === "account") {
-    learnerId = learnerIds.includes(remembered ?? "") ? remembered : learnerIds[0];
+    // Same fail-closed rule as the learner surfaces: never silently pick the
+    // first profile in a multi-learner household (interests would be read and
+    // saved against the wrong child).
+    learnerId = resolveAccountLearnerId(remembered, learnerIds);
   }
 
   const refresh = useCallback(() => {
@@ -92,6 +107,11 @@ export function useInterests() {
     mode,
     state: current ? state : null,
     settled: current ? settledFor !== null : false,
+    // Fail-closed leftover: signed in, learners exist, but none is safely
+    // resolvable (multi-learner household, no valid remembered id). The surface
+    // must offer a way to pick — never an endless loading state.
+    selectionRequired: mode === "account" && learnerId === null,
     save,
+    retrySession,
   };
 }

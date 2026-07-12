@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  authoredQuestCandidates,
   attemptMatchesQuest,
   findUnitIdOfActivity,
   foldQuestProgress,
@@ -126,5 +127,70 @@ describe("questActivityHref", () => {
     expect(
       questActivityHref("practice_skill", { count: 2, skill: "science.observe" }, candidates),
     ).toBeNull();
+  });
+
+  it("falls back to any replayable authored activity in a curated unit", () => {
+    const program = {
+      slug: "p",
+      title: "Program",
+      subtitle: "",
+      ageBand: "",
+      summary: "",
+      units: [
+        {
+          id: "reading",
+          order: 1,
+          title: "Reading",
+          emoji: "📖",
+          world: "sunshine",
+          bigIdea: "",
+          phonicsFocus: "",
+          mathFocus: "",
+          project: "",
+          lessons: [
+            {
+              id: "lesson-reading",
+              order: 1,
+              title: "Reading",
+              activities: [
+                { id: "replay-reading", skillTags: ["reading.fluency"] },
+              ],
+            },
+          ],
+        },
+        {
+          id: "math",
+          order: 2,
+          title: "Math",
+          emoji: "🔢",
+          world: "sunshine",
+          bigIdea: "",
+          phonicsFocus: "",
+          mathFocus: "",
+          project: "",
+          lessons: [
+            {
+              id: "lesson-math",
+              order: 1,
+              title: "Math",
+              activities: [{ id: "replay-math", skillTags: ["math.count"] }],
+            },
+          ],
+        },
+      ],
+    } as never;
+
+    const candidates = authoredQuestCandidates(program, new Set(["math"]));
+
+    expect(candidates).toEqual([
+      {
+        href: "/learn/p/math/replay-math",
+        unitId: "math",
+        skills: ["math.count"],
+      },
+    ]);
+    expect(
+      questActivityHref("practice_skill", { count: 2, skill: "math.count" }, candidates),
+    ).toBe("/learn/p/math/replay-math");
   });
 });

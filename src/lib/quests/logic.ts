@@ -20,6 +20,27 @@ export interface QuestHrefCandidate {
   skills: string[];
 }
 
+/** All replayable authored destinations in the learner's resolved program tree. */
+export function authoredQuestCandidates(
+  program: Program,
+  activeUnitKeys: ReadonlySet<string> | null,
+): QuestHrefCandidate[] {
+  const candidates: QuestHrefCandidate[] = [];
+  for (const unit of program.units) {
+    if (activeUnitKeys && !activeUnitKeys.has(unit.id)) continue;
+    for (const lesson of unit.lessons) {
+      for (const activity of lesson.activities) {
+        candidates.push({
+          href: `/learn/${program.slug}/${unit.id}/${activity.id}`,
+          unitId: unit.id,
+          skills: [...activity.skillTags],
+        });
+      }
+    }
+  }
+  return candidates;
+}
+
 /**
  * Choose the most relevant playable destination for a quest. Candidates arrive
  * in recommender order, so a general quest uses the first one. Targeted quests

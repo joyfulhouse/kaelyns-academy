@@ -10,6 +10,7 @@ import { Mascot } from "@/components/art/Mascot";
 import { AppShellKid } from "./AppShellKid";
 import { getEnrollmentsAction, getTutorSession } from "@/app/(learner)/actions";
 import { getKeySnapshot, subscribeKey } from "./localStore";
+import { AccountSessionError } from "./AccountSessionError";
 
 /**
  * The program picker, the learner surface's front door. It decides which
@@ -21,10 +22,10 @@ import { getKeySnapshot, subscribeKey } from "./localStore";
  *  - **Guest / signed-in-with-no-profile:** every program is shown (no
  *    enrollment gating), so a visitor can explore any world.
  *
- * Resolution is forgiving by construction: the server actions never throw, and
- * any failure falls back to showing every program rather than a dead end. Hooks
- * are all unconditional; state is set from awaited action results under a
- * mounted ref (no external-store reads inside an effect).
+ * Resolution is forgiving by construction: a signed-out visitor sees every
+ * program, while a session service failure stays on a retryable saved-account
+ * surface. Hooks are all unconditional; state is set from awaited action
+ * results under a mounted ref (no external-store reads inside an effect).
  */
 
 export interface PickerProgram {
@@ -45,7 +46,9 @@ function readRememberedAccountLearner(raw: string | null): string | null {
 
 type Resolution =
   | { phase: "loading" }
+  | { phase: "error" }
   | { phase: "ready"; visibleSlugs: string[] | null };
+type ResolutionResult = Resolution | { phase: "redirect"; href: string };
 
 export function ProgramPicker({ programs }: { programs: PickerProgram[] }) {
   const router = useRouter();
@@ -74,17 +77,17 @@ export function ProgramPicker({ programs }: { programs: PickerProgram[] }) {
     latest.current = { programs, router, rememberedLearner };
   }, [programs, router, rememberedLearner]);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    void (async () => {
-      const { programs: progs, router: r, rememberedLearner: rememberedId } = latest.current;
+  const resolvePrograms = useCallback(async (): Promise<ResolutionResult> => {
+      const { programs: progs, rememberedLearner: rememberedId } = latest.current;
       const session = await getTutorSession();
-      if (!mountedRef.current) return;
+
+      if (session.status === "error") {
+        return { phase: "error" };
+      }
 
       // Guest, or signed-in but no learner profile yet: show every program.
-      if (!session.signedIn || session.learners.length === 0) {
-        setResolution({ phase: "ready", visibleSlugs: null });
-        return;
+      if (session.status === "unauthenticated" || session.learners.length === 0) {
+        return { phase: "ready", visibleSlugs: null };
       }
 
       // Account mode: read the active (remembered, else first) learner's
@@ -92,15 +95,12 @@ export function ProgramPicker({ programs }: { programs: PickerProgram[] }) {
       // id can't strand the picker.
       const active = session.learners.find((l) => l.id === rememberedId) ?? session.learners[0];
       const enrolled = await getEnrollmentsAction(active.id);
-      if (!mountedRef.current) return;
 
       // Keep only enrollments we actually have a program tile for.
       const known = enrolled.filter((slug) => progs.some((p) => p.slug === slug));
 
       if (known.length === 1) {
-        setRedirecting(true);
-        r.replace(`/learn/${known[0]}`);
-        return;
+        return { phase: "redirect", href: `/learn/${known[0]}` };
       }
       // CURATION GAP (accepted, P0 pilot): when a signed-in child has zero
       // active enrollments, `visibleSlugs` is `null` → the picker shows ALL
@@ -113,14 +113,24 @@ export function ProgramPicker({ programs }: { programs: PickerProgram[] }) {
       // PUBLISHED programs are reachable, and nothing crosses accounts. See
       // docs/claude/KNOWN-RISKS-P0-PILOT.md ("Kid-surface curation").
       // None resolved (e.g. enrollment read unavailable) falls back to all.
-      setResolution({ phase: "ready", visibleSlugs: known.length > 0 ? known : null });
-    })();
+      return { phase: "ready", visibleSlugs: known.length > 0 ? known : null };
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    void resolvePrograms().then((result) => {
+      if (!mountedRef.current) return;
+      if (result.phase === "redirect") {
+        setRedirecting(true);
+        latest.current.router.replace(result.href);
+      } else {
+        setResolution(result);
+      }
+    });
     return () => {
       mountedRef.current = false;
     };
-    // Runs once on mount; latest render values are read from `latest.current`
-    // (refs), so there are no reactive dependencies to declare.
-  }, []);
+  }, [resolvePrograms]);
 
   const visible = useMemo(() => {
     if (resolution.phase !== "ready") return [];
@@ -138,6 +148,25 @@ export function ProgramPicker({ programs }: { programs: PickerProgram[] }) {
           <p className="mt-6 text-base text-ink-faint">Getting your worlds ready...</p>
         </div>
       </AppShellKid>
+    );
+  }
+
+  if (resolution.phase === "error") {
+    return (
+      <AccountSessionError
+        backHref="/"
+        retry={async () => {
+          setResolution({ phase: "loading" });
+          const result = await resolvePrograms();
+          if (!mountedRef.current) return;
+          if (result.phase === "redirect") {
+            setRedirecting(true);
+            latest.current.router.replace(result.href);
+          } else {
+            setResolution(result);
+          }
+        }}
+      />
     );
   }
 

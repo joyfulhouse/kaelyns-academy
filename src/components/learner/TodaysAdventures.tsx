@@ -40,8 +40,9 @@ export function TodaysAdventures({
 
   function handleStart(id: string, status: QuestView["status"], href: string | null) {
     if (pendingId) return;
+    if (!href) return;
     if (status === "active") {
-      if (href) router.push(href);
+      router.push(href);
       return;
     }
     setPendingId(id);
@@ -146,14 +147,12 @@ export function TodaysAdventures({
                 </span>
               </a>
             ) : (
-              <button
-                type="button"
-                onClick={() => handleStart(q.id, q.status, null)}
-                disabled={q.status === "active" || pendingId !== null}
-                className="flex min-h-24 w-full items-center rounded-xl border-2 border-ink/20 bg-paper-sunk px-4 py-4 text-left text-ink-soft disabled:opacity-60"
-              >
-                {q.title}
-              </button>
+              <div className="flex min-h-24 w-full items-center rounded-xl border-2 border-ink/20 bg-paper-sunk px-4 py-4 text-left text-ink-soft">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{q.title}</span>
+                  <span className="block text-sm">Saved for later</span>
+                </span>
+              </div>
             )}
           </li>
           );

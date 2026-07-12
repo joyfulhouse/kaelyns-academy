@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { uniqueTag, E2E_LEARNER_PREFIX } from "../helpers";
+import { uniqueTag, E2E_LEARNER_PREFIX, selectAccountLearner } from "../helpers";
 
 /**
  * Adventure 2.0 B3 adaptive-generation affordance smoke — SIGNED-IN half
@@ -41,14 +41,9 @@ test("a signed-in learner is offered AI 'More' practice on the reward screen", a
   await expect(page.getByRole("status")).toContainText(/enrolled/i);
 
   try {
-    // Select this learner on the account picker so the activity host loads ITS
-    // state (account mode otherwise defaults to the first learner, which is
-    // non-deterministic across the seeded account's rows). Writing the choice to
-    // localStorage here carries it to the deep-linked activity below.
-    // exact: true — the tag makes the name unique, but keep it strict-mode-safe.
-    await page.goto(ADAPTIVE);
-    await page.getByRole("button", { name: /Switch learner/i }).click();
-    await page.getByRole("button", { name, exact: true }).click();
+    // Seed this learner before entering the kid route so both the world map and
+    // direct activity link resolve deterministically to the throwaway profile.
+    await selectAccountLearner(page, name);
 
     // Complete the authored generable activity (same flow as the guest spec).
     await page.goto(READING_ACTIVITY);

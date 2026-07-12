@@ -50,8 +50,9 @@ import type { SkillState } from "@/lib/tutor";
  *
  * Posture (spec §8): all of these are forgiving by construction. They resolve
  * the session lazily per-request (build-safe — no getAuth()/getDb() at module
- * top level) and NEVER throw to the client: an unauthenticated visitor or any
- * failure yields a calm empty/`ok:false` result the hook can fall back from.
+ * top level) and NEVER throw to the client. Session resolution distinguishes a
+ * signed-out guest from a retryable service failure; other actions return calm
+ * empty/`ok:false` results.
  */
 
 /**
@@ -70,10 +71,10 @@ export interface TutorLearner {
   birthMonth: string | null;
 }
 
-export interface TutorSession {
-  signedIn: boolean;
-  learners: TutorLearner[];
-}
+export type TutorSession =
+  | { status: "authenticated"; learners: TutorLearner[] }
+  | { status: "unauthenticated"; learners: [] }
+  | { status: "error"; learners: [] };
 
 /** Default avatars cycled across an account's learners (DB stores no avatar). */
 const AVATARS = ["🦊", "🐢", "🦉", "🐰", "🐼", "🦋"] as const;
@@ -92,7 +93,7 @@ export async function getTutorSession(): Promise<TutorSession> {
     const { listLearners } = await import("@/lib/tutor/store");
     const rows = await listLearners(accountId);
     return {
-      signedIn: true,
+      status: "authenticated",
       learners: rows.map((r, i) => ({
         id: r.id,
         displayName: r.displayName,
@@ -101,9 +102,11 @@ export async function getTutorSession(): Promise<TutorSession> {
       })),
     };
   } catch (error) {
-    if (error instanceof UnauthenticatedError) return { signedIn: false, learners: [] };
+    if (error instanceof UnauthenticatedError) {
+      return { status: "unauthenticated", learners: [] };
+    }
     captureNonCritical("getTutorSession failed", error);
-    return { signedIn: false, learners: [] };
+    return { status: "error", learners: [] };
   }
 }
 
