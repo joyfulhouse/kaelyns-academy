@@ -12,14 +12,18 @@ export const schema = readingComprehensionConfig;
 type QuestionKind = ReadingComprehensionConfig["questions"][number]["kind"];
 
 /**
- * What the child did: per-question, whether they got it on the first tap, plus
- * whether they reached the retell moment. The retell is a "say it out loud"
- * affordance, never graded, so it carries no correctness.
+ * What the child did: per-question, whether they got it on the first tap. The
+ * retell is a "say it out loud" affordance, never graded, so it carries no
+ * correctness.
  */
 export interface ReadingComprehensionResponse {
   /** One entry per question, in order: true when answered correctly first try. */
   firstTry: boolean[];
-  /** Whether the child opened the optional retell moment (presence, not quality). */
+  /**
+   * Historical self-attestation flag. The Player no longer asks the child to
+   * attest (the retell panel just offers Continue), so new responses always
+   * record false; kept for stored-response shape compatibility, never scored.
+   */
   retold: boolean;
 }
 
