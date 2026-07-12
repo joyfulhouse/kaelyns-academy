@@ -40,6 +40,7 @@ test("learner map shows the star chip + Today's Adventures, and the sticker shop
   await ensurePersistentLearner(page);
 
   await page.goto(`/learn/${ADAPTIVE_PROGRAM_SLUG}`);
+  await page.getByRole("button", { name: /Switch learner/i }).click();
   await page.getByRole("button", { name: E2E_PERSISTENT_LEARNER_NAME, exact: true }).click();
 
   // Star chip (spec §3.7): renders once the account-mode rewards state

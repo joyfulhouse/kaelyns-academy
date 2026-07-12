@@ -22,7 +22,7 @@ import {
   type NewGeneratedActivity,
   type ShelfItem,
 } from "@/lib/tutor/store";
-import type { EnrollmentConfig } from "@/lib/content/config";
+import type { EnrollmentConfig, LearnerSurfaceConfig } from "@/lib/content/config";
 import {
   activityIdsForProgram,
   findActivity,
@@ -345,7 +345,7 @@ export interface LearnerStateResult {
    */
   generatedShelf: ShelfItem[];
   /** Per-child, per-program enrollment config set by the parent (empty object if none). */
-  config: EnrollmentConfig;
+  config: LearnerSurfaceConfig;
   /**
    * The learner's resolved (version-pinned) program tree — the SAME tree this
    * state is scoped to. Null when unauthenticated, on failure, or for an unknown
@@ -454,8 +454,11 @@ export async function getLearnerStateAction(
       // overrides the per-program flag, so the client hides "More, made just for
       // me" whenever EITHER level disables AI — matching the server gate, which
       // remains the authoritative enforcement.
-      const effectiveConfig: EnrollmentConfig =
-        settings?.aiPractice === false ? { ...config, aiPractice: false } : config;
+      const effectiveConfig: LearnerSurfaceConfig = {
+        ...config,
+        ...(settings?.readAloud !== undefined ? { readAloud: settings.readAloud } : undefined),
+        ...(settings?.aiPractice === false ? { aiPractice: false } : undefined),
+      };
 
       return {
         skillState,

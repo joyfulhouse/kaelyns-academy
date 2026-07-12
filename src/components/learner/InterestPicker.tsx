@@ -130,7 +130,7 @@ export function InterestPicker() {
                 aria-pressed={has}
                 aria-label={has ? `${i.label}, picked` : `Pick ${i.label}`}
                 className={cn(
-                  "relative flex min-h-11 w-full flex-col items-center gap-1 rounded-2xl border-[3px] border-ink px-2 py-3",
+                  "relative flex min-h-24 w-full flex-col items-center gap-1 rounded-2xl border-[3px] border-ink px-2 py-3",
                   has ? "bg-accent/15" : "bg-paper/60",
                 )}
               >

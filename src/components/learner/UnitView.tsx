@@ -11,7 +11,8 @@ import {
 import type { Activity, Unit } from "@/content";
 import { getUnit } from "@/content";
 import { ensureLessonPractice } from "@/app/(learner)/actions";
-import { SHELF_LESSON_CAP } from "@/lib/tutor/shelf";
+import { nextBest } from "@/lib/tutor";
+import { nextGeneratedPick, SHELF_LESSON_CAP } from "@/lib/tutor/shelf";
 import type { ShelfItem } from "@/lib/tutor/store";
 import { cn } from "@/lib/cn";
 import { Mascot } from "@/components/art/Mascot";
@@ -53,6 +54,8 @@ export function UnitView({
   // `mode`/`available`/`config` drive the account-mode curation gate (Fix-F A3).
   const {
     getStars,
+    skillState,
+    completed,
     ready,
     program,
     mode,
@@ -93,6 +96,24 @@ export function UnitView({
   // Flatten activities across lessons; the child sees one friendly list, the
   // lesson grouping is an authoring detail.
   const activities: Activity[] = unit.lessons.flatMap((l) => l.activities);
+  const recommendationProgram =
+    program ?? {
+      slug: programSlug,
+      title: unit.title,
+      subtitle: "",
+      ageBand: "",
+      summary: "",
+      units: [unit],
+    };
+  const recommendation = nextBest(recommendationProgram, skillState, completed).find(
+    (pick) => pick.unit.id === unit.id,
+  );
+  const generatedRecommendation = recommendation
+    ? undefined
+    : nextGeneratedPick(
+        generatedShelf.filter((item) => item.unitKey === unit.id),
+        completed,
+      );
 
   return (
     <div data-world={unit.world}>
@@ -131,11 +152,33 @@ export function UnitView({
           </div>
         </header>
 
-        {/* Activities */}
-        <h2 className="mb-3 px-1 font-display text-xl font-semibold tracking-tight">
-          Let&rsquo;s play
-        </h2>
-        <ul className="flex flex-col gap-4">
+        {recommendation ? (
+          <RecommendedActivity
+            href={`/learn/${programSlug}/${unit.id}/${recommendation.activity.id}`}
+            activity={recommendation.activity}
+            reason={recommendation.reason}
+            reduce={Boolean(reduce)}
+          />
+        ) : generatedRecommendation ? (
+          <RecommendedActivity
+            href={`/learn/${programSlug}/generated/${generatedRecommendation.id}`}
+            activity={generatedRecommendation}
+            reason="Fresh practice, made for you"
+            reduce={Boolean(reduce)}
+          />
+        ) : null}
+
+        <details className="group rounded-2xl border-2 border-ink/20 bg-paper-raised">
+          <summary className="flex min-h-24 cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-5 py-4 font-display text-xl font-semibold marker:content-none">
+            Pick something else
+            <CaretRightIcon
+              weight="bold"
+              className="size-7 shrink-0 transition group-open:rotate-90"
+              aria-hidden
+            />
+          </summary>
+          <div className="border-t-2 border-ink/15 px-4 pb-5 pt-5">
+            <ul className="flex flex-col gap-4">
           {activities.map((activity, i) => {
             const meta = ACTIVITY_META[activity.kind];
             const Icon = meta.icon;
@@ -186,21 +229,21 @@ export function UnitView({
               </motion.li>
             );
           })}
-        </ul>
+            </ul>
 
-        {/* Fresh practice shelf (Adventure 2.0 B3): account mode only, once the
-            server has generated items for a completed lesson in THIS unit. Guest
-            mode never renders it (generatedShelf is always [] there, §8). */}
-        {mode === "account" && ready && selectedLearnerId && (
-          <FreshPracticeShelf
-            programSlug={programSlug}
-            unit={unit}
-            shelf={generatedShelf}
-            getStars={getStars}
-            learnerId={selectedLearnerId}
-            refreshShelf={refreshShelf}
-          />
-        )}
+            {/* The generated shelf is part of the alternate inventory too. */}
+            {mode === "account" && ready && selectedLearnerId && (
+              <FreshPracticeShelf
+                programSlug={programSlug}
+                unit={unit}
+                shelf={generatedShelf}
+                getStars={getStars}
+                learnerId={selectedLearnerId}
+                refreshShelf={refreshShelf}
+              />
+            )}
+          </div>
+        </details>
 
         <div className="mt-10 flex flex-col items-center gap-2 text-center">
           <Mascot mood="happy" size={56} />
@@ -208,6 +251,43 @@ export function UnitView({
         </div>
       </AppShellKid>
     </div>
+  );
+}
+
+function RecommendedActivity({
+  href,
+  activity,
+  reason,
+  reduce,
+}: {
+  href: string;
+  activity: Pick<Activity, "kind" | "title">;
+  reason: string;
+  reduce: boolean;
+}) {
+  const meta = ACTIVITY_META[activity.kind];
+  const Icon = meta.icon;
+  return (
+    <motion.a
+      href={href}
+      initial={reduce ? false : { opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: reduce ? 0.01 : 0.3, ease: [0.16, 1, 0.3, 1] }}
+      aria-label={`Continue with ${activity.title}. ${reason}.`}
+      className="mb-5 flex min-h-28 w-full items-center gap-4 rounded-2xl border-[3px] border-ink bg-coral-deep px-5 py-5 text-on-accent shadow-pop transition active:translate-y-1 active:shadow-none motion-safe:hover:-translate-y-0.5"
+    >
+      <span className="grid size-24 shrink-0 place-items-center rounded-2xl border-[3px] border-ink bg-paper-raised text-ink">
+        <Icon weight="duotone" className="size-11" aria-hidden />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-base font-semibold text-on-accent/85">Continue here</span>
+        <span className="mt-0.5 block font-display text-2xl font-semibold tracking-tight">
+          {activity.title}
+        </span>
+        <span className="mt-1 block truncate text-base text-on-accent/80">{reason}</span>
+      </span>
+      <CaretRightIcon weight="bold" className="size-8 shrink-0" aria-hidden />
+    </motion.a>
   );
 }
 

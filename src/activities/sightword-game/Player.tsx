@@ -94,7 +94,7 @@ export function SightwordGamePlayer({
               animate={isNudging && !reduced ? { x: [0, -6, 6, -4, 4, 0] } : { x: 0 }}
               transition={{ duration: 0.4, ease: [0.25, 1, 0.5, 1] }}
               className={cn(
-                "relative grid min-h-20 place-items-center rounded-2xl border-[3px] border-ink px-4 py-5",
+                "relative grid min-h-24 place-items-center rounded-2xl border-[3px] border-ink px-4 py-5",
                 "font-display text-2xl shadow-pop transition duration-200 ease-out",
                 "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
                 isFound

@@ -20,12 +20,7 @@ const MATH_ACTIVITY = `${ADAPTIVE}/math-baseline/math-baseline-a1`;
 
 test("the baseline check-in world tiles render on the map", async ({ page }) => {
   await page.goto(ADAPTIVE);
-  // Guest picker: tap a mock learner to reach the world map.
-  const kaelynTile = page.getByRole("button", { name: "Kaelyn" });
-  await expect(kaelynTile).toBeVisible({ timeout: 20_000 });
-  await kaelynTile.click();
-
-  // Both baseline tiles' titles render on the map.
+  // The remembered guest learner auto-enters; both baseline tiles render.
   await expect(page.getByText("Reading — Show what you know", { exact: true })).toBeVisible({
     timeout: 20_000,
   });
@@ -37,7 +32,7 @@ test("a reading-comprehension baseline activity renders and advances after a cor
 }) => {
   await page.goto(READING_ACTIVITY);
   // "Ben's Lucky Find" — read the passage, then answer the literal question.
-  const readIt = page.getByRole("button", { name: "I read it" });
+  const readIt = page.getByRole("button", { name: "Continue to questions" });
   await expect(readIt).toBeVisible({ timeout: 25_000 });
   await readIt.click();
 

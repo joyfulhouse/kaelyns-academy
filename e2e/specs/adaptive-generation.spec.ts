@@ -38,7 +38,7 @@ test("a guest finishes a generable activity but the reward screen offers no AI '
 
   // Read the passage, then answer the one literal question (mirrors
   // baseline-placement.spec.ts's proven flow for this activity).
-  const readIt = page.getByRole("button", { name: "I read it" });
+  const readIt = page.getByRole("button", { name: "Continue to questions" });
   await expect(readIt).toBeVisible({ timeout: 25_000 });
   await readIt.click();
 
@@ -52,10 +52,10 @@ test("a guest finishes a generable activity but the reward screen offers no AI '
   await expect(keepGoing).toBeVisible({ timeout: 20_000 });
   await keepGoing.click();
 
-  // We're on the host reward screen once its stable "Back to the map" button
+  // We're on the host reward screen once its stable quiet "Map" action
   // renders (the reward headline varies with star count, so it's not a reliable
   // anchor). Then assert the account-only affordance is absent for a guest.
-  await expect(page.getByRole("link", { name: "Back to the map" })).toBeVisible({
+  await expect(page.getByRole("link", { name: "Map" })).toBeVisible({
     timeout: 20_000,
   });
   await expect(page.getByRole("button", { name: "More, made just for me" })).toHaveCount(0);

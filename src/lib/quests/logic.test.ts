@@ -3,6 +3,7 @@ import {
   attemptMatchesQuest,
   findUnitIdOfActivity,
   foldQuestProgress,
+  questActivityHref,
   selectDailyQuests,
   type QuestAttemptCtx,
 } from "./logic";
@@ -89,5 +90,41 @@ describe("findUnitIdOfActivity", () => {
     } as never;
     expect(findUnitIdOfActivity(program, "a1")).toBe("u1");
     expect(findUnitIdOfActivity(program, "zz")).toBeNull();
+  });
+});
+
+describe("questActivityHref", () => {
+  const candidates = [
+    { href: "/learn/p/reading/a1", unitId: "reading", skills: ["reading.literal"] },
+    { href: "/learn/p/math/a2", unitId: "math", skills: ["math.count"] },
+    { href: "/learn/p/generated/g1", unitId: "reading", skills: ["reading.fluency"] },
+  ];
+
+  it("routes a general completion quest to the top recommendation", () => {
+    expect(questActivityHref("complete_n", { count: 3 }, candidates)).toBe(
+      "/learn/p/reading/a1",
+    );
+  });
+
+  it("routes strand and skill quests to a matching recommendation", () => {
+    expect(questActivityHref("try_strand", { count: 1, unitId: "math" }, candidates)).toBe(
+      "/learn/p/math/a2",
+    );
+    expect(
+      questActivityHref(
+        "practice_skill",
+        { count: 2, skill: "reading.fluency" },
+        candidates,
+      ),
+    ).toBe("/learn/p/generated/g1");
+  });
+
+  it("does not route a targeted quest to an unrelated recommendation", () => {
+    expect(questActivityHref("try_strand", { count: 1, unitId: "science" }, candidates)).toBe(
+      null,
+    );
+    expect(
+      questActivityHref("practice_skill", { count: 2, skill: "science.observe" }, candidates),
+    ).toBeNull();
   });
 });

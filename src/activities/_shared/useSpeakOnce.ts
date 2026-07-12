@@ -1,9 +1,28 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import {
+  createContext,
+  createElement,
+  useContext,
+  useEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 
 const UNSEEN = Symbol("unseen");
 const ONCE = Symbol("once");
+const ReadAloudDefaultContext = createContext(true);
+
+/** Controls automatic narration while leaving every manual speaker available. */
+export function ReadAloudDefaultProvider({
+  enabled,
+  children,
+}: {
+  enabled: boolean;
+  children: ReactNode;
+}) {
+  return createElement(ReadAloudDefaultContext.Provider, { value: enabled }, children);
+}
 
 /**
  * Run `effect` on mount, then again only when `key` changes — the mount run
@@ -27,10 +46,11 @@ export function useEffectOncePerKey(effect: () => void, key: unknown = ONCE): vo
  * is always visible too), so a missing voice simply means nothing is spoken.
  */
 export function useSpeakOnce(speak: (text: string) => void, text: string): void {
+  const enabled = useContext(ReadAloudDefaultContext);
   const spoken = useRef(false);
   useEffect(() => {
-    if (spoken.current) return;
+    if (!enabled || spoken.current) return;
     spoken.current = true;
     speak(text);
-  }, [speak, text]);
+  }, [enabled, speak, text]);
 }

@@ -12,3 +12,17 @@ export const learnerSettingsSchema = z.object({
   readAloud: z.boolean().optional(),
 });
 export type LearnerSettings = z.infer<typeof learnerSettingsSchema>;
+
+/** Enrollment controls plus learner-wide defaults projected onto kid surfaces. */
+export type LearnerSurfaceConfig = EnrollmentConfig & Pick<LearnerSettings, "readAloud">;
+
+/** Do not auto-speak account content until the persisted learner setting arrives. */
+export function shouldAutoRead(
+  mode: "loading" | "guest" | "account",
+  ready: boolean,
+  readAloud: boolean | undefined,
+): boolean {
+  if (mode === "loading") return false;
+  if (mode === "guest") return readAloud !== false;
+  return ready && readAloud !== false;
+}

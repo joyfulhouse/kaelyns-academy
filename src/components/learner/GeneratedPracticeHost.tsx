@@ -16,6 +16,8 @@ import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner } from "./learners";
 import { useLearnerState } from "./useLearnerState";
 import { stopSpeaking } from "./speak";
+import { ReadAloudDefaultProvider } from "@/activities/_shared/useSpeakOnce";
+import { shouldAutoRead } from "@/lib/content/config";
 
 /**
  * The play host for a generated SHELF item (Adventure 2.0 B3). A minimal mirror
@@ -44,7 +46,7 @@ export function GeneratedPracticeHost({
   const { learner } = useActiveLearner();
   // One state seam (DB-backed in account mode); the shelf route requires a
   // session, so `record` always takes the account path here.
-  const { record } = useLearnerState(learner.id, programSlug);
+  const { record, config, mode, ready } = useLearnerState(learner.id, programSlug);
   const [phase, setPhase] = useState<Phase>({ kind: "playing" });
 
   // Resolve the plugin + re-validate the stored config at the render boundary
@@ -106,7 +108,8 @@ export function GeneratedPracticeHost({
   return (
     <div data-world={world}>
       <AppShellKid backHref={backHref} readAloud={row.title}>
-        <AnimatePresence mode="wait">
+        <ReadAloudDefaultProvider enabled={shouldAutoRead(mode, ready, config.readAloud)}>
+          <AnimatePresence mode="wait">
           {phase.kind === "reward" ? (
             <ShelfReward key="reward" stars={phase.stars} backHref={backHref} />
           ) : (
@@ -118,7 +121,8 @@ export function GeneratedPracticeHost({
               />
             </PlayerFrame>
           )}
-        </AnimatePresence>
+          </AnimatePresence>
+        </ReadAloudDefaultProvider>
       </AppShellKid>
     </div>
   );

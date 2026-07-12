@@ -215,7 +215,7 @@ function Tray({
               disabled={disabled}
               aria-label={`Remove ${meta.label} from the tray`}
               className={cn(
-                "grid min-h-11 min-w-11 place-items-center rounded-full border-2 border-ink bg-paper-raised text-2xl shadow-pop transition duration-200 ease-out",
+                "grid min-h-24 min-w-24 place-items-center rounded-full border-2 border-ink bg-paper-raised text-3xl shadow-pop transition duration-200 ease-out",
                 "hover:-translate-y-0.5 active:translate-y-0.5",
                 "disabled:pointer-events-none disabled:opacity-50",
               )}

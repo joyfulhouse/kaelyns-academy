@@ -14,6 +14,35 @@ export interface QuestAttemptCtx {
   generated: boolean;
 }
 
+export interface QuestHrefCandidate {
+  href: string;
+  unitId: string | null;
+  skills: string[];
+}
+
+/**
+ * Choose the most relevant playable destination for a quest. Candidates arrive
+ * in recommender order, so a general quest uses the first one. Targeted quests
+ * require a matching strand/skill so their CTA can actually advance them.
+ */
+export function questActivityHref(
+  kind: QuestKind,
+  target: QuestTarget,
+  candidates: QuestHrefCandidate[],
+): string | null {
+  const fallback = candidates[0]?.href ?? null;
+  switch (kind) {
+    case "complete_n":
+      return fallback;
+    case "try_strand":
+      return candidates.find((candidate) => candidate.unitId === target.unitId)?.href ?? null;
+    case "practice_skill":
+      return candidates.find((candidate) =>
+        target.skill !== undefined && candidate.skills.includes(target.skill),
+      )?.href ?? null;
+  }
+}
+
 export function attemptMatchesQuest(
   kind: QuestKind,
   target: QuestTarget,

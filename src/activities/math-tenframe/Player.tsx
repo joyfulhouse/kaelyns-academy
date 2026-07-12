@@ -160,7 +160,7 @@ function TenFrame({
             aria-label={filled ? `Dot ${index + 1}, filled` : `Empty space ${index + 1}`}
             aria-pressed={filled}
             className={cn(
-              "grid size-14 place-items-center rounded-full border-2 transition duration-200 ease-out",
+              "grid size-11 place-items-center rounded-full border-2 transition duration-200 ease-out sm:size-16",
               isPreset
                 ? "border-ink bg-honey"
                 : isPlaced

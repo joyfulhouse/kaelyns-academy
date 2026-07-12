@@ -122,7 +122,7 @@ export function StickerBook({ programSlug }: { programSlug: string }) {
                       });
                     }}
                     className={cn(
-                      "flex min-h-11 w-full flex-col items-center gap-1 rounded-2xl border-[3px] border-ink px-2 py-3",
+                      "flex min-h-24 w-full flex-col items-center gap-1 rounded-2xl border-[3px] border-ink px-2 py-3",
                       has ? "bg-paper" : "bg-paper/60",
                     )}
                     aria-label={

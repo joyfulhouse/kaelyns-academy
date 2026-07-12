@@ -11,7 +11,7 @@ import { canSpeak, speak, stopSpeaking } from "./speak";
 
 /**
  * The kid surface frame (DESIGN.md §6). Applies `.surface-kid` (raises tap-min
- * to 64px + base font), a warm top bar with the mascot, a big round back
+ * to 96px + base font), a warm top bar with the mascot, a big round back
  * button, and an optional read-aloud speaker. Almost no chrome text: actions
  * lead with icon + size + color, labels are screen-reader only.
  */
@@ -50,24 +50,24 @@ export function AppShellKid({
     >
       <SkipLink />
       <header className="sticky top-0 z-50 border-b-2 border-line bg-paper/95 backdrop-blur-[2px]">
-        <div className="mx-auto flex h-20 w-full max-w-5xl items-center gap-3 px-4">
+        <div className="mx-auto flex h-28 w-full max-w-5xl items-center gap-3 px-4">
           <button
             type="button"
             onClick={handleBack}
             aria-label="Go back"
             className={cn(
-              "grid size-16 shrink-0 place-items-center rounded-full",
+              "grid size-24 shrink-0 place-items-center rounded-full",
               "border-[3px] border-ink bg-paper-raised text-ink shadow-pop",
               "transition active:translate-y-1 active:shadow-none",
               "motion-safe:hover:-translate-y-0.5",
             )}
           >
-            <ArrowLeftIcon weight="bold" className="size-8" />
+              <ArrowLeftIcon weight="bold" className="size-10" />
           </button>
 
           <span className="mx-auto flex items-center gap-2.5">
             <Mascot size={44} mood="happy" className="motion-safe:animate-float" />
-            <span className="font-display text-xl font-semibold tracking-tight text-ink">
+            <span className="hidden font-display text-xl font-semibold tracking-tight text-ink sm:inline">
               Kaelyn&rsquo;s Academy
             </span>
           </span>
@@ -80,16 +80,16 @@ export function AppShellKid({
               onClick={() => speak(readAloud)}
               aria-label="Read this aloud"
               className={cn(
-                "grid size-16 shrink-0 place-items-center rounded-full",
+                "grid size-24 shrink-0 place-items-center rounded-full",
                 "border-[3px] border-ink bg-honey text-ink shadow-pop",
                 "transition active:translate-y-1 active:shadow-none",
                 "motion-safe:hover:-translate-y-0.5",
               )}
             >
-              <SpeakerHighIcon weight="fill" className="size-8" />
+              <SpeakerHighIcon weight="fill" className="size-10" />
             </button>
           ) : (
-            <span aria-hidden className="size-16 shrink-0" />
+            <span aria-hidden className="size-24 shrink-0" />
           )}
         </div>
       </header>

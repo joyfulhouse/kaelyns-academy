@@ -15,6 +15,7 @@ import {
 import type { ActivityKind, Program, World } from "@/content";
 import { nextBest, strandProgress } from "@/lib/tutor";
 import { nextGeneratedPick } from "@/lib/tutor/shelf";
+import { questActivityHref } from "@/lib/quests/logic";
 import { cn } from "@/lib/cn";
 import { Mascot } from "@/components/art/Mascot";
 import { Sun } from "@/components/art/Decorations";
@@ -22,11 +23,12 @@ import { ProgressRing } from "@/components/ui/ProgressRing";
 import { Stars } from "@/components/ui/Stars";
 import { Button } from "@/components/ui/Button";
 import { AppShellKid } from "./AppShellKid";
-import { useActiveLearner, LEARNERS } from "./learners";
+import { useActiveLearner, learnerPickerTransition, LEARNERS } from "./learners";
 import { useLearnerState, type SurfaceLearner, type UseLearnerState } from "./useLearnerState";
 import { useRewards } from "./useRewards";
 import { useQuests } from "./useQuests";
 import { TodaysAdventures } from "./TodaysAdventures";
+import { curateAdventureCandidates } from "./adventureCandidates";
 import { computeUnitProgress, computeProgramRatio } from "./useProgress";
 import { computeUnlockedIds, pathLabelsByUnitId, segmentUnits } from "./branching";
 import { ACTIVITY_META } from "./activityMeta";
@@ -51,7 +53,7 @@ export function StudioHome({ program }: { program: Program }) {
   // is the stable hook key; the learner's PINNED version (a different tree for
   // the SAME slug, C#5) arrives on `state.program` once account state loads.
   const state = useLearnerState(guestLearner.id, program.slug);
-  const [picked, setPicked] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(() => learnerPickerTransition(true, "mount"));
 
   // Render the learner's resolved (version-pinned) tree once it has loaded;
   // until then (guest mode, loading, or the brief account-load window) fall back
@@ -65,7 +67,8 @@ export function StudioHome({ program }: { program: Program }) {
     return <ResolvingSurface />;
   }
 
-  if (picked) {
+  const pickerRequired = state.mode === "account" && state.selectedLearnerId === null;
+  if (!pickerOpen && !pickerRequired) {
     // Account-mode curation gate (Fix-F A3): once a learner has picked, block a
     // program a grown-up hasn't added (removed/paused/not-assigned → available
     // false) with the calm "ask a grown-up" state instead of the map. Enforced
@@ -73,13 +76,18 @@ export function StudioHome({ program }: { program: Program }) {
     // is unaffected, and while loading we keep showing the map (built from the
     // published prop) so there's no flash-of-block before the signal arrives.
     if (state.mode === "account" && state.ready && !state.available) {
-      return <NotAssigned programSlug={program.slug} onSwitchLearner={() => setPicked(false)} />;
+      return (
+        <NotAssigned
+          programSlug={program.slug}
+          onSwitchLearner={() => setPickerOpen((open) => learnerPickerTransition(open, "switch"))}
+        />
+      );
     }
     return (
       <WorldMap
         program={effectiveProgram}
         state={state}
-        onSwitchLearner={() => setPicked(false)}
+        onSwitchLearner={() => setPickerOpen((open) => learnerPickerTransition(open, "switch"))}
       />
     );
   }
@@ -89,15 +97,15 @@ export function StudioHome({ program }: { program: Program }) {
       state={state}
       onPickGuest={(id) => {
         setLearnerId(id);
-        setPicked(true);
+        setPickerOpen((open) => learnerPickerTransition(open, "pick"));
       }}
       onPickAccount={(id) => {
         state.selectLearner(id);
-        setPicked(true);
+        setPickerOpen((open) => learnerPickerTransition(open, "pick"));
       }}
       onSetupProfile={async () => {
         const ok = await state.setupProfile();
-        if (ok) setPicked(true);
+        if (ok) setPickerOpen((open) => learnerPickerTransition(open, "pick"));
         return ok;
       }}
     />
@@ -142,7 +150,7 @@ function NotAssigned({
           <button
             type="button"
             onClick={onSwitchLearner}
-            className="inline-flex min-h-11 items-center justify-center rounded-pill text-base font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
+            className="inline-flex min-h-24 items-center justify-center rounded-pill px-4 text-base font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
           >
             Not you? Switch learner
           </button>
@@ -286,7 +294,7 @@ function SetupProfile({ onSetupProfile }: { onSetupProfile: () => Promise<boolea
           void onSetupProfile().finally(() => setBusy(false));
         }}
         className={cn(
-          "inline-flex min-h-16 items-center gap-2 rounded-pill px-6",
+          "inline-flex min-h-24 items-center gap-2 rounded-pill px-6",
           "border-[3px] border-ink bg-accent/15 font-display text-xl font-semibold text-ink shadow-pop",
           "transition active:translate-y-1 active:shadow-none motion-safe:hover:-translate-y-0.5",
           busy && "opacity-70",
@@ -351,21 +359,8 @@ function WorldMap({
   // A stable key over the completed set so the next-best memo recomputes only
   // when the set actually changes (not on every render that rebuilds the Set).
   const completedKey = [...completed].sort().join("|");
-  const topPick = useMemo(
-    () =>
-      ready
-        ? nextBest(program, skillState, new Set(completedKey ? completedKey.split("|") : []))[0]
-        : undefined,
-    [program, skillState, ready, completedKey],
-  );
-  // Next-thing fallback (B3 §4.1): when the tutor has no authored recommendation
-  // left (finished the map), offer the oldest not-yet-played generated shelf item
-  // so there's always a warm next thing. `completed` already includes played
-  // shelf ids (durable credit), so a done generated item is never re-offered.
-  // Empty in guest mode (generatedShelf is always []), so guests see no card here.
-  const generatedPick = topPick ? undefined : nextGeneratedPick(generatedShelf, completed);
-
-  // activeUnitKeys curation: when set (non-empty), only those unit ids are shown.
+  // activeUnitKeys curation applies to every playable surface: path tiles,
+  // hero picks, generated fallbacks, and quest destinations.
   const activeUnitKeys =
     config.activeUnitKeys && config.activeUnitKeys.length > 0
       ? new Set(config.activeUnitKeys)
@@ -373,6 +368,42 @@ function WorldMap({
   const visibleUnits = activeUnitKeys
     ? program.units.filter((u) => activeUnitKeys.has(u.id))
     : program.units;
+
+  const globalRecommendations = useMemo(
+    () =>
+      ready
+        ? nextBest(program, skillState, new Set(completedKey ? completedKey.split("|") : []))
+        : [],
+    [program, skillState, ready, completedKey],
+  );
+  const { recommendations, generated: curatedGeneratedShelf } = curateAdventureCandidates(
+    globalRecommendations,
+    generatedShelf,
+    activeUnitKeys,
+  );
+  const topPick = recommendations[0];
+  // Next-thing fallback (B3 §4.1): when the tutor has no authored recommendation
+  // left (finished the map), offer the oldest not-yet-played generated shelf item
+  // so there's always a warm next thing. `completed` already includes played
+  // shelf ids (durable credit), so a done generated item is never re-offered.
+  // Empty in guest mode (generatedShelf is always []), so guests see no card here.
+  const playableGeneratedCandidates = [...curatedGeneratedShelf]
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .filter((item) => !completed.has(item.id));
+  const questGeneratedPick = nextGeneratedPick(curatedGeneratedShelf, completed);
+  const generatedPick = topPick ? undefined : questGeneratedPick;
+  const questCandidates = [
+    ...recommendations.map((recommendation) => ({
+      href: `/learn/${program.slug}/${recommendation.unit.id}/${recommendation.activity.id}`,
+      unitId: recommendation.unit.id,
+      skills: [...recommendation.activity.skillTags],
+    })),
+    ...playableGeneratedCandidates.map((item) => ({
+      href: `/learn/${program.slug}/generated/${item.id}`,
+      unitId: item.unitKey,
+      skills: [...item.skillTags],
+    })),
+  ];
 
   // Fork-aware unlock (spec §4.4): a unit is "started" once it has any
   // completion, same "forgiving" posture as the old prevDone gate — but routed
@@ -434,13 +465,13 @@ function WorldMap({
               <button
                 type="button"
                 onClick={onSwitchLearner}
-                className="inline-flex min-h-11 items-center rounded-pill text-base font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
+                className="inline-flex min-h-24 items-center rounded-pill px-3 text-base font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
               >
                 Not you? Switch learner
               </button>
               <Link
                 href="/learn"
-                className="inline-flex min-h-11 items-center gap-1.5 rounded-pill text-base font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
+                className="inline-flex min-h-24 items-center gap-1.5 rounded-pill px-3 text-base font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
               >
                 <ArrowsLeftRightIcon weight="bold" className="size-5" />
                 Switch worlds
@@ -448,7 +479,7 @@ function WorldMap({
               {rewards && (
                 <Link
                   href={`/learn/${program.slug}/stickers`}
-                  className="inline-flex min-h-11 items-center gap-1.5 rounded-pill border-2 border-ink bg-paper px-3 font-display text-base font-semibold"
+                  className="inline-flex min-h-24 items-center gap-1.5 rounded-pill border-2 border-ink bg-paper px-5 font-display text-base font-semibold"
                   aria-label={`${rewards.balance} stars. Open your sticker book.`}
                 >
                   <StarIcon weight="fill" className="size-5 text-honey" aria-hidden />
@@ -462,7 +493,7 @@ function WorldMap({
               {mode === "account" && (
                 <Link
                   href="/learn/interests"
-                  className="inline-flex size-11 items-center justify-center rounded-pill border-2 border-ink bg-paper"
+                  className="inline-flex size-24 items-center justify-center rounded-pill border-2 border-ink bg-paper"
                   aria-label="Pick your favorite things"
                 >
                   <HeartIcon weight="fill" className="size-5 text-coral" aria-hidden />
@@ -486,13 +517,9 @@ function WorldMap({
         </div>
       </div>
 
-      {/* Today's Adventures (account mode, once quests exist) replaces the
-          single-pick card with the daily quest board; guests and quest-less
-          days keep the tutor's single best recommendation (guest fallback,
-          spec §4.1 — a hard requirement, no regression). */}
-      {quests ? (
-        <TodaysAdventures quests={quests} onActivate={activate} reduce={Boolean(reduce)} />
-      ) : topPick ? (
+      {/* One dominant next action, regardless of whether the daily quest board
+          is present. The map and quest choices remain secondary below it. */}
+      {topPick ? (
         <NextThingCard
           kind={topPick.activity.kind}
           title={topPick.activity.title}
@@ -512,6 +539,15 @@ function WorldMap({
           reduce={Boolean(reduce)}
         />
       ) : null}
+
+      {quests && (
+        <TodaysAdventures
+          quests={quests}
+          onActivate={activate}
+          hrefForQuest={(quest) => questActivityHref(quest.kind, quest.target, questCandidates)}
+          reduce={Boolean(reduce)}
+        />
+      )}
 
       {/* The path of worlds (curated by activeUnitKeys when set). Fork groups
           (spec §4.4) stay single-column in v1: a divider announces the choice
@@ -595,47 +631,55 @@ function NextThingCard({
   const meta = ACTIVITY_META[kind];
   const Icon = meta.icon;
 
-  const motionProps = reduce
-    ? {}
-    : {
-        initial: { opacity: 0, y: 12 },
-        animate: { opacity: 1, y: 0 },
-        transition: { duration: 0.34, ease: [0.16, 1, 0.3, 1] as const },
-      };
-
   return (
     <motion.a
-      {...motionProps}
       href={href}
       data-world={world}
-      aria-label={`Your next thing: ${title}. ${meta.label}. ${reason}.`}
+      aria-label={`Continue today's adventure: ${title}. ${meta.label}. ${reason}.`}
+      initial={reduce ? false : { opacity: 0, y: 12, scale: 1 }}
+      animate={
+        reduce
+          ? { opacity: 1, y: 0 }
+          : { opacity: 1, y: 0, scale: [1, 1.012, 1] }
+      }
+      transition={
+        reduce
+          ? { duration: 0.01 }
+          : {
+              opacity: { duration: 0.34, ease: [0.16, 1, 0.3, 1] },
+              y: { duration: 0.34, ease: [0.16, 1, 0.3, 1] },
+              scale: { duration: 2.4, repeat: Infinity, ease: "easeInOut", delay: 0.5 },
+            }
+      }
       className={cn(
-        "group relative mb-8 flex w-full items-center gap-4 overflow-hidden rounded-2xl px-5 py-5",
-        "border-[3px] border-ink bg-accent/15 shadow-pop transition",
+        "group relative mb-8 flex min-h-28 w-full items-center gap-4 overflow-hidden rounded-2xl px-5 py-5",
+        "border-[3px] border-ink bg-coral-deep text-on-accent shadow-pop transition",
         "active:translate-y-1 active:shadow-none motion-safe:hover:-translate-y-0.5",
       )}
     >
       <span
         aria-hidden
-        className="grid size-20 shrink-0 place-items-center rounded-2xl border-[3px] border-ink bg-paper-raised"
+        className="grid size-24 shrink-0 place-items-center rounded-2xl border-[3px] border-ink bg-paper-raised"
       >
         <Icon weight="duotone" className="size-11 text-ink" />
       </span>
 
       <div className="min-w-0 flex-1">
-        <div className="inline-flex items-center gap-1.5 font-display text-sm font-semibold text-accent-deep">
+        <div className="inline-flex items-center gap-1.5 font-display text-base font-semibold text-on-accent/85">
           <SparkleIcon weight="fill" className="size-4" />
-          {isPractice ? "A little more practice" : "Your next thing"}
+          Continue today&apos;s adventure
         </div>
         <div className="mt-0.5 truncate font-display text-2xl font-semibold tracking-tight">
           {title}
         </div>
-        <p className="mt-1 truncate text-base text-ink-soft">{reason}</p>
+        <p className="mt-1 truncate text-base text-on-accent/80">
+          {isPractice ? "A little more practice" : reason}
+        </p>
       </div>
 
       <span
         aria-hidden
-        className="grid size-12 shrink-0 place-items-center rounded-full border-[3px] border-ink bg-honey text-ink shadow-pop"
+        className="grid size-20 shrink-0 place-items-center rounded-full border-[3px] border-ink bg-honey text-ink shadow-pop"
       >
         <CompassIcon weight="bold" className="size-7" />
       </span>

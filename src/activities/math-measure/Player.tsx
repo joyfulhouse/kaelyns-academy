@@ -147,7 +147,7 @@ function CompareBoard({
             disabled={disabled}
             aria-label={item.label}
             className={cn(
-              "grid min-h-11 place-items-center gap-2 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-4 shadow-pop transition duration-200 ease-out",
+              "grid min-h-24 place-items-center gap-2 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-4 shadow-pop transition duration-200 ease-out",
               "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
               "disabled:pointer-events-none disabled:opacity-50",
             )}
@@ -208,7 +208,7 @@ function UnitsBoard({
             disabled={disabled}
             aria-label={`${choice} ${meta.label}s`}
             className={cn(
-              "min-h-11 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-4 font-display text-2xl text-ink shadow-pop transition duration-200 ease-out",
+              "min-h-24 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-4 font-display text-2xl text-ink shadow-pop transition duration-200 ease-out",
               "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
               "disabled:pointer-events-none disabled:opacity-50",
             )}

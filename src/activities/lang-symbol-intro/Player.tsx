@@ -108,7 +108,7 @@ export function LangSymbolIntroPlayer({
               stopAll();
               setPhase("quiz");
             }}
-            className="rounded-full border-[3px] border-ink bg-success/25 px-8 py-4 font-display text-xl text-ink shadow-pop transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none"
+            className="min-h-24 rounded-full border-[3px] border-ink bg-success/25 px-8 py-4 font-display text-xl text-ink shadow-pop transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none"
           >
             I&apos;m ready
           </button>

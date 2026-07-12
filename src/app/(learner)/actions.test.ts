@@ -26,6 +26,8 @@ vi.mock("@/lib/tutor/store", () => ({
   getLearner: vi.fn(),
   getLearnerSettings: vi.fn(),
   getEnrollmentForGate: vi.fn(),
+  getEnrollmentConfig: vi.fn(),
+  getSkillState: vi.fn(),
   getCompletedActivityIds: vi.fn(),
   getGeneratedCompletions: vi.fn(),
   listGeneratedShelf: vi.fn(),
@@ -66,7 +68,10 @@ import {
   getLearner,
   getLearnerSettings,
   getEnrollmentForGate,
+  getEnrollmentConfig,
+  getSkillState,
   getCompletedActivityIds,
+  getGeneratedCompletions,
   listGeneratedShelf,
   withLessonGenerationLock,
   type ShelfItem,
@@ -76,7 +81,12 @@ import { resolveLearnerProgram } from "@/lib/content/repository";
 import { findUnitIdOfActivity } from "@/lib/quests/logic";
 import { generatePracticeItems } from "@/lib/ai/practice";
 import { pickGenerationTargets, type GenerationTarget } from "@/lib/tutor/shelf";
-import { recordAttemptAction, ensureLessonPractice, type RecordAttemptInput } from "./actions";
+import {
+  recordAttemptAction,
+  ensureLessonPractice,
+  getLearnerStateAction,
+  type RecordAttemptInput,
+} from "./actions";
 import type { Program } from "@/content";
 
 const PROGRAM = { slug: "kaelyn-adaptive", title: "T", subtitle: "", ageBand: "", summary: "", units: [] } as unknown as Program;
@@ -89,6 +99,26 @@ const BASE_INPUT: RecordAttemptInput = {
   generated: false,
   score: { correct: 1, total: 1, stars: 3, skillEvidence: [] },
 };
+
+describe("getLearnerStateAction learner defaults", () => {
+  it("propagates readAloud and keeps the learner AI kill switch authoritative", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { band: "ready", aiPractice: true },
+    });
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(getSkillState).mockResolvedValue({});
+    vi.mocked(getCompletedActivityIds).mockResolvedValue([]);
+    vi.mocked(getEnrollmentConfig).mockResolvedValue({ band: "ready", aiPractice: true });
+    vi.mocked(getLearnerSettings).mockResolvedValue({ readAloud: false, aiPractice: false });
+    vi.mocked(listGeneratedShelf).mockResolvedValue([]);
+    vi.mocked(getGeneratedCompletions).mockResolvedValue([]);
+
+    const result = await getLearnerStateAction("L1", "kaelyn-adaptive");
+
+    expect(result.config).toEqual({ band: "ready", aiPractice: false, readAloud: false });
+  });
+});
 
 beforeEach(() => {
   vi.mocked(recordAttempt).mockResolvedValue(undefined);

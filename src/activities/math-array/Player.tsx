@@ -189,7 +189,7 @@ function ArrayGrid({
       {Array.from({ length: rows * cols }, (_, index) => {
         const isFilled = index < filled;
         const tileClass = cn(
-          "grid size-12 place-items-center rounded-xl border-2 text-2xl transition duration-200 ease-out sm:size-14",
+          "grid size-11 place-items-center rounded-xl border-2 text-2xl transition duration-200 ease-out sm:size-16",
           isFilled ? "border-ink bg-accent" : "border-dashed border-ink/25 bg-paper-sunk",
           interactive && "hover:border-ink/50 active:translate-y-px",
         );
@@ -282,7 +282,7 @@ function StepButton({
       disabled={disabled}
       aria-label={label}
       className={cn(
-        "grid size-16 place-items-center rounded-2xl border-[3px] border-ink bg-honey text-ink shadow-pop",
+        "grid size-24 place-items-center rounded-2xl border-[3px] border-ink bg-honey text-ink shadow-pop",
         "transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
         "disabled:pointer-events-none disabled:opacity-50",
       )}

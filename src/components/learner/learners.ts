@@ -28,6 +28,36 @@ const DEFAULT_LEARNER_ID = LEARNERS[0].id;
 
 const ACTIVE_LEARNER_KEY = "ka:active-learner";
 
+export type LearnerPickerEvent = "mount" | "switch" | "pick";
+
+/**
+ * Resolve the account learner that is safe to auto-enter. A remembered learner
+ * must still belong to the household; without one, only a single-learner
+ * household is unambiguous. Returning null keeps multi-learner households at
+ * the picker instead of silently choosing the first profile.
+ */
+export function resolveAccountLearnerId(
+  rememberedId: string | null,
+  learnerIds: readonly string[],
+): string | null {
+  if (rememberedId && learnerIds.includes(rememberedId)) return rememberedId;
+  return learnerIds.length === 1 ? learnerIds[0] : null;
+}
+
+/**
+ * Once account selection has been resolved, the picker is an explicit detour.
+ * The visible switch action opens it, and choosing a learner closes it again.
+ */
+export function learnerPickerTransition(open: boolean, event: LearnerPickerEvent): boolean {
+  switch (event) {
+    case "mount":
+    case "pick":
+      return false;
+    case "switch":
+      return !open;
+  }
+}
+
 function getLearner(id: string): Learner | undefined {
   return LEARNERS.find((l) => l.id === id);
 }

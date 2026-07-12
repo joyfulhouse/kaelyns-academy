@@ -26,7 +26,7 @@ test("guest can open a world from the picker", async ({ page }) => {
 test("an authored activity renders its interactive player", async ({ page }) => {
   await page.goto(AUTHORED_ACTIVITY);
   // The reading activity opens on its passage step with real, tappable controls.
-  const advance = page.getByRole("button", { name: /I read it/i });
+  const advance = page.getByRole("button", { name: /Continue to questions/i });
   await expect(advance).toBeVisible({ timeout: 25_000 });
   await expect(page.getByRole("button", { name: /Read the story to me/i })).toBeVisible();
 

@@ -5,7 +5,7 @@ import type { Activity, ActivityScore, Program } from "@/content";
 import { getProgram, getUnit } from "@/content";
 import { applyEvidence, type SkillState } from "@/lib/tutor";
 import { findUnitIdOfActivity } from "@/lib/quests/logic";
-import type { EnrollmentConfig } from "@/lib/content/config";
+import type { LearnerSurfaceConfig } from "@/lib/content/config";
 // Type-only import (erased at build): the store is server-only, but its
 // client-safe ShelfItem shape crosses the server→client boundary via
 // getLearnerStateAction — same pattern as GeneratedPracticeHost (Task 4).
@@ -18,6 +18,7 @@ import {
   type TutorLearner,
 } from "@/app/(learner)/actions";
 import { getKeySnapshot, subscribeKey, writeKey } from "./localStore";
+import { resolveAccountLearnerId } from "./learners";
 import { useSkillState } from "./useSkillState";
 import { useProgress } from "./useProgress";
 
@@ -106,7 +107,7 @@ export interface UseLearnerState {
    * guest mode or when no config has been set. Clients read this to apply
    * activeUnitKeys curation, AI-practice gating, band defaults, and dailyGoal.
    */
-  config: EnrollmentConfig;
+  config: LearnerSurfaceConfig;
   /**
    * The active learner's RESOLVED (version-pinned) program tree (C#5), as scoped
    * by {@link getLearnerStateAction}. Non-null only in account mode once the
@@ -195,7 +196,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const [accountSkill, setAccountSkill] = useState<SkillState>(EMPTY_STATE);
   const [accountCompleted, setAccountCompleted] = useState<Set<string>>(new Set());
   const [accountStars, setAccountStars] = useState<Record<string, 0 | 1 | 2 | 3>>({});
-  const [accountConfig, setAccountConfig] = useState<EnrollmentConfig>({});
+  const [accountConfig, setAccountConfig] = useState<LearnerSurfaceConfig>({});
   // The active learner's generated "fresh practice" shelf (B3), set from the same
   // action result. Empty until account state loads / in guest mode.
   const [accountShelf, setAccountShelf] = useState<ShelfItem[]>(EMPTY_SHELF);
@@ -247,9 +248,10 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
     signedIn === null ? "loading" : signedIn && learners.length > 0 ? "account" : "guest";
   const selectedLearnerId =
     mode === "account"
-      ? learners.some((l) => l.id === rememberedAccountLearner)
-        ? rememberedAccountLearner
-        : learners[0].id
+      ? resolveAccountLearnerId(
+          rememberedAccountLearner,
+          learners.map((learner) => learner.id),
+        )
       : mode === "guest"
         ? guestLearnerId
         : null;
