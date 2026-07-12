@@ -14,7 +14,6 @@ import type { Activity, ActivityScore, Unit, World } from "@/content";
 import { findActivity, getSkill, getUnit } from "@/content";
 import { ensureLessonPractice } from "@/app/(learner)/actions";
 import { isGenerableKind } from "@/lib/ai/generable";
-import { outcomeOf } from "@/lib/tutor";
 import "@/activities"; // side-effect: registers every available activity-type plugin
 import { getActivityType } from "@/activities";
 import { cn } from "@/lib/cn";
@@ -27,6 +26,11 @@ import { useLearnerState } from "./useLearnerState";
 import { NotAssigned } from "./UnitView";
 import { ACTIVITY_META } from "./activityMeta";
 import { stopSpeaking } from "./speak";
+import { ReadAloudDefaultProvider } from "@/activities/_shared/useSpeakOnce";
+import { shouldAutoRead } from "@/lib/content/config";
+import { accountLearnerSelectionRequired } from "./learnerAccess";
+import { AccountLearnerPicker } from "./AccountLearnerPicker";
+import { AccountSessionError } from "./AccountSessionError";
 
 /** How many AI-generated items may be played back to back, so the loop stays
  *  bounded no matter how much a child taps "more". */
@@ -113,8 +117,9 @@ export function ActivityHost({
   // mode; in account mode the hook resolves the selected account learner. State
   // is scoped to the active program by its slug, and `program` is the learner's
   // RESOLVED (version-pinned) tree (null in guest/loading).
-  const { skillState, record, signedIn, config, selectedLearnerId, program, mode, available, ready } =
-    useLearnerState(learner.id, programSlug);
+  const learnerState = useLearnerState(learner.id, programSlug);
+  const { record, signedIn, config, selectedLearnerId, program, mode, available, ready } =
+    learnerState;
   const [phase, setPhase] = useState<Phase>({ kind: "play" });
   const [generatedCount, setGeneratedCount] = useState(0);
 
@@ -264,6 +269,14 @@ export function ActivityHost({
     }
   }, [effectiveActivity, signedIn, selectedLearnerId, programSlug, config.band]);
 
+  if (mode === "error") {
+    return <AccountSessionError backHref={backHref} retry={learnerState.retrySession} />;
+  }
+
+  if (accountLearnerSelectionRequired(mode, selectedLearnerId)) {
+    return <AccountLearnerPicker state={learnerState} />;
+  }
+
   // Account-mode curation gate (Fix-F A3), checked AFTER every hook above so hook
   // order stays stable. Enforced ONLY in account mode and ONLY once state has
   // loaded (`ready`) — guest mode is unaffected and the loading beat isn't a
@@ -288,7 +301,6 @@ export function ActivityHost({
 
   // Auto-offer more when this activity's primary skill is still emerging, and
   // only while we're under the generation cap and the kind is renderable.
-  const primarySkill = activity.skillTags[0];
   // AI practice spends on the LiteLLM gateway via /api/practice, which now
   // requires an account — so only offer "more, made just for me" to a signed-in
   // household. Guests play authored content only (no false, always-failing tap).
@@ -304,13 +316,11 @@ export function ActivityHost({
     signedIn &&
     aiPracticeEnabled &&
     isGenerableKind(activity.kind);
-  const autoOffer =
-    canGenerate && primarySkill !== undefined && outcomeOf(skillState, primarySkill) === "emerging";
-
   return (
     <div data-world={effectiveWorld}>
       <AppShellKid backHref={backHref} readAloud={activity.title}>
-        <AnimatePresence mode="wait">
+        <ReadAloudDefaultProvider enabled={shouldAutoRead(mode, ready, config.readAloud)}>
+          <AnimatePresence mode="wait">
           {phase.kind === "reward" ? (
             <RewardScreen
               key="reward"
@@ -318,7 +328,6 @@ export function ActivityHost({
               backHref={backHref}
               nextHref={nextHref}
               canGenerate={canGenerate}
-              autoOffer={autoOffer}
               onMore={handleMore}
             />
           ) : phase.kind === "generating" ? (
@@ -351,7 +360,8 @@ export function ActivityHost({
           ) : (
             <ComingSoon key="soon" activity={activity} backHref={backHref} />
           )}
-        </AnimatePresence>
+          </AnimatePresence>
+        </ReadAloudDefaultProvider>
       </AppShellKid>
     </div>
   );
@@ -382,7 +392,6 @@ function RewardScreen({
   backHref,
   nextHref,
   canGenerate,
-  autoOffer,
   onMore,
 }: {
   stars: 0 | 1 | 2 | 3;
@@ -390,8 +399,6 @@ function RewardScreen({
   nextHref: string | null;
   /** True while more AI practice may be offered (under the cap, kind renderable). */
   canGenerate: boolean;
-  /** True when the just-finished skill is still emerging (offer more prominently). */
-  autoOffer: boolean;
   onMore: () => void;
 }) {
   const reduce = useReducedMotion();
@@ -449,35 +456,23 @@ function RewardScreen({
         })}
       </div>
 
-      {autoOffer && (
-        <p className="mt-6 text-lg text-ink-soft">Want a little more, just for you?</p>
-      )}
-
       <div className="mt-6 flex w-full flex-col items-stretch gap-3">
-        {/* When the skill is still emerging, "more practice" leads; otherwise it
-            is a gentle honey option below Next so the journey stays primary. */}
-        {canGenerate && autoOffer && (
-          <Button type="button" onClick={onMore} variant="primary" size="kid">
-            <SparkleIcon weight="fill" className="size-6" />
-            More, made just for me
-          </Button>
-        )}
         {nextHref && (
-          <Button href={nextHref} variant={autoOffer ? "soft" : "primary"} size="kid">
-            Next
+          <Button href={nextHref} variant="primary" size="kid" className="w-full">
+            Keep going
             <ArrowRightIcon weight="bold" className="size-6" />
           </Button>
         )}
-        {canGenerate && !autoOffer && (
-          <Button type="button" onClick={onMore} variant="honey" size="kid">
-            <SparkleIcon weight="fill" className="size-6" />
+        <Button href={backHref} variant={nextHref ? "ghost" : "primary"} size="kid">
+          <MapTrifoldIcon weight="duotone" className="size-6" />
+          Map
+        </Button>
+        {canGenerate && (
+          <Button type="button" onClick={onMore} variant="ghost" size="md">
+            <SparkleIcon weight="fill" className="size-5" />
             More, made just for me
           </Button>
         )}
-        <Button href={backHref} variant="soft" size="kid">
-          <MapTrifoldIcon weight="duotone" className="size-6" />
-          Back to the map
-        </Button>
       </div>
     </motion.div>
   );

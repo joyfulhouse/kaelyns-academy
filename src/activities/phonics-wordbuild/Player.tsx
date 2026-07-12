@@ -172,7 +172,7 @@ export function PhonicsWordbuildPlayer({
             disabled={shake.wrong}
             aria-label={`Letter tile ${tile}`}
             className={cn(
-              "grid h-16 min-w-16 place-items-center rounded-2xl border-[3px] border-ink bg-paper-raised px-4",
+              "grid h-24 min-w-24 place-items-center rounded-2xl border-[3px] border-ink bg-paper-raised px-4",
               "font-display text-3xl text-ink shadow-pop transition duration-200 ease-out",
               "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-50",
             )}

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { uniqueTag, E2E_LEARNER_PREFIX } from "../helpers";
+import { uniqueTag, E2E_LEARNER_PREFIX, selectAccountLearner } from "../helpers";
 
 /**
  * Adventure 2.0 B3 adaptive-generation affordance smoke — SIGNED-IN half
@@ -41,17 +41,13 @@ test("a signed-in learner is offered AI 'More' practice on the reward screen", a
   await expect(page.getByRole("status")).toContainText(/enrolled/i);
 
   try {
-    // Select this learner on the account picker so the activity host loads ITS
-    // state (account mode otherwise defaults to the first learner, which is
-    // non-deterministic across the seeded account's rows). Writing the choice to
-    // localStorage here carries it to the deep-linked activity below.
-    // exact: true — the tag makes the name unique, but keep it strict-mode-safe.
-    await page.goto(ADAPTIVE);
-    await page.getByRole("button", { name, exact: true }).click();
+    // Seed this learner before entering the kid route so both the world map and
+    // direct activity link resolve deterministically to the throwaway profile.
+    await selectAccountLearner(page, name);
 
     // Complete the authored generable activity (same flow as the guest spec).
     await page.goto(READING_ACTIVITY);
-    const readIt = page.getByRole("button", { name: "I read it" });
+    const readIt = page.getByRole("button", { name: "Continue to questions" });
     await expect(readIt).toBeVisible({ timeout: 25_000 });
     await readIt.click();
 
@@ -63,10 +59,10 @@ test("a signed-in learner is offered AI 'More' practice on the reward screen", a
     await expect(keepGoing).toBeVisible({ timeout: 20_000 });
     await keepGoing.click();
 
-    // On the host reward screen (anchored by its stable "Back to the map"
+    // On the host reward screen (anchored by its stable quiet "Map"
     // button), the account-only affordance IS offered. Do NOT click it — the
     // gate env has no LiteLLM, so a click would fire a real generation.
-    await expect(page.getByRole("link", { name: "Back to the map" })).toBeVisible({
+    await expect(page.getByRole("link", { name: "Map" })).toBeVisible({
       timeout: 20_000,
     });
     await expect(page.getByRole("button", { name: "More, made just for me" })).toBeVisible();

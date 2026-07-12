@@ -22,6 +22,25 @@ import {
   type MathArrayResponse,
 } from "./logic";
 
+const ARRAY_GRID_COLUMNS: Record<number, string> = {
+  1: "grid-cols-1",
+  2: "grid-cols-2",
+  3: "grid-cols-3",
+  4: "grid-cols-4",
+  5: "grid-cols-5",
+  6: "grid-cols-6",
+  7: "grid-cols-7",
+  8: "grid-cols-8",
+  9: "grid-cols-9",
+  10: "grid-cols-10",
+  11: "grid-cols-11",
+  12: "grid-cols-12",
+};
+
+export function arrayGridClass(cols: number): string {
+  return ARRAY_GRID_COLUMNS[cols] ?? "grid-cols-1";
+}
+
 export function MathArrayPlayer({
   config,
   onComplete,
@@ -106,17 +125,19 @@ export function MathArrayPlayer({
         </p>
       )}
 
-      <motion.div className="flex justify-center" {...shake.shakeProps(reduced)}>
-        <ArrayGrid
-          rows={parsed.rows}
-          cols={parsed.cols}
-          filled={filled}
-          emoji={parsed.emoji}
-          interactive={isBuild && !shake.wrong}
-          mode={parsed.mode}
-          reduced={reduced}
-          onTapTile={tapTile}
-        />
+      <motion.div className="w-full overflow-x-auto pb-1" {...shake.shakeProps(reduced)}>
+        <div className="flex min-w-max justify-center">
+          <ArrayGrid
+            rows={parsed.rows}
+            cols={parsed.cols}
+            filled={filled}
+            emoji={parsed.emoji}
+            interactive={isBuild && !shake.wrong}
+            mode={parsed.mode}
+            reduced={reduced}
+            onTapTile={tapTile}
+          />
+        </div>
       </motion.div>
 
       <ProgressHint>
@@ -181,15 +202,15 @@ function ArrayGrid({
       role="grid"
       aria-label={`Array with ${rows} rows and ${cols} columns`}
       className={cn(
-        "inline-grid gap-1.5 rounded-2xl border-[3px] border-ink bg-paper-raised p-3 shadow-pop",
-        groupByRow && "gap-y-3",
+        "inline-grid gap-0.5 rounded-2xl border-[3px] border-ink bg-paper-raised p-0 shadow-pop sm:gap-1",
+        arrayGridClass(cols),
+        groupByRow && "gap-y-2 sm:gap-y-3",
       )}
-      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
     >
       {Array.from({ length: rows * cols }, (_, index) => {
         const isFilled = index < filled;
         const tileClass = cn(
-          "grid size-12 place-items-center rounded-xl border-2 text-2xl transition duration-200 ease-out sm:size-14",
+          "grid size-16 place-items-center rounded-xl border-2 text-2xl transition duration-200 ease-out",
           isFilled ? "border-ink bg-accent" : "border-dashed border-ink/25 bg-paper-sunk",
           interactive && "hover:border-ink/50 active:translate-y-px",
         );
@@ -282,7 +303,7 @@ function StepButton({
       disabled={disabled}
       aria-label={label}
       className={cn(
-        "grid size-16 place-items-center rounded-2xl border-[3px] border-ink bg-honey text-ink shadow-pop",
+        "grid size-24 place-items-center rounded-2xl border-[3px] border-ink bg-honey text-ink shadow-pop",
         "transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
         "disabled:pointer-events-none disabled:opacity-50",
       )}

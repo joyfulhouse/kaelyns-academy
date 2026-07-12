@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { shouldAutoRead } from "./config";
 import { enrollmentConfigSchema, learnerSettingsSchema } from "./config";
 
 describe("enrollmentConfigSchema", () => {
@@ -12,4 +13,14 @@ describe("enrollmentConfigSchema", () => {
 });
 describe("learnerSettingsSchema", () => {
   it("accepts known keys", () => { expect(learnerSettingsSchema.parse({ readAloud: true, aiPractice: true, dailyGoal: 2 }).readAloud).toBe(true); });
+});
+
+describe("automatic read-aloud surface gate", () => {
+  it("waits for account settings, honors false, and keeps guest default-on", () => {
+    expect(shouldAutoRead("loading", false, undefined)).toBe(false);
+    expect(shouldAutoRead("account", false, undefined)).toBe(false);
+    expect(shouldAutoRead("account", true, false)).toBe(false);
+    expect(shouldAutoRead("account", true, true)).toBe(true);
+    expect(shouldAutoRead("guest", true, undefined)).toBe(true);
+  });
 });

@@ -5,7 +5,7 @@ import type { Activity, ActivityScore, Program } from "@/content";
 import { getProgram, getUnit } from "@/content";
 import { applyEvidence, type SkillState } from "@/lib/tutor";
 import { findUnitIdOfActivity } from "@/lib/quests/logic";
-import type { EnrollmentConfig } from "@/lib/content/config";
+import type { LearnerSurfaceConfig } from "@/lib/content/config";
 // Type-only import (erased at build): the store is server-only, but its
 // client-safe ShelfItem shape crosses the server→client boundary via
 // getLearnerStateAction — same pattern as GeneratedPracticeHost (Task 4).
@@ -16,8 +16,11 @@ import {
   getTutorSession,
   recordAttemptAction,
   type TutorLearner,
+  type TutorSession,
 } from "@/app/(learner)/actions";
 import { getKeySnapshot, subscribeKey, writeKey } from "./localStore";
+import { resolveAccountLearnerId } from "./learners";
+import { recordingDestination, resolveLearnerMode, type LearnerMode } from "./learnerAccess";
 import { useSkillState } from "./useSkillState";
 import { useProgress } from "./useProgress";
 
@@ -25,10 +28,9 @@ import { useProgress } from "./useProgress";
  * The learner surface's mode-picking state hook: the seam between the signed-in,
  * DB-backed experience and the signed-out, localStorage guest experience.
  *
- *  - **account mode** (a household is signed in and has >= 1 learner): mastery
- *    state + completed activities come from the account-scoped DB via server
- *    actions; `record` persists each attempt. The selected learner is a
- *    localStorage-remembered choice among the account's real learners.
+ *  - **account mode** (a household is signed in): learner onboarding stays on
+ *    the saved surface; once a learner is selected, mastery state + completed
+ *    activities come from the account-scoped DB and `record` persists attempts.
  *  - **guest mode** (not signed in): delegates entirely to the existing
  *    localStorage hooks (`useSkillState` + `useProgress`) — unchanged behavior.
  *
@@ -39,8 +41,6 @@ import { useProgress } from "./useProgress";
  * they satisfy `react-hooks/set-state-in-effect`. Optimistic merges keep the
  * kid UI snappy; a refetch then reconciles with the server's derived outcome.
  */
-
-type LearnerMode = "loading" | "account" | "guest";
 
 /** A learner as the surface renders it (covers both real DB + mock guests). */
 export interface SurfaceLearner {
@@ -63,8 +63,7 @@ export interface UseLearnerState {
   mode: LearnerMode;
   /**
    * True when a household is signed in, even if it has no learner yet. Lets the
-   * picker offer "set up a profile" (via {@link UseLearnerState.setupProfile})
-   * before falling back to guest play.
+   * picker offer "set up a profile" via {@link UseLearnerState.setupProfile}.
    */
   signedIn: boolean;
   /** The account's real learners (empty in guest mode). */
@@ -73,10 +72,12 @@ export interface UseLearnerState {
   selectedLearnerId: string | null;
   /** Choose a different account learner (remembered across pages). */
   selectLearner: (id: string) => void;
+  /** Retry session resolution after an auth, database, or service failure. */
+  retrySession: () => Promise<void>;
   /**
    * Create a default learner for a signed-in household with no profile yet, then
    * switch into account mode. No-op (resolves false) when not signed in or on
-   * failure, so the caller can fall back to guest play.
+   * failure; account mode remains fail-closed on the onboarding surface.
    */
   setupProfile: () => Promise<boolean>;
   /**
@@ -106,7 +107,7 @@ export interface UseLearnerState {
    * guest mode or when no config has been set. Clients read this to apply
    * activeUnitKeys curation, AI-practice gating, band defaults, and dailyGoal.
    */
-  config: EnrollmentConfig;
+  config: LearnerSurfaceConfig;
   /**
    * The active learner's RESOLVED (version-pinned) program tree (C#5), as scoped
    * by {@link getLearnerStateAction}. Non-null only in account mode once the
@@ -178,10 +179,11 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const { complete: guestComplete } = guestProgress;
 
   // ── Session resolution ────────────────────────────────────────────────────
-  // `signedIn` is null until the session resolves (the "loading" beat); the
-  // learners list is what determines account vs guest mode (spec: account needs
-  // at least one learner). Both are set from the awaited action result.
-  const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  // Operational failures remain distinct from signed-out guest mode so account
+  // progress can never silently fall back to localStorage.
+  const [sessionStatus, setSessionStatus] = useState<TutorSession["status"] | "loading">(
+    "loading",
+  );
   const [learners, setLearners] = useState<SurfaceLearner[]>([]);
 
   // The remembered account-learner choice (external store, no setState-in-effect).
@@ -195,7 +197,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const [accountSkill, setAccountSkill] = useState<SkillState>(EMPTY_STATE);
   const [accountCompleted, setAccountCompleted] = useState<Set<string>>(new Set());
   const [accountStars, setAccountStars] = useState<Record<string, 0 | 1 | 2 | 3>>({});
-  const [accountConfig, setAccountConfig] = useState<EnrollmentConfig>({});
+  const [accountConfig, setAccountConfig] = useState<LearnerSurfaceConfig>({});
   // The active learner's generated "fresh practice" shelf (B3), set from the same
   // action result. Empty until account state loads / in guest mode.
   const [accountShelf, setAccountShelf] = useState<ShelfItem[]>(EMPTY_SHELF);
@@ -224,9 +226,9 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const refreshSession = useCallback(async () => {
     const session = await getTutorSession();
     if (!mountedRef.current) return session;
-    setSignedIn(session.signedIn);
+    setSessionStatus(session.status);
     setLearners(
-      session.learners.map((l: TutorLearner) => ({
+      (session.status === "authenticated" ? session.learners : []).map((l: TutorLearner) => ({
         id: l.id,
         displayName: l.displayName,
         avatar: l.avatar,
@@ -239,17 +241,21 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
     void refreshSession();
   }, [refreshSession]);
 
+  const retrySession = useCallback(async () => {
+    setSessionStatus("loading");
+    await refreshSession();
+  }, [refreshSession]);
+
   // Mode + active learner are DERIVED (not stored), so there is no synchronous
-  // setState-in-effect: account when signed in with >= 1 learner; otherwise the
-  // localStorage guest surface (covers signed-out AND signed-in-with-no-profile,
-  // which the picker then offers to set up).
-  const mode: LearnerMode =
-    signedIn === null ? "loading" : signedIn && learners.length > 0 ? "account" : "guest";
+  // setState-in-effect. Signed-in households always stay in account mode, even
+  // before their first learner is created, so they can never enter local play.
+  const mode = resolveLearnerMode(sessionStatus);
   const selectedLearnerId =
     mode === "account"
-      ? learners.some((l) => l.id === rememberedAccountLearner)
-        ? rememberedAccountLearner
-        : learners[0].id
+      ? resolveAccountLearnerId(
+          rememberedAccountLearner,
+          learners.map((learner) => learner.id),
+        )
       : mode === "guest"
         ? guestLearnerId
         : null;
@@ -329,7 +335,8 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const record = useCallback<UseLearnerState["record"]>(
     (activity, response, score, opts) => {
       const generated = opts?.generated ?? false;
-      if (mode === "account" && selectedLearnerId) {
+      const destination = recordingDestination(mode, selectedLearnerId);
+      if (destination === "account" && selectedLearnerId) {
         const day = today();
         // Optimistic merge so the reward + map update immediately… EXCEPT the
         // skill_state merge for a checkpoint-unit activity: the server
@@ -387,6 +394,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
         })();
         return;
       }
+      if (destination === "blocked") return;
       // Guest mode: localStorage only. Generated practice records evidence but
       // not star progress (it isn't an authored, trackable activity).
       guestRecord(score.skillEvidence);
@@ -415,6 +423,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       learners,
       selectedLearnerId,
       selectLearner,
+      retrySession,
       setupProfile,
       record,
       config: accountConfig,
@@ -443,10 +452,11 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       getStars: guestProgress.getStars,
       ready: guestSkill.ready && guestProgress.ready,
       mode,
-      signedIn: signedIn === true,
+      signedIn: false,
       learners: [],
       selectedLearnerId: guestLearnerId,
       selectLearner,
+      retrySession,
       setupProfile,
       record,
       config: {},
@@ -461,7 +471,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
     };
   }
 
-  // loading
+  // loading or retryable session error
   return {
     skillState: EMPTY_STATE,
     completed: EMPTY_COMPLETED as Set<string>,
@@ -472,6 +482,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
     learners: [],
     selectedLearnerId: null,
     selectLearner,
+    retrySession,
     setupProfile,
     record,
     config: {},

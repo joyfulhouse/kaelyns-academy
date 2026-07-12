@@ -17,6 +17,7 @@ import { useWrongShake } from "../_shared/useWrongShake";
 import { goalFor, schema, score, type MathTenframeResponse } from "./logic";
 
 const CELLS_PER_FRAME = 10;
+export const TEN_FRAME_GRID_CLASS = "grid-cols-5";
 
 export function MathTenframePlayer({
   config,
@@ -95,20 +96,19 @@ export function MathTenframePlayer({
         </p>
       )}
 
-      <motion.div
-        className="flex flex-wrap items-center justify-center gap-6"
-        {...shake.shakeProps(reduced)}
-      >
-        {Array.from({ length: parsed.frames }, (_, frame) => (
-          <TenFrame
-            key={frame}
-            frame={frame}
-            preset={preset}
-            placed={added}
-            reduced={reduced}
-            onToggle={toggleCell}
-          />
-        ))}
+      <motion.div className="w-full overflow-x-auto pb-1" {...shake.shakeProps(reduced)}>
+        <div className="flex min-w-max flex-wrap items-center justify-center gap-6">
+          {Array.from({ length: parsed.frames }, (_, frame) => (
+            <TenFrame
+              key={frame}
+              frame={frame}
+              preset={preset}
+              placed={added}
+              reduced={reduced}
+              onToggle={toggleCell}
+            />
+          ))}
+        </div>
       </motion.div>
 
       <ProgressHint>
@@ -145,7 +145,12 @@ function TenFrame({
   onToggle: (index: number) => void;
 }) {
   return (
-    <div className="grid grid-cols-5 gap-1.5 rounded-2xl border-[3px] border-ink bg-paper-raised p-3 shadow-pop">
+    <div
+      className={cn(
+        "grid gap-0.5 rounded-2xl border-[3px] border-ink bg-paper-raised p-0 shadow-pop sm:gap-1",
+        TEN_FRAME_GRID_CLASS,
+      )}
+    >
       {Array.from({ length: CELLS_PER_FRAME }, (_, i) => {
         const index = frame * CELLS_PER_FRAME + i;
         const isPreset = index < preset;
@@ -160,7 +165,7 @@ function TenFrame({
             aria-label={filled ? `Dot ${index + 1}, filled` : `Empty space ${index + 1}`}
             aria-pressed={filled}
             className={cn(
-              "grid size-14 place-items-center rounded-full border-2 transition duration-200 ease-out",
+              "grid size-16 place-items-center rounded-full border-2 transition duration-200 ease-out",
               isPreset
                 ? "border-ink bg-honey"
                 : isPlaced
@@ -170,7 +175,10 @@ function TenFrame({
           >
             {filled && (
               <motion.span
-                className={cn("size-9 rounded-full", isPreset ? "bg-honey-deep" : "bg-accent-deep")}
+                className={cn(
+                  "size-7 rounded-full sm:size-9",
+                  isPreset ? "bg-honey-deep" : "bg-accent-deep",
+                )}
                 initial={reduced ? { opacity: 0 } : { scale: 0.4, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 transition={{ duration: reduced ? 0.001 : 0.24, ease: [0.16, 1, 0.3, 1] }}

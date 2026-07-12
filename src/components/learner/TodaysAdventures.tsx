@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { CheckCircleIcon, CompassIcon, StarIcon } from "@phosphor-icons/react/dist/ssr";
 import { cn } from "@/lib/cn";
 import type { QuestView } from "@/lib/quests/store";
+import { activateOfferedQuest } from "./questStart";
 
 /**
  * Today's Adventures (spec §4.1): the daily quest board. One row per quest —
@@ -21,22 +23,35 @@ import type { QuestView } from "@/lib/quests/store";
 export function TodaysAdventures({
   quests,
   onActivate,
+  hrefForQuest,
   reduce,
 }: {
   quests: QuestView[];
   onActivate: (id: string) => Promise<void>;
+  hrefForQuest: (quest: QuestView) => string | null;
   reduce: boolean;
 }) {
+  const router = useRouter();
   // In-flight guard (same idiom as InterestPicker's `saving`): a child
   // double-tapping "I'll do this one!" before the activate round-trip
   // resolves would otherwise fire onActivate twice. Keyed per-quest so
   // other offered quests stay tappable while one is settling.
   const [pendingId, setPendingId] = useState<string | null>(null);
 
-  function handleActivate(id: string) {
+  function handleStart(id: string, status: QuestView["status"], href: string | null) {
     if (pendingId) return;
+    if (!href) return;
+    if (status === "active") {
+      router.push(href);
+      return;
+    }
     setPendingId(id);
-    void onActivate(id).finally(() => setPendingId(null));
+    void activateOfferedQuest({
+      id,
+      href,
+      activate: onActivate,
+      navigate: (destination) => router.push(destination),
+    }).finally(() => setPendingId(null));
   }
 
   const doneMotionProps = reduce
@@ -57,14 +72,16 @@ export function TodaysAdventures({
         Today&apos;s Adventures
       </h2>
       <ul className="flex flex-col gap-2">
-        {quests.map((q) => (
+        {quests.map((q) => {
+          const href = hrefForQuest(q);
+          return (
           <li key={q.id}>
             {q.status === "done" ? (
               <motion.div
                 {...doneMotionProps}
                 role="status"
                 aria-label={`${q.title}, done! You earned ${q.rewardStars} stars.`}
-                className="flex items-center gap-3 rounded-xl border-2 border-ink/20 bg-honey/20 px-4 py-3"
+                className="flex min-h-24 items-center gap-3 rounded-xl border-2 border-ink/20 bg-honey/20 px-4 py-3"
               >
                 <CheckCircleIcon weight="fill" className="size-7 shrink-0 text-ink" aria-hidden />
                 <span aria-hidden className="flex-1 truncate font-medium">
@@ -78,22 +95,22 @@ export function TodaysAdventures({
                   <StarIcon weight="fill" className="size-4 text-honey" />
                 </span>
               </motion.div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  if (q.status === "offered") handleActivate(q.id);
+            ) : href ? (
+              <a
+                href={href}
+                onClick={(event) => {
+                  event.preventDefault();
+                  handleStart(q.id, q.status, href);
                 }}
-                disabled={q.status === "offered" && pendingId !== null}
-                aria-pressed={q.status === "active"}
+                aria-disabled={pendingId !== null}
                 aria-label={
                   q.status === "active"
-                    ? `${q.title}. Your active adventure. ${q.progress.done} of ${q.target.count} done. Reward ${q.rewardStars} stars.`
-                    : `${q.title}. I'll do this one! Reward ${q.rewardStars} stars.`
+                    ? `${q.title}. Continue. ${q.progress.done} of ${q.target.count} done. Reward ${q.rewardStars} stars.`
+                    : `${q.title}. Start. Reward ${q.rewardStars} stars.`
                 }
                 className={cn(
-                  "flex min-h-11 w-full items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition",
-                  "disabled:pointer-events-none disabled:opacity-60",
+                  "flex min-h-24 w-full items-center gap-3 rounded-xl border-2 px-4 py-4 text-left transition",
+                  pendingId !== null && "pointer-events-none opacity-60",
                   q.status === "active"
                     ? "border-ink bg-honey/30 shadow-pop"
                     : "border-ink/30 bg-paper active:translate-y-1 active:shadow-none motion-safe:hover:-translate-y-0.5",
@@ -103,8 +120,11 @@ export function TodaysAdventures({
                   <span className="block truncate font-medium">{q.title}</span>
                   {q.status === "offered" && (
                     <span className="block text-sm font-semibold text-accent-deep">
-                      I&apos;ll do this one!
+                      Start
                     </span>
+                  )}
+                  {q.status === "active" && (
+                    <span className="block text-sm font-semibold text-accent-deep">Continue</span>
                   )}
                 </span>
                 <span aria-hidden className="flex shrink-0 gap-1">
@@ -125,10 +145,18 @@ export function TodaysAdventures({
                   +{q.rewardStars}
                   <StarIcon weight="fill" className="size-4 text-honey" />
                 </span>
-              </button>
+              </a>
+            ) : (
+              <div className="flex min-h-24 w-full items-center rounded-xl border-2 border-ink/20 bg-paper-sunk px-4 py-4 text-left text-ink-soft">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{q.title}</span>
+                  <span className="block text-sm">Saved for later</span>
+                </span>
+              </div>
             )}
           </li>
-        ))}
+          );
+        })}
       </ul>
     </section>
   );

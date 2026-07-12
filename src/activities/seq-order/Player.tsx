@@ -93,7 +93,7 @@ export function SeqOrderPlayer({
               animate={wrongIndex === originalIndex ? shake.shakeProps(reduced).animate : { x: 0 }}
               transition={shake.shakeProps(reduced).transition}
               className={cn(
-                "grid min-h-16 place-items-center gap-1 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-5 text-ink shadow-pop transition duration-200 ease-out",
+                "grid min-h-24 place-items-center gap-1 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-5 text-ink shadow-pop transition duration-200 ease-out",
                 "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
                 "disabled:pointer-events-none disabled:opacity-50",
               )}
@@ -115,7 +115,7 @@ export function SeqOrderPlayer({
           return (
             <div
               key={originalIndex}
-              className="grid min-h-11 place-items-center gap-1 rounded-2xl border-[3px] border-solid border-ink bg-honey/40 px-4 py-3 text-ink"
+              className="grid min-h-24 place-items-center gap-1 rounded-2xl border-[3px] border-solid border-ink bg-honey/40 px-4 py-3 text-ink"
             >
               <span className="font-display text-sm">{position + 1}</span>
               <div className="flex items-center gap-1">

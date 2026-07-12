@@ -100,7 +100,7 @@
   --dur: 240ms;
   --dur-slow: 420ms;
   --dur-celebrate: 700ms;
-  --tap-min: 44px;
+  --tap-min: 48px;
 }
 
 /* ── Program worlds: override accent over the stable warm shell ── */
@@ -127,11 +127,11 @@
 
 /* ── Two voices: rescale tokens by surface ── */
 .surface-kid {
-  --tap-min: 64px;
+  --tap-min: 96px;
   --text-base: 1.25rem;
 }
 .surface-parent {
-  --tap-min: 44px;
+  --tap-min: 48px;
 }
 
 /* ── Base ── */

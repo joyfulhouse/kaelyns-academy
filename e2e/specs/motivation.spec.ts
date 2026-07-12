@@ -1,5 +1,9 @@
 import { test, expect } from "@playwright/test";
-import { E2E_PERSISTENT_LEARNER_NAME, ensurePersistentLearner } from "../helpers";
+import {
+  E2E_PERSISTENT_LEARNER_NAME,
+  ensurePersistentLearner,
+  selectAccountLearner,
+} from "../helpers";
 
 /**
  * Adventure 2.0 Phase A motivation journeys (Task 13): the star chip + daily
@@ -38,9 +42,9 @@ test("learner map shows the star chip + Today's Adventures, and the sticker shop
   page,
 }) => {
   await ensurePersistentLearner(page);
+  await selectAccountLearner(page, E2E_PERSISTENT_LEARNER_NAME);
 
   await page.goto(`/learn/${ADAPTIVE_PROGRAM_SLUG}`);
-  await page.getByRole("button", { name: E2E_PERSISTENT_LEARNER_NAME, exact: true }).click();
 
   // Star chip (spec §3.7): renders once the account-mode rewards state
   // resolves. The balance is matched only by shape (a number) — it may be

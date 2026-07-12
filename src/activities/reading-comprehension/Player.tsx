@@ -157,15 +157,15 @@ export function ReadingComprehensionPlayer({
         <RetellPanel
           prompt={parsed.retellPrompt}
           speech={speech}
-          onDone={() => setDone({ firstTry, retold: true })}
+          onSkip={() => setDone({ firstTry, retold: false })}
         />
       )}
     </div>
   );
 }
 
-/** The reading surface: title + a generously typed passage with a read-to-me
- *  button, then a single "I read it" button to move on. */
+/** The reading surface advances into the observable question task without asking
+ *  the child to attest that they read the passage. */
 function PassagePanel({
   title,
   passage,
@@ -188,13 +188,13 @@ function PassagePanel({
           )}
           <SpeakerButton speech={speech} text={`${title ? `${title}. ` : ""}${passage}`} label="Read the story to me" />
         </div>
-        <p className="max-w-[60ch] whitespace-pre-line font-body text-xl leading-relaxed text-ink">
+        <p className="max-w-[42ch] whitespace-pre-line font-body text-[1.75rem] leading-[1.7] text-ink">
           {passage}
         </p>
       </div>
       <div className="flex justify-center">
         <Button variant="primary" size="kid" onClick={onContinue}>
-          I read it
+          Continue to questions
           <ArrowRightIcon weight="bold" aria-hidden="true" />
         </Button>
       </div>
@@ -224,7 +224,7 @@ function ChoiceCard({
       aria-pressed={chosen}
       whileTap={reduced || locked ? undefined : { scale: 0.97 }}
       className={cn(
-        "flex min-h-16 items-center justify-between gap-3 rounded-2xl border-[3px] border-ink px-5 py-4 text-left",
+        "flex min-h-24 items-center justify-between gap-3 rounded-2xl border-[3px] border-ink px-5 py-4 text-left",
         "font-display text-xl text-ink shadow-pop transition duration-200 ease-out",
         chosen ? "bg-honey" : "bg-paper-raised",
         locked
@@ -247,16 +247,16 @@ function ChoiceCard({
   );
 }
 
-/** The optional retell moment: a "say it out loud" prompt. Nothing is recorded
- *  or graded — it is a speaking bridge, so the only action is "I told it". */
+/** The optional retell remains an unrecorded speaking invitation. The one action
+ *  skips it cleanly without turning speech into a self-reported achievement. */
 function RetellPanel({
   prompt,
   speech,
-  onDone,
+  onSkip,
 }: {
   prompt: string;
   speech: ReturnType<typeof useSpeech>;
-  onDone: () => void;
+  onSkip: () => void;
 }) {
   return (
     <div className="grid gap-5 text-center">
@@ -273,8 +273,8 @@ function RetellPanel({
         </p>
       </div>
       <div className="flex justify-center">
-        <Button variant="primary" size="kid" onClick={onDone}>
-          I told it
+        <Button variant="soft" size="kid" onClick={onSkip}>
+          Continue
           <ArrowRightIcon weight="bold" aria-hidden="true" />
         </Button>
       </div>

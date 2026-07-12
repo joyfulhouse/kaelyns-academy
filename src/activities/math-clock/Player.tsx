@@ -103,7 +103,7 @@ export function MathClockPlayer({
                 disabled={shake.wrong}
                 aria-label={`Digital time ${choiceLabel}`}
                 className={cn(
-                  "min-h-11 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-4 font-display text-2xl text-ink shadow-pop transition duration-200 ease-out",
+                  "min-h-24 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-4 font-display text-2xl text-ink shadow-pop transition duration-200 ease-out",
                   "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
                   "disabled:pointer-events-none disabled:opacity-50",
                 )}
@@ -117,7 +117,7 @@ export function MathClockPlayer({
             <div
               role="group"
               aria-label="Choose the hour"
-              className="mx-auto grid max-w-md grid-cols-4 gap-3 sm:grid-cols-6"
+              className="mx-auto grid max-w-2xl grid-cols-3 gap-3 sm:grid-cols-4"
             >
               {HOURS.map((h) => (
                 <button
@@ -128,7 +128,7 @@ export function MathClockPlayer({
                   aria-label={`Set hour to ${h}`}
                   aria-pressed={pickedHour === h}
                   className={cn(
-                    "grid min-h-11 place-items-center rounded-xl border-[3px] border-ink font-display text-lg text-ink shadow-pop transition duration-200 ease-out",
+                    "grid min-h-24 place-items-center rounded-xl border-[3px] border-ink font-display text-xl text-ink shadow-pop transition duration-200 ease-out",
                     pickedHour === h ? "bg-accent" : "bg-paper-raised",
                     "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
                     "disabled:pointer-events-none disabled:opacity-50",
@@ -148,7 +148,7 @@ export function MathClockPlayer({
                   aria-label={m === 0 ? "Set minutes to zero" : "Set minutes to thirty"}
                   aria-pressed={pickedMinute === m}
                   className={cn(
-                    "min-h-11 rounded-xl border-[3px] border-ink px-6 py-2 font-display text-lg text-ink shadow-pop transition duration-200 ease-out",
+                    "min-h-24 rounded-xl border-[3px] border-ink px-8 py-3 font-display text-xl text-ink shadow-pop transition duration-200 ease-out",
                     pickedMinute === m ? "bg-accent" : "bg-paper-raised",
                     "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
                     "disabled:pointer-events-none disabled:opacity-50",

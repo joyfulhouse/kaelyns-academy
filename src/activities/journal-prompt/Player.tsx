@@ -279,7 +279,7 @@ function ComposeView({
                 onClick={() => append(word)}
                 aria-label={`Add the word ${word}`}
                 className={cn(
-                  "min-h-12 rounded-pill border-[3px] border-ink bg-honey px-4 py-2 font-display text-lg text-ink shadow-pop",
+                  "min-h-24 rounded-pill border-[3px] border-ink bg-honey px-5 py-3 font-display text-lg text-ink shadow-pop",
                   "transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
                 )}
               >

@@ -31,7 +31,7 @@ const SIZE: Record<Exclude<ButtonSize, "kid">, string> = {
 
 /** Kid treatment: storybook ink outline + flat "sticker" shadow that presses in. */
 const KID =
-  "min-h-16 rounded-2xl border-[3px] border-ink px-8 py-5 text-xl font-bold " +
+  "min-h-24 rounded-2xl border-[3px] border-ink px-8 py-5 text-xl font-bold " +
   "shadow-pop hover:-translate-y-0.5 active:translate-y-1 active:shadow-none";
 
 const BASE =

@@ -14,8 +14,8 @@ type SpeakerPress = "pop" | "soft";
 // look. The defaults reproduce the original kid-sized honey button exactly; the
 // other variants let the audio Players reuse this instead of hand-rolling their
 // circular speaker/play buttons.
-const SIZE_BOX: Record<SpeakerSize, string> = { sm: "size-12", md: "size-16", lg: "size-28" };
-const SIZE_ICON: Record<SpeakerSize, number> = { sm: 24, md: 28, lg: 56 };
+const SIZE_BOX: Record<SpeakerSize, string> = { sm: "size-20", md: "size-24", lg: "size-28" };
+const SIZE_ICON: Record<SpeakerSize, number> = { sm: 32, md: 40, lg: 56 };
 const SHAPE_CLASS: Record<SpeakerShape, string> = { square: "rounded-2xl", round: "rounded-full" };
 const TONE_CLASS: Record<SpeakerTone, string> = {
   honey: "bg-honey",
