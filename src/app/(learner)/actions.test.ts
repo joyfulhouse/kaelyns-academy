@@ -120,7 +120,7 @@ describe("getTutorSession", () => {
 });
 
 describe("getLearnerStateAction learner defaults", () => {
-  it("propagates readAloud and keeps the learner AI kill switch authoritative", async () => {
+  it("propagates readAloud/oralReading and keeps the learner AI kill switch authoritative", async () => {
     vi.mocked(getEnrollmentForGate).mockResolvedValue({
       status: "active",
       config: { band: "ready", aiPractice: true },
@@ -129,13 +129,22 @@ describe("getLearnerStateAction learner defaults", () => {
     vi.mocked(getSkillState).mockResolvedValue({});
     vi.mocked(getCompletedActivityIds).mockResolvedValue([]);
     vi.mocked(getEnrollmentConfig).mockResolvedValue({ band: "ready", aiPractice: true });
-    vi.mocked(getLearnerSettings).mockResolvedValue({ readAloud: false, aiPractice: false });
+    vi.mocked(getLearnerSettings).mockResolvedValue({
+      readAloud: false,
+      oralReading: true,
+      aiPractice: false,
+    });
     vi.mocked(listGeneratedShelf).mockResolvedValue([]);
     vi.mocked(getGeneratedCompletions).mockResolvedValue([]);
 
     const result = await getLearnerStateAction("L1", "kaelyn-adaptive");
 
-    expect(result.config).toEqual({ band: "ready", aiPractice: false, readAloud: false });
+    expect(result.config).toEqual({
+      band: "ready",
+      aiPractice: false,
+      readAloud: false,
+      oralReading: true,
+    });
   });
 });
 

@@ -89,6 +89,7 @@ const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
   "math-measure": "Measure & compare",
   "sort-categories": "Sort",
   "seq-order": "Order",
+  "oral-reading": "Read aloud",
 };
 
 /** Plain-language label for an attempt's kind (falls back to the raw kind). */

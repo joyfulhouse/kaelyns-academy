@@ -10,6 +10,7 @@ import type {
   MathMeasureConfig,
   MathMoneyConfig,
   MathTenframeConfig,
+  OralReadingConfig,
   PhonicsWordbuildConfig,
   ReadingComprehensionConfig,
   SeqOrderConfig,
@@ -75,7 +76,8 @@ export type Activity =
   | ActivityOf<"math-money", MathMoneyConfig>
   | ActivityOf<"math-measure", MathMeasureConfig>
   | ActivityOf<"sort-categories", SortCategoriesConfig>
-  | ActivityOf<"seq-order", SeqOrderConfig>;
+  | ActivityOf<"seq-order", SeqOrderConfig>
+  | ActivityOf<"oral-reading", OralReadingConfig>;
 
 type CheckpointKind = "baseline" | "mid" | "final";
 
@@ -130,6 +132,15 @@ export interface ActivityPlayerProps<Config, Response> {
   config: Config;
   onComplete: (response: Response, score: ActivityScore) => void;
   onExit?: () => void;
+  /** Account-only learner context. Guests receive no context and Players must
+   * degrade without calling gated learner APIs. */
+  learnerContext?: {
+    learnerId: string;
+    /** Program the activity is being played under — gated learner APIs verify
+     * the enrollment is ACTIVE for this slug (§8 two-control convention). */
+    programSlug: string;
+    oralReading: boolean;
+  };
 }
 
 export interface ActivityType<Config = unknown, Response = unknown> {

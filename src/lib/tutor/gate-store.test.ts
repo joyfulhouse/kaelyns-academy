@@ -115,7 +115,11 @@ describe("getLearnerSettings", () => {
 
   it("returns the parsed settings", async () => {
     learnerRows.value = [{ settings: { aiPractice: false, readAloud: true } }];
-    expect(await getLearnerSettings("acc-1", "L1")).toEqual({ aiPractice: false, readAloud: true });
+    expect(await getLearnerSettings("acc-1", "L1")).toEqual({
+      aiPractice: false,
+      readAloud: true,
+      oralReading: false,
+    });
   });
 
   it("fails CLOSED on malformed settings (aiPractice:false) and logs", async () => {
@@ -126,10 +130,10 @@ describe("getLearnerSettings", () => {
     expect(captureException).toHaveBeenCalledOnce();
   });
 
-  it("keeps a legitimately empty settings row permissive ({})", async () => {
-    // Absence/empty config is default-allow (correct) — only malformed fails closed.
+  it("keeps an empty row AI-permissive while oral reading defaults off", async () => {
+    // AI remains default-allow; microphone verification is sensitive/default-off.
     learnerRows.value = [{ settings: {} }];
-    expect(await getLearnerSettings("acc-1", "L1")).toEqual({});
+    expect(await getLearnerSettings("acc-1", "L1")).toEqual({ oralReading: false });
   });
 });
 

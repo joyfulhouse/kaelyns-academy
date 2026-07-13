@@ -72,7 +72,7 @@ describe("parseJsonbFailClosed", () => {
       { aiPractice: false, readAloud: true },
       "x",
     );
-    expect(got).toEqual({ aiPractice: false, readAloud: true });
+    expect(got).toEqual({ aiPractice: false, readAloud: true, oralReading: false });
     expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 });

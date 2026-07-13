@@ -12,7 +12,10 @@ describe("enrollmentConfigSchema", () => {
   it("rejects a negative daily goal", () => { expect(() => enrollmentConfigSchema.parse({ dailyGoal: -1 })).toThrow(); });
 });
 describe("learnerSettingsSchema", () => {
-  it("accepts known keys", () => { expect(learnerSettingsSchema.parse({ readAloud: true, aiPractice: true, dailyGoal: 2 }).readAloud).toBe(true); });
+  it("accepts known keys", () => { expect(learnerSettingsSchema.parse({ readAloud: true, aiPractice: true, oralReading: true, dailyGoal: 2 }).oralReading).toBe(true); });
+  it("defaults oral reading off when the setting is absent", () => {
+    expect(learnerSettingsSchema.parse({}).oralReading).toBe(false);
+  });
 });
 
 describe("automatic read-aloud surface gate", () => {

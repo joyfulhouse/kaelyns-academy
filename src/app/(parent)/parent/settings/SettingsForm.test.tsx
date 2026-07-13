@@ -13,6 +13,7 @@ describe("settingsToFormState", () => {
       dailyGoal: "5",
       aiFeatures: true,
       readAloudDefault: true,
+      oralReading: false,
     });
   });
 
@@ -22,6 +23,7 @@ describe("settingsToFormState", () => {
     // Absent fields still fall back to defaults.
     expect(state.dailyGoal).toBe("5");
     expect(state.readAloudDefault).toBe(true);
+    expect(state.oralReading).toBe(false);
   });
 
   it("preserves a stored aiPractice:true", () => {
@@ -30,11 +32,12 @@ describe("settingsToFormState", () => {
 
   it("maps every stored field onto the form's field names", () => {
     expect(
-      settingsToFormState({ dailyGoal: 10, aiPractice: false, readAloud: false }),
+      settingsToFormState({ dailyGoal: 10, aiPractice: false, readAloud: false, oralReading: true }),
     ).toEqual({
       dailyGoal: "10",
       aiFeatures: false,
       readAloudDefault: false,
+      oralReading: true,
     });
   });
 
@@ -47,6 +50,7 @@ describe("settingsToFormState", () => {
       dailyGoal: "5",
       aiFeatures: true,
       readAloudDefault: true,
+      oralReading: false,
     });
   });
 

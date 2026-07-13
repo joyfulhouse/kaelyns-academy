@@ -460,6 +460,9 @@ export async function getLearnerStateAction(
       const effectiveConfig: LearnerSurfaceConfig = {
         ...config,
         ...(settings?.readAloud !== undefined ? { readAloud: settings.readAloud } : undefined),
+        ...(settings?.oralReading !== undefined
+          ? { oralReading: settings.oralReading }
+          : undefined),
         ...(settings?.aiPractice === false ? { aiPractice: false } : undefined),
       };
 

@@ -392,7 +392,7 @@ export async function updateEnrollmentConfigAction(
 }
 
 /**
- * Persist learner-level settings (dailyGoal, aiPractice, readAloud).
+ * Persist learner-level settings (dailyGoal, aiPractice, readAloud, oralReading).
  * Parses the incoming `settings` with learnerSettingsSchema before persisting.
  */
 export async function saveLearnerSettingsAction(

@@ -389,6 +389,11 @@ describe("KIND_BRIEF", () => {
 });
 
 describe("isGenerableKind (single source of truth for authored-only gating)", () => {
+  it("keeps oral-reading authored-only", () => {
+    expect(isGenerableKind("oral-reading")).toBe(false);
+    expect(KIND_BRIEF["oral-reading"]).toBeUndefined();
+  });
+
   it("is true for kinds with a KIND_BRIEF entry and for World-Languages kinds", () => {
     expect(isGenerableKind("phonics-wordbuild")).toBe(true);
     expect(isGenerableKind("math-tenframe")).toBe(true);
