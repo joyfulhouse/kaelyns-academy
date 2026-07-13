@@ -144,6 +144,76 @@ describe("authored program content", () => {
     }
     expect(checked).toBeGreaterThanOrEqual(3);
   });
+
+  it("authors sentence fluency beside the unchanged v1 word-reading block", () => {
+    const unit = kaelynAdaptive.units.find((u) => u.id === "word-study")!;
+    const activities = unit.lessons.flatMap((lesson) => lesson.activities);
+    const oralReadingActivities = activities.filter(
+      (activity) => activity.kind === "oral-reading",
+    );
+    const sentences = oralReadingActivities.filter(
+      (activity) => activity.config.mode === "sentence",
+    );
+
+    expect(sentences.map(({ id }) => id)).toEqual([
+      "word-sentence-see-cat",
+      "word-sentence-run-play",
+    ]);
+    for (const activity of sentences) {
+      expect(activity.band).toBe("ready");
+      expect(activity.skillTags).toEqual(["reading.fluency.phrasing"]);
+      expect(activity.config.skillTag).toBe("reading.fluency.phrasing");
+    }
+
+    const originalWordConfigs = activities
+      .filter(
+        (activity) =>
+          activity.kind === "oral-reading" && activity.id.startsWith("word-oral-"),
+      )
+      .map(({ id, config }) => ({ id, config }));
+    expect(originalWordConfigs).toEqual([
+      {
+        id: "word-oral-the",
+        config: {
+          instruction: "Listen, then read this word aloud.",
+          target: "the",
+          skillTag: "reading.fluency.phrasing",
+        },
+      },
+      {
+        id: "word-oral-and",
+        config: {
+          instruction: "Listen, then read this word aloud.",
+          target: "and",
+          skillTag: "reading.fluency.phrasing",
+        },
+      },
+      {
+        id: "word-oral-to",
+        config: {
+          instruction: "Listen, then read this word aloud.",
+          target: "to",
+          skillTag: "reading.fluency.phrasing",
+        },
+      },
+      {
+        id: "word-oral-see",
+        config: {
+          instruction: "Listen, then read this word aloud.",
+          target: "see",
+          skillTag: "reading.fluency.phrasing",
+        },
+      },
+      {
+        id: "word-oral-we-can",
+        config: {
+          instruction: "Listen, then read these words aloud.",
+          target: "we can",
+          skillTag: "reading.fluency.phrasing",
+        },
+      },
+    ]);
+  });
 });
 
 describe("World Languages content matches the canonical inventory", () => {

@@ -1,6 +1,6 @@
 export type OralReadingMatchResult = "matched" | "unclear" | "no-speech";
 
-const HOMOPHONE_GROUPS = [
+export const HOMOPHONE_GROUPS = [
   ["to", "too", "two", "2"],
   ["there", "their", "theyre"],
   ["no", "know"],
@@ -20,7 +20,7 @@ const HOMOPHONE_GROUPS = [
   ["ten", "10"],
 ] as const;
 
-const HOMOPHONE_CANONICAL = new Map<string, string>(
+export const HOMOPHONE_CANONICAL = new Map<string, string>(
   HOMOPHONE_GROUPS.flatMap((group) => group.map((word) => [word, group[0]] as const)),
 );
 
@@ -96,7 +96,7 @@ function levenshtein(a: string, b: string): number {
  * "the"→"she", "and"→"end"), so below five letters only exact/homophone may
  * match.
  */
-function tokenMatches(targetWord: string, spokenWord: string): boolean {
+export function tokenMatches(targetWord: string, spokenWord: string): boolean {
   if (targetWord === spokenWord) return true;
   const canonicalTarget = HOMOPHONE_CANONICAL.get(targetWord) ?? targetWord;
   const canonicalSpoken = HOMOPHONE_CANONICAL.get(spokenWord) ?? spokenWord;

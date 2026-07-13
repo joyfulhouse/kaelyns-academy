@@ -6,7 +6,10 @@ import {
   MicrophoneIcon,
   StopCircleIcon,
 } from "@phosphor-icons/react/dist/ssr";
-import type { OralReadingConfig } from "@/content/activity-configs";
+import type {
+  OralReadingConfig,
+  OralReadingWordConfig,
+} from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
@@ -15,78 +18,23 @@ import { useActivity } from "../_shared/useActivity";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { schema, score, type OralReadingResponse } from "./logic";
+import { SentenceReader } from "./SentenceReader";
+import {
+  MAX_RECORDING_MS,
+  MIC_CLASSES,
+  VERIFY_TIMEOUT_MS,
+  browserHasMicrophone,
+  canRecordAnother,
+  canSubmitRecording,
+  parseWordRouteResult,
+  phaseAfterUnmatched,
+  subscribeStatic,
+  supportedMimeType,
+  type OralReadingPhase,
+  type VerificationResult,
+} from "./recording";
 
-const MAX_RECORDING_MS = 8_000;
-
-type VerificationResult = OralReadingResponse["results"][number];
-type Phase = "ready" | "requesting" | "listening" | "checking" | "unclear" | "fallback";
-
-/** Locked UX decision: at most two focused rereads before the grown-up path. */
-const MAX_VERIFY_ATTEMPTS = 2;
-
-/**
- * End-to-end deadline on the verification request. The server has its own
- * body-read and transcription timeouts, but only a client-side abort
- * guarantees a stalled network or proxy can never pin the child in the
- * disabled "checking" phase — the never-blocked rule wins over waiting.
- */
-const VERIFY_TIMEOUT_MS = 20_000;
-
-const MIC_CLASSES: Record<"ready" | "busy" | "listening", string> = {
-  ready: "bg-honey text-ink",
-  busy: "bg-honey/55 text-ink",
-  listening: "bg-accent-deep text-on-accent",
-};
-
-function subscribeStatic(): () => void {
-  return () => {};
-}
-
-function browserHasMicrophone(): boolean {
-  return (
-    typeof navigator !== "undefined" &&
-    typeof navigator.mediaDevices?.getUserMedia === "function" &&
-    typeof MediaRecorder !== "undefined"
-  );
-}
-
-function supportedMimeType(): string | undefined {
-  const types = ["audio/webm;codecs=opus", "audio/webm"];
-  return types.find((type) => MediaRecorder.isTypeSupported(type));
-}
-
-function parseRouteResult(value: unknown): VerificationResult | "unavailable" {
-  if (!value || typeof value !== "object") return "unavailable";
-  const result = (value as { result?: unknown }).result;
-  return result === "matched" || result === "unclear" || result === "no-speech"
-    ? result
-    : "unavailable";
-}
-
-export function canSubmitRecording(
-  active: boolean,
-  byteLength: number,
-  recordingFailed = false,
-): boolean {
-  return active && !recordingFailed && byteLength > 0;
-}
-
-/**
- * Whether another recording may start. `submitted` counts every uploaded
- * recording — including ones whose verification came back "unavailable" — so
- * gateway failures cannot grant extra tries around the two-attempt cap.
- */
-export function canRecordAnother(submitted: number): boolean {
-  return submitted < MAX_VERIFY_ATTEMPTS;
-}
-
-/**
- * Phase after an upload that did not match: honey retry until the cap, then
- * the grown-up path. `submittedSoFar` includes the upload just verified.
- */
-export function phaseAfterUnmatched(submittedSoFar: number): Extract<Phase, "unclear" | "fallback"> {
-  return submittedSoFar >= MAX_VERIFY_ATTEMPTS ? "fallback" : "unclear";
-}
+export { canRecordAnother, canSubmitRecording, phaseAfterUnmatched } from "./recording";
 
 export function OralReadingPlayer({
   config,
@@ -94,10 +42,34 @@ export function OralReadingPlayer({
   learnerContext,
 }: ActivityPlayerProps<OralReadingConfig, OralReadingResponse>) {
   const parsed = useActivity(schema, config);
+  if (parsed.mode === "sentence") {
+    return (
+      <SentenceReader
+        config={parsed}
+        onComplete={onComplete}
+        learnerContext={learnerContext}
+      />
+    );
+  }
+
+  return (
+    <WordReadingPlayer
+      config={parsed}
+      onComplete={onComplete}
+      learnerContext={learnerContext}
+    />
+  );
+}
+
+function WordReadingPlayer({
+  config: parsed,
+  onComplete,
+  learnerContext,
+}: ActivityPlayerProps<OralReadingWordConfig, OralReadingResponse>) {
   const speech = useSpeech();
   const micSupported = useSyncExternalStore(subscribeStatic, browserHasMicrophone, () => false);
   const micAllowed = learnerContext?.oralReading === true;
-  const [phase, setPhase] = useState<Phase>("ready");
+  const [phase, setPhase] = useState<OralReadingPhase>("ready");
   const [results, setResults] = useState<VerificationResult[]>([]);
   // Counts every UPLOADED recording, including ones whose verification came
   // back "unavailable" — the attempt cap bounds recordings and STT calls, so
@@ -175,7 +147,7 @@ export function OralReadingPlayer({
         body: form,
         signal: controller.signal,
       });
-      if (apiResponse.ok) routeResult = parseRouteResult(await apiResponse.json());
+      if (apiResponse.ok) routeResult = parseWordRouteResult(await apiResponse.json());
     } catch {
       // Timeout, unmount abort, or network failure — all resolve to
       // "unavailable" and (when still mounted) the grown-up fallback below.

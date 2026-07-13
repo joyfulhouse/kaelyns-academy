@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { oralReadingAlign, type OralReadingAlignment } from "@/lib/ai/oralReadingAlign";
 import { matchOralReading, type OralReadingMatchResult } from "@/lib/ai/oralReadingMatch";
 import { transcribeOralReading } from "@/lib/ai/transcribe";
 import { resolveRateLimit } from "@/lib/api/rate";
@@ -22,21 +23,46 @@ const MAX_CONCURRENT_READS = 8;
 
 let activeReads = 0;
 
-const fieldsSchema = z.object({
-  learnerId: z.string().min(1).max(100),
-  programSlug: z.string().min(1).max(100),
-  target: z
-    .string()
-    .trim()
-    .min(1)
-    .max(64)
-    .refine((value) => value.split(/\s+/).length <= 6),
-});
+const fieldsSchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("word"),
+    learnerId: z.string().min(1).max(100),
+    programSlug: z.string().min(1).max(100),
+    target: z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .refine((value) => value.split(/\s+/).length <= 6),
+  }),
+  z.object({
+    mode: z.literal("sentence"),
+    learnerId: z.string().min(1).max(100),
+    programSlug: z.string().min(1).max(100),
+    // Mirrors oralReadingSentenceConfig: a passage must fit the kaelyn-stt 15s
+    // decoded-speech cap (~7 words at the 30 WCPM grade-1 target).
+    passage: z
+      .string()
+      .trim()
+      .min(1)
+      .max(60)
+      .refine((value) => value.split(/\s+/).length <= 7)
+      .refine((value) => /[a-z0-9]/i.test(value)),
+  }),
+]);
 
 type RouteResult = OralReadingMatchResult | "unavailable";
 
 function result(resultValue: RouteResult, status = 200, headers?: HeadersInit): NextResponse {
   return NextResponse.json({ result: resultValue }, { status, headers });
+}
+
+function sentenceResult(alignment: OralReadingAlignment): NextResponse {
+  return NextResponse.json({
+    result: alignment.result,
+    words: alignment.perWord,
+    ...(alignment.wcpm === undefined ? {} : { wcpm: alignment.wcpm }),
+  });
 }
 
 function declaredTooLarge(request: Request): boolean {
@@ -144,16 +170,18 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const parsed = fieldsSchema.safeParse({
+    mode: form.get("mode") ?? "word",
     learnerId: form.get("learnerId"),
     programSlug: form.get("programSlug"),
     target: form.get("target"),
+    passage: form.get("passage"),
   });
   const audio = form.get("file");
   if (!parsed.success || !(audio instanceof Blob) || audio.size === 0) {
     return result("unavailable", 400);
   }
 
-  const { learnerId, programSlug, target } = parsed.data;
+  const { learnerId, programSlug } = parsed.data;
   try {
     // §8 two-control gate, same as /api/practice: the learner must belong to
     // this account with an ACTIVE enrollment in the program being played
@@ -172,10 +200,26 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
+    if (parsed.data.mode === "sentence") {
+      // The recognized text and words exist only in this request scope. Only
+      // the known target's derived states and server-timed WCPM are returned.
+      const transcription = await transcribeOralReading(audio, parsed.data.passage, {
+        wordTimestamps: true,
+      });
+      // Sentence alignment needs per-word timestamps. If the gateway returned
+      // none (e.g. LiteLLM stripped words[] from the verbose response), report
+      // "unavailable" so the player degrades to the grown-up fallback rather
+      // than falsely settling every word honey as if she missed them all.
+      if (!transcription.words || transcription.words.length === 0) {
+        return result("unavailable");
+      }
+      return sentenceResult(oralReadingAlign(parsed.data.passage, transcription.words));
+    }
+
     // The raw text exists only inside this request scope. It is immediately
     // reduced to a tri-state and is never returned, logged, or persisted.
-    const transcript = await transcribeOralReading(audio, target);
-    return result(matchOralReading(target, transcript));
+    const transcript = await transcribeOralReading(audio, parsed.data.target);
+    return result(matchOralReading(parsed.data.target, transcript));
   } catch (error) {
     captureNonCritical("oral-reading transcription failed", error);
     return result("unavailable");

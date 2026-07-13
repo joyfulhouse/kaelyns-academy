@@ -8,6 +8,13 @@ const cfg: OralReadingConfig = {
   skillTag: "word.syllables.types",
 };
 
+const sentenceCfg: OralReadingConfig = {
+  mode: "sentence",
+  instruction: "Listen, then read the sentence.",
+  passage: "We can see the cat.",
+  skillTag: "reading.fluency.phrasing",
+};
+
 describe("oral-reading score", () => {
   it("awards 3 stars and solid evidence for a first-try match", () => {
     const response: OralReadingResponse = {
@@ -73,6 +80,62 @@ describe("oral-reading score", () => {
 
     expect(Object.keys(response).sort()).toEqual(["attempts", "fallbackUsed", "results"]);
   });
+
+  it("awards 3 stars for strong sentence accuracy", () => {
+    const response: OralReadingResponse = {
+      attempts: 1,
+      results: ["matched"],
+      fallbackUsed: false,
+      wcpm: 42,
+      perWord: Array.from({ length: 5 }, () => ({ state: "correct" as const })),
+      correctCount: 5,
+      totalWords: 5,
+    };
+
+    expect(score(sentenceCfg, response)).toEqual({
+      correct: 5,
+      total: 5,
+      stars: 3,
+      skillEvidence: [{ skill: "reading.fluency.phrasing", outcome: "solid" }],
+    });
+    expect(Object.keys(response)).not.toContain("transcript");
+  });
+
+  it("derives stars and skill evidence from accuracy regardless of WCPM", () => {
+    const scoreAt = (correctCount: number, wcpm: number | undefined) =>
+      score(sentenceCfg, {
+        attempts: 1,
+        results: [correctCount === 5 ? "matched" : "unclear"],
+        fallbackUsed: false,
+        wcpm,
+        correctCount,
+        totalWords: 5,
+      });
+
+    expect(scoreAt(5, undefined)).toEqual(scoreAt(5, 1));
+    expect(scoreAt(5, 1)).toEqual(scoreAt(5, 300));
+    expect(scoreAt(5, 1)).toMatchObject({
+      correct: 5,
+      total: 5,
+      stars: 3,
+      skillEvidence: [{ skill: "reading.fluency.phrasing", outcome: "solid" }],
+    });
+
+    expect(scoreAt(4, undefined)).toEqual(scoreAt(4, 1));
+    expect(scoreAt(4, 1)).toEqual(scoreAt(4, 300));
+    expect(scoreAt(4, 300)).toMatchObject({
+      correct: 4,
+      total: 5,
+      stars: 2,
+      skillEvidence: [{ skill: "reading.fluency.phrasing", outcome: "emerging" }],
+    });
+  });
+
+  it("always awards at least 1 star when a sentence finishes through fallback", () => {
+    expect(
+      score(sentenceCfg, { attempts: 0, results: [], fallbackUsed: true }),
+    ).toMatchObject({ correct: 0, total: 5, stars: 1 });
+  });
 });
 
 describe("oral-reading plugin metadata", () => {
@@ -82,6 +145,7 @@ describe("oral-reading plugin metadata", () => {
 
   it("accepts the structurally valid authored config", () => {
     expect(validateGenerated(cfg)).toBeNull();
+    expect(validateGenerated(sentenceCfg)).toBeNull();
   });
 
   it("allows an authored target without skill evidence", () => {
