@@ -32,7 +32,10 @@ test("a guest hears the model and completes through the grown-up fallback", asyn
   await expect(grownUp).toBeVisible();
   await grownUp.click();
   await expect(page.getByText("You did it!", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Keep going" })).toBeVisible();
+  // Reward-screen CTAs are LINKS (Button href renders an anchor — see #57);
+  // which one shows depends on whether a next activity exists, so accept
+  // either forward path.
+  await expect(page.getByRole("link", { name: /Keep going|Map/ }).first()).toBeVisible();
 });
 
 test("an opted-in signed-in learner gets a matched result", async ({
@@ -109,7 +112,13 @@ test("an opted-in signed-in learner gets a matched result", async ({
     const oralReading = page.getByRole("switch", { name: "Oral reading check" });
     await expect(oralReading).not.toBeChecked();
     await oralReading.click();
-    await page.getByRole("button", { name: "Save changes" }).click();
+    // The settings page has one "Save changes" per section (Learning & AI,
+    // Interests) — scope to the section that owns the oral-reading switch.
+    await page
+      .locator("section")
+      .filter({ has: page.getByRole("switch", { name: "Oral reading check" }) })
+      .getByRole("button", { name: "Save changes" })
+      .click();
     await expect(page.getByText("Settings saved.")).toBeVisible();
 
     await page.goto("/parent/learners");
