@@ -5,6 +5,7 @@ import {
   CakeIcon,
   GearSixIcon,
   SparkleIcon,
+  TrendUpIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import { Pill } from "@/components/ui/Pill";
 import { ProgressRing } from "@/components/ui/ProgressRing";
@@ -15,10 +16,13 @@ import { ActivityRowItem } from "@/components/parent/ActivityRowItem";
 import {
   getLearnerDetail,
   getLearnerCurriculum,
+  getLearnerFluency,
   getLearnerRewards,
   type ActivityRow,
+  type FluencySeries,
   type SkillStatus,
 } from "@/app/(parent)/data";
+import { FluencyChart } from "@/components/parent/FluencyChart";
 import { CurriculumPanel } from "@/components/parent/CurriculumPanel";
 import { RewardsPanel } from "@/components/parent/RewardsPanel";
 import { LearnerDataControls } from "@/components/parent/LearnerDataControls";
@@ -70,11 +74,12 @@ export default async function LearnerDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  // Fetch detail, curriculum, and rewards in parallel — all account-scoped.
-  const [detail, curriculum, rewards] = await Promise.all([
+  // Fetch detail, curriculum, fluency, and rewards in parallel. Every read is account-scoped.
+  const [detail, curriculum, rewards, fluency] = await Promise.all([
     getLearnerDetail(id),
     getLearnerCurriculum(id),
     getLearnerRewards(id),
+    getLearnerFluency(id),
   ]);
   // 404 when the learner does not exist or is not this account's (tenancy).
   if (!detail) notFound();
@@ -145,6 +150,8 @@ export default async function LearnerDetailPage({
         </>
       )}
 
+      <ReadingFluencyCard series={fluency} />
+
       <CheckpointResultsPanel learnerId={id} checkpoints={checkpoints} />
 
       <CurriculumPanel learnerId={id} curriculum={curriculum} />
@@ -162,6 +169,39 @@ export default async function LearnerDetailPage({
 
       <LearnerDataControls learnerId={id} learnerName={learner.displayName} />
     </div>
+  );
+}
+
+function ReadingFluencyCard({ series }: { series: FluencySeries | null }) {
+  if (!series) return null;
+
+  return (
+    <section className="mt-10" aria-labelledby="reading-fluency-title">
+      <div className="flex items-start gap-3">
+        <span
+          aria-hidden
+          className="grid size-10 shrink-0 place-items-center rounded-md border border-line bg-accent/12 text-accent-deep"
+        >
+          <TrendUpIcon weight="regular" className="size-5" />
+        </span>
+        <div>
+          <h2
+            id="reading-fluency-title"
+            className="font-display text-xl font-semibold tracking-tight"
+          >
+            Reading fluency
+          </h2>
+          <p className="mt-1 max-w-prose text-sm text-ink-soft">
+            Words read correctly per minute in sentence read-alouds. Each day keeps the strongest
+            reading from that day.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-5 rounded-xl border border-line bg-paper-raised p-5 sm:p-6">
+        <FluencyChart points={series.points} latest={series.latest} best={series.best} />
+      </div>
+    </section>
   );
 }
 

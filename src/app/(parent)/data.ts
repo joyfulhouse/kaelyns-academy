@@ -5,6 +5,7 @@
 import { getSessionOrNull } from "@/lib/auth";
 import { withAccount } from "@/lib/tenancy";
 import {
+  getFluencyHistory,
   getLearnerSettings,
   getPendingCheckpointResults,
   getRecentAttempts,
@@ -366,6 +367,50 @@ export async function getLearnerRewards(learnerId: string): Promise<LearnerRewar
             createdAt: entry.createdAt,
             when: relativeDay(entry.createdAt.slice(0, 10)),
           })),
+        };
+      },
+      null,
+    ),
+  );
+}
+
+/** Parent-ready WCPM history, reduced to the best sentence-reading result per day. */
+export interface FluencySeries {
+  learner: LearnerRow;
+  points: { day: string; wcpm: number; label: string }[];
+  latest: number | null;
+  best: number | null;
+}
+
+/**
+ * Read and shape one owned learner's sentence-reading fluency history. The
+ * nested ownership gate keeps the parent wrapper fail-closed before the store
+ * reader runs; the store applies the same gate at its own boundary.
+ */
+export async function getLearnerFluency(learnerId: string): Promise<FluencySeries | null> {
+  return withAccount(({ accountId }) =>
+    withOwnedLearner<FluencySeries | null>(
+      accountId,
+      learnerId,
+      async (learner) => {
+        const history = await getFluencyHistory(accountId, learnerId);
+        const bestByDay = new Map<string, number>();
+
+        for (const point of history) {
+          if (typeof point.wcpm !== "number" || !Number.isFinite(point.wcpm)) continue;
+          const prior = bestByDay.get(point.day);
+          if (prior === undefined || point.wcpm > prior) bestByDay.set(point.day, point.wcpm);
+        }
+
+        const points = [...bestByDay.entries()]
+          .sort(([dayA], [dayB]) => dayA.localeCompare(dayB))
+          .map(([day, wcpm]) => ({ day, wcpm, label: relativeDay(day) }));
+
+        return {
+          learner,
+          points,
+          latest: points.at(-1)?.wcpm ?? null,
+          best: points.length > 0 ? Math.max(...points.map(({ wcpm }) => wcpm)) : null,
         };
       },
       null,

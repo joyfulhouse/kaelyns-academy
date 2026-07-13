@@ -780,6 +780,57 @@ export async function getRecentAttempts(
   );
 }
 
+export interface FluencyPoint {
+  day: string;
+  wcpm: number;
+}
+
+/**
+ * Chronological sentence-reading fluency evidence for the parent dashboard.
+ * Word-mode oral-reading attempts have no WCPM value and are omitted. JSON is
+ * narrowed in application code rather than cast in SQL so malformed legacy
+ * response rows fail closed without breaking the whole series. Selects the
+ * MOST RECENT `limit` attempts (desc) then returns them oldest→newest, so the
+ * chart always tracks recent growth rather than freezing on the first 60 ever.
+ */
+export async function getFluencyHistory(
+  accountId: string,
+  learnerId: string,
+  limit = 60,
+): Promise<FluencyPoint[]> {
+  return withOwnedLearner<FluencyPoint[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select({
+          day: attempt.day,
+          response: attempt.response,
+          createdAt: attempt.createdAt,
+        })
+        .from(attempt)
+        .where(and(eq(attempt.learnerId, learnerId), eq(attempt.kind, "oral-reading")))
+        .orderBy(desc(attempt.createdAt))
+        .limit(limit);
+
+      return rows
+        .reverse()
+        .flatMap(({ day, response }) => {
+          if (typeof response !== "object" || response === null) return [];
+          const wcpm = (response as { wcpm?: unknown }).wcpm;
+          // WCPM is client-echoed into the attempt (like every activity score —
+          // the platform's client-authoritative attempt model; see the Slice 1
+          // risk-accept). Bound it to the aligner's plausible 0..300 range so a
+          // forged/out-of-range value can't distort a household's own chart.
+          return typeof wcpm === "number" && Number.isFinite(wcpm) && wcpm >= 0 && wcpm <= 300
+            ? [{ day, wcpm }]
+            : [];
+        });
+    },
+    [],
+  );
+}
+
 /** One AI-generated attempt for the parent-visible provenance trail (P6 / §8). */
 interface GeneratedAttempt {
   activityId: string;
