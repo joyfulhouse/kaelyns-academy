@@ -3,6 +3,7 @@ import {
   mathClockConfig,
   mathMoneyConfig,
   mathMeasureConfig,
+  oralReadingConfig,
 } from "./activity-configs";
 
 describe("math-clock config", () => {
@@ -127,6 +128,46 @@ describe("math-measure config", () => {
           { label: "b", emoji: "b", size: 2 },
         ],
         answerIndex: 0,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("oral-reading config", () => {
+  it("defaults an unchanged v1 config to word mode", () => {
+    const authored = {
+      instruction: "Listen, then read this word aloud.",
+      target: "the",
+      skillTag: "reading.fluency.phrasing",
+    };
+
+    expect(oralReadingConfig.parse(authored)).toEqual({ mode: "word", ...authored });
+  });
+
+  it("accepts a bounded sentence passage without an authored scoring pace", () => {
+    const authored = {
+      mode: "sentence" as const,
+      instruction: "Listen, then read the sentence.",
+      passage: "We can see the cat.",
+      skillTag: "reading.fluency.phrasing",
+    };
+
+    expect(oralReadingConfig.parse(authored)).toEqual(authored);
+  });
+
+  it("rejects sentence passages above the character or word caps", () => {
+    expect(
+      oralReadingConfig.safeParse({
+        mode: "sentence",
+        instruction: "Read.",
+        passage: "a".repeat(201),
+      }).success,
+    ).toBe(false);
+    expect(
+      oralReadingConfig.safeParse({
+        mode: "sentence",
+        instruction: "Read.",
+        passage: Array.from({ length: 41 }, () => "cat").join(" "),
       }).success,
     ).toBe(false);
   });

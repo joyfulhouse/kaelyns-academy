@@ -33,6 +33,59 @@ describe("transcribeOralReading", () => {
     expect(form.get("model")).toBe("kaelyn-stt");
     expect(form.get("prompt")).toBe("there");
     expect(form.get("file")).toBeInstanceOf(Blob);
+    expect(form.get("response_format")).toBeNull();
+  });
+
+  it("opts into verbose word timestamps without changing the default call shape", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          text: "we can see",
+          words: [
+            { word: "we", start: 0, end: 0.4 },
+            { word: "can", start: 0.4, end: 0.8, probability: 0.7 },
+            { word: "see", start: 0.8, end: 1.2 },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      transcribeOralReading(new Blob([new Uint8Array([1])]), "we can see", {
+        wordTimestamps: true,
+      }),
+    ).resolves.toEqual({
+      text: "we can see",
+      words: [
+        { word: "we", start: 0, end: 0.4 },
+        { word: "can", start: 0.4, end: 0.8, probability: 0.7 },
+        { word: "see", start: 0.8, end: 1.2 },
+      ],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const form = init.body as FormData;
+    expect(form.get("response_format")).toBe("verbose_json");
+  });
+
+  it("tolerates a verbose response whose words field was stripped", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ text: "we can see" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      transcribeOralReading(new Blob([new Uint8Array([1])]), "we can see", {
+        wordTimestamps: true,
+      }),
+    ).resolves.toEqual({ text: "we can see" });
   });
 
   it("throws when the gateway fails or omits text", async () => {
