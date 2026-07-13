@@ -66,6 +66,7 @@ function tableName(t: unknown): string {
 type Predicate =
   | { op: "eq" | "lte"; column: string | undefined; value: unknown }
   | { op: "and"; conditions: Predicate[] };
+type Ordering = { direction: "asc" | "desc"; column: string | undefined };
 
 function matches(row: Record<string, unknown>, predicate: Predicate | undefined): boolean {
   if (!predicate) return true;
@@ -75,11 +76,34 @@ function matches(row: Record<string, unknown>, predicate: Predicate | undefined)
   return String(row[predicate.column]) <= String(predicate.value);
 }
 
+function applyQueryShape(
+  rows: Record<string, unknown>[],
+  predicate: Predicate | undefined,
+  ordering: Ordering | undefined,
+  limit: number | undefined,
+): Record<string, unknown>[] {
+  const selected = rows.filter((row) => matches(row, predicate));
+  if (ordering?.column) {
+    selected.sort((left, right) => {
+      const leftValue = left[ordering.column!];
+      const rightValue = right[ordering.column!];
+      const comparison =
+        leftValue instanceof Date && rightValue instanceof Date
+          ? leftValue.getTime() - rightValue.getTime()
+          : String(leftValue).localeCompare(String(rightValue));
+      return ordering.direction === "asc" ? comparison : -comparison;
+    });
+  }
+  return limit === undefined ? selected : selected.slice(0, limit);
+}
+
 function builder(op: string, table: string, projection?: Record<string, unknown>) {
   const chain = {
     op,
     table,
     predicate: undefined as Predicate | undefined,
+    ordering: undefined as Ordering | undefined,
+    limitValue: undefined as number | undefined,
     from(t: unknown) {
       chain.table = tableName(t);
       return chain;
@@ -123,10 +147,12 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
       ops.push({ op: "onConflictDoUpdate", table: chain.table });
       return chain;
     },
-    limit() {
+    limit(value?: number) {
+      chain.limitValue = value;
       return chain;
     },
-    orderBy() {
+    orderBy(ordering?: Ordering) {
+      chain.ordering = ordering;
       return chain;
     },
     for() {
@@ -144,10 +170,17 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
               ? reviewScheduleRows.value.filter((row) => matches(row, chain.predicate))
             : chain.op === "select" && chain.table === "enrollment"
               ? enrollmentRows.value
-              : chain.op === "select" && chain.table === "attempt"
+            : chain.op === "select" && chain.table === "attempt"
                 ? projection && "activityId" in projection
                   ? completedTodayRows.value.filter((row) => matches(row, chain.predicate))
-                  : attemptRows.value
+                  : projection && "response" in projection
+                    ? applyQueryShape(
+                        attemptRows.value,
+                        chain.predicate,
+                        chain.ordering,
+                        chain.limitValue,
+                      )
+                    : attemptRows.value
                 : chain.op === "select" && chain.table === "checkpoint_result"
                   ? checkpointResultRows.value
                   : chain.op === "select" && chain.table === "learner_quest"
@@ -203,8 +236,11 @@ vi.mock("@/lib/db/schema", () => ({
     id: { name: "id" },
     learnerId: { name: "learnerId" },
     activityId: { name: "activityId" },
+    kind: { name: "kind" },
     generated: { name: "generated" },
+    response: { name: "response" },
     day: { name: "day" },
+    createdAt: { name: "createdAt" },
   },
   enrollment: {
     _name: "enrollment",
@@ -256,8 +292,8 @@ vi.mock("drizzle-orm", () => ({
   and: (...conditions: Predicate[]) => ({ op: "and", conditions }),
   eq: (column: { name?: string }, value: unknown) => ({ op: "eq", column: column?.name, value }),
   lte: (column: { name?: string }, value: unknown) => ({ op: "lte", column: column?.name, value }),
-  desc: (a: unknown) => a,
-  asc: (a: unknown) => a,
+  desc: (column: { name?: string }) => ({ direction: "desc", column: column?.name }),
+  asc: (column: { name?: string }) => ({ direction: "asc", column: column?.name }),
   inArray: (...a: unknown[]) => a,
 }));
 
@@ -269,6 +305,7 @@ import {
   applyPlacement,
   EnrollmentNotActiveError,
   getDueReviews,
+  getFluencyHistory,
   getPendingCheckpointResults,
   nextSkillRecord,
   recordAttempt,
@@ -880,6 +917,123 @@ describe("nextSkillRecord (DB evidence fold)", () => {
     const r = nextSkillRecord(undefined, "solid", "2026-06-20", "baseline");
     expect(r.history).toEqual([{ day: "2026-06-20", outcome: "solid", source: "baseline" }]);
     expect(r.outcome).toBe("solid");
+  });
+});
+
+describe("getFluencyHistory (owned oral-reading history)", () => {
+  beforeEach(() => {
+    ops.length = 0;
+    learnerRows.value = [{ id: "L1" }];
+    attemptRows.value = [];
+  });
+
+  it("extracts only finite numeric WCPM values from response JSON", async () => {
+    attemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "oral-reading",
+        day: "2026-07-08",
+        response: null,
+        createdAt: new Date("2026-07-08T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "oral-reading",
+        day: "2026-07-09",
+        response: {},
+        createdAt: new Date("2026-07-09T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "oral-reading",
+        day: "2026-07-10",
+        response: { wcpm: "18" },
+        createdAt: new Date("2026-07-10T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "oral-reading",
+        day: "2026-07-11",
+        response: { wcpm: Number.NaN },
+        createdAt: new Date("2026-07-11T10:00:00Z"),
+      },
+      {
+        // A forged out-of-plausible-range WCPM is dropped (client-echo guard).
+        learnerId: "L1",
+        kind: "oral-reading",
+        day: "2026-07-11",
+        response: { wcpm: 99999 },
+        createdAt: new Date("2026-07-11T11:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "oral-reading",
+        day: "2026-07-12",
+        response: { wcpm: 22 },
+        createdAt: new Date("2026-07-12T10:00:00Z"),
+      },
+    ];
+
+    await expect(getFluencyHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-12", wcpm: 22 },
+    ]);
+  });
+
+  it("applies learner and oral-reading filters and keeps the most recent, chronological", async () => {
+    attemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "math-tenframe",
+        day: "2026-07-07",
+        response: { wcpm: 99 },
+        createdAt: new Date("2026-07-07T10:00:00Z"),
+      },
+      {
+        learnerId: "someone-else",
+        kind: "oral-reading",
+        day: "2026-07-08",
+        response: { wcpm: 88 },
+        createdAt: new Date("2026-07-08T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "oral-reading",
+        day: "2026-07-12",
+        response: { wcpm: 22 },
+        createdAt: new Date("2026-07-12T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "oral-reading",
+        day: "2026-07-10",
+        response: { wcpm: 12 },
+        createdAt: new Date("2026-07-10T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "oral-reading",
+        day: "2026-07-11",
+        response: { wcpm: 18 },
+        createdAt: new Date("2026-07-11T10:00:00Z"),
+      },
+    ];
+
+    // limit 2 keeps the MOST RECENT two attempts (07-11, 07-12), returned
+    // oldest→newest so the chart tracks recent growth, not the first reads ever.
+    await expect(getFluencyHistory("acct-1", "L1", 2)).resolves.toEqual([
+      { day: "2026-07-11", wcpm: 18 },
+      { day: "2026-07-12", wcpm: 22 },
+    ]);
+  });
+
+  it("fails closed without reading attempts when the learner is not owned", async () => {
+    learnerRows.value = [];
+    attemptRows.value = [
+      { day: "2026-07-12", response: { wcpm: 22 }, createdAt: new Date() },
+    ];
+
+    await expect(getFluencyHistory("acct-2", "L1")).resolves.toEqual([]);
+    expect(ops.filter((entry) => entry.table === "attempt")).toEqual([]);
   });
 });
 

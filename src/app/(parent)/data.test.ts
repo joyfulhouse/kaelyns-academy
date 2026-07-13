@@ -11,6 +11,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const PLACED_SLUG = "reading.fluency.phrasing";
+const OWNED_LEARNER = {
+  id: "L1",
+  accountId: "acc-1",
+  displayName: "Kiddo",
+  avatar: null,
+  birthMonth: null,
+};
 
 vi.mock("@/lib/tenancy", async (importActual) => ({
   ...(await importActual<typeof import("@/lib/tenancy")>()),
@@ -19,23 +26,25 @@ vi.mock("@/lib/tenancy", async (importActual) => ({
   ),
 }));
 
+const { withOwnedLearner } = vi.hoisted(() => ({ withOwnedLearner: vi.fn() }));
 vi.mock("@/lib/tutor/scope", async (importActual) => ({
   ...(await importActual<typeof import("@/lib/tutor/scope")>()),
-  withOwnedLearner: vi.fn(
-    async (
-      _accountId: string,
-      _learnerId: string,
-      fn: (owned: { id: string; accountId: string; displayName: string; avatar: null; birthMonth: null }) => unknown,
-    ) => fn({ id: "L1", accountId: "acc-1", displayName: "Kiddo", avatar: null, birthMonth: null }),
-  ),
+  withOwnedLearner,
 }));
 
-const { getSkillState, getRecentAttempts, getPendingCheckpointResults } = vi.hoisted(() => ({
-  getSkillState: vi.fn(),
-  getRecentAttempts: vi.fn(),
-  getPendingCheckpointResults: vi.fn(),
+const { getSkillState, getRecentAttempts, getPendingCheckpointResults, getFluencyHistory } =
+  vi.hoisted(() => ({
+    getSkillState: vi.fn(),
+    getRecentAttempts: vi.fn(),
+    getPendingCheckpointResults: vi.fn(),
+    getFluencyHistory: vi.fn(),
+  }));
+vi.mock("@/lib/tutor/store", () => ({
+  getSkillState,
+  getRecentAttempts,
+  getPendingCheckpointResults,
+  getFluencyHistory,
 }));
-vi.mock("@/lib/tutor/store", () => ({ getSkillState, getRecentAttempts, getPendingCheckpointResults }));
 
 vi.mock("@/lib/content/repository", () => ({
   getProgramAsync: vi.fn(async () => undefined),
@@ -43,13 +52,26 @@ vi.mock("@/lib/content/repository", () => ({
   listProgramSummariesAsync: vi.fn(async () => []),
 }));
 
-import { getLearnerDetail } from "./data";
+import { getLearnerDetail, getLearnerFluency } from "./data";
 
 beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T12:00:00"));
+  withOwnedLearner.mockImplementation(
+    async (
+      _accountId: string,
+      _learnerId: string,
+      fn: (owned: typeof OWNED_LEARNER) => unknown,
+    ) => fn(OWNED_LEARNER),
+  );
   getRecentAttempts.mockResolvedValue([]);
   getPendingCheckpointResults.mockResolvedValue([]);
+  getFluencyHistory.mockResolvedValue([]);
 });
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.clearAllMocks();
+});
 
 describe("getLearnerDetail: SkillStatus.source", () => {
   it('is "baseline" for a skill placed via a parent-confirmed check-in', async () => {
@@ -84,5 +106,71 @@ describe("getLearnerDetail: SkillStatus.source", () => {
     const solidByPlay = detail!.skills.find((s) => s.slug === PLACED_SLUG);
     expect(solidByPlay?.source).toBe("play");
     expect(solidByPlay?.outcome).toBe("solid"); // placed and played-to-solid must be visually distinguishable
+  });
+});
+
+describe("getLearnerFluency", () => {
+  it("keeps the best result per day in chronological order and derives latest and best", async () => {
+    getFluencyHistory.mockResolvedValue([
+      { day: "2026-07-12", wcpm: 18 },
+      { day: "2026-07-10", wcpm: 30 },
+      { day: "2026-07-12", wcpm: 23 },
+      { day: "2026-07-11", wcpm: 15 },
+    ]);
+
+    const series = await getLearnerFluency("L1");
+
+    expect(series).toEqual({
+      learner: OWNED_LEARNER,
+      points: [
+        { day: "2026-07-10", wcpm: 30, label: "3 days ago" },
+        { day: "2026-07-11", wcpm: 15, label: "2 days ago" },
+        { day: "2026-07-12", wcpm: 23, label: "Yesterday" },
+      ],
+      latest: 23,
+      best: 30,
+    });
+    expect(getFluencyHistory).toHaveBeenCalledWith("acc-1", "L1");
+  });
+
+  it("returns an owned empty series when no sentence reading has a WCPM result", async () => {
+    await expect(getLearnerFluency("L1")).resolves.toEqual({
+      learner: OWNED_LEARNER,
+      points: [],
+      latest: null,
+      best: null,
+    });
+  });
+
+  it("drops absent, non-numeric, and non-finite WCPM values defensively", async () => {
+    getFluencyHistory.mockResolvedValue([
+      { day: "2026-07-08" },
+      { day: "2026-07-09", wcpm: "19" },
+      { day: "2026-07-10", wcpm: Number.NaN },
+      { day: "2026-07-11", wcpm: Number.POSITIVE_INFINITY },
+      { day: "2026-07-12", wcpm: 21 },
+    ]);
+
+    const series = await getLearnerFluency("L1");
+
+    expect(series?.points).toEqual([
+      { day: "2026-07-12", wcpm: 21, label: "Yesterday" },
+    ]);
+    expect(series?.latest).toBe(21);
+    expect(series?.best).toBe(21);
+  });
+
+  it("fails closed when the learner is not owned by the account", async () => {
+    withOwnedLearner.mockImplementationOnce(
+      async (
+        _accountId: string,
+        _learnerId: string,
+        _fn: (owned: typeof OWNED_LEARNER) => unknown,
+        fallback: unknown,
+      ) => fallback,
+    );
+
+    await expect(getLearnerFluency("other-account-learner")).resolves.toBeNull();
+    expect(getFluencyHistory).not.toHaveBeenCalled();
   });
 });
