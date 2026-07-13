@@ -136,6 +136,9 @@ export interface ActivityPlayerProps<Config, Response> {
    * degrade without calling gated learner APIs. */
   learnerContext?: {
     learnerId: string;
+    /** Program the activity is being played under — gated learner APIs verify
+     * the enrollment is ACTIVE for this slug (§8 two-control convention). */
+    programSlug: string;
     oralReading: boolean;
   };
 }

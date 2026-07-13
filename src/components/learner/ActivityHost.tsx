@@ -344,7 +344,7 @@ export function ActivityHost({
                 config={phase.config}
                 learnerContext={
                   signedIn && selectedLearnerId
-                    ? { learnerId: selectedLearnerId, oralReading: config.oralReading === true }
+                    ? { learnerId: selectedLearnerId, programSlug, oralReading: config.oralReading === true }
                     : undefined
                 }
                 // Relay this generated item's provenance to the recorder (P6 / §8).
@@ -360,7 +360,7 @@ export function ActivityHost({
                 config={activity.config}
                 learnerContext={
                   signedIn && selectedLearnerId
-                    ? { learnerId: selectedLearnerId, oralReading: config.oralReading === true }
+                    ? { learnerId: selectedLearnerId, programSlug, oralReading: config.oralReading === true }
                     : undefined
                 }
                 onComplete={handleComplete}

@@ -163,6 +163,7 @@ export function OralReadingPlayer({
     form.append("file", blob, "reading.webm");
     form.append("target", parsed.target);
     form.append("learnerId", learnerContext.learnerId);
+    form.append("programSlug", learnerContext.programSlug);
     const controller = new AbortController();
     abortRef.current = controller;
     const deadline = setTimeout(() => controller.abort(), VERIFY_TIMEOUT_MS);

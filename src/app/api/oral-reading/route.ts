@@ -6,7 +6,7 @@ import { resolveRateLimit } from "@/lib/api/rate";
 import { captureNonCritical } from "@/lib/capture";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getAccountOrNull } from "@/lib/tenancy";
-import { getLearner, getLearnerSettings } from "@/lib/tutor/store";
+import { getEnrollmentForGate, getLearnerSettings } from "@/lib/tutor/store";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +24,7 @@ let activeReads = 0;
 
 const fieldsSchema = z.object({
   learnerId: z.string().min(1).max(100),
+  programSlug: z.string().min(1).max(100),
   target: z
     .string()
     .trim()
@@ -144,6 +145,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const parsed = fieldsSchema.safeParse({
     learnerId: form.get("learnerId"),
+    programSlug: form.get("programSlug"),
     target: form.get("target"),
   });
   const audio = form.get("file");
@@ -151,15 +153,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     return result("unavailable", 400);
   }
 
-  const { learnerId, target } = parsed.data;
+  const { learnerId, programSlug, target } = parsed.data;
   try {
-    const [ownedLearner, settings] = await Promise.all([
-      getLearner(account.accountId, learnerId),
+    // §8 two-control gate, same as /api/practice: the learner must belong to
+    // this account with an ACTIVE enrollment in the program being played
+    // (getEnrollmentForGate resolves ownership), AND the parent must have
+    // explicitly opted this learner in (default is off). Fail closed on all.
+    const [enrollment, settings] = await Promise.all([
+      getEnrollmentForGate(account.accountId, learnerId, programSlug),
       getLearnerSettings(account.accountId, learnerId),
     ]);
-    // Fail closed: the learner must belong to this account and the parent must
-    // have explicitly opted this learner in (default is off).
-    if (!ownedLearner || settings?.oralReading !== true) {
+    if (!enrollment || enrollment.status !== "active" || settings?.oralReading !== true) {
       return result("unavailable", 403);
     }
   } catch (error) {
