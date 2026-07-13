@@ -206,9 +206,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       const transcription = await transcribeOralReading(audio, parsed.data.passage, {
         wordTimestamps: true,
       });
-      return sentenceResult(
-        oralReadingAlign(parsed.data.passage, transcription.words ?? []),
-      );
+      // Sentence alignment needs per-word timestamps. If the gateway returned
+      // none (e.g. LiteLLM stripped words[] from the verbose response), report
+      // "unavailable" so the player degrades to the grown-up fallback rather
+      // than falsely settling every word honey as if she missed them all.
+      if (!transcription.words || transcription.words.length === 0) {
+        return result("unavailable");
+      }
+      return sentenceResult(oralReadingAlign(parsed.data.passage, transcription.words));
     }
 
     // The raw text exists only inside this request scope. It is immediately

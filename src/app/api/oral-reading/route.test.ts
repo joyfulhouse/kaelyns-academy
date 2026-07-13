@@ -174,6 +174,17 @@ describe("POST /api/oral-reading", () => {
     expect(JSON.stringify(body)).not.toContain("transcript");
   });
 
+  it("returns unavailable when the gateway drops per-word timestamps", async () => {
+    // e.g. LiteLLM stripped words[] from the verbose response.
+    vi.mocked(transcribeOralReading).mockResolvedValue({ text: "we can see the cat", words: [] });
+
+    const res = await POST(post({ mode: "sentence" }));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ result: "unavailable" });
+    expect(oralReadingAlign).not.toHaveBeenCalled();
+  });
+
   it("rejects a sentence above either passage cap before transcription", async () => {
     expect((await POST(post({ mode: "sentence", passage: "a".repeat(201) }))).status).toBe(
       400,
