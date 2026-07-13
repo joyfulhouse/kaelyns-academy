@@ -25,12 +25,22 @@ const checkpointUpdates: Record<string, unknown>[] = [];
 // The set() payload of each `skill_state` update — lets a test assert
 // applyPlacement's baseline seed write (evidence/outcome).
 const skillStateUpdates: Record<string, unknown>[] = [];
+// The values() payload of each review_schedule upsert. The scheduler writes the
+// full next state through insert(...).onConflictDoUpdate(...), so this captures
+// both first schedules and later review folds.
+const reviewScheduleInserts: Record<string, unknown>[] = [];
 // Mutable canned rows the fake `tx` returns for each select target.
 const learnerRows = { value: [{ id: "L1" }] as Record<string, unknown>[] };
 const skillRows = { value: [] as Record<string, unknown>[] };
+const reviewScheduleRows = { value: [] as Record<string, unknown>[] };
 // The in-tx active-enrollment gate read (Fix-F A4): default ACTIVE so the
 // happy-path tests persist; the gate tests override to removed/paused/none.
-const enrollmentRows = { value: [{ id: "E1", status: "active" }] as Record<string, unknown>[] };
+const enrollmentRows = {
+  value: [{ id: "E1", status: "active", programSlug: "kaelyn-adaptive" }] as Record<
+    string,
+    unknown
+  >[],
+};
 // The in-tx checkpoint_result upsert read (C1): default a single pending row so
 // a checkpointPhase attempt's fold has a row to update; unused by non-checkpoint
 // tests (upsertCheckpointScore is only ever called when checkpointPhase is set).
@@ -41,6 +51,7 @@ const checkpointResultRows = {
 // row (only the just-inserted attempt) so the happy path is a first completion;
 // the repeat-completion test overrides to two rows (prior + just-inserted).
 const attemptRows = { value: [{ id: "new" }] as Record<string, unknown>[] };
+const completedTodayRows = { value: [] as Record<string, unknown>[] };
 // The day's learner_quest rows (Adventure 2.0 fold); applyAttemptToQuests only
 // SELECTs status="active" rows (mirroring the real query's WHERE clause) — the
 // fake filters here so "offered leaves untouched" is actually observable.
@@ -52,15 +63,29 @@ function tableName(t: unknown): string {
 
 /** A thenable query builder: chainable methods return `this`; awaiting it
  *  records the (op, table) and resolves to the canned rows for that target. */
-function builder(op: string, table: string) {
+type Predicate =
+  | { op: "eq" | "lte"; column: string | undefined; value: unknown }
+  | { op: "and"; conditions: Predicate[] };
+
+function matches(row: Record<string, unknown>, predicate: Predicate | undefined): boolean {
+  if (!predicate) return true;
+  if (predicate.op === "and") return predicate.conditions.every((part) => matches(row, part));
+  if (!predicate.column) return true;
+  if (predicate.op === "eq") return row[predicate.column] === predicate.value;
+  return String(row[predicate.column]) <= String(predicate.value);
+}
+
+function builder(op: string, table: string, projection?: Record<string, unknown>) {
   const chain = {
     op,
     table,
+    predicate: undefined as Predicate | undefined,
     from(t: unknown) {
       chain.table = tableName(t);
       return chain;
     },
-    where() {
+    where(predicate?: Predicate) {
+      chain.predicate = predicate;
       return chain;
     },
     set(v?: Record<string, unknown>) {
@@ -85,10 +110,17 @@ function builder(op: string, table: string) {
       if (chain.op === "insert" && chain.table === "star_ledger" && v) {
         ledgerInserts.push(v);
       }
+      if (chain.op === "insert" && chain.table === "review_schedule" && v) {
+        reviewScheduleInserts.push(v);
+      }
       return chain;
     },
     onConflictDoNothing() {
       ops.push({ op: "onConflictDoNothing", table: chain.table });
+      return chain;
+    },
+    onConflictDoUpdate() {
+      ops.push({ op: "onConflictDoUpdate", table: chain.table });
       return chain;
     },
     limit() {
@@ -108,10 +140,14 @@ function builder(op: string, table: string) {
           ? learnerRows.value
           : chain.op === "select" && chain.table === "skill_state"
             ? skillRows.value
+            : chain.op === "select" && chain.table === "review_schedule"
+              ? reviewScheduleRows.value.filter((row) => matches(row, chain.predicate))
             : chain.op === "select" && chain.table === "enrollment"
               ? enrollmentRows.value
               : chain.op === "select" && chain.table === "attempt"
-                ? attemptRows.value
+                ? projection && "activityId" in projection
+                  ? completedTodayRows.value.filter((row) => matches(row, chain.predicate))
+                  : attemptRows.value
                 : chain.op === "select" && chain.table === "checkpoint_result"
                   ? checkpointResultRows.value
                   : chain.op === "select" && chain.table === "learner_quest"
@@ -138,8 +174,8 @@ function builder(op: string, table: string) {
  *  OUTSIDE a transaction, so getDb() itself must answer select/delete too). */
 function connection() {
   return {
-    select(_proj?: unknown) {
-      return builder("select", "unknown");
+    select(projection?: Record<string, unknown>) {
+      return builder("select", "unknown", projection);
     },
     insert(t: unknown) {
       return builder("insert", tableName(t));
@@ -161,10 +197,36 @@ const db = { ...connection(), transaction };
 
 vi.mock("@/lib/db", () => ({ getDb: () => db }));
 vi.mock("@/lib/db/schema", () => ({
-  learner: { _name: "learner", id: {}, accountId: {} },
-  attempt: { _name: "attempt", id: {}, learnerId: {}, activityId: {}, generated: {} },
-  enrollment: { _name: "enrollment", learnerId: {}, programSlug: {}, status: {} },
-  skillState: { _name: "skill_state", id: {}, learnerId: {}, skill: {} },
+  learner: { _name: "learner", id: { name: "id" }, accountId: { name: "accountId" } },
+  attempt: {
+    _name: "attempt",
+    id: { name: "id" },
+    learnerId: { name: "learnerId" },
+    activityId: { name: "activityId" },
+    generated: { name: "generated" },
+    day: { name: "day" },
+  },
+  enrollment: {
+    _name: "enrollment",
+    id: { name: "id" },
+    learnerId: { name: "learnerId" },
+    programSlug: { name: "programSlug" },
+    status: { name: "status" },
+  },
+  skillState: {
+    _name: "skill_state",
+    id: { name: "id" },
+    learnerId: { name: "learnerId" },
+    skill: { name: "skill" },
+  },
+  reviewSchedule: {
+    _name: "review_schedule",
+    id: { name: "id" },
+    learnerId: { name: "learnerId" },
+    skill: { name: "skill" },
+    programSlug: { name: "programSlug" },
+    nextReviewOn: { name: "nextReviewOn" },
+  },
   starLedger: { _name: "star_ledger" },
   // Adventure 2.0 quest fold (applyAttemptToQuests, src/lib/quests/store.ts —
   // imported by recordAttempt and resolved against this SAME mocked module).
@@ -191,21 +253,29 @@ vi.mock("@/lib/db/schema", () => ({
 }));
 // drizzle-orm operators are used only to build opaque predicate objects here.
 vi.mock("drizzle-orm", () => ({
-  and: (...a: unknown[]) => a,
-  eq: (...a: unknown[]) => a,
+  and: (...conditions: Predicate[]) => ({ op: "and", conditions }),
+  eq: (column: { name?: string }, value: unknown) => ({ op: "eq", column: column?.name, value }),
+  lte: (column: { name?: string }, value: unknown) => ({ op: "lte", column: column?.name, value }),
   desc: (a: unknown) => a,
   asc: (a: unknown) => a,
   inArray: (...a: unknown[]) => a,
 }));
 
+vi.mock("@/lib/content/repository", () => ({
+  resolveLearnerProgram: vi.fn(),
+}));
+
 import {
   applyPlacement,
   EnrollmentNotActiveError,
+  getDueReviews,
   getPendingCheckpointResults,
   nextSkillRecord,
   recordAttempt,
   redoCheckpoint,
 } from "./store";
+import { resolveLearnerProgram } from "@/lib/content/repository";
+import type { Program } from "@/content";
 
 const input = {
   learnerId: "L1",
@@ -237,13 +307,17 @@ describe("recordAttempt (atomic persistence)", () => {
     ledgerInserts.length = 0;
     questUpdates.length = 0;
     checkpointUpdates.length = 0;
+    skillStateUpdates.length = 0;
+    reviewScheduleInserts.length = 0;
     transaction.mockClear();
     learnerRows.value = [{ id: "L1" }];
     skillRows.value = [];
-    enrollmentRows.value = [{ id: "E1", status: "active" }];
+    enrollmentRows.value = [{ id: "E1", status: "active", programSlug: "kaelyn-adaptive" }];
     attemptRows.value = [{ id: "new" }];
     questRows.value = [];
     checkpointResultRows.value = [{ id: "CR1", scores: {} }];
+    reviewScheduleRows.value = [];
+    completedTodayRows.value = [];
   });
 
   it("runs inside a single transaction", async () => {
@@ -389,6 +463,122 @@ describe("recordAttempt (atomic persistence)", () => {
       },
     });
     expect(lockedSkills).toEqual(["math.add", "math.count", "math.sub"]);
+  });
+
+  // ── Phase 3: spaced-repetition schedule fold ─────────────────────────────
+
+  it("starts a one-day schedule when the folded skill first becomes solid", async () => {
+    skillRows.value = [
+      { id: "S1", evidence: [{ day: "2026-06-13", outcome: "solid" }] },
+    ];
+
+    await recordAttempt("acct-1", input);
+
+    expect(reviewScheduleInserts).toEqual([
+      expect.objectContaining({
+        learnerId: "L1",
+        skill: "math.add",
+        programSlug: "kaelyn-adaptive",
+        intervalIndex: 0,
+        nextReviewOn: "2026-06-16",
+        lastReviewedOn: null,
+        lastOutcome: "solid",
+      }),
+    ]);
+  });
+
+  it("promotes a passed review to the next ladder interval", async () => {
+    skillRows.value = [
+      { id: "S1", evidence: [{ day: "2026-06-13", outcome: "solid" }] },
+    ];
+    reviewScheduleRows.value = [
+      {
+        id: "R1",
+        learnerId: "L1",
+        skill: "math.add",
+        programSlug: "kaelyn-adaptive",
+        intervalIndex: 0,
+        nextReviewOn: "2026-06-15",
+        lastReviewedOn: null,
+        lastOutcome: "solid",
+      },
+    ];
+
+    await recordAttempt("acct-1", input);
+
+    expect(reviewScheduleInserts).toContainEqual(
+      expect.objectContaining({
+        intervalIndex: 1,
+        nextReviewOn: "2026-06-18",
+        lastReviewedOn: "2026-06-15",
+        lastOutcome: "solid",
+      }),
+    );
+  });
+
+  it("demotes a struggled review even though mastery remains durably solid", async () => {
+    skillRows.value = [
+      {
+        id: "S1",
+        evidence: [
+          { day: "2026-06-12", outcome: "solid" },
+          { day: "2026-06-13", outcome: "solid" },
+        ],
+      },
+    ];
+    reviewScheduleRows.value = [
+      {
+        id: "R1",
+        learnerId: "L1",
+        skill: "math.add",
+        programSlug: "kaelyn-adaptive",
+        intervalIndex: 2,
+        nextReviewOn: "2026-06-15",
+        lastReviewedOn: "2026-06-08",
+        lastOutcome: "solid",
+      },
+    ];
+
+    await recordAttempt("acct-1", {
+      ...input,
+      score: {
+        ...input.score,
+        skillEvidence: [{ skill: "math.add", outcome: "emerging" }],
+      },
+    });
+
+    expect(reviewScheduleInserts).toContainEqual(
+      expect.objectContaining({
+        intervalIndex: 0,
+        nextReviewOn: "2026-06-16",
+        lastReviewedOn: "2026-06-15",
+        lastOutcome: "emerging",
+      }),
+    );
+  });
+
+  it("does not touch a not-yet-due schedule on incidental practice (no thrash)", async () => {
+    skillRows.value = [
+      { id: "S1", evidence: [{ day: "2026-06-13", outcome: "solid" }] },
+    ];
+    // Scheduled for a future review; this attempt (day 2026-06-15) is normal
+    // adventure practice, not the due review, so the ladder must not move.
+    reviewScheduleRows.value = [
+      {
+        id: "R1",
+        learnerId: "L1",
+        skill: "math.add",
+        programSlug: "kaelyn-adaptive",
+        intervalIndex: 2,
+        nextReviewOn: "2026-06-20",
+        lastReviewedOn: "2026-06-13",
+        lastOutcome: "solid",
+      },
+    ];
+
+    await recordAttempt("acct-1", input);
+
+    expect(reviewScheduleInserts).toHaveLength(0);
   });
 
   // ── Adventure 2.0: star-economy earn on first authored completion ───────────
@@ -608,6 +798,7 @@ describe("recordAttempt (atomic persistence)", () => {
 
     // The quest fold is also skipped for a checkpoint attempt.
     expect(questUpdates).toHaveLength(0);
+    expect(reviewScheduleInserts).toHaveLength(0);
   });
 
   it("still earns activity stars on a baseline checkpoint attempt", async () => {
@@ -739,13 +930,17 @@ describe("applyPlacement (parent-gated baseline seed)", () => {
     lockedSkills.length = 0;
     checkpointUpdates.length = 0;
     skillStateUpdates.length = 0;
+    reviewScheduleInserts.length = 0;
     transaction.mockClear();
     learnerRows.value = [{ id: "L1" }];
     skillRows.value = [];
+    reviewScheduleRows.value = [];
+    enrollmentRows.value = [{ id: "E1", status: "active", programSlug: "kaelyn-adaptive" }];
     checkpointResultRows.value = [
       {
         id: "CR1",
         learnerId: "L1",
+        enrollmentId: "E1",
         unitId: "math-baseline",
         phase: "baseline",
         status: "pending",
@@ -767,6 +962,15 @@ describe("applyPlacement (parent-gated baseline seed)", () => {
       outcome: "solid",
       evidence: [{ day: "2026-06-20", outcome: "solid", source: "baseline" }],
     });
+    expect(reviewScheduleInserts).toContainEqual(
+      expect.objectContaining({
+        learnerId: "L1",
+        skill: "math.add",
+        programSlug: "kaelyn-adaptive",
+        intervalIndex: 0,
+        nextReviewOn: "2026-06-21",
+      }),
+    );
 
     // The checkpoint result flips to applied.
     expect(checkpointUpdates).toContainEqual(
@@ -797,6 +1001,136 @@ describe("applyPlacement (parent-gated baseline seed)", () => {
     await applyPlacement("acct-1", "CR-missing");
     expect(skillStateUpdates).toHaveLength(0);
     expect(checkpointUpdates).toHaveLength(0);
+  });
+});
+
+const DUE_PROGRAM = {
+  slug: "kaelyn-adaptive",
+  title: "Test world",
+  subtitle: "",
+  ageBand: "",
+  summary: "",
+  units: [
+    {
+      id: "numbers",
+      order: 1,
+      title: "Numbers",
+      emoji: "🔢",
+      world: "sunshine",
+      bigIdea: "",
+      phonicsFocus: "",
+      mathFocus: "",
+      project: "",
+      lessons: [
+        {
+          id: "numbers-1",
+          order: 1,
+          title: "One",
+          activities: [
+            { id: "a-today", title: "Already warm", kind: "math-tenframe", band: "ready", skillTags: ["math.add"], config: {} },
+            { id: "a-review", title: "Add again", kind: "math-tenframe", band: "ready", skillTags: ["math.add"], config: {} },
+            { id: "a-future", title: "Later", kind: "math-tenframe", band: "ready", skillTags: ["math.future"], config: {} },
+            { id: "a-other", title: "Other world", kind: "math-tenframe", band: "ready", skillTags: ["math.other"], config: {} },
+          ],
+        },
+      ],
+    },
+    {
+      id: "reading",
+      order: 2,
+      title: "Reading",
+      emoji: "📚",
+      world: "ocean",
+      bigIdea: "",
+      phonicsFocus: "",
+      mathFocus: "",
+      project: "",
+      lessons: [
+        {
+          id: "reading-1",
+          order: 1,
+          title: "One",
+          activities: [
+            { id: "a-reading", title: "Read again", kind: "reading-comprehension", band: "ready", skillTags: ["reading.fluency"], config: {} },
+          ],
+        },
+      ],
+    },
+  ],
+} as unknown as Program;
+
+describe("getDueReviews (owned authored review read)", () => {
+  beforeEach(() => {
+    ops.length = 0;
+    learnerRows.value = [{ id: "L1" }];
+    vi.mocked(resolveLearnerProgram).mockReset();
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(DUE_PROGRAM);
+    reviewScheduleRows.value = [
+      { id: "R1", learnerId: "L1", skill: "math.add", programSlug: "kaelyn-adaptive", intervalIndex: 1, nextReviewOn: "2026-07-10", lastReviewedOn: null, lastOutcome: "solid" },
+      { id: "R2", learnerId: "L1", skill: "reading.fluency", programSlug: "kaelyn-adaptive", intervalIndex: 0, nextReviewOn: "2026-07-12", lastReviewedOn: null, lastOutcome: "solid" },
+      { id: "R3", learnerId: "L1", skill: "math.future", programSlug: "kaelyn-adaptive", intervalIndex: 0, nextReviewOn: "2026-07-14", lastReviewedOn: null, lastOutcome: "solid" },
+      { id: "R4", learnerId: "L1", skill: "math.other", programSlug: "another-program", intervalIndex: 0, nextReviewOn: "2026-07-09", lastReviewedOn: null, lastOutcome: "solid" },
+    ];
+    completedTodayRows.value = [
+      { learnerId: "L1", activityId: "a-today", generated: false, day: "2026-07-13" },
+      // Yesterday's completion remains reviewable today.
+      { learnerId: "L1", activityId: "a-review", generated: false, day: "2026-07-12" },
+      // Generated attempts never suppress an authored review.
+      { learnerId: "L1", activityId: "a-reading", generated: true, day: "2026-07-13" },
+    ];
+  });
+
+  it("filters by due day and program, excludes authored completions today, and orders most overdue first", async () => {
+    const reviews = await getDueReviews("acct-1", "L1", "kaelyn-adaptive", "2026-07-13");
+
+    expect(reviews.map((review) => [review.activity.id, review.skill, review.nextReviewOn])).toEqual([
+      ["a-review", "math.add", "2026-07-10"],
+      ["a-reading", "reading.fluency", "2026-07-12"],
+    ]);
+  });
+
+  it("surfaces at most one activity per due skill (no flooding)", async () => {
+    // math.add maps to two available activities (a-today, a-review); with
+    // neither completed, only the FIRST authored match must surface.
+    completedTodayRows.value = [];
+    reviewScheduleRows.value = [
+      { id: "R1", learnerId: "L1", skill: "math.add", programSlug: "kaelyn-adaptive", intervalIndex: 1, nextReviewOn: "2026-07-10", lastReviewedOn: null, lastOutcome: "solid" },
+    ];
+
+    const reviews = await getDueReviews("acct-1", "L1", "kaelyn-adaptive", "2026-07-13");
+
+    expect(reviews.filter((review) => review.skill === "math.add")).toHaveLength(1);
+    expect(reviews[0].activity.id).toBe("a-today");
+  });
+
+  it("never surfaces a checkpoint unit's activity as a review", async () => {
+    // A due skill whose only authored match lives in a checkpoint/assessment
+    // unit must not appear — completing it would take the checkpoint branch and
+    // never advance the schedule.
+    completedTodayRows.value = [];
+    reviewScheduleRows.value = [
+      { id: "R1", learnerId: "L1", skill: "math.add", programSlug: "kaelyn-adaptive", intervalIndex: 1, nextReviewOn: "2026-07-10", lastReviewedOn: null, lastOutcome: "solid" },
+    ];
+    vi.mocked(resolveLearnerProgram).mockResolvedValue({
+      ...DUE_PROGRAM,
+      units: DUE_PROGRAM.units.map((unit) =>
+        unit.id === "numbers" ? { ...unit, checkpoint: "baseline" } : unit,
+      ),
+    } as unknown as Program);
+
+    const reviews = await getDueReviews("acct-1", "L1", "kaelyn-adaptive", "2026-07-13");
+
+    expect(reviews.filter((review) => review.skill === "math.add")).toEqual([]);
+  });
+
+  it("returns no rows and does not resolve content for another account's learner", async () => {
+    learnerRows.value = [];
+
+    await expect(
+      getDueReviews("acct-2", "L1", "kaelyn-adaptive", "2026-07-13"),
+    ).resolves.toEqual([]);
+    expect(resolveLearnerProgram).not.toHaveBeenCalled();
+    expect(ops.some((op) => op.table === "review_schedule")).toBe(false);
   });
 });
 

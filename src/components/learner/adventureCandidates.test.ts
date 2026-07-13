@@ -11,12 +11,17 @@ describe("curateAdventureCandidates", () => {
       { id: "g1", unitKey: "global-top" },
       { id: "g2", unitKey: "assigned" },
     ];
+    const reviews = [
+      { activity: { id: "r1" }, unit: { id: "global-top" } },
+      { activity: { id: "r2" }, unit: { id: "assigned" } },
+    ];
 
     expect(
-      curateAdventureCandidates(recommendations, generated, new Set(["assigned"])),
+      curateAdventureCandidates(recommendations, generated, new Set(["assigned"]), reviews),
     ).toEqual({
       recommendations: [recommendations[1]],
       generated: [generated[1]],
+      reviews: [reviews[1]],
     });
   });
 });

@@ -19,6 +19,7 @@ function learnerExport(overrides: Partial<LearnerExport> = {}): LearnerExport {
     settings: { aiPractice: false },
     enrollments: [],
     skillState: [],
+    reviewSchedules: [],
     attempts: [],
     aiProvenance: [],
     stars: { balance: 0, ledger: [] },
@@ -113,6 +114,7 @@ describe("account export inventory guard", () => {
     learner: "learners",
     enrollment: "enrollments",
     skill_state: "skillState",
+    review_schedule: "reviewSchedules",
     attempt: "attempts", // also feeds aiProvenance
     // Deliberate omissions (described in manifest.notExported):
     session: null, // auth session rows — not child data, security-sensitive

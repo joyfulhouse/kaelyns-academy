@@ -31,6 +31,7 @@ vi.mock("@/lib/tutor/store", () => ({
   getEnrollmentConfig: vi.fn(),
   getSkillState: vi.fn(),
   getCompletedActivityIds: vi.fn(),
+  getDueReviews: vi.fn(),
   getGeneratedCompletions: vi.fn(),
   listGeneratedShelf: vi.fn(),
   // Fix 2: ensureLessonPractice serializes recount→generate→insert behind this
@@ -74,6 +75,7 @@ import {
   getEnrollmentConfig,
   getSkillState,
   getCompletedActivityIds,
+  getDueReviews,
   getGeneratedCompletions,
   listGeneratedShelf,
   withLessonGenerationLock,
@@ -128,6 +130,7 @@ describe("getLearnerStateAction learner defaults", () => {
     vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
     vi.mocked(getSkillState).mockResolvedValue({});
     vi.mocked(getCompletedActivityIds).mockResolvedValue([]);
+    vi.mocked(getDueReviews).mockResolvedValue([]);
     vi.mocked(getEnrollmentConfig).mockResolvedValue({ band: "ready", aiPractice: true });
     vi.mocked(getLearnerSettings).mockResolvedValue({
       readAloud: false,

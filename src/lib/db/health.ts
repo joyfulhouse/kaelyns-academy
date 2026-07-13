@@ -37,6 +37,19 @@ export const REQUIRED_COLUMNS: ColumnMap = {
     "gen_at",
   ],
   skill_state: ["id", "learner_id", "skill", "outcome", "evidence", "updated_at"],
+  // Phase 3 spaced repetition (migration 0012). Every scheduler write/read
+  // depends on this concern table, so drift must fail the canary first.
+  review_schedule: [
+    "id",
+    "learner_id",
+    "skill",
+    "program_slug",
+    "interval_index",
+    "next_review_on",
+    "last_reviewed_on",
+    "last_outcome",
+    "updated_at",
+  ],
   // Account-deletion audit (P6, migration 0008). Written by deleteAccount before the
   // cascade; gate it so a skipped 0008 fails closed rather than 500-ing a delete.
   deletion_audit: ["id", "user_id", "deleted_at", "learner_count", "attempt_count", "requested_by"],

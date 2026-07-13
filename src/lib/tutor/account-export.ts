@@ -12,7 +12,7 @@
 import type { LearnerExport } from "./export";
 
 /** Bump when the export SHAPE changes, so a consumer can tell versions apart. */
-export const ACCOUNT_EXPORT_SCHEMA_VERSION = 1;
+export const ACCOUNT_EXPORT_SCHEMA_VERSION = 2;
 
 /**
  * The self-describing data inventory (the COPPA "clear data inventory"). These
@@ -29,6 +29,7 @@ export const EXPORT_CONTENTS = [
   // "attempts" includes each attempt's full `response` payload — the child's own
   // answers, journal text, and drawing data (COPPA "export … all its data").
   "skillState",
+  "reviewSchedules",
   "attempts",
   "aiProvenance",
   // Adventure 2.0 Phase A (Task 10): the motivation + choice tables.

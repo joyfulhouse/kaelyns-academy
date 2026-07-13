@@ -216,6 +216,32 @@ export const skillState = pgTable(
 );
 
 /**
+ * Sparse spaced-repetition state (Phase 3). A row exists only after a skill
+ * first reaches solid; reviews walk the 1/3/7/21-day ladder independently of
+ * the hot skill_state read path.
+ */
+export const reviewSchedule = pgTable(
+  "review_schedule",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    learnerId: text("learner_id")
+      .notNull()
+      .references(() => learner.id, { onDelete: "cascade" }),
+    skill: text("skill").notNull(),
+    programSlug: text("program_slug").notNull(),
+    intervalIndex: integer("interval_index").notNull().default(0),
+    nextReviewOn: date("next_review_on").notNull(),
+    lastReviewedOn: date("last_reviewed_on"),
+    lastOutcome: text("last_outcome"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("review_schedule_learner_skill_uq").on(t.learnerId, t.skill),
+    index("review_schedule_learner_next_idx").on(t.learnerId, t.nextReviewOn),
+  ],
+);
+
+/**
  * Assessment capture (Adventure 2.0 Phase C, spec §3.5). One row per
  * (learner, checkpoint unit, phase) — the per-skill first-try signal from a
  * baseline/mid/final check-in. Baseline attempts fold here INSTEAD of
