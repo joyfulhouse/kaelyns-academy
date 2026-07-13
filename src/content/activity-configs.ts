@@ -287,6 +287,21 @@ export const seqOrderConfig = z.object({
 });
 export type SeqOrderConfig = z.input<typeof seqOrderConfig>;
 
+// Authored-only listen-first oral reading: one known word or short phrase.
+// Authored activities carry `skillTag` so emitted evidence stays inside the
+// activity's `skillTags`; omission is allowed for evidence-free review items.
+export const oralReadingConfig = z.object({
+  instruction: z.string().trim().min(1).max(200),
+  target: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .refine((value) => value.split(/\s+/).length <= 6, "target must be six words or fewer"),
+  skillTag: z.string().trim().min(1).max(64).optional(),
+});
+export type OralReadingConfig = z.input<typeof oralReadingConfig>;
+
 export const ACTIVITY_CONFIG_SCHEMAS = {
   "phonics-wordbuild": phonicsWordbuildConfig,
   "sightword-game": sightwordGameConfig,
@@ -301,6 +316,7 @@ export const ACTIVITY_CONFIG_SCHEMAS = {
   "math-measure": mathMeasureConfig,
   "sort-categories": sortCategoriesConfig,
   "seq-order": seqOrderConfig,
+  "oral-reading": oralReadingConfig,
 } as const;
 
 export type ActivityKind = keyof typeof ACTIVITY_CONFIG_SCHEMAS;

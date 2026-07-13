@@ -342,6 +342,11 @@ export function ActivityHost({
             <PlayerFrame key={`practice-${generatedCount}`}>
               <activityType.Player
                 config={phase.config}
+                learnerContext={
+                  signedIn && selectedLearnerId
+                    ? { learnerId: selectedLearnerId, oralReading: config.oralReading === true }
+                    : undefined
+                }
                 // Relay this generated item's provenance to the recorder (P6 / §8).
                 onComplete={(response, score) =>
                   handlePracticeComplete(response, score, phase.gen)
@@ -353,6 +358,11 @@ export function ActivityHost({
             <PlayerFrame key="play">
               <activityType.Player
                 config={activity.config}
+                learnerContext={
+                  signedIn && selectedLearnerId
+                    ? { learnerId: selectedLearnerId, oralReading: config.oralReading === true }
+                    : undefined
+                }
                 onComplete={handleComplete}
                 onExit={handleExit}
               />

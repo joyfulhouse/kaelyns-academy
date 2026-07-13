@@ -26,6 +26,7 @@ import { langSymbolIntro } from "./lang-symbol-intro";
 import { langListenMatch } from "./lang-listen-match";
 import { sortCategories } from "./sort-categories";
 import { seqOrder } from "./seq-order";
+import { oralReading } from "./oral-reading";
 
 let registered = false;
 
@@ -46,6 +47,7 @@ export function registerActivityTypes(): void {
   registerActivityType(langListenMatch);
   registerActivityType(sortCategories);
   registerActivityType(seqOrder);
+  registerActivityType(oralReading);
 }
 
 registerActivityTypes();

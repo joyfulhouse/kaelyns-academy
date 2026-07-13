@@ -6,6 +6,7 @@ import {
   GridFourIcon,
   HandTapIcon,
   ListNumbersIcon,
+  MicrophoneIcon,
   NotePencilIcon,
   PuzzlePieceIcon,
   RulerIcon,
@@ -34,4 +35,5 @@ export const ACTIVITY_META: Record<ActivityKind, { icon: Icon; label: string }> 
   "math-measure": { icon: RulerIcon, label: "Measure & compare" },
   "sort-categories": { icon: StackIcon, label: "Sort" },
   "seq-order": { icon: ListNumbersIcon, label: "Order" },
+  "oral-reading": { icon: MicrophoneIcon, label: "Read it out loud" },
 };

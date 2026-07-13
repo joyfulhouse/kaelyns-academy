@@ -134,6 +134,11 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
         instruction: "Put them in order.",
         cards: [{ label: "First" }, { label: "Second" }, { label: "Third" }],
       };
+    case "oral-reading":
+      return {
+        instruction: "Listen, then read this word aloud.",
+        target: "the",
+      };
   }
 }
 

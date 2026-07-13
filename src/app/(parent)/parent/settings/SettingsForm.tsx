@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   ListChecksIcon,
+  MicrophoneIcon,
   RobotIcon,
   SpeakerHighIcon,
 } from "@phosphor-icons/react/dist/ssr";
@@ -18,7 +19,7 @@ import type { LearnerSettings } from "@/lib/content/config";
 
 /**
  * Parent settings form for ONE learner. Controls map directly to
- * `LearnerSettings` (dailyGoal, aiPractice, readAloud) and persist via
+ * `LearnerSettings` (dailyGoal, aiPractice, readAloud, oralReading) and persist via
  * `saveLearnerSettingsAction(learnerId, …)`. It serves two surfaces: the
  * account-wide Settings page (passing the primary learner, or null when the
  * account has no child yet) and the per-learner Settings page
@@ -44,12 +45,14 @@ interface SettingsState {
   dailyGoal: string;
   aiFeatures: boolean;
   readAloudDefault: boolean;
+  oralReading: boolean;
 }
 
 const DEFAULTS: SettingsState = {
   dailyGoal: "5",
   aiFeatures: true,
   readAloudDefault: true,
+  oralReading: false,
 };
 
 /**
@@ -65,6 +68,7 @@ export function settingsToFormState(settings: LearnerSettings | null): SettingsS
     dailyGoal: settings.dailyGoal !== undefined ? String(settings.dailyGoal) : DEFAULTS.dailyGoal,
     aiFeatures: settings.aiPractice ?? DEFAULTS.aiFeatures,
     readAloudDefault: settings.readAloud ?? DEFAULTS.readAloudDefault,
+    oralReading: settings.oralReading ?? DEFAULTS.oralReading,
   };
 }
 
@@ -106,6 +110,7 @@ export function SettingsForm({
           dailyGoal: Number.isFinite(dailyGoal) ? dailyGoal : undefined,
           aiPractice: settings.aiFeatures,
           readAloud: settings.readAloudDefault,
+          oralReading: settings.oralReading,
         }),
       { fallbackMessage: "Could not save settings. Please try again." },
     );
@@ -167,6 +172,18 @@ export function SettingsForm({
               onChange={(v) => update("readAloudDefault", v)}
               label="Read-aloud by default"
               description="Prompts and instructions are spoken aloud automatically. Recommended for pre- and early readers."
+              disabled={pending}
+              className="flex-1"
+            />
+          </div>
+
+          <div className="flex items-start gap-3 p-5">
+            <MicrophoneIcon weight="regular" className="mt-0.5 size-5 shrink-0 text-accent-deep" />
+            <Switch
+              checked={settings.oralReading}
+              onChange={(value) => update("oralReading", value)}
+              label="Oral reading check"
+              description="Lets the microphone check a word your child reads aloud. Recordings are used only for that check and are never saved."
               disabled={pending}
               className="flex-1"
             />

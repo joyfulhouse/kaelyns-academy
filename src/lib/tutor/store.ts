@@ -1340,10 +1340,13 @@ export async function getEnrollmentForGate(
 
 /**
  * §8 AI-gate read: the per-learner settings (owned-by-account), safeParsed.
- * Returns null when the learner is not owned by the account; {} when the row
- * has no/empty settings; `{ aiPractice: false }` (fail-closed) when the stored
- * settings are malformed. The gate reads `settings?.aiPractice === false` as the
- * top-level (all-programs) parental kill-switch.
+ * Returns null when the learner is not owned by the account;
+ * `{ oralReading: false }` when the row has no/empty settings (AI stays
+ * default-allow via absence, while the microphone gate's Zod default keeps it
+ * opt-in); `{ aiPractice: false }` (fail-closed) when the stored settings are
+ * malformed. The gate reads `settings?.aiPractice === false` as the top-level
+ * (all-programs) parental kill-switch, and `settings?.oralReading === true` as
+ * the explicit microphone opt-in.
  */
 export async function getLearnerSettings(
   accountId: string,

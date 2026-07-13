@@ -131,6 +131,19 @@ describe("authored program content", () => {
     // Guard against the loop silently matching nothing (unit re-id, kind rename).
     expect(checked).toBeGreaterThanOrEqual(6);
   });
+
+  it("oral-reading runtime skill evidence stays inside authored skillTags", () => {
+    let checked = 0;
+    for (const { activity } of everyActivity()) {
+      if (activity.kind !== "oral-reading") continue;
+      const type = getActivityType(activity.kind)!;
+      for (const skill of type.skillsAffected(activity.config)) {
+        expect(activity.skillTags, `${activity.id} emits ${skill}`).toContain(skill);
+      }
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThanOrEqual(3);
+  });
 });
 
 describe("World Languages content matches the canonical inventory", () => {

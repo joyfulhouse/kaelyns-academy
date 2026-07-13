@@ -10,11 +10,14 @@ export const learnerSettingsSchema = z.object({
   dailyGoal: z.number().int().min(0).max(50).optional(),
   aiPractice: z.boolean().optional(),
   readAloud: z.boolean().optional(),
+  // Sensitive feature: an absent legacy value is an explicit opt-out.
+  oralReading: z.boolean().default(false),
 });
-export type LearnerSettings = z.infer<typeof learnerSettingsSchema>;
+export type LearnerSettings = z.input<typeof learnerSettingsSchema>;
 
 /** Enrollment controls plus learner-wide defaults projected onto kid surfaces. */
-export type LearnerSurfaceConfig = EnrollmentConfig & Pick<LearnerSettings, "readAloud">;
+export type LearnerSurfaceConfig = EnrollmentConfig &
+  Pick<LearnerSettings, "readAloud" | "oralReading">;
 
 /** Do not auto-speak account content until the persisted learner setting arrives. */
 export function shouldAutoRead(
