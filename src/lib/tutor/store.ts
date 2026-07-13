@@ -1,7 +1,7 @@
 // server-only: this module opens DB connections and must never be imported into
 // a Client Component. (the `server-only` package isn't installed; this comment
 // is the guard, and only server actions / route handlers import it.)
-import { and, asc, count, desc, eq, inArray, lt, or, sql, sum } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, lt, lte, or, sql, sum } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import {
   attempt,
@@ -14,12 +14,13 @@ import {
   learnerInterest,
   learnerQuest,
   learnerSticker,
+  reviewSchedule,
   skillState,
   starLedger,
   user,
   verification,
 } from "@/lib/db/schema";
-import type { ActivityScore, SkillOutcome, SkillTag } from "@/content";
+import type { Activity, ActivityScore, Lesson, SkillOutcome, SkillTag, Unit } from "@/content";
 import type { ActivityKind } from "@/content/activity-configs";
 import { SHELF_BATCH, SHELF_LESSON_CAP } from "./shelf";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
@@ -38,6 +39,8 @@ import { shapeAccountExport, type AccountExport } from "./account-export";
 import { parseJsonbFailClosed } from "./jsonb";
 import { getLearner, toLearnerRow, withOwnedLearner, type LearnerRow } from "./scope";
 import { applyAttemptToQuests } from "@/lib/quests/store";
+import { unitSkills } from "./recommend";
+import { nextSchedule, type ReviewScheduleState } from "./schedule";
 
 /** The transaction type recordAttempt's tx-scoped helpers share (mirrors the
  *  same derivation in src/lib/quests/store.ts). */
@@ -77,6 +80,54 @@ export function nextSkillRecord(
     source?: "play" | "baseline";
   }[];
   return { history, outcome: deriveOutcome({ history } as SkillRecord) };
+}
+
+/**
+ * Fold one skill result into its sparse review schedule while the caller holds
+ * that skill's skill_state lock. The durable derived outcome gates first-time
+ * scheduling; once a schedule exists, the current attempt outcome drives
+ * promotion/demotion because mastery itself intentionally stays solid.
+ */
+async function upsertReviewSchedule(
+  tx: Db,
+  learnerId: string,
+  programSlug: string,
+  skill: SkillTag,
+  derivedOutcome: SkillOutcome,
+  attemptOutcome: SkillOutcome,
+  day: DayKey,
+): Promise<void> {
+  const rows = await tx
+    .select()
+    .from(reviewSchedule)
+    .where(and(eq(reviewSchedule.learnerId, learnerId), eq(reviewSchedule.skill, skill)))
+    .limit(1)
+    .for("update");
+  const row = rows[0];
+  const current: ReviewScheduleState | null = row
+    ? {
+        intervalIndex: row.intervalIndex,
+        nextReviewOn: row.nextReviewOn,
+        lastReviewedOn: row.lastReviewedOn,
+        lastOutcome: row.lastOutcome as SkillOutcome | null,
+      }
+    : null;
+  // The ladder only moves on a genuine REVIEW — i.e. when the skill was due
+  // (nextReviewOn <= day). Incidental practice of an already-scheduled skill
+  // that is not yet due must not promote/demote it, or normal adventure play
+  // would thrash the schedule. (First-time scheduling, current === null, still
+  // proceeds.)
+  if (current && current.nextReviewOn > day) return;
+  const schedule = nextSchedule(current, current ? attemptOutcome : derivedOutcome, day);
+  if (!schedule) return;
+
+  await tx
+    .insert(reviewSchedule)
+    .values({ learnerId, skill, programSlug, ...schedule })
+    .onConflictDoUpdate({
+      target: [reviewSchedule.learnerId, reviewSchedule.skill],
+      set: { programSlug, ...schedule, updatedAt: new Date() },
+    });
 }
 
 /**
@@ -390,6 +441,15 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
           .update(skillState)
           .set({ evidence: history, outcome, updatedAt: new Date() })
           .where(eq(skillState.id, row.id));
+        await upsertReviewSchedule(
+          tx,
+          input.learnerId,
+          input.programSlug,
+          ev.skill,
+          outcome,
+          ev.outcome,
+          input.day,
+        );
       }
 
       // Adventure 2.0: fold this attempt into today's ACTIVE quests + credit any
@@ -434,6 +494,103 @@ export async function getSkillState(accountId: string, learnerId: string): Promi
       return state;
     },
     {},
+  );
+}
+
+/** One due authored destination, ordered by the skill schedule that surfaced it. */
+export interface DueReview {
+  skill: SkillTag;
+  nextReviewOn: string;
+  activity: Activity;
+  unit: Unit;
+  lesson: Lesson;
+}
+
+const MAX_DUE_SKILLS = 24;
+const MAX_DUE_REVIEWS = 8;
+
+/**
+ * Resolve due skill schedules to replayable authored activities in the
+ * learner's version-pinned program tree. The read is account-owned, scoped to
+ * one program and calendar day, and omits authored activities already played
+ * today so the Warm-up row never immediately repeats completed work.
+ */
+export async function getDueReviews(
+  accountId: string,
+  learnerId: string,
+  programSlug: string,
+  today: string,
+): Promise<DueReview[]> {
+  return withOwnedLearner<DueReview[]>(
+    accountId,
+    learnerId,
+    async () => {
+      // Lazy to keep the repository ↔ tutor-store enrollment-pin seam free of a
+      // module-initialization cycle. No resolver or DB factory runs at import time.
+      const { resolveLearnerProgram } = await import("@/lib/content/repository");
+      const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
+      if (!program) return [];
+
+      const [scheduled, completedToday] = await Promise.all([
+        getDb()
+          .select()
+          .from(reviewSchedule)
+          .where(
+            and(
+              eq(reviewSchedule.learnerId, learnerId),
+              eq(reviewSchedule.programSlug, programSlug),
+              lte(reviewSchedule.nextReviewOn, today),
+            ),
+          )
+          .orderBy(asc(reviewSchedule.nextReviewOn), asc(reviewSchedule.skill))
+          .limit(MAX_DUE_SKILLS),
+        getDb()
+          .select({ activityId: attempt.activityId })
+          .from(attempt)
+          .where(
+            and(
+              eq(attempt.learnerId, learnerId),
+              eq(attempt.day, today),
+              eq(attempt.generated, false),
+            ),
+          )
+          .limit(5000),
+      ]);
+      const completedIds = new Set(completedToday.map((row) => row.activityId));
+      const seenActivityIds = new Set<string>();
+      const reviews: DueReview[] = [];
+
+      // Surface at most ONE authored activity per due skill so a skill that
+      // appears in many activities doesn't flood the Warm-up row.
+      dueLoop: for (const due of scheduled) {
+        for (const unit of program.units) {
+          // Never resurface a checkpoint/assessment unit as casual review: its
+          // activities route to the checkpoint branch of recordAttempt (which
+          // skips skill_state + the scheduler), so the schedule would never
+          // advance and the assessment could repeat under Warm-up framing.
+          if (unit.checkpoint) continue;
+          if (!unitSkills(unit).includes(due.skill)) continue;
+          for (const lesson of unit.lessons) {
+            for (const activity of lesson.activities) {
+              if (!activity.skillTags.includes(due.skill)) continue;
+              if (completedIds.has(activity.id) || seenActivityIds.has(activity.id)) continue;
+              reviews.push({
+                skill: due.skill,
+                nextReviewOn: due.nextReviewOn,
+                activity,
+                unit,
+                lesson,
+              });
+              seenActivityIds.add(activity.id);
+              if (reviews.length >= MAX_DUE_REVIEWS) return reviews;
+              continue dueLoop;
+            }
+          }
+        }
+      }
+      return reviews;
+    },
+    [],
   );
 }
 
@@ -521,6 +678,12 @@ export async function applyPlacement(accountId: string, checkpointResultId: stri
     if (row.status === "applied") return; // idempotent: nothing left to do
 
     const day = row.createdAt.toISOString().slice(0, 10); // YYYY-MM-DD
+    const placementEnrollment = await tx
+      .select({ programSlug: enrollment.programSlug })
+      .from(enrollment)
+      .where(eq(enrollment.id, row.enrollmentId))
+      .limit(1);
+    const programSlug = placementEnrollment[0]?.programSlug;
     const { seed } = computePlacement(row.scores);
     // Lock skill_state rows in a deterministic (alphabetical) order — same
     // deadlock-avoidance as recordAttempt's fold — so a concurrent recordAttempt
@@ -546,6 +709,17 @@ export async function applyPlacement(accountId: string, checkpointResultId: stri
         .update(skillState)
         .set({ evidence: folded.history, outcome: folded.outcome, updatedAt: new Date() })
         .where(eq(skillState.id, s.id));
+      if (programSlug) {
+        await upsertReviewSchedule(
+          tx,
+          row.learnerId,
+          programSlug,
+          skillTag,
+          folded.outcome,
+          "solid",
+          day,
+        );
+      }
     }
 
     await tx
@@ -1435,6 +1609,7 @@ async function gatherLearnerExport(
   const [
     enrollmentRows,
     skillStateRows,
+    reviewScheduleRows,
     attemptRows,
     starBalanceRows,
     starLedgerRows,
@@ -1446,6 +1621,7 @@ async function gatherLearnerExport(
   ] = await Promise.all([
     getDb().select().from(enrollment).where(eq(enrollment.learnerId, learnerId)),
     getDb().select().from(skillState).where(eq(skillState.learnerId, learnerId)),
+    getDb().select().from(reviewSchedule).where(eq(reviewSchedule.learnerId, learnerId)),
     getDb()
       .select()
       .from(attempt)
@@ -1514,6 +1690,14 @@ async function gatherLearnerExport(
       skill: s.skill,
       outcome: s.outcome,
       evidence: (s.evidence as { day: string; outcome: string }[]) ?? [],
+    })),
+    reviewSchedules: reviewScheduleRows.map((schedule) => ({
+      skill: schedule.skill,
+      programSlug: schedule.programSlug,
+      intervalIndex: schedule.intervalIndex,
+      nextReviewOn: schedule.nextReviewOn,
+      lastReviewedOn: schedule.lastReviewedOn,
+      lastOutcome: schedule.lastOutcome,
     })),
     attempts: attemptRows.map((a) => ({
       activityId: a.activityId,

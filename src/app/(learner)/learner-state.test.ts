@@ -22,6 +22,7 @@ vi.mock("@/lib/tutor/store", () => ({
   getEnrollmentForGate: vi.fn(),
   getSkillState: vi.fn(),
   getCompletedActivityIds: vi.fn(),
+  getDueReviews: vi.fn(),
   getEnrollmentConfig: vi.fn(),
   getLearnerSettings: vi.fn(),
   // B3 shelf reads: the durable "fresh practice" list + the generated-attempt
@@ -47,6 +48,7 @@ import { resolveLearnerProgram } from "@/lib/content/repository";
 import {
   ensureEnrollment,
   getCompletedActivityIds,
+  getDueReviews,
   getEnrollmentConfig,
   getEnrollmentForGate,
   getGeneratedCompletions,
@@ -61,6 +63,7 @@ const PROGRAM = { slug: "kaelyn-adaptive", title: "T", subtitle: "", ageBand: ""
 beforeEach(() => {
   vi.mocked(getSkillState).mockResolvedValue({});
   vi.mocked(getCompletedActivityIds).mockResolvedValue([]);
+  vi.mocked(getDueReviews).mockResolvedValue([]);
   vi.mocked(getEnrollmentConfig).mockResolvedValue({});
   vi.mocked(getLearnerSettings).mockResolvedValue({});
   vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
@@ -100,6 +103,27 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(true);
     expect(res.program).toBe(PROGRAM);
+  });
+
+  it("surfaces due authored reviews for an active enrollment", async () => {
+    const dueReview = {
+      skill: "math.add",
+      nextReviewOn: "2026-07-12",
+      activity: { id: "a-review" },
+      unit: { id: "unit-1" },
+      lesson: { id: "lesson-1" },
+    };
+    vi.mocked(getDueReviews).mockResolvedValue([dueReview] as never);
+
+    const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
+
+    expect(res.dueReviews).toEqual([dueReview]);
+    expect(getDueReviews).toHaveBeenCalledWith(
+      "acc-1",
+      "L1",
+      "kaelyn-adaptive",
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    );
   });
 
   it("does NOT lazily auto-enroll on open (A1: ensureEnrollment never called)", async () => {

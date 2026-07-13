@@ -32,6 +32,7 @@ const rows: Record<string, Record<string, unknown>[]> = {
   learner: [],
   enrollment: [],
   skill_state: [],
+  review_schedule: [],
   attempt: [],
   star_ledger: [],
   learner_sticker: [],
@@ -137,6 +138,7 @@ vi.mock("@/lib/db/schema", () => ({
   learner: { _name: "learner", id: {}, accountId: {}, createdAt: {} },
   enrollment: { _name: "enrollment", learnerId: {} },
   skillState: { _name: "skill_state", learnerId: {} },
+  reviewSchedule: { _name: "review_schedule", learnerId: {} },
   attempt: { _name: "attempt", learnerId: {} },
   deletionAudit: { _name: "deletion_audit" },
   verification: { _name: "verification", identifier: {}, value: {} },
@@ -317,6 +319,36 @@ describe("checkpoint_result COPPA round-trip (buildLearnerExport + deleteLearner
     deleteReturning.value = [];
     const deleted = await deleteLearner("U1", "L1");
     expect(deleted).toBe(false);
+  });
+});
+
+describe("review_schedule COPPA round-trip (buildLearnerExport)", () => {
+  const owned = {
+    id: "L1",
+    accountId: "U1",
+    displayName: "A",
+    birthMonth: null,
+    settings: {},
+    createdAt: new Date(),
+  };
+
+  it("includes the learner's skill ids and review dates", async () => {
+    rows.learner = [owned];
+    rows.review_schedule = [
+      {
+        skill: "math.add",
+        programSlug: "kaelyn-adaptive",
+        intervalIndex: 2,
+        nextReviewOn: "2026-07-20",
+        lastReviewedOn: "2026-07-13",
+        lastOutcome: "solid",
+      },
+    ];
+
+    const result = await buildLearnerExport("U1", "L1", "2026-07-13T00:00:00.000Z");
+
+    expect(result).not.toBeNull();
+    expect(result!.reviewSchedules).toEqual(rows.review_schedule);
   });
 });
 

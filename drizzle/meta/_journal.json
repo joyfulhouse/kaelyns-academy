@@ -85,6 +85,13 @@
       "when": 1783443224689,
       "tag": "0011_thankful_franklin_richards",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1783927466301,
+      "tag": "0012_curly_felicia_hardy",
+      "breakpoints": true
     }
   ]
 }

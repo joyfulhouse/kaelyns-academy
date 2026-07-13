@@ -8,6 +8,7 @@ import {
   ensureDefaultLearner,
   ensureEnrollment,
   getCompletedActivityIds,
+  getDueReviews,
   getEnrollmentConfig,
   getEnrollmentForGate,
   getGeneratedActivity,
@@ -20,6 +21,7 @@ import {
   recordAttempt,
   withLessonGenerationLock,
   type NewGeneratedActivity,
+  type DueReview,
   type ShelfItem,
 } from "@/lib/tutor/store";
 import type { EnrollmentConfig, LearnerSurfaceConfig } from "@/lib/content/config";
@@ -347,6 +349,8 @@ export interface LearnerStateResult {
    * section + the next-thing fallback.
    */
   generatedShelf: ShelfItem[];
+  /** Due authored activities for the low-pressure Warm-up row, most overdue first. */
+  dueReviews: DueReview[];
   /** Per-child, per-program enrollment config set by the parent (empty object if none). */
   config: LearnerSurfaceConfig;
   /**
@@ -373,6 +377,7 @@ const EMPTY_STATE: LearnerStateResult = {
   completedActivityIds: [],
   starsByActivity: {},
   generatedShelf: [],
+  dueReviews: [],
   config: {},
   program: null,
   available: false,
@@ -416,8 +421,17 @@ export async function getLearnerStateAction(
       if (!program) return EMPTY_STATE;
       const activityIds = new Set(activityIdsForProgram(program));
       const skillTags = new Set(skillTagsForProgram(program));
+      const today = new Date().toISOString().slice(0, 10);
 
-      const [fullSkillState, completed, config, settings, generatedShelf, generatedCompletions] =
+      const [
+        fullSkillState,
+        completed,
+        config,
+        settings,
+        generatedShelf,
+        generatedCompletions,
+        dueReviews,
+      ] =
         await Promise.all([
           getSkillState(accountId, learnerId),
           getCompletedActivityIds(accountId, learnerId),
@@ -425,6 +439,7 @@ export async function getLearnerStateAction(
           getLearnerSettings(accountId, learnerId),
           listGeneratedShelf(accountId, learnerId, programSlug),
           getGeneratedCompletions(accountId, learnerId),
+          getDueReviews(accountId, learnerId, programSlug, today),
         ]);
 
       // Scope skill_state to this program's skills.
@@ -471,6 +486,7 @@ export async function getLearnerStateAction(
         completedActivityIds,
         starsByActivity,
         generatedShelf,
+        dueReviews,
         config: effectiveConfig,
         program,
         available: true,

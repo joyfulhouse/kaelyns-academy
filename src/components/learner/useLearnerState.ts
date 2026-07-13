@@ -9,7 +9,7 @@ import type { LearnerSurfaceConfig } from "@/lib/content/config";
 // Type-only import (erased at build): the store is server-only, but its
 // client-safe ShelfItem shape crosses the server→client boundary via
 // getLearnerStateAction — same pattern as GeneratedPracticeHost (Task 4).
-import type { ShelfItem } from "@/lib/tutor/store";
+import type { DueReview, ShelfItem } from "@/lib/tutor/store";
 import {
   ensureHouseholdLearner,
   getLearnerStateAction,
@@ -134,6 +134,8 @@ export interface UseLearnerState {
    * guest/loading mode (§8: guests never fetch or render a shelf).
    */
   generatedShelf: ShelfItem[];
+  /** Due authored activities for the low-pressure Warm-up row. */
+  dueReviews: DueReview[];
   /**
    * Re-read the account state (incl. the shelf) so the surface picks up freshly
    * generated items — called after a "More like this" generation resolves. No-op
@@ -149,6 +151,7 @@ const EMPTY_STATE: SkillState = Object.freeze({}) as SkillState;
 const EMPTY_COMPLETED: ReadonlySet<string> = new Set();
 /** Stable empty shelf so guest/loading returns keep a referentially-stable []. */
 const EMPTY_SHELF: ShelfItem[] = Object.freeze([]) as unknown as ShelfItem[];
+const EMPTY_DUE_REVIEWS: DueReview[] = Object.freeze([]) as unknown as DueReview[];
 
 function clampStars(value: number): 0 | 1 | 2 | 3 {
   if (!Number.isFinite(value)) return 0;
@@ -201,6 +204,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   // The active learner's generated "fresh practice" shelf (B3), set from the same
   // action result. Empty until account state loads / in guest mode.
   const [accountShelf, setAccountShelf] = useState<ShelfItem[]>(EMPTY_SHELF);
+  const [accountDueReviews, setAccountDueReviews] = useState<DueReview[]>(EMPTY_DUE_REVIEWS);
   // The resolved (version-pinned) program tree for the loaded (learner, program).
   // Set from the same action result as the state above, so the rendered map and
   // the scoped progress are guaranteed the same version (C#5).
@@ -272,6 +276,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
         completedActivityIds,
         starsByActivity,
         generatedShelf,
+        dueReviews,
         config,
         program,
         available,
@@ -284,6 +289,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       // any optimistic stars from a prior learner/program so glyphs match.
       setAccountStars(starsByActivity as Record<string, 0 | 1 | 2 | 3>);
       setAccountShelf(generatedShelf);
+      setAccountDueReviews(dueReviews);
       setAccountConfig(config);
       // The resolved (pinned) tree for this load. Null on unauth/failure/unknown
       // slug → the caller keeps showing the server-passed published prop.
@@ -436,6 +442,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       // The shelf, gated to the active (learner, program) like the state above so
       // a learner/world switch never flashes the prior shelf.
       generatedShelf: loadedForActive ? accountShelf : EMPTY_SHELF,
+      dueReviews: loadedForActive ? accountDueReviews : EMPTY_DUE_REVIEWS,
       refreshShelf,
     };
   }
@@ -467,6 +474,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       available: true,
       // Guests never fetch or render a shelf (§8: no child↔account data).
       generatedShelf: EMPTY_SHELF,
+      dueReviews: EMPTY_DUE_REVIEWS,
       refreshShelf,
     };
   }
@@ -491,6 +499,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
     // state — not a flash of the "ask a grown-up" block — until mode resolves.
     available: true,
     generatedShelf: EMPTY_SHELF,
+    dueReviews: EMPTY_DUE_REVIEWS,
     refreshShelf,
   };
 }

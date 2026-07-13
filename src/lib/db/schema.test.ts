@@ -10,6 +10,7 @@ import {
   generatedActivity,
   learner,
   publisher,
+  reviewSchedule,
   session,
   skillState,
   user,
@@ -52,6 +53,10 @@ describe("account-delete cascade map (FK ON DELETE)", () => {
 
   it("cascades generated_activity off learner (Adventure 2.0 B3 AI-generated shelf items)", () => {
     expect(fkOnDelete(generatedActivity, "learner_id")).toBe("cascade");
+  });
+
+  it("cascades review_schedule off learner (Phase 3 spaced repetition)", () => {
+    expect(fkOnDelete(reviewSchedule, "learner_id")).toBe("cascade");
   });
 
   it("cascades the Better Auth session + account credential rows off user", () => {
@@ -111,6 +116,25 @@ describe("generated_activity schema", () => {
       "genRoute",
       "genAt",
       "createdAt",
+    ]) {
+      expect(cols).toContain(c);
+    }
+  });
+});
+
+describe("review_schedule schema", () => {
+  it("exposes the spaced-repetition columns", () => {
+    const cols = Object.keys(reviewSchedule);
+    for (const c of [
+      "id",
+      "learnerId",
+      "skill",
+      "programSlug",
+      "intervalIndex",
+      "nextReviewOn",
+      "lastReviewedOn",
+      "lastOutcome",
+      "updatedAt",
     ]) {
       expect(cols).toContain(c);
     }

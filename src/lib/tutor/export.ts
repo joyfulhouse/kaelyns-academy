@@ -41,6 +41,15 @@ export interface LearnerExport {
     outcome: string;
     evidence: { day: string; outcome: string }[];
   }[];
+  /** Sparse spaced-repetition state (Phase 3): skill ids + calendar dates only. */
+  reviewSchedules: {
+    skill: string;
+    programSlug: string;
+    intervalIndex: number;
+    nextReviewOn: string;
+    lastReviewedOn: string | null;
+    lastOutcome: string | null;
+  }[];
   attempts: {
     activityId: string;
     kind: string;
@@ -106,6 +115,14 @@ export interface ShapeInput {
     skill: string;
     outcome: string;
     evidence: { day: string; outcome: string }[];
+  }[];
+  reviewSchedules: {
+    skill: string;
+    programSlug: string;
+    intervalIndex: number;
+    nextReviewOn: string;
+    lastReviewedOn: string | null;
+    lastOutcome: string | null;
   }[];
   attempts: {
     activityId: string;
@@ -182,6 +199,14 @@ export function shapeLearnerExport(input: ShapeInput): LearnerExport {
       skill: s.skill,
       outcome: s.outcome,
       evidence: s.evidence,
+    })),
+    reviewSchedules: input.reviewSchedules.map((schedule) => ({
+      skill: schedule.skill,
+      programSlug: schedule.programSlug,
+      intervalIndex: schedule.intervalIndex,
+      nextReviewOn: schedule.nextReviewOn,
+      lastReviewedOn: schedule.lastReviewedOn,
+      lastOutcome: schedule.lastOutcome,
     })),
     attempts: input.attempts.map((a) => ({
       activityId: a.activityId,

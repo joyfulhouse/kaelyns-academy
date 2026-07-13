@@ -25,6 +25,16 @@ function baseInput(overrides: Partial<ShapeInput> = {}): ShapeInput {
         evidence: [{ day: "2026-06-20", outcome: "solid" }],
       },
     ],
+    reviewSchedules: [
+      {
+        skill: "rs.a",
+        programSlug: "summer-k-to-grade1",
+        intervalIndex: 1,
+        nextReviewOn: "2026-06-24",
+        lastReviewedOn: "2026-06-21",
+        lastOutcome: "solid",
+      },
+    ],
     attempts: [
       {
         activityId: "u1l1a1",
@@ -120,6 +130,22 @@ describe("shapeLearnerExport (pure shaper)", () => {
     expect(s.skill).toBe("rs.a");
     expect(s.outcome).toBe("solid");
     expect(s.evidence).toEqual([{ day: "2026-06-20", outcome: "solid" }]);
+  });
+
+  it("includes the learner's spaced-repetition schedules", () => {
+    const result = shapeLearnerExport(baseInput());
+    expect(result).toMatchObject({
+      reviewSchedules: [
+        {
+          skill: "rs.a",
+          programSlug: "summer-k-to-grade1",
+          intervalIndex: 1,
+          nextReviewOn: "2026-06-24",
+          lastReviewedOn: "2026-06-21",
+          lastOutcome: "solid",
+        },
+      ],
+    });
   });
 
   it("includes attempts with activityId, kind, score (stars/correct/total only), response, day, createdAt", () => {

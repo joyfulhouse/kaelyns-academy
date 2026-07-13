@@ -5,6 +5,7 @@ import { Fragment, useMemo, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import {
   ArrowRightIcon,
+  ArrowCounterClockwiseIcon,
   ArrowsLeftRightIcon,
   CompassIcon,
   HeartIcon,
@@ -273,8 +274,17 @@ function WorldMap({
   onSwitchLearner: () => void;
 }) {
   const reduce = useReducedMotion();
-  const { skillState, completed, getStars, ready, config, mode, selectedLearnerId, generatedShelf } =
-    state;
+  const {
+    skillState,
+    completed,
+    getStars,
+    ready,
+    config,
+    mode,
+    selectedLearnerId,
+    generatedShelf,
+    dueReviews,
+  } = state;
 
   // Both the sticker shop (spec §3.7) and Today's Adventures (spec §4.1) are
   // account-mode only; guest mode never calls the rewards/quest actions, so the
@@ -332,11 +342,28 @@ function WorldMap({
         : [],
     [program, skillState, ready, completedKey],
   );
-  const { recommendations, generated: curatedGeneratedShelf } = useMemo(
-    () => curateAdventureCandidates(globalRecommendations, generatedShelf, activeUnitKeys),
-    [activeUnitKeys, generatedShelf, globalRecommendations],
+  const {
+    recommendations,
+    generated: curatedGeneratedShelf,
+    reviews: curatedDueReviews,
+  } = useMemo(
+    () =>
+      curateAdventureCandidates(
+        globalRecommendations,
+        generatedShelf,
+        activeUnitKeys,
+        dueReviews,
+      ),
+    [activeUnitKeys, dueReviews, generatedShelf, globalRecommendations],
   );
   const topPick = recommendations[0];
+  // A skill that regressed to non-solid can be recommended as the "needs work"
+  // hero AND still be due for review — the same activity must not appear as both
+  // the hero and a "something you know" Warm-up tile (contradictory framing).
+  const dedupedDueReviews = useMemo(
+    () => curatedDueReviews.filter((review) => review.activity.id !== topPick?.activity.id),
+    [curatedDueReviews, topPick],
+  );
   // Next-thing fallback (B3 §4.1): when the tutor has no authored recommendation
   // left (finished the map), offer the oldest not-yet-played generated shelf item
   // so there's always a warm next thing. `completed` already includes played
@@ -513,6 +540,10 @@ function WorldMap({
         />
       ) : null}
 
+      {dedupedDueReviews.length > 0 && (
+        <WarmUpRow programSlug={program.slug} reviews={dedupedDueReviews} />
+      )}
+
       {quests && (
         <TodaysAdventures
           quests={quests}
@@ -576,6 +607,73 @@ function WorldMap({
         <p className="text-base text-ink-faint">More worlds open as you play.</p>
       </div>
     </AppShellKid>
+  );
+}
+
+/* ── Warm up ───────────────────────────────────────────────────────────────
+   Due authored reviews stay visually subordinate to the single hero: a small,
+   forgiving row that links back through the ordinary authored activity route. */
+
+// Keep the row small (One Big GO): show only the few most-overdue reviews so a
+// large review backlog never becomes a second choice-board under the hero.
+const MAX_WARM_UP_TILES = 3;
+
+function WarmUpRow({
+  programSlug,
+  reviews,
+}: {
+  programSlug: string;
+  reviews: UseLearnerState["dueReviews"];
+}) {
+  const shown = reviews.slice(0, MAX_WARM_UP_TILES);
+  return (
+    <section
+      aria-label="Warm up"
+      className="mb-8 rounded-2xl border-2 border-ink/20 bg-honey/15 px-4 py-4"
+    >
+      <div className="flex items-start gap-3">
+        <span
+          aria-hidden
+          className="grid size-10 shrink-0 place-items-center rounded-full bg-honey/45 text-ink"
+        >
+          <ArrowCounterClockwiseIcon weight="bold" className="size-5" />
+        </span>
+        <div>
+          <h2 className="font-display text-lg font-semibold">Warm up</h2>
+          <p className="text-sm text-ink-soft">Let&apos;s warm up with something you know!</p>
+        </div>
+      </div>
+
+      <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+        {shown.map((review) => {
+          const meta = ACTIVITY_META[review.activity.kind];
+          const Icon = meta.icon;
+          return (
+            <li key={review.activity.id}>
+              <a
+                href={`/learn/${programSlug}/${review.unit.id}/${review.activity.id}`}
+                data-world={review.unit.world}
+                aria-label={`Warm up: ${review.activity.title}. ${meta.label}.`}
+                className="flex min-h-20 items-center gap-3 rounded-xl border-2 border-ink/20 bg-paper-raised px-3 py-3 transition active:translate-y-0.5 motion-safe:hover:-translate-y-0.5"
+              >
+                <span
+                  aria-hidden
+                  className="grid size-10 shrink-0 place-items-center rounded-lg bg-honey/25"
+                >
+                  <Icon weight="duotone" className="size-6 text-ink" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate font-display text-base font-semibold">
+                    {review.activity.title}
+                  </span>
+                  <span className="block text-sm text-ink-soft">{meta.label}</span>
+                </span>
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
