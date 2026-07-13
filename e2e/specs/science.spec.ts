@@ -24,11 +24,7 @@ const SEQ_ACTIVITY = `${SCIENCE_UNIT}/sci-cycle-frog`;
 
 test("the Science & Nature world tile renders on the map", async ({ page }) => {
   await page.goto(ADAPTIVE);
-  // Guest picker: tap a mock learner to reach the world map.
-  const kaelynTile = page.getByRole("button", { name: "Kaelyn" });
-  await expect(kaelynTile).toBeVisible({ timeout: 20_000 });
-  await kaelynTile.click();
-
+  // Guests land straight on the world map (One Big GO: no picker re-ask).
   // Locked or playable, the tile's title renders on the map.
   await expect(page.getByText("Science & Nature", { exact: true })).toBeVisible({ timeout: 20_000 });
 });
