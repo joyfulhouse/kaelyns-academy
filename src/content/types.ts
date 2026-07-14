@@ -22,7 +22,7 @@ export type { ActivityKind };
 
 export type Band = "ready" | "stretch";
 export type SkillDomain =
-  | "phonics" // Program 01 (archived)
+  | "phonics" // Program 01 (archived) + decodable readers
   | "reading"
   | "word" // word study: multisyllable decoding + morphology
   | "vocab" // vocabulary depth

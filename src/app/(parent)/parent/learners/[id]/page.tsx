@@ -47,6 +47,7 @@ export const metadata: Metadata = { title: "Learner" };
  */
 const DOMAIN_ORDER = [
   { key: "reading", label: "Reading & Comprehension" },
+  { key: "phonics", label: "Phonics: Decodable Readers" },
   { key: "word", label: "Word Study" },
   { key: "vocab", label: "Vocabulary" },
   { key: "writing", label: "Writing" },
@@ -62,9 +63,9 @@ const DOMAIN_ORDER = [
 ] as const satisfies readonly { key: SkillDomain; label: string }[];
 
 // Exhaustiveness backstop: every SkillDomain MUST appear in DOMAIN_ORDER, or
-// its parent-report row would silently vanish. A missing NON-ARCHIVED domain
-// fails typecheck. (Note: "phonics" is archived; omitting it is intentional.)
-type _MissingDomain = Exclude<SkillDomain, "phonics" | (typeof DOMAIN_ORDER)[number]["key"]>;
+// its parent-report row would silently vanish. A missing domain fails
+// typecheck. ("phonics" is live again via the decodable-readers unit.)
+type _MissingDomain = Exclude<SkillDomain, (typeof DOMAIN_ORDER)[number]["key"]>;
 type _VerifyExhaustive = _MissingDomain extends never ? true : false;
 const _exhaustivenessCheck: _VerifyExhaustive = true;
 
