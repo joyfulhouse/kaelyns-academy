@@ -290,7 +290,7 @@ export type SeqOrderConfig = z.input<typeof seqOrderConfig>;
 // Authored-only, listen-first oral reading. The word branch intentionally keeps
 // the original v1 fields and defaults its discriminator so the five existing
 // word-oral-* configs remain unchanged at authoring and seed boundaries.
-export const oralReadingWordConfig = z.object({
+const oralReadingWordConfig = z.object({
   // `optional().transform(...)` lets Zod's discriminator recognize both an
   // absent v1 mode and the explicit literal, then resolves the parsed config
   // to the canonical word branch. (`literal().default()` is selected too late

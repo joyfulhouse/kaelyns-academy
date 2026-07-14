@@ -112,7 +112,7 @@ export const DECODABLE_LIBRARY: DecodableLibraryGroup[] = [
  * schedules independently — a single shared tag would mark the whole unit
  * solid at once and stall the CVC → digraph → blend sequence.
  */
-export function decodableSkillTag(pattern: PhonicsPattern): string {
+function decodableSkillTag(pattern: PhonicsPattern): string {
   return `phonics.decode.${pattern}`;
 }
 
@@ -122,8 +122,9 @@ export function decodableReaderActivities(pattern?: PhonicsPattern): Activity[] 
     ? DECODABLE_LIBRARY.filter((group) => group.pattern === pattern)
     : DECODABLE_LIBRARY;
 
-  return groups.flatMap((group) =>
-    group.passages.map(
+  return groups.flatMap((group) => {
+    const skillTag = decodableSkillTag(group.pattern);
+    return group.passages.map(
       (passage, index): Activity => ({
         id: `decodable-${group.pattern}-${String(index + 1).padStart(2, "0")}`,
         kind: "oral-reading",
@@ -131,14 +132,14 @@ export function decodableReaderActivities(pattern?: PhonicsPattern): Activity[] 
         blurb: "Sound out each word, then read the whole sentence smoothly.",
         estMinutes: 3,
         band: "ready",
-        skillTags: [decodableSkillTag(group.pattern)],
+        skillTags: [skillTag],
         config: {
           mode: "sentence",
           instruction: "Listen, then read this sentence aloud.",
           passage,
-          skillTag: decodableSkillTag(group.pattern),
+          skillTag,
         },
       }),
-    ),
-  );
+    );
+  });
 }

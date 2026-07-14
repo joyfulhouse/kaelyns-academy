@@ -1,8 +1,5 @@
 import type { Program } from "../types";
-import {
-  DECODABLE_LIBRARY,
-  decodableReaderActivities,
-} from "../decodable";
+import { DECODABLE_LIBRARY, decodableReaderActivities } from "../decodable";
 
 /**
  * Program 02 — Kaelyn's Adaptive Curriculum.

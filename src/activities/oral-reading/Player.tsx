@@ -34,8 +34,6 @@ import {
   type VerificationResult,
 } from "./recording";
 
-export { canRecordAnother, canSubmitRecording, phaseAfterUnmatched } from "./recording";
-
 export function OralReadingPlayer({
   config,
   onComplete,
