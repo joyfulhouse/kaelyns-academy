@@ -357,7 +357,10 @@ test("a decodable reader settles green and shows a linked reward action", async 
     await page.goto(DECODABLE_ACTIVITY);
 
     const passage = page.getByLabel("Reading passage");
-    await expect(passage).toContainText("The fat cat sat.", { timeout: 25_000 });
+    // Words render as separate karaoke spans, so textContent has no spaces.
+    await expect(passage).toContainText(/The\s*fat\s*cat\s*sat\./, {
+      timeout: 25_000,
+    });
     await page.getByRole("button", { name: "Read it aloud" }).click();
     await page.getByRole("button", { name: "Stop listening" }).click();
 
