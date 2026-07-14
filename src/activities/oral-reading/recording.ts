@@ -1,15 +1,15 @@
 import type { OralReadingResponse } from "./logic";
 
 export const MAX_RECORDING_MS = 8_000;
-export const MIN_SENTENCE_PACE_WCPM = 15;
-export const SENTENCE_SETUP_MARGIN_MS = 3_000;
-export const MAX_RECORDING_MS_FLOOR = MAX_RECORDING_MS;
+const MIN_SENTENCE_PACE_WCPM = 15;
+const SENTENCE_SETUP_MARGIN_MS = 3_000;
+const MAX_RECORDING_MS_FLOOR = MAX_RECORDING_MS;
 // The mic-open ceiling. Leading/trailing silence is VAD-trimmed server-side, so
 // this can exceed the kaelyn-stt 15s decoded-speech cap by the setup margin.
 // The sentence passage schema (≤7 words) keeps actual reading within that cap
 // at the 30 WCPM grade-1 target — 7 words ≈ 14s reading, + 3s margin = 17s.
-export const MAX_RECORDING_MS_CEIL = 18_000;
-export const MAX_VERIFY_ATTEMPTS = 2;
+const MAX_RECORDING_MS_CEIL = 18_000;
+const MAX_VERIFY_ATTEMPTS = 2;
 export const VERIFY_TIMEOUT_MS = 20_000;
 
 /**

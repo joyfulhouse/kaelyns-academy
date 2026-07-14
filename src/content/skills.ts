@@ -422,6 +422,80 @@ export const SKILLS: Skill[] = [
     stretchIndicator: "Explains what comes before and after a given stage",
   },
 
+  // ── Decodable Readers (Phase 3 Slice 4): one decode skill per phonics
+  // pattern, so each lesson tracks and schedules independently instead of
+  // collapsing into a single fluency tag. ──
+  {
+    slug: "phonics.decode.short-a-cvc",
+    domain: "phonics",
+    label: "Decoding short a (CVC)",
+    readyIndicator: "Sounds out and reads a short sentence of short-a CVC words accurately aloud",
+    stretchIndicator: "Reads the sentence smoothly on the first try without sounding out",
+  },
+  {
+    slug: "phonics.decode.short-e-cvc",
+    domain: "phonics",
+    label: "Decoding short e (CVC)",
+    readyIndicator: "Sounds out and reads a short sentence of short-e CVC words accurately aloud",
+    stretchIndicator: "Reads the sentence smoothly on the first try without sounding out",
+  },
+  {
+    slug: "phonics.decode.short-i-cvc",
+    domain: "phonics",
+    label: "Decoding short i (CVC)",
+    readyIndicator: "Sounds out and reads a short sentence of short-i CVC words accurately aloud",
+    stretchIndicator: "Reads the sentence smoothly on the first try without sounding out",
+  },
+  {
+    slug: "phonics.decode.short-o-cvc",
+    domain: "phonics",
+    label: "Decoding short o (CVC)",
+    readyIndicator: "Sounds out and reads a short sentence of short-o CVC words accurately aloud",
+    stretchIndicator: "Reads the sentence smoothly on the first try without sounding out",
+  },
+  {
+    slug: "phonics.decode.short-u-cvc",
+    domain: "phonics",
+    label: "Decoding short u (CVC)",
+    readyIndicator: "Sounds out and reads a short sentence of short-u CVC words accurately aloud",
+    stretchIndicator: "Reads the sentence smoothly on the first try without sounding out",
+  },
+  {
+    slug: "phonics.decode.digraph-sh",
+    domain: "phonics",
+    label: "Decoding sh words",
+    readyIndicator: "Reads sh as one sound and decodes a short sentence with sh words accurately aloud",
+    stretchIndicator: "Reads the sentence smoothly on the first try without sounding out",
+  },
+  {
+    slug: "phonics.decode.digraph-ch",
+    domain: "phonics",
+    label: "Decoding ch words",
+    readyIndicator: "Reads ch as one sound and decodes a short sentence with ch words accurately aloud",
+    stretchIndicator: "Reads the sentence smoothly on the first try without sounding out",
+  },
+  {
+    slug: "phonics.decode.digraph-th",
+    domain: "phonics",
+    label: "Decoding th words",
+    readyIndicator: "Reads th as one sound and decodes a short sentence with th words accurately aloud",
+    stretchIndicator: "Reads the sentence smoothly on the first try without sounding out",
+  },
+  {
+    slug: "phonics.decode.blend-initial",
+    domain: "phonics",
+    label: "Decoding beginning blends",
+    readyIndicator: "Blends both consonant sounds at the start of a word and reads a short blend sentence accurately aloud",
+    stretchIndicator: "Reads the sentence smoothly on the first try without sounding out",
+  },
+  {
+    slug: "phonics.decode.blend-final",
+    domain: "phonics",
+    label: "Decoding ending blends",
+    readyIndicator: "Blends both consonant sounds at the end of a word and reads a short blend sentence accurately aloud",
+    stretchIndicator: "Reads the sentence smoothly on the first try without sounding out",
+  },
+
   // ── World Languages: Zhuyin / Bopomofo ──
   // Script-mapping: she already speaks Mandarin and reads pinyin, so this is
   // learning the symbols for sounds she knows, not a new language.

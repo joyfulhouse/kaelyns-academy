@@ -7,7 +7,7 @@ export interface OralReadingTimestampWord {
   probability?: number;
 }
 
-export interface OralReadingWordState {
+interface OralReadingWordState {
   state: "correct" | "unclear";
 }
 

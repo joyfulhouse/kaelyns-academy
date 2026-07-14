@@ -145,6 +145,39 @@ describe("authored program content", () => {
     expect(checked).toBeGreaterThanOrEqual(3);
   });
 
+  it("Decodable Readers contains ready-band sentence fluency activities", () => {
+    const unit = kaelynAdaptive.units.find((u) => u.id === "decodable-readers");
+    expect(unit).toBeDefined();
+    expect(unit!.world).toBe("ocean");
+    expect(unit!.checkpoint).toBeUndefined();
+
+    const activities = unit!.lessons.flatMap((lesson) => lesson.activities);
+    expect(activities.length).toBeGreaterThanOrEqual(24);
+
+    for (const activity of activities) {
+      expect(activity.kind).toBe("oral-reading");
+      expect(activity.band).toBe("ready");
+      expect(activity.skillTags).toHaveLength(1);
+      expect(activity.skillTags[0]).toMatch(/^phonics\.decode\./);
+      if (activity.kind !== "oral-reading") continue;
+
+      expect(activity.config.mode).toBe("sentence");
+      if (activity.config.mode !== "sentence") continue;
+
+      expect(activity.config.skillTag).toBe(activity.skillTags[0]);
+      expect(activity.config.passage.split(/\s+/).length).toBeLessThanOrEqual(7);
+    }
+
+    // Each lesson carries its own decode skill so progression, recommendations,
+    // and spaced review advance pattern by pattern (CVC → digraphs → blends).
+    const lessonSkills = unit!.lessons.map(
+      (lesson) => new Set(lesson.activities.flatMap((a) => a.skillTags)),
+    );
+    for (const skills of lessonSkills) expect(skills.size).toBe(1);
+    const distinct = new Set(lessonSkills.flatMap((s) => [...s]));
+    expect(distinct.size).toBe(unit!.lessons.length);
+  });
+
   it("authors sentence fluency beside the unchanged v1 word-reading block", () => {
     const unit = kaelynAdaptive.units.find((u) => u.id === "word-study")!;
     const activities = unit.lessons.flatMap((lesson) => lesson.activities);

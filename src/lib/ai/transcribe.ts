@@ -8,7 +8,7 @@ interface TranscriptionResponse {
   words?: unknown;
 }
 
-export interface TranscriptionWord {
+interface TranscriptionWord {
   word: string;
   start: number;
   end: number;

@@ -1,6 +1,6 @@
 export type OralReadingMatchResult = "matched" | "unclear" | "no-speech";
 
-export const HOMOPHONE_GROUPS = [
+const HOMOPHONE_GROUPS = [
   ["to", "too", "two", "2"],
   ["there", "their", "theyre"],
   ["no", "know"],
@@ -20,7 +20,7 @@ export const HOMOPHONE_GROUPS = [
   ["ten", "10"],
 ] as const;
 
-export const HOMOPHONE_CANONICAL = new Map<string, string>(
+const HOMOPHONE_CANONICAL = new Map<string, string>(
   HOMOPHONE_GROUPS.flatMap((group) => group.map((word) => [word, group[0]] as const)),
 );
 

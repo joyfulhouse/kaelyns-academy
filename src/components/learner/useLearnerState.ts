@@ -43,7 +43,7 @@ import { useProgress } from "./useProgress";
  */
 
 /** A learner as the surface renders it (covers both real DB + mock guests). */
-export interface SurfaceLearner {
+interface SurfaceLearner {
   id: string;
   displayName: string;
   avatar: string;

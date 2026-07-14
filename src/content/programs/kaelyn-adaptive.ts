@@ -1,4 +1,5 @@
 import type { Program } from "../types";
+import { DECODABLE_LIBRARY, decodableReaderActivities } from "../decodable";
 
 /**
  * Program 02 — Kaelyn's Adaptive Curriculum.
@@ -1489,6 +1490,26 @@ export const kaelynAdaptive: Program = {
           ],
         },
       ],
+    },
+
+    // ── Decodable Readers: short vowels → digraphs → blends ──────────────
+    {
+      id: "decodable-readers",
+      order: 7,
+      title: "Decodable Readers",
+      emoji: "🐚",
+      world: "ocean",
+      bigIdea:
+        "Use the sound patterns you know to unlock each sentence, then read it smoothly.",
+      phonicsFocus: "Short vowels → digraphs → blends",
+      mathFocus: "",
+      project: "Read a whole shelf of sound-it-out sentences aloud.",
+      lessons: DECODABLE_LIBRARY.map((group, index) => ({
+        id: `decodable-${group.pattern}`,
+        order: index + 1,
+        title: group.lessonTitle,
+        activities: decodableReaderActivities(group.pattern),
+      })),
     },
 
     // ── Baseline check-ins (Adventure 2.0 C1) ──────────────────────────────
