@@ -19,10 +19,11 @@ const OWNED_LEARNER = {
   birthMonth: null,
 };
 
-vi.mock("@/lib/tenancy", async (importActual) => ({
-  ...(await importActual<typeof import("@/lib/tenancy")>()),
-  withAccount: vi.fn(async (fn: (ctx: { accountId: string; userId: string }) => unknown) =>
-    fn({ accountId: "acc-1", userId: "acc-1" }),
+vi.mock("@/lib/parent-pin-gate", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/parent-pin-gate")>()),
+  withUnlockedAccount: vi.fn(
+    async (fn: (ctx: { accountId: string; userId: string }) => unknown) =>
+      fn({ accountId: "acc-1", userId: "acc-1" }),
   ),
 }));
 

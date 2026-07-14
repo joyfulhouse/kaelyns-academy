@@ -6,6 +6,7 @@ import { BackLink } from "@/components/ui/BackLink";
 import { AssignProgramControl } from "@/components/parent/AssignProgramControl";
 import { getProgramDetail } from "@/app/(parent)/data";
 import { getProgramAsync } from "@/lib/content/repository";
+import { parentUnlockChallenge } from "@/app/(parent)/parent-unlock-challenge";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,9 @@ export default async function ProgramDetailPage({
 }: {
   params: Promise<{ slug: string }>;
 }) {
+  const unlockChallenge = await parentUnlockChallenge();
+  if (unlockChallenge) return unlockChallenge;
+
   const { slug } = await params;
   const detail = await getProgramDetail(slug);
 

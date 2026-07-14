@@ -2,12 +2,16 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { MarketplaceGrid } from "@/components/parent/MarketplaceGrid";
 import { getCatalog } from "@/app/(parent)/data";
+import { parentUnlockChallenge } from "@/app/(parent)/parent-unlock-challenge";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Curriculum" };
 
 export default async function CurriculumPage() {
+  const unlockChallenge = await parentUnlockChallenge();
+  if (unlockChallenge) return unlockChallenge;
+
   const programs = await getCatalog();
 
   return (

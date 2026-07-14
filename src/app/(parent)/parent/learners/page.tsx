@@ -6,13 +6,18 @@ import { Surface } from "@/components/ui/Surface";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { AddChildForm } from "@/components/parent/AddChildForm";
+import { HandoffButton } from "@/components/parent/HandoffButton";
 import { outcomeDisplay } from "@/components/parent/skill-display";
 import { avatarInitial, listLearnerCards, type LearnerCard } from "@/app/(parent)/data";
 import { programStats } from "@/content";
+import { parentUnlockChallenge } from "@/app/(parent)/parent-unlock-challenge";
 
 export const metadata: Metadata = { title: "Learners" };
 
 export default async function LearnersPage() {
+  const unlockChallenge = await parentUnlockChallenge();
+  if (unlockChallenge) return unlockChallenge;
+
   const learners = await listLearnerCards();
 
   return (
@@ -63,42 +68,47 @@ function LearnerListItem({ card }: { card: LearnerCard }) {
   const started = summary.active > 0;
 
   return (
-    <Link
-      href={`/parent/learners/${learner.id}`}
-      className="group flex items-center gap-4 rounded-xl border border-line p-5 transition-colors hover:border-line-strong hover:bg-paper-sunk/40"
-    >
-      <span
-        aria-hidden
-        className="grid size-12 shrink-0 place-items-center rounded-pill border-2 border-ink/15 bg-accent/15 font-display text-xl font-semibold text-ink"
-      >
-        {avatarInitial(learner.displayName)}
-      </span>
+    <div className="rounded-xl border border-line p-5 transition-colors hover:border-line-strong hover:bg-paper-sunk/40">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+        <Link
+          href={`/parent/learners/${learner.id}`}
+          className="group flex min-w-0 flex-1 items-center gap-4 rounded-lg"
+        >
+          <span
+            aria-hidden
+            className="grid size-12 shrink-0 place-items-center rounded-pill border-2 border-ink/15 bg-accent/15 font-display text-xl font-semibold text-ink"
+          >
+            {avatarInitial(learner.displayName)}
+          </span>
 
-      <div className="min-w-0 flex-1">
-        <h3 className="font-display text-lg font-semibold tracking-tight">{learner.displayName}</h3>
-        <p className="text-sm text-ink-soft">
-          {program ? `${program.title} · ${stats.units} strands` : "Not enrolled"}
-        </p>
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {started ? (
-            <>
-              <Pill tone="success" icon={outcomeDisplay("solid").icon}>
-                {summary.counts.solid} solid
-              </Pill>
-              <Pill tone="ready" icon={outcomeDisplay("emerging").icon}>
-                {summary.counts.emerging} emerging
-              </Pill>
-            </>
-          ) : (
-            <Pill tone="neutral">No activities yet</Pill>
-          )}
-        </div>
+          <div className="min-w-0 flex-1">
+            <h3 className="font-display text-lg font-semibold tracking-tight">{learner.displayName}</h3>
+            <p className="text-sm text-ink-soft">
+              {program ? `${program.title} · ${stats.units} strands` : "Not enrolled"}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {started ? (
+                <>
+                  <Pill tone="success" icon={outcomeDisplay("solid").icon}>
+                    {summary.counts.solid} solid
+                  </Pill>
+                  <Pill tone="ready" icon={outcomeDisplay("emerging").icon}>
+                    {summary.counts.emerging} emerging
+                  </Pill>
+                </>
+              ) : (
+                <Pill tone="neutral">No activities yet</Pill>
+              )}
+            </div>
+          </div>
+
+          <CaretRightIcon
+            weight="bold"
+            className="size-5 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5"
+          />
+        </Link>
+        <HandoffButton learnerId={learner.id} learnerName={learner.displayName} />
       </div>
-
-      <CaretRightIcon
-        weight="bold"
-        className="size-5 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5"
-      />
-    </Link>
+    </div>
   );
 }

@@ -60,6 +60,9 @@ export const REQUIRED_COLUMNS: ColumnMap = {
   session: ["id", "user_id", "token", "expires_at"],
   account: ["id", "user_id", "provider_id", "account_id"],
   verification: ["id", "identifier", "value", "expires_at"],
+  // Optional parent-area PIN gate (migration 0013). A missing table must fail
+  // the canary before the parent layout attempts its per-request gate read.
+  parent_pin: ["account_id", "pin_hash", "failed_attempts", "locked_until", "updated_at"],
   // Curriculum marketplace tables (Slice 1). Drift on any of these 503s the
   // deploy canary before the app tries to read versioned content.
   publisher: ["id", "name", "kind"],

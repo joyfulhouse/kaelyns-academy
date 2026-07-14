@@ -11,9 +11,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * `{ ok: false }`, and a real success revalidates the learner's own page.
  */
 
-vi.mock("@/lib/tenancy", async (importActual) => ({
-  ...(await importActual<typeof import("@/lib/tenancy")>()),
-  withAccount: vi.fn(async (fn: (ctx: { accountId: string; userId: string }) => unknown) =>
+vi.mock("@/lib/parent-pin-gate", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/parent-pin-gate")>()),
+  withUnlockedAccount: vi.fn(async (fn: (ctx: { accountId: string; userId: string }) => unknown) =>
     fn({ accountId: "acc-1", userId: "acc-1" }),
   ),
 }));

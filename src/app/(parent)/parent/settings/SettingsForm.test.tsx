@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { settingsToFormState } from "./SettingsForm";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+import { GrownUpLock, settingsToFormState } from "./SettingsForm";
+
+vi.mock("@/app/(parent)/pin-actions", () => ({
+  setParentPinAction: vi.fn(),
+  clearParentPinByPasswordAction: vi.fn(),
+}));
 
 // settingsToFormState is the pure mapper that initializes the Settings form from
 // the learner's *persisted* settings. The contract that matters: a stored
@@ -64,5 +70,25 @@ describe("settingsToFormState", () => {
     expect(secondChild.aiFeatures).toBe(false);
     expect(secondChild.dailyGoal).toBe("10");
     expect(secondChild.readAloudDefault).toBe(true);
+  });
+});
+
+describe("Grown-up lock settings", () => {
+  it("shows the set-PIN form and 15-minute grace explanation when no PIN exists", () => {
+    const html = renderToStaticMarkup(<GrownUpLock initialHasPin={false} />);
+
+    expect(html).toContain("Grown-up lock");
+    expect(html).toContain("15 minutes");
+    expect(html).toContain("Set PIN");
+    expect(html).toContain('inputMode="numeric"');
+    expect(html).not.toContain("Remove PIN");
+  });
+
+  it("shows change and password-protected removal controls when a PIN exists", () => {
+    const html = renderToStaticMarkup(<GrownUpLock initialHasPin />);
+
+    expect(html).toContain("Change PIN");
+    expect(html).toContain("Remove PIN");
+    expect(html).toContain('autoComplete="current-password"');
   });
 });

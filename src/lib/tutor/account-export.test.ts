@@ -119,6 +119,7 @@ describe("account export inventory guard", () => {
     // Deliberate omissions (described in manifest.notExported):
     session: null, // auth session rows — not child data, security-sensitive
     account: null, // Better Auth credential/oauth rows — passwords/tokens
+    parent_pin: null, // parent credential material — derived PIN hashes are never exported
     publisher: null, // marketplace ownership (set null on delete) — not child data
     // Adventure 2.0 Phase A tables (Task 10 wires these into the export):
     star_ledger: "stars",

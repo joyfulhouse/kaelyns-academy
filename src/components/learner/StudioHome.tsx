@@ -9,6 +9,7 @@ import {
   ArrowsLeftRightIcon,
   CompassIcon,
   HeartIcon,
+  HandTapIcon,
   LockSimpleIcon,
   SparkleIcon,
   StarIcon,
@@ -39,6 +40,8 @@ import { curateAdventureCandidates } from "./adventureCandidates";
 import { computeUnitProgress, computeProgramRatio } from "./useProgress";
 import { computeUnlockedIds, pathLabelsByUnitId, segmentUnits } from "./branching";
 import { ACTIVITY_META } from "./activityMeta";
+import { lockParentAreaAction } from "@/app/(parent)/pin-actions";
+import { captureNonCritical } from "@/lib/capture";
 
 /**
  * The studio home: pick-a-learner, then the program as a world map. Units are
@@ -51,7 +54,13 @@ import { ACTIVITY_META } from "./activityMeta";
  * the mock learners. The picker + map both read the one hook so the two surfaces
  * never diverge.
  */
-export function StudioHome({ program }: { program: Program }) {
+export function StudioHome({
+  program,
+  handoff,
+}: {
+  program: Program;
+  handoff?: { learnerId: string; showPinNudge: boolean };
+}) {
   // The guest active-learner seam still drives mock-learner selection; in account
   // mode the hook ignores this id and uses the selected real learner instead.
   const { learner: guestLearner, setLearnerId } = useActiveLearner();
@@ -61,12 +70,27 @@ export function StudioHome({ program }: { program: Program }) {
   // the SAME slug, C#5) arrives on `state.program` once account state loads.
   const state = useLearnerState(guestLearner.id, program.slug);
   const [pickerOpen, setPickerOpen] = useState(() => learnerPickerTransition(true, "mount"));
+  const [handoffOpen, setHandoffOpen] = useState(() => handoff !== undefined);
 
   // Render the learner's resolved (version-pinned) tree once it has loaded;
   // until then (guest mode, loading, or the brief account-load window) fall back
   // to the server-passed published prop so the map never blanks or flickers. The
   // pinned tree then swaps in seamlessly.
   const effectiveProgram = state.program ?? program;
+  const handoffLearnerName = handoff
+    ? state.learners.find((learner) => learner.id === handoff.learnerId)?.displayName
+    : undefined;
+
+  if (handoffOpen && handoff) {
+    return (
+      <HandoffInterstitial
+        learnerName={handoffLearnerName}
+        learnerReady={state.selectedLearnerId === handoff.learnerId}
+        showPinNudge={handoff.showPinNudge}
+        onGo={() => setHandoffOpen(false)}
+      />
+    );
+  }
 
   // While the session resolves we show a calm loading beat rather than flashing
   // the mock picker at a signed-in household.
@@ -118,6 +142,133 @@ export function StudioHome({ program }: { program: Program }) {
         setPickerOpen((open) => learnerPickerTransition(open, "pick"));
       }}
     />
+  );
+}
+
+interface InterstitialHandoffDependencies {
+  lockParentArea: () => Promise<{ ok: true } | { ok: false; message?: string }>;
+  captureFailure: (message: string, error: unknown) => void;
+  proceed: () => void;
+  showRetry: (message: string) => void;
+}
+
+/** Fail closed until the grown-up unlock cookie has definitely been cleared. */
+export async function completeInterstitialHandoff({
+  lockParentArea,
+  captureFailure,
+  proceed,
+  showRetry,
+}: InterstitialHandoffDependencies): Promise<void> {
+  let failure: unknown = null;
+
+  try {
+    const result = await lockParentArea();
+    if (!result.ok) {
+      failure = new Error(result.message ?? "The parent area could not be locked.");
+    }
+  } catch (error) {
+    failure = error;
+  }
+
+  if (failure !== null) {
+    try {
+      captureFailure("handoff interstitial parent lock failed", failure);
+    } finally {
+      showRetry("One moment — tap GO again");
+    }
+    return;
+  }
+
+  proceed();
+}
+
+/** Friendly, reduced-motion-safe beat while the grown-up physically passes the device. */
+function HandoffInterstitial({
+  learnerName,
+  learnerReady,
+  showPinNudge,
+  onGo,
+}: {
+  learnerName?: string;
+  learnerReady: boolean;
+  showPinNudge: boolean;
+  onGo: () => void;
+}) {
+  const reduce = useReducedMotion();
+  const [starting, setStarting] = useState(false);
+  const [retryMessage, setRetryMessage] = useState<string | null>(null);
+
+  async function startLearning(): Promise<void> {
+    if (starting || !learnerReady) return;
+    setStarting(true);
+    setRetryMessage(null);
+
+    await completeInterstitialHandoff({
+      lockParentArea: lockParentAreaAction,
+      captureFailure: captureNonCritical,
+      proceed: () => {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("handoff");
+        window.history.replaceState(window.history.state, "", url);
+        onGo();
+      },
+      showRetry: (message) => {
+        setRetryMessage(message);
+        setStarting(false);
+      },
+    });
+  }
+
+  return (
+    <div className="surface-kid fixed inset-0 z-[100] grid min-h-dvh place-items-center overflow-hidden bg-honey/35 px-5 py-8">
+      <Sun
+        aria-hidden="true"
+        className="pointer-events-none absolute -right-12 -top-12 size-48 text-honey opacity-70 motion-safe:animate-[spin_60s_linear_infinite]"
+      />
+      <motion.div
+        initial={reduce ? false : { opacity: 0, y: 16, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+        className="relative flex w-full max-w-xl flex-col items-center rounded-3xl border-[3px] border-ink bg-paper-raised px-6 py-9 text-center shadow-pop sm:px-10"
+      >
+        <Mascot mood="wave" size={112} className={reduce ? undefined : "motion-safe:animate-float"} />
+        <p className="mt-5 font-display text-lg font-semibold text-accent-deep">Ready to explore?</p>
+        <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight sm:text-5xl">
+          {learnerName ? `Passing to ${learnerName}` : "Passing the device"}
+        </h1>
+        <p className="mt-3 text-lg text-ink-soft">
+          {learnerReady
+            ? "Take the device, then tap the big button!"
+            : "Getting the right adventure ready…"}
+        </p>
+        <button
+          type="button"
+          onClick={() => void startLearning()}
+          disabled={!learnerReady || starting}
+          aria-busy={starting}
+          aria-describedby={retryMessage ? "handoff-lock-retry" : undefined}
+          className="mt-8 inline-flex min-h-24 w-full items-center justify-center gap-3 rounded-2xl border-[3px] border-ink bg-coral-deep px-8 py-5 font-display text-3xl font-bold text-on-accent shadow-pop transition active:translate-y-1 active:shadow-none disabled:cursor-wait disabled:opacity-60 motion-safe:hover:-translate-y-0.5"
+        >
+          <HandTapIcon weight="fill" className="size-9" />
+          GO!
+        </button>
+
+        {retryMessage && (
+          <p id="handoff-lock-retry" role="status" className="mt-4 text-base font-medium text-ink-soft">
+            {retryMessage}
+          </p>
+        )}
+
+        {showPinNudge && (
+          <Link
+            href="/parent/settings#pin"
+            className="mt-6 inline-flex min-h-12 items-center rounded-pill px-3 text-base font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
+          >
+            Lock the grown-up area first?
+          </Link>
+        )}
+      </motion.div>
+    </div>
   );
 }
 

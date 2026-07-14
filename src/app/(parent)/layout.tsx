@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { getAuth } from "@/lib/auth";
 import { DashboardShellParent } from "@/components/parent/DashboardShellParent";
+import { PinChallenge } from "@/components/parent/PinChallenge";
+import { parentPinRequiresChallenge } from "@/lib/parent-pin-gate";
 
 /**
  * Parent surface gate. Resolves the Better Auth session per-request (lazy
@@ -17,6 +19,14 @@ export const dynamic = "force-dynamic";
 export default async function ParentLayout({ children }: { children: ReactNode }) {
   const session = await getAuth().api.getSession({ headers: await headers() });
   if (!session?.user) redirect("/sign-in");
+
+  if (await parentPinRequiresChallenge(session.user.id)) {
+    return (
+      <DashboardShellParent>
+        <PinChallenge />
+      </DashboardShellParent>
+    );
+  }
 
   return <DashboardShellParent>{children}</DashboardShellParent>;
 }

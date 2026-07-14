@@ -71,15 +71,15 @@ export function getKeySnapshot<T>(key: string, parse: (raw: string | null) => T)
 
 /** Write a value and notify same-tab subscribers (the `storage` event does not
  *  fire in the tab that performed the write). */
-export function writeKey(key: string, value: string): void {
-  if (typeof window === "undefined") return;
+export function writeKey(key: string, value: string): boolean {
+  if (typeof window === "undefined") return false;
   try {
     window.localStorage.setItem(key, value);
   } catch {
-    // Quota/availability failures are non-fatal for a child's flow.
-    return;
+    return false;
   }
   // Invalidate the cache eagerly so the next snapshot reflects the write.
   cache.delete(key);
   notify(key);
+  return true;
 }

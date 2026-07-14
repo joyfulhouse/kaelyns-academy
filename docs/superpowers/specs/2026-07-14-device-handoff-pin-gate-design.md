@@ -21,10 +21,10 @@ shared device.
 |---|---|
 | Scope | Handoff UX **and** PIN gate in one slice. |
 | PIN model | **Always-on once set**: any entry to `/parent` challenges, with a ~15-minute grace window after success. Opt-in — accounts without a PIN see no challenge. |
-| Enforcement | **Server-side.** Gate in the `(parent)/layout.tsx` (which already resolves the session and bounces unauthenticated visitors). PIN never verified client-side. |
-| PIN storage | New **`parent_pin` table** (`account_id` PK → `user.id` cascade, `pin_hash`, `updated_at`) via additive migration 0013. Keeps Better Auth's `user` table untouched. Hash with Node `crypto.scrypt` (per-record salt); never logged, never returned. |
+| Enforcement | **Server-side.** The `(parent)/layout.tsx` is the initial fast path, every parent data-access helper rechecks the unlock and returns its locked/empty shape, and every parent page renders the shared challenge before reading data (required because Next.js preserves layouts on soft navigation). PIN is never verified client-side. |
+| PIN storage | New **`parent_pin` table** (`account_id` PK → `user.id` cascade, `pin_hash`, `failed_attempts`, `locked_until`, `updated_at`) via additive migration 0013. Keeps Better Auth's `user` table untouched. Hash with Node `crypto.scrypt` (per-record salt); never logged, never returned. |
 | Unlock token | HttpOnly, `Secure`, `SameSite=Lax` cookie `ka-parent-unlock`, value = HMAC-SHA256(`BETTER_AUTH_SECRET`) over `accountId.expiresAt`, expiry 15 min. No new secret, no DB session row. Kid cannot bypass via localStorage/source. |
-| Brute force | Server rate limit via existing `checkRateLimit` (`src/lib/rate-limit.ts`): 5 attempts per account+IP, then 60 s cooldown. Constant-time compare. |
+| Brute force | Durable cluster-wide per-account budget on `parent_pin`: attempt 5 locks for 60 s, the next failure after expiry for 5 min, then 15 min. Active locks reject before scrypt; success resets the budget. Existing per-pod `checkRateLimit` remains as a cheap account+IP fast path. Constant-time compare. |
 | Recovery | "Forgot PIN" → re-enter the **account password** (Better Auth credential verify) → PIN cleared; parent sets a new one in settings. |
 | PIN format | 4–6 digits, numeric only (kid-proof ≠ crypto secret; the account password remains the real credential). |
 | Sign-out | Ungated (not a data risk; blocking it is hostile UX). |
@@ -36,13 +36,17 @@ shared device.
 ### A. PIN core — `src/lib/parent-pin.ts` (pure) + `parent_pin` table
 - `hashPin(pin)` / `verifyPin(pin, hash)` — scrypt, per-record salt, constant-time.
 - `mintUnlockToken(accountId, now, secret)` / `verifyUnlockToken(token, accountId, now, secret)` — pure HMAC helpers, clockless (caller passes `now`), unit-testable.
-- Store fns (lazy `getDb()`): `getPinHash`, `setPin`, `clearPin` — account-scoped.
+- Store fns (lazy `getDb()`): hash/state reads, serialized failure recording,
+  success reset, `setPin`, and `clearPin` — account-scoped.
 
 ### B. Gate — `(parent)/layout.tsx`
 After the existing session check: load `pin_hash` for the account; if set and
 the `ka-parent-unlock` cookie fails verification → render `<PinChallenge/>`
 instead of `{children}` (no parent data fetched behind the gate). Grace: a
 successful verify action sets the cookie; the layout re-renders children.
+Because shared layouts do not rerun on every client navigation, parent read
+helpers independently enforce the same gate with locked/empty fallbacks, and a
+shared page-level helper renders `<PinChallenge/>` before any page read.
 
 ### C. Actions — `(parent)/pin-actions.ts`
 - `verifyParentPinAction(pin)` — rate-limited, verifies, sets the cookie.
@@ -54,13 +58,16 @@ All return calm discriminated results (existing action idiom), never throw to cl
 - **`HandoffButton`** (client): writes the learner id to the existing
   `ka:account-learner` localStorage slot, then routes to
   `/learn/kaelyn-adaptive` — the child lands on **her** map, picker skipped
-  (mirrors `useLearnerState`'s account-selection read).
+  (mirrors `useLearnerState`'s account-selection read). A failed storage write
+  blocks navigation and surfaces a calm error.
 - Placement: `ProfileCard` on `/parent` (primary learner) and each learner card
   on `/parent/learners`; `AddChildForm` success state gains one explainer line
   ("Kaelyn learns on this device through your account — no child login") + the button.
 - **Handoff beat**: brief kid-styled fullscreen interstitial ("Passing to
   Kaelyn — tap GO!") before the map, so the device changes hands on a friendly
-  screen. Static Tailwind classes, Phosphor icons, reduced-motion safe.
+  screen. GO stays disabled until `useLearnerState.selectedLearnerId` exactly
+  matches the opaque handoff id in the URL. Static Tailwind classes, Phosphor
+  icons, reduced-motion safe.
 - **First-handoff nudge**: if the account has no PIN, the interstitial offers
   "Lock the grown-up area first?" (skippable, links to settings#pin).
 
@@ -70,7 +77,8 @@ New "Grown-up lock" section: set/change PIN (enter twice), remove PIN
 
 ## Testing
 - Unit: hash/verify round-trip + wrong-pin; token mint/verify (expiry, tamper,
-  wrong account); rate-limit lockout; store fns tenancy.
+  wrong account); durable threshold/escalating lockout and success reset;
+  per-pod rate-limit fast path; store fns tenancy.
 - Component: PinChallenge (error/cooldown states), SettingsForm PIN section.
 - e2e (`e2e/specs/parent-pin.spec.ts` + handoff case): set PIN → `/parent`
   challenges → wrong PIN rejected → correct unlocks → handoff lands on the

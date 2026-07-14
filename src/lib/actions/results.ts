@@ -1,6 +1,22 @@
 import { captureNonCritical } from "@/lib/capture";
+import { ParentAreaLockedError } from "@/lib/parent-pin-gate";
 import { UnauthenticatedError } from "@/lib/tenancy";
 import type { z } from "zod";
+
+/** Expected access failures shared by parent Server Action result unions. */
+export type ActionGateReason = "unauthenticated" | "locked";
+
+type BaseMappedActionError = {
+  ok: false;
+  reason: "unauthenticated" | "unavailable";
+  message: string;
+};
+
+type ParentMappedActionError = {
+  ok: false;
+  reason: ActionGateReason | "unavailable";
+  message: string;
+};
 
 /**
  * Shared plumbing for the discriminated `{ ok, reason, message }` results that
@@ -11,9 +27,10 @@ import type { z } from "zod";
  *
  * The result *shapes* the UI switches on (the `reason` literals and the
  * user-facing `message` strings) are owned by the call sites; these helpers only
- * produce the two shapes that were duplicated verbatim everywhere:
+ * produce the common shapes that were duplicated verbatim everywhere:
  *   - the "input failed Zod validation" → `reason:"invalid"` shape, and
- *   - the generic catch tail → `unauthenticated` / `unavailable`.
+ *   - the generic catch tail → `unauthenticated` / `unavailable`, plus the
+ *     opt-in parent PIN authorization tail → `locked`.
  */
 
 /**
@@ -44,6 +61,8 @@ export function parseInput<T>(
  * tail every action shared:
  *   - an `UnauthenticatedError` (raised by the tenancy seam) → a calm
  *     "please sign in again" prompt; NEVER logged, it is an expected gate, and
+ *   - an opted-in `ParentAreaLockedError` → calm unlock guidance; NEVER logged,
+ *     because an expired or missing device unlock is an expected gate, and
  *   - anything else → logged non-critically under `context` and reported as a
  *     transient `unavailable` with the caller's own `unavailableMessage`.
  * The fixed "Please sign in again." string is preserved verbatim from the old
@@ -53,9 +72,28 @@ export function mapActionError(
   error: unknown,
   context: string,
   unavailableMessage: string,
-): { ok: false; reason: "unauthenticated" | "unavailable"; message: string } {
+): BaseMappedActionError;
+export function mapActionError(
+  error: unknown,
+  context: string,
+  unavailableMessage: string,
+  options: { allowLocked: true },
+): ParentMappedActionError;
+export function mapActionError(
+  error: unknown,
+  context: string,
+  unavailableMessage: string,
+  options?: { allowLocked?: boolean },
+): ParentMappedActionError {
   if (error instanceof UnauthenticatedError) {
     return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
+  }
+  if (options?.allowLocked && error instanceof ParentAreaLockedError) {
+    return {
+      ok: false,
+      reason: "locked",
+      message: "The grown-up area is locked. Unlock it to continue.",
+    };
   }
   captureNonCritical(context, error);
   return { ok: false, reason: "unavailable", message: unavailableMessage };
