@@ -132,13 +132,23 @@ describe("parseAndScoreActivity", () => {
     expect(
       parseAndScoreActivity(
         "oral-reading",
-        { instruction: "Read.", target: "there", skillTag: "word.sight" },
-        { attempts: 1, results: ["unclear"], fallbackUsed: false },
-        ["word.sight"],
+        {
+          presentation: "cold",
+          instruction: "Read.",
+          target: "cat",
+          skillTag: "phonics.decode.short-a-cvc",
+        },
+        { attempts: 1, results: ["unclear"], status: "verified" },
+        ["phonics.decode.short-a-cvc"],
       ),
     ).toMatchObject({
       ok: true,
-      score: { correct: 0, total: 1, stars: 1 },
+      score: {
+        correct: 0,
+        total: 1,
+        stars: 1,
+        skillEvidence: [{ skill: "phonics.decode.short-a-cvc", outcome: "not_yet" }],
+      },
     });
   });
 
