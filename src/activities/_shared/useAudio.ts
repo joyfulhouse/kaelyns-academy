@@ -25,7 +25,7 @@ export interface AudioController {
   /** Bounded, child-facing availability state for the current request. */
   status: AudioStatus;
   /** Play `audioKey`'s clip if present, else speak `text`. Cancels anything in flight. */
-  play: (opts: AudioRequest) => void;
+  play: (opts: AudioRequest, handlers?: AudioPlaybackHandlers) => void;
   /** Replay the most recent request, including after an unavailable result. */
   retry: () => void;
   /** Stop the current clip and any speech. */
@@ -34,11 +34,20 @@ export interface AudioController {
   cancel: () => void;
 }
 
+/** Request-scoped media outcomes; superseded requests never invoke these handlers. */
+export interface AudioPlaybackHandlers {
+  onReady?: () => void;
+  onUnavailable?: () => void;
+}
+
 export function useAudio(locale = "en-US"): AudioController {
   const speech = useSpeech(locale);
+  const cancelSpeech = speech.cancel;
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const requestIdRef = useRef(0);
   const lastRequestRef = useRef<AudioRequest | null>(null);
+  const lastHandlersRef = useRef<AudioPlaybackHandlers | undefined>(undefined);
+  const lifecycleRef = useRef(0);
   const [playback, dispatch] = useReducer(audioPlaybackReducer, initialAudioPlaybackState);
 
   // Stop and detach any in-flight clip (also clears its listeners via .onerror/.onended).
@@ -54,11 +63,11 @@ export function useAudio(locale = "en-US"): AudioController {
 
   const stopMedia = useCallback(() => {
     stopClip();
-    speech.cancel();
-  }, [stopClip, speech]);
+    cancelSpeech();
+  }, [cancelSpeech, stopClip]);
 
   const playRequest = useCallback(
-    (request: AudioRequest, requestId: number) => {
+    (request: AudioRequest, requestId: number, handlers?: AudioPlaybackHandlers) => {
       const { audioKey, text } = request;
 
       const fallBackToSpeech = (): void => {
@@ -66,6 +75,8 @@ export function useAudio(locale = "en-US"): AudioController {
         const ttsAvailable = speech.supported && speech.hasVoice;
         if (ttsAvailable) speech.speak(text);
         dispatch({ type: "fallback", requestId, available: ttsAvailable });
+        if (ttsAvailable) handlers?.onReady?.();
+        else handlers?.onUnavailable?.();
       };
 
       if (!audioKey || typeof Audio === "undefined") {
@@ -89,6 +100,7 @@ export function useAudio(locale = "en-US"): AudioController {
         if (audioRef.current === el) {
           audioRef.current = null;
           dispatch({ type: "finished", requestId });
+          handlers?.onReady?.();
         }
       };
       // play() can also reject (autoplay policy, load failure) → same fallback.
@@ -103,13 +115,14 @@ export function useAudio(locale = "en-US"): AudioController {
   );
 
   const play = useCallback(
-    (request: AudioRequest) => {
+    (request: AudioRequest, handlers?: AudioPlaybackHandlers) => {
       stopMedia();
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
       lastRequestRef.current = request;
+      lastHandlersRef.current = handlers;
       dispatch({ type: "play", requestId, request });
-      playRequest(request, requestId);
+      playRequest(request, requestId, handlers);
     },
     [playRequest, stopMedia],
   );
@@ -121,7 +134,7 @@ export function useAudio(locale = "en-US"): AudioController {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
     dispatch({ type: "retry", requestId });
-    playRequest(request, requestId);
+    playRequest(request, requestId, lastHandlersRef.current);
   }, [playRequest, stopMedia]);
 
   const stop = useCallback(() => {
@@ -131,13 +144,21 @@ export function useAudio(locale = "en-US"): AudioController {
     dispatch({ type: "stop", requestId });
   }, [stopMedia]);
 
-  useEffect(
-    () => () => {
-      requestIdRef.current += 1;
-      stopMedia();
-    },
-    [stopMedia],
-  );
+  useEffect(() => {
+    const lifecycle = lifecycleRef.current + 1;
+    lifecycleRef.current = lifecycle;
+    return () => {
+      // React development Strict Mode tears effects down and immediately starts
+      // them again while preserving hook state. Defer final cleanup one microtask
+      // so that synthetic teardown cannot cancel the one-shot lesson prompt; a
+      // genuine unmount has no newer lifecycle and still stops every medium.
+      queueMicrotask(() => {
+        if (lifecycleRef.current !== lifecycle) return;
+        requestIdRef.current += 1;
+        stopMedia();
+      });
+    };
+  }, [stopMedia]);
 
   // Return a stable controller so consumers' useCallback/effects that depend on
   // it don't churn every render. Members are stable primitives (from useSpeech)
