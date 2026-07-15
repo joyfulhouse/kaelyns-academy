@@ -7,6 +7,7 @@ import {
   schema,
   score,
   skillsAffected,
+  validateGenerated,
   type MathTenframeResponse,
 } from "./logic";
 
@@ -19,5 +20,6 @@ export const mathTenframe: ActivityType<MathTenframeConfig, MathTenframeResponse
   Player: MathTenframePlayer,
   score,
   skillsAffected,
+  validateGenerated,
 };
 export type { MathTenframeResponse };

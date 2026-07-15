@@ -92,6 +92,14 @@ describe("math-array score", () => {
     expect(responseSchema.safeParse({ entered: 12, attempts: 1 }).success).toBe(false);
     expect(
       responseSchema.safeParse({
+        mode: "multiply",
+        revealedRows: 3,
+        entered: 12,
+        attempts: 21,
+      }).success,
+    ).toBe(false);
+    expect(
+      responseSchema.safeParse({
         mode: "area",
         filledCells: Array.from({ length: 145 }, (_, index) => index),
         entered: 145,

@@ -2,6 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getServerActivityType } from "./definitions";
 import { parseAndScoreActivity } from "./server-verification";
 
+const REPRESENT_THREE = {
+  mode: "represent" as const,
+  occupiedCells: [0, 1, 2],
+  placements: [0, 1, 2],
+  attempts: 1,
+};
+
 describe("parseAndScoreActivity", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -11,7 +18,7 @@ describe("parseAndScoreActivity", () => {
     const result = parseAndScoreActivity(
       "math-tenframe",
       { instruction: "Show 3.", mode: "represent", target: 3 },
-      { count: 3, attempts: 1 },
+      REPRESENT_THREE,
       ["math.counting"],
     );
 
@@ -23,7 +30,7 @@ describe("parseAndScoreActivity", () => {
         target: 3,
         frames: 1,
       },
-      response: { count: 3, attempts: 1 },
+      response: REPRESENT_THREE,
       score: {
         correct: 1,
         total: 1,
@@ -38,7 +45,7 @@ describe("parseAndScoreActivity", () => {
       parseAndScoreActivity(
         "math-tenframe",
         { instruction: "Show 3.", mode: "represent", target: 300 },
-        { count: 3, attempts: 1 },
+        REPRESENT_THREE,
         ["math.counting"],
       ),
     ).toEqual({ ok: false, reason: "invalid-config" });
@@ -50,8 +57,7 @@ describe("parseAndScoreActivity", () => {
         "math-tenframe",
         { instruction: "Show 3.", mode: "represent", target: 3 },
         {
-          count: 3,
-          attempts: 1,
+          ...REPRESENT_THREE,
           stars: 3,
           skillEvidence: [{ skill: "forged.skill", outcome: "solid" }],
         },
@@ -65,7 +71,12 @@ describe("parseAndScoreActivity", () => {
       parseAndScoreActivity(
         "math-tenframe",
         { instruction: "Add 2.", mode: "add", target: 3, addend: 2 },
-        { count: 5, attempts: 1 },
+        {
+          mode: "add",
+          occupiedCells: [0, 1, 2, 3, 4],
+          placements: [3, 4],
+          attempts: 1,
+        },
         ["math.addition"],
       ),
     ).toEqual({ ok: false, reason: "unauthorized-skill" });
@@ -84,7 +95,7 @@ describe("parseAndScoreActivity", () => {
       parseAndScoreActivity(
         "math-tenframe",
         { instruction: "Show 3.", mode: "represent", target: 3 },
-        { count: 3, attempts: 1 },
+        REPRESENT_THREE,
         ["math.counting"],
       ),
     ).toEqual({ ok: false, reason: "unauthorized-skill" });
@@ -103,7 +114,7 @@ describe("parseAndScoreActivity", () => {
       parseAndScoreActivity(
         "math-tenframe",
         { instruction: "Show 3.", mode: "represent", target: 3 },
-        { count: 3, attempts: 1 },
+        REPRESENT_THREE,
         ["math.counting"],
       ),
     ).toEqual({ ok: false, reason: "invalid-score" });

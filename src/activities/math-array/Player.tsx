@@ -196,7 +196,7 @@ function MultiplyMode({ config, onComplete, reduced, speech }: ModeProps<Multipl
 
   function check() {
     if (selected === null) return;
-    const attemptCount = attempts + 1;
+    const attemptCount = Math.min(attempts + 1, 20);
     setAttempts(attemptCount);
     if (selected === expected) {
       onComplete({
@@ -315,7 +315,7 @@ function DivideMode({ config, onComplete, reduced, speech }: ModeProps<DivideCon
 
   function check() {
     if (!complete || selected === null) return;
-    const attemptCount = attempts + 1;
+    const attemptCount = Math.min(attempts + 1, 20);
     setAttempts(attemptCount);
     if (selected === expected) {
       onComplete({
@@ -384,7 +384,7 @@ function DivideMode({ config, onComplete, reduced, speech }: ModeProps<DivideCon
         <ProgressHint>
           {deal.pool.length > 0
             ? `${deal.pool.length} ${deal.pool.length === 1 ? "item" : "items"} left to share`
-            : `Each group has ${expected}`}
+            : "The shares are even—count one group"}
         </ProgressHint>
 
         {complete && (
@@ -442,7 +442,7 @@ function AreaMode({ config, onComplete, reduced, speech }: ModeProps<AreaConfig>
 
   function check() {
     if (!complete || selected === null) return;
-    const attemptCount = attempts + 1;
+    const attemptCount = Math.min(attempts + 1, 20);
     setAttempts(attemptCount);
     if (selected === expected) {
       onComplete({

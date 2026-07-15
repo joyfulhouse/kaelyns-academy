@@ -12,7 +12,12 @@ const KINDS = Object.keys(ACTIVITY_CONFIG_SCHEMAS) as ActivityKind[];
 const VALID_RESPONSES = {
   "phonics-wordbuild": { builds: [{ word: "cat", tries: 1 }] },
   "sightword-game": { found: ["the"], decoyTaps: 0 },
-  "math-tenframe": { count: 3, attempts: 1 },
+  "math-tenframe": {
+    mode: "represent",
+    occupiedCells: [0, 1, 2],
+    placements: [0, 1, 2],
+    attempts: 1,
+  },
   "journal-prompt": { text: "A cat.", didDraw: false },
   "reading-comprehension": { firstTry: [true], retold: false },
   "math-array": { mode: "build", builtRows: 2, attempts: 1 },
@@ -34,7 +39,12 @@ const OVER_BOUNDED_RESPONSES = {
     found: Array.from({ length: 65 }, (_, index) => `word-${index}`),
     decoyTaps: 0,
   },
-  "math-tenframe": { count: 3, attempts: 101 },
+  "math-tenframe": {
+    mode: "represent",
+    occupiedCells: [0, 1, 2],
+    placements: [0, 1, 2],
+    attempts: 21,
+  },
   "journal-prompt": { text: "x".repeat(2_001), didDraw: false },
   "reading-comprehension": { firstTry: Array.from({ length: 33 }, () => true), retold: false },
   "math-array": {

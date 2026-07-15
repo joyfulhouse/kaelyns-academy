@@ -11,7 +11,7 @@ import {
 /** Server-safe schema + scoring for math-array. No "use client". */
 export const schema = mathArrayConfig;
 
-const attempts = z.number().int().min(1).max(100);
+const attempts = z.number().int().min(1).max(20);
 const entered = z.number().int().min(0).max(144);
 
 /** Bounded evidence of the model the child actually constructed. */

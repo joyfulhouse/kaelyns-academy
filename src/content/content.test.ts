@@ -47,7 +47,7 @@ describe("authored program content", () => {
     ]);
     expect(
       createHash("sha256").update(JSON.stringify(kaelynAdaptive)).digest("hex"),
-    ).toBe("2b91d8e91390994c0405319dc634ba9e243be6c03c54c68dc8cc8d9d98304c78");
+    ).toBe("caaafcbabee35db10a431d1a3d30c43f728690701b59c2835f5d33a8ae1fc27d");
   });
 
   it("every activity config parses against its kind's schema", () => {
@@ -59,6 +59,24 @@ describe("authored program content", () => {
         () => schema.parse(activity.config),
         `${program.slug}/${activity.id} (${activity.kind})`,
       ).not.toThrow();
+    }
+  });
+
+  it("keeps grouping and regrouping on the mathematical model that performs them", () => {
+    const equalGroups = everyActivity().find(
+      ({ activity }) => activity.id === "math-r2-a2",
+    )?.activity;
+    expect(equalGroups?.kind).toBe("math-array");
+    if (equalGroups?.kind === "math-array") {
+      expect(equalGroups.config.mode).toBe("multiply");
+    }
+
+    const regrouping = everyActivity().find(
+      ({ activity }) => activity.id === "math-r7-a1",
+    )?.activity;
+    expect(regrouping?.kind).toBe("math-tenframe");
+    if (regrouping?.kind === "math-tenframe") {
+      expect(regrouping.config.mode).toBe("make-ten");
     }
   });
 
