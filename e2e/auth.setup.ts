@@ -1,5 +1,5 @@
 import { test as setup } from "@playwright/test";
-import { creds, signIn } from "./helpers";
+import { clearParentPinIfPresent, creds, signIn } from "./helpers";
 
 /**
  * Auth setup: sign in the two SEEDED accounts once and persist their session so
@@ -10,6 +10,9 @@ import { creds, signIn } from "./helpers";
 setup("authenticate as parent", async ({ page }) => {
   const { email, password } = creds.parent();
   await signIn(page, email, password);
+  // Guarantee a PIN-free baseline so the parent project is never gated by a PIN
+  // a prior parent-pin run left behind (its own cleanup runs after this).
+  await clearParentPinIfPresent(page, password);
   await page.context().storageState({ path: "e2e/.auth/parent.json" });
 });
 
