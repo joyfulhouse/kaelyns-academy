@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import type { LangListenMatchConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
+import { AudioUnavailableNotice } from "../_shared/AudioUnavailableNotice";
 import { ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
 import { ChoiceGrid } from "../_shared/ChoiceGrid";
 import { useActivity } from "../_shared/useActivity";
@@ -56,6 +57,10 @@ export function LangListenMatchPlayer({
           tone="success"
         />
       </div>
+
+      {audio.status === "unavailable" ? (
+        <AudioUnavailableNotice onRetry={audio.retry} />
+      ) : null}
 
       <ChoiceGrid
         choices={item.choices}

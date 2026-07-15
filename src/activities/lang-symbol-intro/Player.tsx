@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import type { LangSymbolIntroConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
+import { AudioUnavailableNotice } from "../_shared/AudioUnavailableNotice";
 import { ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
 import { ChoiceGrid } from "../_shared/ChoiceGrid";
 import { localeForRole } from "../_shared/speechRouting";
@@ -75,6 +76,10 @@ export function LangSymbolIntroPlayer({
           <p className="text-center text-lg text-ink-soft">{parsed.instruction}</p>
         </div>
 
+        {target.status === "unavailable" ? (
+          <AudioUnavailableNotice onRetry={target.retry} />
+        ) : null}
+
         <div className="mx-auto grid max-w-2xl grid-cols-2 gap-4 sm:grid-cols-3">
           {parsed.symbols.map((s) => (
             <button
@@ -112,6 +117,9 @@ export function LangSymbolIntroPlayer({
   return (
     <div className="grid gap-8">
       <p className="text-center font-display text-2xl text-ink">{q.prompt}</p>
+      {target.status === "unavailable" ? (
+        <AudioUnavailableNotice onRetry={target.retry} />
+      ) : null}
       <ChoiceGrid choices={q.choices} answerIndex={q.answerIndex} picked={picked} onChoose={choose} />
       <ProgressHint>
         {step + 1} of {parsed.verify.length}
