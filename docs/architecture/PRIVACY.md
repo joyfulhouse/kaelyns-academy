@@ -25,6 +25,7 @@ learning account:
 | Child (learner) | display name, **birth month only** (never a full DOB), avatar, per-learner settings | no full birth date, no photos, no contact info, no free-text profile |
 | Learning data | enrollments, attempts (score + response), derived skill_state | — |
 | AI provenance | per generated attempt: model route, path tag, generated-at (**metadata only**) | **never the raw prompt** (a prompt can embed the child's display name → PII) |
+| Oral-reading verification | a five-minute opaque witness with activity identity and derived tri-state/per-word/count/WCPM facts | **never audio, transcript, target text, or passage text** |
 | Audio | shared, **content-addressed** narration clips keyed by `sha256(text|voice|speed)` | clips reference **no** learner/account (no PII); see §5 |
 
 There is **no open-ended child↔LLM chat**. All child-facing AI is bounded and
@@ -78,6 +79,9 @@ The **manifest** is the self-describing data inventory (`schemaVersion`,
 - **narration audio** — shared, content-addressed, references no one; not the
   parent's to export and carries no PII.
 - **raw AI prompts** — not stored at all (only the bound metadata is); see §1.
+- **short-lived oral-reading witnesses** — operational claim rows, not learner
+  artifacts. Once consumed, the canonical child-safe result is already exported
+  in `attempts`; audio and transcripts are never stored at all.
 - **passwords / auth tokens** — security-sensitive; never leave the system.
 
 **Inventory guard.** A reviewer can diff `manifest.contents` against the DB tables
@@ -95,8 +99,8 @@ is no soft-delete / undo window — a 30-day grace would mean child data persist
 request at once.
 
 - **Delete one child** — `deleteLearnerAction` → `deleteLearner`. A single
-  `DELETE FROM learner` cascades `enrollment`, `attempt`, `skill_state` via FK
-  `ON DELETE CASCADE`.
+  `DELETE FROM learner` cascades `enrollment`, `attempt`, `skill_state`, and
+  `oral_reading_verification` via FK `ON DELETE CASCADE`.
 - **Delete the whole account** — `deleteAccountAction` → `deleteAccount`. A single
   `DELETE FROM "user"` cascades the entire child-data graph **plus** the Better
   Auth `session` and `account` (credential/oauth) rows. The Better Auth

@@ -56,7 +56,7 @@ import {
   recordAttemptAction,
   type RecordResult,
 } from "@/app/(learner)/actions";
-import { useLearnerState } from "./useLearnerState";
+import { extractOralReadingVerification, useLearnerState } from "./useLearnerState";
 
 const SCORE = {
   correct: 1,
@@ -73,6 +73,36 @@ const ACTIVITY = {
   kind: "math-clock",
   config: { mode: "set", targetHour: 6, targetMinute: 0 },
 } as Activity;
+
+const ORAL_ACTIVITY = {
+  id: "oral-1",
+  title: "Read there",
+  skillTags: ["word.sight"],
+  band: "ready",
+  kind: "oral-reading",
+  config: { instruction: "Read.", target: "there", skillTag: "word.sight" },
+} as Activity;
+
+describe("oral-reading completion extractor", () => {
+  it("moves only oral-reading's opaque witness to the action seam", () => {
+    expect(
+      extractOralReadingVerification("oral-reading", {
+        attempts: 1,
+        results: ["matched"],
+        fallbackUsed: false,
+        verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }),
+    ).toEqual({
+      response: { attempts: 1, results: ["matched"], fallbackUsed: false },
+      verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+
+    const ordinary = { attempts: 1, verificationId: "not-a-general-plugin-seam" };
+    expect(extractOralReadingVerification("math-clock", ordinary)).toEqual({
+      response: ordinary,
+    });
+  });
+});
 
 describe("useLearnerState record completion", () => {
   beforeEach(() => {
@@ -128,6 +158,36 @@ describe("useLearnerState record completion", () => {
     // A rejected reconcile never replaces any of the last known-good account
     // state; all account-state setters remain untouched.
     for (const setter of hookHarness.setters.slice(2)) expect(setter).not.toHaveBeenCalled();
+  });
+
+  it("sends the oral witness separately and never as trusted response facts", async () => {
+    vi.mocked(recordAttemptAction).mockResolvedValue({
+      ok: true,
+      score: { correct: 1, total: 1, stars: 3, skillEvidence: [] },
+    });
+    const state = useLearnerState("guest-1", "kaelyn-adaptive");
+
+    await state.record(
+      ORAL_ACTIVITY,
+      {
+        attempts: 1,
+        results: ["matched"],
+        fallbackUsed: false,
+        verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      },
+      { unitKey: "unit-1" },
+      "22222222-2222-4222-8222-222222222222",
+    );
+
+    expect(recordAttemptAction).toHaveBeenCalledWith({
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      completionId: "22222222-2222-4222-8222-222222222222",
+      unitKey: "unit-1",
+      activityId: "oral-1",
+      response: { attempts: 1, results: ["matched"], fallbackUsed: false },
+      verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
   });
 
   it("surfaces an initial operational state-read failure through account error mode", async () => {

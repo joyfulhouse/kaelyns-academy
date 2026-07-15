@@ -40,6 +40,38 @@ describe("REQUIRED_COLUMNS coverage (schema-drift canary)", () => {
       expect.arrayContaining(["generated", "response", "completion_id", "created_at"]),
     );
     expect(REQUIRED_COLUMNS.skill_state).toEqual(expect.arrayContaining(["updated_at"]));
+    expect(REQUIRED_COLUMNS.oral_reading_verification).toEqual(
+      expect.arrayContaining([
+        "id",
+        "learner_id",
+        "program_slug",
+        "unit_key",
+        "activity_id",
+        "mode",
+        "result",
+        "per_word",
+        "correct_count",
+        "total_words",
+        "wcpm",
+        "expires_at",
+        "consumed_completion_id",
+      ]),
+    );
+  });
+
+  it("flags a skipped oral-reading witness migration before the route accepts audio", () => {
+    expect(
+      missingColumns(
+        { oral_reading_verification: REQUIRED_COLUMNS.oral_reading_verification },
+        {},
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        "oral_reading_verification.id",
+        "oral_reading_verification.expires_at",
+        "oral_reading_verification.consumed_completion_id",
+      ]),
+    );
   });
 
   it("includes the Better Auth tables with their key columns", () => {

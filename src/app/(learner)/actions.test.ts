@@ -19,6 +19,7 @@ vi.mock("@/lib/tutor/store", () => ({
   CompletionReplayMismatchError: class CompletionReplayMismatchError extends Error {},
   EnrollmentNotActiveError: class EnrollmentNotActiveError extends Error {},
   recordAttempt: vi.fn(),
+  recordOralReadingAttempt: vi.fn(),
   listLearners: vi.fn(),
   // The generated-shelf star witness (B3): recordAttemptAction reads this for a
   // generated attempt to decide shelfEligible + the shelf unit.
@@ -64,6 +65,7 @@ vi.mock("@/lib/tutor/shelf", () => ({
 import {
   CompletionReplayMismatchError,
   recordAttempt,
+  recordOralReadingAttempt,
   listLearners,
   getGeneratedActivity,
   getPlayableGeneratedActivity,
@@ -128,6 +130,18 @@ const PROGRAM = {
                 instruction: "Make six o'clock.",
                 targetHour: 6,
                 targetMinute: 0,
+              },
+            },
+            {
+              id: "oral-1",
+              kind: "oral-reading",
+              title: "Read there",
+              band: "ready",
+              skillTags: ["word.sight"],
+              config: {
+                instruction: "Read the word.",
+                target: "there",
+                skillTag: "word.sight",
               },
             },
           ],
@@ -396,6 +410,149 @@ describe("recordAttemptAction canonical authored scoring", () => {
       ok: false,
       reason: "invalid",
     });
+  });
+});
+
+describe("recordAttemptAction oral-reading witness boundary", () => {
+  const ORAL_INPUT: RecordAttemptInput = {
+    learnerId: "L1",
+    programSlug: "kaelyn-adaptive",
+    completionId: "33333333-3333-4333-8333-333333333333",
+    unitKey: "unit-1",
+    activityId: "oral-1",
+    response: {
+      attempts: 2,
+      results: ["unclear", "matched"],
+      fallbackUsed: false,
+      correctCount: 999,
+      wcpm: 300,
+    },
+  };
+
+  beforeEach(() => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(recordOralReadingAttempt).mockReset();
+  });
+
+  it("ignores all browser verified facts and records only the claimed witness", async () => {
+    vi.mocked(recordOralReadingAttempt).mockImplementation(async (_accountId, input) => {
+      expect(Object.hasOwn(input, "response")).toBe(false);
+      const canonical = input.canonicalize({
+        mode: "word",
+        result: "matched",
+        perWord: null,
+        correctCount: 1,
+        totalWords: 1,
+        wcpm: null,
+      });
+      expect(canonical).toEqual({
+        response: { attempts: 1, results: ["matched"], fallbackUsed: false },
+        score: {
+          correct: 1,
+          total: 1,
+          stars: 3,
+          skillEvidence: [{ skill: "word.sight", outcome: "solid" }],
+        },
+      });
+      return canonical?.score ?? null;
+    });
+
+    const result = await recordAttemptAction({
+      ...ORAL_INPUT,
+      verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      score: {
+        correct: 1,
+        total: 1,
+        stars: 3,
+        skillEvidence: [{ skill: "word.sight", outcome: "solid" }],
+      },
+    });
+    expect(recordOralReadingAttempt).toHaveBeenCalledWith(
+      "acc-1",
+      expect.objectContaining({
+        verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        learnerId: "L1",
+        unitKey: "unit-1",
+        activityId: "oral-1",
+      }),
+    );
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("canonicalizes an omitted witness to participation with zero evidence", async () => {
+    vi.mocked(recordOralReadingAttempt).mockImplementation(async (_accountId, input) => {
+      const canonical = input.canonicalize(null);
+      expect(canonical).toEqual({
+        response: { attempts: 0, results: [], fallbackUsed: true },
+        score: { correct: 0, total: 0, stars: 1, skillEvidence: [] },
+      });
+      return canonical?.score ?? null;
+    });
+
+    await expect(recordAttemptAction(ORAL_INPUT)).resolves.toEqual({
+      ok: true,
+      score: { correct: 0, total: 0, stars: 1, skillEvidence: [] },
+    });
+  });
+
+  it("rejects an invalid, mismatched, expired, or reused witness result from the store", async () => {
+    vi.mocked(recordOralReadingAttempt).mockResolvedValue(null);
+    await expect(
+      recordAttemptAction({
+        ...ORAL_INPUT,
+        verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }),
+    ).resolves.toEqual({ ok: false, reason: "invalid" });
+  });
+
+  it("rejects a malformed opaque id before resolving pinned content", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockClear();
+    await expect(
+      recordAttemptAction({ ...ORAL_INPUT, verificationId: "not-a-uuid" }),
+    ).resolves.toEqual({ ok: false, reason: "invalid" });
+    expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
+    expect(recordOralReadingAttempt).not.toHaveBeenCalled();
+  });
+
+  it("rejects verification ids for ordinary deterministic activities", async () => {
+    await expect(
+      recordAttemptAction({
+        ...BASE_INPUT,
+        verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }),
+    ).resolves.toEqual({ ok: false, reason: "invalid" });
+    expect(recordAttempt).not.toHaveBeenCalled();
+    expect(recordOralReadingAttempt).not.toHaveBeenCalled();
+  });
+
+  it("rejects generated oral-reading even when the shelf row is learner-owned", async () => {
+    vi.mocked(getGeneratedActivity).mockResolvedValue({
+      id: "gen-oral",
+      lessonId: "lesson-1",
+      unitKey: "unit-1",
+      programSlug: "kaelyn-adaptive",
+      kind: "oral-reading",
+      title: "Generated oral",
+      config: { instruction: "Read.", target: "there", skillTag: "word.sight" },
+      skillTags: ["word.sight"],
+      gen: { model: "ha-assist", route: "ready", at: "2026-07-15T00:00:00.000Z" },
+    });
+
+    await expect(
+      recordAttemptAction({
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+        completionId: "44444444-4444-4444-8444-444444444444",
+        generatedActivityId: "gen-oral",
+        response: { attempts: 1, results: ["matched"], fallbackUsed: false },
+      }),
+    ).resolves.toEqual({ ok: false, reason: "invalid" });
+    expect(recordAttempt).not.toHaveBeenCalled();
+    expect(recordOralReadingAttempt).not.toHaveBeenCalled();
   });
 });
 

@@ -37,6 +37,24 @@ export const REQUIRED_COLUMNS: ColumnMap = {
     "gen_route",
     "gen_at",
   ],
+  // Privacy-safe oral verification witness (migration 0015). Both the upload
+  // route and the atomic completion claim depend on every listed column.
+  oral_reading_verification: [
+    "id",
+    "learner_id",
+    "program_slug",
+    "unit_key",
+    "activity_id",
+    "mode",
+    "result",
+    "per_word",
+    "correct_count",
+    "total_words",
+    "wcpm",
+    "expires_at",
+    "consumed_completion_id",
+    "created_at",
+  ],
   skill_state: ["id", "learner_id", "skill", "outcome", "evidence", "updated_at"],
   // Phase 3 spaced repetition (migration 0012). Every scheduler write/read
   // depends on this concern table, so drift must fail the canary first.

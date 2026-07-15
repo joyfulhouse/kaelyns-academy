@@ -139,6 +139,10 @@ export interface ActivityPlayerProps<Config, Response> {
     /** Program the activity is being played under — gated learner APIs verify
      * the enrollment is ACTIVE for this slug (§8 two-control convention). */
     programSlug: string;
+    /** Exact authored route identity. Present in ActivityHost; generated shelf
+     * hosts omit it, so oral verification remains authored-only. */
+    unitKey?: string;
+    activityId?: string;
     oralReading: boolean;
   };
 }

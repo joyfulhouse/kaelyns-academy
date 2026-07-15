@@ -3,7 +3,6 @@ import type { ActivityScore, SkillTag } from "@/content/types";
 import { z } from "zod";
 import {
   evenSkillEvidence,
-  firstTryRateFromAttempts,
   outcomeFromAccuracy,
   starsFromAccuracy,
 } from "../_shared/scoring";
@@ -20,6 +19,9 @@ export const responseSchema = z
     results: z.array(oralReadingResult).max(2),
     /** True when verification completed through any forgiving fallback path. */
     fallbackUsed: z.boolean(),
+    /** Short-lived server witness returned by the upload route. The learner
+     * host extracts it before persistence; it is never trusted as response data. */
+    verificationId: z.string().uuid().optional(),
     /** Derived fluency evidence for sentence mode; never a client-timed value. */
     wcpm: z.number().min(0).max(300).optional(),
     /** One child-safe state per authored passage word. */
@@ -35,11 +37,15 @@ export const responseSchema = z
 export type OralReadingResponse = z.infer<typeof responseSchema>;
 
 export function score(config: OralReadingConfig, response: OralReadingResponse): ActivityScore {
+  if (response.fallbackUsed) {
+    return { correct: 0, total: 0, stars: 1, skillEvidence: [] };
+  }
   if (config.mode === "sentence") return scoreSentence(config, response);
 
-  const matchedAt = response.results.indexOf("matched");
-  const matched = matchedAt !== -1;
-  const rate = firstTryRateFromAttempts(matched, matchedAt + 1);
+  // A persisted witness represents exactly one current server observation.
+  // Prior browser results are display-only and cannot influence mastery.
+  const matched = response.results.at(-1) === "matched";
+  const rate = matched ? 1 : 0;
   return {
     correct: matched ? 1 : 0,
     total: 1,
@@ -60,13 +66,7 @@ function scoreSentence(
     (response.results.includes("matched") ? total : 0);
   const correct = Math.min(total, Math.max(0, derivedCorrect));
   const accuracy = correct / total;
-  const performanceRate = response.fallbackUsed
-    ? 0
-    : accuracy >= 0.9
-      ? 1
-      : accuracy >= 0.5
-        ? 0.5
-        : 0;
+  const performanceRate = accuracy >= 0.9 ? 1 : accuracy >= 0.5 ? 0.5 : 0;
 
   return {
     correct,

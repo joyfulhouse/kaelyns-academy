@@ -46,6 +46,7 @@ export const EXPORT_CONTENTS = [
 export const EXPORT_NOT_EXPORTED = [
   "narration audio (shared, content-addressed, no PII)",
   "raw AI prompts (metadata only is kept; prompts can embed a child's name)",
+  "short-lived oral-reading witnesses (canonical results are in attempts; audio/transcripts are never stored)",
   "passwords / PIN hashes / auth tokens",
 ] as const;
 

@@ -251,7 +251,13 @@ export function ActivityHost({
                 config={authoredConfig?.status === "ready" ? authoredConfig.config : activity.config}
                 learnerContext={
                   signedIn && selectedLearnerId
-                    ? { learnerId: selectedLearnerId, programSlug, oralReading: config.oralReading === true }
+                    ? {
+                        learnerId: selectedLearnerId,
+                        programSlug,
+                        unitKey: unit.id,
+                        activityId: activity.id,
+                        oralReading: config.oralReading === true,
+                      }
                     : undefined
                 }
                 onComplete={handleComplete}

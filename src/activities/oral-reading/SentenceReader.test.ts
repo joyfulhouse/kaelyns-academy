@@ -28,6 +28,7 @@ describe("sentence oral-reading feedback", () => {
           result: "matched",
           words: [{ state: "correct" }, { state: "correct" }],
           wcpm: 42,
+          verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
           transcript: "must not cross the boundary",
         },
         2,
@@ -36,17 +37,32 @@ describe("sentence oral-reading feedback", () => {
       result: "matched",
       words: [{ state: "correct" }, { state: "correct" }],
       wcpm: 42,
+      verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     });
 
     expect(
       parseSentenceRouteResult(
-        { result: "matched", words: [{ state: "correct" }] },
+        {
+          result: "matched",
+          words: [{ state: "correct" }],
+          verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        },
         2,
       ),
     ).toBe("unavailable");
     expect(
       parseSentenceRouteResult(
-        { result: "matched", words: [{ state: "incorrect" }, { state: "correct" }] },
+        {
+          result: "matched",
+          words: [{ state: "incorrect" }, { state: "correct" }],
+          verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        },
+        2,
+      ),
+    ).toBe("unavailable");
+    expect(
+      parseSentenceRouteResult(
+        { result: "matched", words: [{ state: "correct" }, { state: "correct" }] },
         2,
       ),
     ).toBe("unavailable");

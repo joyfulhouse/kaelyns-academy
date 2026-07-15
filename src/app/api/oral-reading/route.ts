@@ -7,7 +7,14 @@ import { resolveRateLimit } from "@/lib/api/rate";
 import { captureNonCritical } from "@/lib/capture";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getAccountOrNull } from "@/lib/tenancy";
-import { getEnrollmentForGate, getLearnerSettings } from "@/lib/tutor/store";
+import {
+  createOralReadingVerification,
+  getEnrollmentForGate,
+  getLearnerSettings,
+} from "@/lib/tutor/store";
+import { resolveAccountLearnerProgram } from "@/lib/content/repository";
+import { getUnit } from "@/content";
+import { oralReadingConfig, type OralReadingConfig } from "@/content/activity-configs";
 
 export const dynamic = "force-dynamic";
 
@@ -23,33 +30,14 @@ const MAX_CONCURRENT_READS = 8;
 
 let activeReads = 0;
 
-const fieldsSchema = z.discriminatedUnion("mode", [
-  z.object({
-    mode: z.literal("word"),
+const fieldsSchema = z
+  .object({
     learnerId: z.string().min(1).max(100),
     programSlug: z.string().min(1).max(100),
-    target: z
-      .string()
-      .trim()
-      .min(1)
-      .max(64)
-      .refine((value) => value.split(/\s+/).length <= 6),
-  }),
-  z.object({
-    mode: z.literal("sentence"),
-    learnerId: z.string().min(1).max(100),
-    programSlug: z.string().min(1).max(100),
-    // Mirrors oralReadingSentenceConfig: a passage must fit the kaelyn-stt 15s
-    // decoded-speech cap (~7 words at the 30 WCPM grade-1 target).
-    passage: z
-      .string()
-      .trim()
-      .min(1)
-      .max(60)
-      .refine((value) => value.split(/\s+/).length <= 7)
-      .refine((value) => /[a-z0-9]/i.test(value)),
-  }),
-]);
+    unitKey: z.string().min(1).max(100),
+    activityId: z.string().min(1).max(100),
+  })
+  .strict();
 
 type RouteResult = OralReadingMatchResult | "unavailable";
 
@@ -57,12 +45,31 @@ function result(resultValue: RouteResult, status = 200, headers?: HeadersInit): 
   return NextResponse.json({ result: resultValue }, { status, headers });
 }
 
-function sentenceResult(alignment: OralReadingAlignment): NextResponse {
+function sentenceResult(
+  alignment: OralReadingAlignment,
+  verificationId: string,
+): NextResponse {
   return NextResponse.json({
     result: alignment.result,
     words: alignment.perWord,
     ...(alignment.wcpm === undefined ? {} : { wcpm: alignment.wcpm }),
+    verificationId,
   });
+}
+
+function exactOralActivity(
+  program: Awaited<ReturnType<typeof resolveAccountLearnerProgram>>,
+  unitKey: string,
+  activityId: string,
+): OralReadingConfig | null {
+  if (!program) return null;
+  const unit = getUnit(program, unitKey);
+  const activity = unit?.lessons
+    .flatMap((lesson) => lesson.activities)
+    .find((candidate) => candidate.id === activityId);
+  if (!activity || activity.kind !== "oral-reading") return null;
+  const parsed = oralReadingConfig.safeParse(activity.config);
+  return parsed.success ? parsed.data : null;
 }
 
 function declaredTooLarge(request: Request): boolean {
@@ -170,40 +177,43 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const parsed = fieldsSchema.safeParse({
-    mode: form.get("mode") ?? "word",
     learnerId: form.get("learnerId"),
     programSlug: form.get("programSlug"),
-    target: form.get("target"),
-    passage: form.get("passage"),
+    unitKey: form.get("unitKey"),
+    activityId: form.get("activityId"),
   });
   const audio = form.get("file");
   if (!parsed.success || !(audio instanceof Blob) || audio.size === 0) {
     return result("unavailable", 400);
   }
 
-  const { learnerId, programSlug } = parsed.data;
+  const { learnerId, programSlug, unitKey, activityId } = parsed.data;
+  let canonicalConfig: OralReadingConfig | null = null;
   try {
     // §8 two-control gate, same as durable shelf generation: the learner must belong to
     // this account with an ACTIVE enrollment in the program being played
     // (getEnrollmentForGate resolves ownership), AND the parent must have
     // explicitly opted this learner in (default is off). Fail closed on all.
-    const [enrollment, settings] = await Promise.all([
+    const [enrollment, settings, program] = await Promise.all([
       getEnrollmentForGate(account.accountId, learnerId, programSlug),
       getLearnerSettings(account.accountId, learnerId),
+      resolveAccountLearnerProgram(account.accountId, learnerId, programSlug),
     ]);
     if (!enrollment || enrollment.status !== "active" || settings?.oralReading !== true) {
       return result("unavailable", 403);
     }
+    canonicalConfig = exactOralActivity(program, unitKey, activityId);
+    if (!canonicalConfig) return result("unavailable", 403);
   } catch (error) {
     captureNonCritical("oral-reading learner gate failed", error);
     return result("unavailable", 403);
   }
 
   try {
-    if (parsed.data.mode === "sentence") {
+    if (canonicalConfig.mode === "sentence") {
       // The recognized text and words exist only in this request scope. Only
       // the known target's derived states and server-timed WCPM are returned.
-      const transcription = await transcribeOralReading(audio, parsed.data.passage, {
+      const transcription = await transcribeOralReading(audio, canonicalConfig.passage, {
         wordTimestamps: true,
       });
       // Sentence alignment needs per-word timestamps. If the gateway returned
@@ -213,13 +223,39 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (!transcription.words || transcription.words.length === 0) {
         return result("unavailable");
       }
-      return sentenceResult(oralReadingAlign(parsed.data.passage, transcription.words));
+      const alignment = oralReadingAlign(canonicalConfig.passage, transcription.words);
+      const verificationId = await createOralReadingVerification(account.accountId, {
+        learnerId,
+        programSlug,
+        unitKey,
+        activityId,
+        mode: "sentence",
+        result: alignment.result,
+        perWord: alignment.perWord,
+        correctCount: alignment.correctCount,
+        totalWords: alignment.totalWords,
+        wcpm: alignment.wcpm ?? null,
+      });
+      return sentenceResult(alignment, verificationId);
     }
 
     // The raw text exists only inside this request scope. It is immediately
     // reduced to a tri-state and is never returned, logged, or persisted.
-    const transcript = await transcribeOralReading(audio, parsed.data.target);
-    return result(matchOralReading(parsed.data.target, transcript));
+    const transcript = await transcribeOralReading(audio, canonicalConfig.target);
+    const matched = matchOralReading(canonicalConfig.target, transcript);
+    const verificationId = await createOralReadingVerification(account.accountId, {
+      learnerId,
+      programSlug,
+      unitKey,
+      activityId,
+      mode: "word",
+      result: matched,
+      perWord: null,
+      correctCount: matched === "matched" ? 1 : 0,
+      totalWords: 1,
+      wcpm: null,
+    });
+    return NextResponse.json({ result: matched, verificationId });
   } catch (error) {
     captureNonCritical("oral-reading transcription failed", error);
     return result("unavailable");

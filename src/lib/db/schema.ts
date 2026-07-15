@@ -200,6 +200,42 @@ export const attempt = pgTable(
   ],
 );
 
+/**
+ * Short-lived, privacy-minimized proof that the bounded oral-reading service
+ * checked one exact authored activity. The route stores only child-safe
+ * derived facts: never audio, transcript, or the authored target/passage. A
+ * completion claims the row atomically with its attempt by binding the opaque
+ * witness to one browser-generated completion id.
+ */
+export const oralReadingVerification = pgTable(
+  "oral_reading_verification",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    learnerId: text("learner_id")
+      .notNull()
+      .references(() => learner.id, { onDelete: "cascade" }),
+    programSlug: text("program_slug").notNull(),
+    unitKey: text("unit_key").notNull(),
+    activityId: text("activity_id").notNull(),
+    mode: text("mode").notNull(),
+    result: text("result").notNull(),
+    perWord: jsonb("per_word").$type<{ state: "correct" | "unclear" }[] | null>(),
+    correctCount: integer("correct_count"),
+    totalWords: integer("total_words"),
+    wcpm: integer("wcpm"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedCompletionId: text("consumed_completion_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("oral_reading_verification_learner_expiry_idx").on(t.learnerId, t.expiresAt),
+    uniqueIndex("oral_reading_verification_learner_completion_uq").on(
+      t.learnerId,
+      t.consumedCompletionId,
+    ),
+  ],
+);
+
 export const skillState = pgTable(
   "skill_state",
   {

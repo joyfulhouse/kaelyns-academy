@@ -130,6 +130,9 @@ describe("account export inventory guard", () => {
     checkpoint_result: "checkpointResults",
     // Adventure 2.0 B3 (Task 6 wires the export read):
     generated_activity: "generatedActivities",
+    // Short-lived operational witness. A consumed witness's canonical facts are
+    // already exported in its attempt response; raw audio/transcript never exist.
+    oral_reading_verification: null,
   };
 
   /** All pgTable objects exported from the schema module. */

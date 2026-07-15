@@ -9,6 +9,7 @@ import {
   enrollment,
   generatedActivity,
   learner,
+  oralReadingVerification,
   parentPin,
   publisher,
   reviewSchedule,
@@ -58,6 +59,10 @@ describe("account-delete cascade map (FK ON DELETE)", () => {
 
   it("cascades review_schedule off learner (Phase 3 spaced repetition)", () => {
     expect(fkOnDelete(reviewSchedule, "learner_id")).toBe("cascade");
+  });
+
+  it("cascades short-lived oral-reading witnesses off learner", () => {
+    expect(fkOnDelete(oralReadingVerification, "learner_id")).toBe("cascade");
   });
 
   it("cascades the Better Auth session + account credential rows off user", () => {
@@ -112,6 +117,44 @@ describe("attempt completion idempotency schema", () => {
         "name" in column ? column.name : undefined,
       ),
     ).toEqual(["learner_id", "completion_id"]);
+  });
+});
+
+describe("oral_reading_verification schema", () => {
+  it("stores only bounded canonical facts and an atomic completion claim", () => {
+    expect(Object.keys(oralReadingVerification)).toEqual(
+      expect.arrayContaining([
+        "id",
+        "learnerId",
+        "programSlug",
+        "unitKey",
+        "activityId",
+        "mode",
+        "result",
+        "perWord",
+        "correctCount",
+        "totalWords",
+        "wcpm",
+        "expiresAt",
+        "consumedCompletionId",
+        "createdAt",
+      ]),
+    );
+    expect(Object.keys(oralReadingVerification)).not.toEqual(
+      expect.arrayContaining(["audio", "transcript", "target", "passage"]),
+    );
+    expect(oralReadingVerification.expiresAt.notNull).toBe(true);
+    expect(oralReadingVerification.consumedCompletionId.notNull).toBe(false);
+
+    const completionIndex = getTableConfig(oralReadingVerification).indexes.find(
+      (index) => index.config.name === "oral_reading_verification_learner_completion_uq",
+    );
+    expect(completionIndex?.config.unique).toBe(true);
+    expect(
+      completionIndex?.config.columns.map((column) =>
+        "name" in column ? column.name : undefined,
+      ),
+    ).toEqual(["learner_id", "consumed_completion_id"]);
   });
 });
 

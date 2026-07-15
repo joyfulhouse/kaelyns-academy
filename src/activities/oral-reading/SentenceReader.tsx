@@ -29,6 +29,8 @@ import {
   browserHasMicrophone,
   canRecordAnother,
   canSubmitRecording,
+  createOralReadingRequestForm,
+  isOpaqueVerificationId,
   phaseAfterUnmatched,
   sentenceRecordingMs,
   subscribeStatic,
@@ -44,6 +46,7 @@ interface SentenceRouteResult {
   result: "matched" | "unclear";
   words: SettledWord[];
   wcpm?: number;
+  verificationId: string;
 }
 
 const WORD_BASE_CLASSES =
@@ -170,8 +173,14 @@ export function parseSentenceRouteResult(
   expectedWords: number,
 ): SentenceRouteResult | "unavailable" {
   if (!value || typeof value !== "object") return "unavailable";
-  const candidate = value as { result?: unknown; words?: unknown; wcpm?: unknown };
+  const candidate = value as {
+    result?: unknown;
+    words?: unknown;
+    wcpm?: unknown;
+    verificationId?: unknown;
+  };
   if (candidate.result !== "matched" && candidate.result !== "unclear") return "unavailable";
+  if (!isOpaqueVerificationId(candidate.verificationId)) return "unavailable";
   if (!Array.isArray(candidate.words) || candidate.words.length !== expectedWords) {
     return "unavailable";
   }
@@ -195,8 +204,13 @@ export function parseSentenceRouteResult(
     return "unavailable";
   }
   return candidate.wcpm === undefined
-    ? { result: candidate.result, words }
-    : { result: candidate.result, words, wcpm: candidate.wcpm };
+    ? { result: candidate.result, words, verificationId: candidate.verificationId }
+    : {
+        result: candidate.result,
+        words,
+        wcpm: candidate.wcpm,
+        verificationId: candidate.verificationId,
+      };
 }
 
 function KaraokePassage({
@@ -363,14 +377,14 @@ export function SentenceReader({
       return;
     }
 
+    const form = createOralReadingRequestForm(blob, learnerContext);
+    if (!form) {
+      setPhase("fallback");
+      return;
+    }
+
     setPhase("checking");
     setSubmitted((count) => count + 1);
-    const form = new FormData();
-    form.append("file", blob, "reading.webm");
-    form.append("mode", "sentence");
-    form.append("passage", config.passage);
-    form.append("learnerId", learnerContext.learnerId);
-    form.append("programSlug", learnerContext.programSlug);
     const controller = new AbortController();
     abortRef.current = controller;
     const deadline = setTimeout(() => controller.abort(), VERIFY_TIMEOUT_MS);
@@ -400,7 +414,10 @@ export function SentenceReader({
 
     const nextResults = [...results, routeResult.result];
     setResults(nextResults);
-    const completed = response(nextResults, false, routeResult);
+    const completed = {
+      ...response(nextResults, false, routeResult),
+      verificationId: routeResult.verificationId,
+    };
     cancelListenSweep();
     settleCancelRef.current?.();
     setFeedback(routeResult);

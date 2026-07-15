@@ -2,6 +2,7 @@
 // a Client Component. (the `server-only` package isn't installed; this comment
 // is the guard, and only server actions / route handlers import it.)
 import { and, asc, count, desc, eq, inArray, lt, lte, or, sql, sum } from "drizzle-orm";
+import { z } from "zod";
 import { getDb } from "@/lib/db";
 import {
   attempt,
@@ -14,6 +15,7 @@ import {
   learnerInterest,
   learnerQuest,
   learnerSticker,
+  oralReadingVerification,
   reviewSchedule,
   skillState,
   starLedger,
@@ -41,6 +43,7 @@ import { getLearner, toLearnerRow, withOwnedLearner, type LearnerRow } from "./s
 import { applyAttemptToQuests } from "@/lib/quests/store";
 import { unitSkills } from "./recommend";
 import { nextSchedule, type ReviewScheduleState } from "./schedule";
+import { responseSchema as oralReadingResponseSchema } from "@/activities/oral-reading/logic";
 
 /** The transaction type recordAttempt's tx-scoped helpers share (mirrors the
  *  same derivation in src/lib/quests/store.ts). */
@@ -61,6 +64,91 @@ export type { LearnerRow };
 
 /** Bound stored evidence (jsonb can otherwise grow without limit). */
 const MAX_HISTORY = 24;
+
+/** A witness only bridges the upload and its immediate completion save. */
+export const ORAL_READING_VERIFICATION_TTL_MS = 5 * 60_000;
+
+const oralVerificationIdentitySchema = z.object({
+  learnerId: z.string().min(1).max(100),
+  programSlug: z.string().min(1).max(100),
+  unitKey: z.string().min(1).max(100),
+  activityId: z.string().min(1).max(100),
+});
+
+const newOralReadingVerificationSchema = z.discriminatedUnion("mode", [
+  oralVerificationIdentitySchema
+    .extend({
+      mode: z.literal("word"),
+      result: z.enum(["matched", "unclear", "no-speech"]),
+      perWord: z.null(),
+      correctCount: z.number().int().min(0).max(1),
+      totalWords: z.literal(1),
+      wcpm: z.null(),
+    })
+    .strict()
+    .superRefine((value, ctx) => {
+      if ((value.result === "matched") !== (value.correctCount === 1)) {
+        ctx.addIssue({ code: "custom", path: ["correctCount"], message: "result mismatch" });
+      }
+    }),
+  oralVerificationIdentitySchema
+    .extend({
+      mode: z.literal("sentence"),
+      result: z.enum(["matched", "unclear"]),
+      perWord: z
+        .array(z.object({ state: z.enum(["correct", "unclear"]) }).strict())
+        .min(1)
+        .max(7),
+      correctCount: z.number().int().min(0).max(7),
+      totalWords: z.number().int().min(1).max(7),
+      wcpm: z.number().int().min(0).max(300).nullable(),
+    })
+    .strict()
+    .superRefine((value, ctx) => {
+      const derivedCorrect = value.perWord.filter(({ state }) => state === "correct").length;
+      if (value.perWord.length !== value.totalWords) {
+        ctx.addIssue({ code: "custom", path: ["totalWords"], message: "word count mismatch" });
+      }
+      if (derivedCorrect !== value.correctCount) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["correctCount"],
+          message: "correct count mismatch",
+        });
+      }
+      if ((value.result === "matched") !== (derivedCorrect === value.totalWords)) {
+        ctx.addIssue({ code: "custom", path: ["result"], message: "result mismatch" });
+      }
+    }),
+]);
+
+export type NewOralReadingVerification = z.infer<
+  typeof newOralReadingVerificationSchema
+>;
+
+/**
+ * Persist one privacy-safe verification result after re-checking learner
+ * ownership. The expiry is server-issued; callers cannot extend witness life.
+ */
+export async function createOralReadingVerification(
+  accountId: string,
+  input: NewOralReadingVerification,
+): Promise<string> {
+  const parsed = newOralReadingVerificationSchema.parse(input);
+  const owned = await getLearner(accountId, parsed.learnerId);
+  if (!owned) throw new Error("learner not found for account");
+
+  const rows = await getDb()
+    .insert(oralReadingVerification)
+    .values({
+      ...parsed,
+      expiresAt: new Date(Date.now() + ORAL_READING_VERIFICATION_TTL_MS),
+    })
+    .returning({ id: oralReadingVerification.id });
+  const row = rows[0];
+  if (!row) throw new Error("oral-reading verification was not persisted");
+  return row.id;
+}
 
 /** Pure: fold one attempt's evidence for a skill into its prior history and
  *  re-derive the outcome. Extracted so the gate logic is unit-testable.
@@ -326,7 +414,17 @@ export async function recordAttempt(
   // throw a unique violation after the attempt row is already in, or drop one
   // submit's evidence (last-writer-wins). One transaction + a row lock per
   // (learner,skill) makes the whole thing atomic and serialized.
-  return getDb().transaction(async (tx) => {
+  return getDb().transaction((tx) => recordAttemptInTransaction(tx, accountId, input));
+}
+
+/** Existing attempt writer, parameterized by a caller-owned transaction so the
+ * oral-reading witness claim can commit atomically with the unchanged ledger,
+ * mastery, checkpoint, review, and quest folds below. */
+async function recordAttemptInTransaction(
+  tx: Db,
+  accountId: string,
+  input: RecordAttemptInput,
+): Promise<ActivityScore> {
     // Tenancy boundary, re-checked inside the tx so it shares the snapshot.
     const owned = await tx
       .select({ id: learner.id })
@@ -528,7 +626,191 @@ export async function recordAttempt(
         });
       }
     }
-    return input.score;
+  return input.score;
+}
+
+export interface OralReadingWitnessFacts {
+  mode: "word" | "sentence";
+  result: "matched" | "unclear" | "no-speech";
+  perWord: { state: "correct" | "unclear" }[] | null;
+  correctCount: number;
+  totalWords: number;
+  wcpm: number | null;
+}
+
+export interface RecordOralReadingAttemptInput {
+  learnerId: string;
+  programSlug: string;
+  completionId: string;
+  unitKey: string;
+  activityId: string;
+  verificationId?: string;
+  day: DayKey;
+  checkpointPhase?: "baseline" | "mid" | "final" | null;
+  canonicalize: (
+    witness: OralReadingWitnessFacts | null,
+  ) => { response: unknown; score: ActivityScore } | null;
+}
+
+/**
+ * Claim one oral-reading witness and write its canonical attempt in the same
+ * transaction. A learner-row lock serializes this low-volume path per learner,
+ * making completion reuse deterministic before either unique constraint is
+ * reached. A committed witness may replay only its original completion id,
+ * including after expiry; an unconsumed expired witness is never accepted.
+ */
+export async function recordOralReadingAttempt(
+  accountId: string,
+  input: RecordOralReadingAttemptInput,
+): Promise<ActivityScore | null> {
+  return getDb().transaction(async (tx) => {
+    const owned = await tx
+      .select({ id: learner.id })
+      .from(learner)
+      .where(and(eq(learner.id, input.learnerId), eq(learner.accountId, accountId)))
+      .limit(1)
+      .for("update");
+    if (!owned[0]) return null;
+
+    let witnessRow: typeof oralReadingVerification.$inferSelect | null = null;
+    let witnessFacts: OralReadingWitnessFacts | null = null;
+    if (input.verificationId) {
+      const rows = await tx
+        .select()
+        .from(oralReadingVerification)
+        .where(eq(oralReadingVerification.id, input.verificationId))
+        .limit(1)
+        .for("update");
+      witnessRow = rows[0] ?? null;
+      if (
+        !witnessRow ||
+        witnessRow.learnerId !== input.learnerId ||
+        witnessRow.programSlug !== input.programSlug ||
+        witnessRow.unitKey !== input.unitKey ||
+        witnessRow.activityId !== input.activityId
+      ) {
+        return null;
+      }
+
+      if (
+        witnessRow.consumedCompletionId &&
+        witnessRow.consumedCompletionId !== input.completionId
+      ) {
+        return null;
+      }
+      const committedReplay = witnessRow.consumedCompletionId === input.completionId;
+      if (committedReplay) {
+        // The witness and attempt committed together, so a retry can return the
+        // original score without re-scoring current content or re-folding any
+        // ledger/mastery state. Preserve the ordinary active-enrollment gate.
+        const enrolled = await tx
+          .select({ status: enrollment.status })
+          .from(enrollment)
+          .where(enrollmentKey(input.learnerId, input.programSlug))
+          .limit(1)
+          .for("update");
+        if (enrolled[0]?.status !== "active") {
+          throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
+        }
+        const replayed = await tx
+          .select({
+            activityId: attempt.activityId,
+            kind: attempt.kind,
+            generated: attempt.generated,
+            score: attempt.score,
+          })
+          .from(attempt)
+          .where(
+            and(
+              eq(attempt.learnerId, input.learnerId),
+              eq(attempt.completionId, input.completionId),
+            ),
+          )
+          .limit(1);
+        const original = replayed[0];
+        return original &&
+          original.activityId === input.activityId &&
+          original.kind === "oral-reading" &&
+          original.generated === false
+          ? original.score
+          : null;
+      }
+      if (!committedReplay && witnessRow.expiresAt.getTime() <= Date.now()) return null;
+
+      if (!committedReplay) {
+        // One completion may bind to only one witness. The learner lock closes
+        // the concurrent two-witness race before either unique index is reached.
+        const consumed = await tx
+          .select({ id: oralReadingVerification.id })
+          .from(oralReadingVerification)
+          .where(
+            and(
+              eq(oralReadingVerification.learnerId, input.learnerId),
+              eq(oralReadingVerification.consumedCompletionId, input.completionId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        if (consumed.some(({ id }) => id !== witnessRow?.id)) return null;
+
+        // A pre-witness or participation-only attempt may already own the same
+        // completion id. It cannot be retroactively upgraded with a new witness.
+        const existingAttempt = await tx
+          .select({ completionId: attempt.completionId })
+          .from(attempt)
+          .where(
+            and(
+              eq(attempt.learnerId, input.learnerId),
+              eq(attempt.completionId, input.completionId),
+            ),
+          )
+          .limit(1);
+        if (existingAttempt[0]) return null;
+      }
+
+      const mode = witnessRow.mode;
+      const result = witnessRow.result;
+      if (
+        (mode !== "word" && mode !== "sentence") ||
+        (result !== "matched" && result !== "unclear" && result !== "no-speech")
+      ) {
+        return null;
+      }
+      witnessFacts = {
+        mode,
+        result,
+        perWord: witnessRow.perWord,
+        correctCount: witnessRow.correctCount ?? 0,
+        totalWords: witnessRow.totalWords ?? 0,
+        wcpm: witnessRow.wcpm,
+      };
+    }
+
+    const canonical = input.canonicalize(witnessFacts);
+    if (!canonical) return null;
+    const score = await recordAttemptInTransaction(tx, accountId, {
+      learnerId: input.learnerId,
+      programSlug: input.programSlug,
+      completionId: input.completionId,
+      activityId: input.activityId,
+      kind: "oral-reading",
+      generated: false,
+      response: canonical.response,
+      score: canonical.score,
+      day: input.day,
+      unitId: input.unitKey,
+      creditEligible: true,
+      shelfEligible: false,
+      checkpointPhase: input.checkpointPhase ?? null,
+    });
+
+    if (witnessRow && !witnessRow.consumedCompletionId) {
+      await tx
+        .update(oralReadingVerification)
+        .set({ consumedCompletionId: input.completionId })
+        .where(eq(oralReadingVerification.id, witnessRow.id));
+    }
+    return score;
   });
 }
 
@@ -869,15 +1151,14 @@ export async function getFluencyHistory(
       return rows
         .reverse()
         .flatMap(({ day, response }) => {
-          if (typeof response !== "object" || response === null) return [];
-          const wcpm = (response as { wcpm?: unknown }).wcpm;
-          // WCPM is client-echoed into the attempt (like every activity score —
-          // the platform's client-authoritative attempt model; see the Slice 1
-          // risk-accept). Bound it to the aligner's plausible 0..300 range so a
-          // forged/out-of-range value can't distort a household's own chart.
-          return typeof wcpm === "number" && Number.isFinite(wcpm) && wcpm >= 0 && wcpm <= 300
-            ? [{ day, wcpm }]
-            : [];
+          // Sentence WCPM reaches the attempt only through a claimed server
+          // witness. Re-parse the complete stored response defensively so
+          // malformed/legacy partial JSON cannot enter the household chart.
+          const parsed = oralReadingResponseSchema.safeParse(response);
+          if (!parsed.success || parsed.data.fallbackUsed || parsed.data.wcpm === undefined) {
+            return [];
+          }
+          return [{ day, wcpm: parsed.data.wcpm }];
         });
     },
     [],

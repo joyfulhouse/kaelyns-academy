@@ -26,11 +26,13 @@ import {
   browserHasMicrophone,
   canRecordAnother,
   canSubmitRecording,
+  createOralReadingRequestForm,
   parseWordRouteResult,
   phaseAfterUnmatched,
   subscribeStatic,
   supportedMimeType,
   type OralReadingPhase,
+  type VerifiedWordRouteResult,
   type VerificationResult,
 } from "./recording";
 
@@ -112,18 +114,19 @@ function WordReadingPlayer({
       return;
     }
 
+    const form = createOralReadingRequestForm(blob, learnerContext);
+    if (!form) {
+      setPhase("fallback");
+      return;
+    }
+
     setPhase("checking");
     setSubmitted((count) => count + 1);
-    const form = new FormData();
-    form.append("file", blob, "reading.webm");
-    form.append("target", parsed.target);
-    form.append("learnerId", learnerContext.learnerId);
-    form.append("programSlug", learnerContext.programSlug);
     const controller = new AbortController();
     abortRef.current = controller;
     const deadline = setTimeout(() => controller.abort(), VERIFY_TIMEOUT_MS);
 
-    let routeResult: VerificationResult | "unavailable" = "unavailable";
+    let routeResult: VerifiedWordRouteResult | "unavailable" = "unavailable";
     try {
       const apiResponse = await fetch("/api/oral-reading", {
         method: "POST",
@@ -147,10 +150,15 @@ function WordReadingPlayer({
       return;
     }
 
-    const nextResults = [...results, routeResult];
+    const nextResults = [...results, routeResult.result];
     setResults(nextResults);
-    if (routeResult === "matched") {
-      onComplete({ attempts: nextResults.length, results: nextResults, fallbackUsed: false });
+    if (routeResult.result === "matched") {
+      onComplete({
+        attempts: nextResults.length,
+        results: nextResults,
+        fallbackUsed: false,
+        verificationId: routeResult.verificationId,
+      });
     } else {
       // `submitted` is read pre-increment here because this closure captured
       // it before setSubmitted queued the +1 for this upload.

@@ -28,6 +28,10 @@ export function sentenceRecordingMs(wordCount: number): number {
 }
 
 export type VerificationResult = OralReadingResponse["results"][number];
+export interface VerifiedWordRouteResult {
+  result: VerificationResult;
+  verificationId: string;
+}
 export type OralReadingPhase =
   | "ready"
   | "requesting"
@@ -59,12 +63,43 @@ export function supportedMimeType(): string | undefined {
   return types.find((type) => MediaRecorder.isTypeSupported(type));
 }
 
-export function parseWordRouteResult(value: unknown): VerificationResult | "unavailable" {
+const OPAQUE_VERIFICATION_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isOpaqueVerificationId(value: unknown): value is string {
+  return typeof value === "string" && OPAQUE_VERIFICATION_ID.test(value);
+}
+
+export function createOralReadingRequestForm(
+  audio: Blob,
+  identity: {
+    learnerId: string;
+    programSlug: string;
+    unitKey?: string;
+    activityId?: string;
+  },
+): FormData | null {
+  if (!identity.unitKey || !identity.activityId) return null;
+  const form = new FormData();
+  form.append("file", audio, "reading.webm");
+  form.append("learnerId", identity.learnerId);
+  form.append("programSlug", identity.programSlug);
+  form.append("unitKey", identity.unitKey);
+  form.append("activityId", identity.activityId);
+  return form;
+}
+
+export function parseWordRouteResult(value: unknown): VerifiedWordRouteResult | "unavailable" {
   if (!value || typeof value !== "object") return "unavailable";
-  const result = (value as { result?: unknown }).result;
-  return result === "matched" || result === "unclear" || result === "no-speech"
-    ? result
-    : "unavailable";
+  const candidate = value as { result?: unknown; verificationId?: unknown };
+  const result = candidate.result;
+  if (
+    (result !== "matched" && result !== "unclear" && result !== "no-speech") ||
+    !isOpaqueVerificationId(candidate.verificationId)
+  ) {
+    return "unavailable";
+  }
+  return { result, verificationId: candidate.verificationId };
 }
 
 export function canSubmitRecording(

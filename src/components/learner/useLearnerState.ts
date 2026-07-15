@@ -144,6 +144,26 @@ const EMPTY_SHELF: ShelfItem[] = Object.freeze([]) as unknown as ShelfItem[];
 const EMPTY_DUE_REVIEWS: DueReview[] = Object.freeze([]) as unknown as DueReview[];
 type AccountStateLoadOutcome = "loaded" | "error" | "stale";
 
+/** The one client-side witness seam. Only oral-reading may lift its opaque id
+ * out of the bounded Player response; ordinary kinds keep their response intact. */
+export function extractOralReadingVerification(
+  kind: Activity["kind"],
+  response: unknown,
+): { response: unknown; verificationId?: string } {
+  if (
+    kind !== "oral-reading" ||
+    !response ||
+    typeof response !== "object" ||
+    Array.isArray(response)
+  ) {
+    return { response };
+  }
+  const { verificationId, ...boundedResponse } = response as Record<string, unknown>;
+  return typeof verificationId === "string"
+    ? { response: boundedResponse, verificationId }
+    : { response: boundedResponse };
+}
+
 /** The remembered account-learner id from storage (pure; snapshot-cache safe). */
 function readRememberedAccountLearner(raw: string | null): string | null {
   return raw && raw.length > 0 ? raw : null;
@@ -350,6 +370,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       const destination = recordingDestination(mode, selectedLearnerId);
       if (destination === "account" && selectedLearnerId) {
         const recordKey = `${selectedLearnerId}:${programSlug}`;
+        const completion = extractOralReadingVerification(activity.kind, response);
         const result = await recordAttemptAction(
           "generatedActivityId" in source
             ? {
@@ -357,7 +378,10 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
                 programSlug,
                 completionId,
                 generatedActivityId: source.generatedActivityId,
-                response,
+                response: completion.response,
+                ...("verificationId" in completion
+                  ? { verificationId: completion.verificationId }
+                  : undefined),
               }
             : {
                 learnerId: selectedLearnerId,
@@ -365,7 +389,10 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
                 completionId,
                 unitKey: source.unitKey,
                 activityId: activity.id,
-                response,
+                response: completion.response,
+                ...("verificationId" in completion
+                  ? { verificationId: completion.verificationId }
+                  : undefined),
               },
         );
         if (

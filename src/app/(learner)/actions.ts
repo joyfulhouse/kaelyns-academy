@@ -36,6 +36,7 @@ import {
 } from "@/content";
 import type { ActivityScore, Band, Lesson, Program, Unit } from "@/content";
 import { parseAndScoreActivity } from "@/activities/server-verification";
+import { getServerAttemptVerifier } from "@/activities/server-attempt-verifiers";
 import { generatePracticeItems, provenanceForGeneration } from "@/lib/ai/practice";
 import {
   pickGenerationTargets,
@@ -225,7 +226,7 @@ const recordAttemptIdentitySchema = z.object({
   response: z.unknown(),
   /** Reserved for a kind-specific, server-stored verification result. Ordinary
    * deterministic plugins reject it; oral reading is the first planned user. */
-  verificationId: z.string().min(1).max(128).optional(),
+  verificationId: z.string().uuid().optional(),
 });
 
 const recordAttemptSchema = z.union([
@@ -262,10 +263,6 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
 
   try {
     return await withAccount(async ({ accountId }): Promise<RecordResult> => {
-      // A verification id cannot be interpreted generically. Until a resolved
-      // activity kind registers the narrow oral-reading verifier, fail closed.
-      if (data.verificationId) return { ok: false, reason: "invalid" };
-
       let program: Program | null;
       try {
         program =
@@ -287,6 +284,12 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
           row.programSlug !== data.programSlug ||
           !programContainsGeneratedLocation(program, row)
         ) {
+          return { ok: false, reason: "invalid" };
+        }
+        // Oral verification is bound to an exact pinned authored activity.
+        // Generated shelf rows never enter that trust path, and no generated
+        // kind may interpret a verification id.
+        if (row.kind === "oral-reading" || data.verificationId) {
           return { ok: false, reason: "invalid" };
         }
         const canonical = parseAndScoreActivity(
@@ -328,6 +331,27 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
         .flatMap((lesson) => lesson.activities)
         .find((candidate) => candidate.id === data.activityId);
       if (!unit || !activity) return { ok: false, reason: "invalid" };
+
+      const verifier = getServerAttemptVerifier(activity.kind);
+      if (verifier) {
+        const score = await verifier({
+          accountId,
+          learnerId: data.learnerId,
+          programSlug: data.programSlug,
+          completionId: data.completionId,
+          unitKey: unit.id,
+          activityId: activity.id,
+          verificationId: data.verificationId,
+          rawConfig: activity.config,
+          allowedSkillTags: activity.skillTags,
+          day: new Date().toISOString().slice(0, 10),
+          checkpointPhase: unit.checkpoint ?? null,
+        });
+        return score ? { ok: true, score } : { ok: false, reason: "invalid" };
+      }
+      // Opaque witnesses have no generic meaning. Ordinary deterministic kinds
+      // reject them instead of silently ignoring them.
+      if (data.verificationId) return { ok: false, reason: "invalid" };
 
       const canonical = parseAndScoreActivity(
         activity.kind,

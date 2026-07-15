@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { OralReadingConfig } from "@/content/activity-configs";
-import { score, skillsAffected, validateGenerated, type OralReadingResponse } from "./logic";
+import {
+  responseSchema,
+  score,
+  skillsAffected,
+  validateGenerated,
+  type OralReadingResponse,
+} from "./logic";
 
 const cfg: OralReadingConfig = {
   instruction: "Listen, then read the word.",
@@ -31,7 +37,7 @@ describe("oral-reading score", () => {
     });
   });
 
-  it("awards 2 stars and emerging evidence for a second-try match", () => {
+  it("scores only the current canonical verified result, not browser attempt history", () => {
     const response: OralReadingResponse = {
       attempts: 2,
       results: ["unclear", "matched"],
@@ -41,12 +47,12 @@ describe("oral-reading score", () => {
     expect(score(cfg, response)).toEqual({
       correct: 1,
       total: 1,
-      stars: 2,
-      skillEvidence: [{ skill: "word.syllables.types", outcome: "emerging" }],
+      stars: 3,
+      skillEvidence: [{ skill: "word.syllables.types", outcome: "solid" }],
     });
   });
 
-  it("keeps the grown-up fallback forgiving at 1 star", () => {
+  it("canonicalizes grown-up and service fallback to participation with no evidence", () => {
     const response: OralReadingResponse = {
       attempts: 2,
       results: ["unclear", "no-speech"],
@@ -55,9 +61,9 @@ describe("oral-reading score", () => {
 
     expect(score(cfg, response)).toEqual({
       correct: 0,
-      total: 1,
+      total: 0,
       stars: 1,
-      skillEvidence: [{ skill: "word.syllables.types", outcome: "not_yet" }],
+      skillEvidence: [],
     });
   });
 
@@ -79,6 +85,28 @@ describe("oral-reading score", () => {
     };
 
     expect(Object.keys(response).sort()).toEqual(["attempts", "fallbackUsed", "results"]);
+    expect(
+      responseSchema.safeParse({ ...response, transcript: "never persist this" }).success,
+    ).toBe(false);
+  });
+
+  it("accepts only a bounded opaque verification id on the player response", () => {
+    expect(
+      responseSchema.safeParse({
+        attempts: 1,
+        results: ["matched"],
+        fallbackUsed: false,
+        verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }).success,
+    ).toBe(true);
+    expect(
+      responseSchema.safeParse({
+        attempts: 1,
+        results: ["matched"],
+        fallbackUsed: false,
+        verificationId: "not-opaque",
+      }).success,
+    ).toBe(false);
   });
 
   it("awards 3 stars for strong sentence accuracy", () => {
@@ -131,10 +159,10 @@ describe("oral-reading score", () => {
     });
   });
 
-  it("always awards at least 1 star when a sentence finishes through fallback", () => {
+  it("awards participation only when a sentence finishes through fallback", () => {
     expect(
       score(sentenceCfg, { attempts: 0, results: [], fallbackUsed: true }),
-    ).toMatchObject({ correct: 0, total: 5, stars: 1 });
+    ).toEqual({ correct: 0, total: 0, stars: 1, skillEvidence: [] });
   });
 });
 

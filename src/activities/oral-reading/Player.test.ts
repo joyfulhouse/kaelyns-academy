@@ -3,11 +3,53 @@ import {
   MAX_RECORDING_MS,
   canRecordAnother,
   canSubmitRecording,
+  createOralReadingRequestForm,
+  parseWordRouteResult,
   phaseAfterUnmatched,
   sentenceRecordingMs,
 } from "./recording";
 
 describe("oral-reading recording lifecycle", () => {
+  it("uploads audio with exact authored identity and no client target or passage", () => {
+    const form = createOralReadingRequestForm(new Blob(["audio"]), {
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      unitKey: "unit-1",
+      activityId: "oral-1",
+    });
+    expect(form && [...form.keys()].sort()).toEqual([
+      "activityId",
+      "file",
+      "learnerId",
+      "programSlug",
+      "unitKey",
+    ]);
+    expect(form?.has("target")).toBe(false);
+    expect(form?.has("passage")).toBe(false);
+    expect(
+      createOralReadingRequestForm(new Blob(["audio"]), {
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+      }),
+    ).toBeNull();
+  });
+
+  it("accepts a verified word result only with a bounded opaque witness", () => {
+    expect(
+      parseWordRouteResult({
+        result: "matched",
+        verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }),
+    ).toEqual({
+      result: "matched",
+      verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    expect(parseWordRouteResult({ result: "matched" })).toBe("unavailable");
+    expect(
+      parseWordRouteResult({ result: "matched", verificationId: "forged" }),
+    ).toBe("unavailable");
+  });
+
   it("never submits an empty recording or a recorder stopped during unmount", () => {
     expect(canSubmitRecording(true, 8)).toBe(true);
     expect(canSubmitRecording(true, 0)).toBe(false);

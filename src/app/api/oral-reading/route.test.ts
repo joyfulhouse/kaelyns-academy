@@ -6,8 +6,12 @@ vi.mock("@/lib/ai/oralReadingAlign", () => ({ oralReadingAlign: vi.fn() }));
 vi.mock("@/lib/tenancy", () => ({ getAccountOrNull: vi.fn() }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: vi.fn() }));
 vi.mock("@/lib/tutor/store", () => ({
+  createOralReadingVerification: vi.fn(),
   getEnrollmentForGate: vi.fn(),
   getLearnerSettings: vi.fn(),
+}));
+vi.mock("@/lib/content/repository", () => ({
+  resolveAccountLearnerProgram: vi.fn(),
 }));
 vi.mock("@/lib/capture", () => ({ captureNonCritical: vi.fn() }));
 
@@ -16,8 +20,94 @@ import { oralReadingAlign } from "@/lib/ai/oralReadingAlign";
 import { transcribeOralReading } from "@/lib/ai/transcribe";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getAccountOrNull } from "@/lib/tenancy";
-import { getEnrollmentForGate, getLearnerSettings } from "@/lib/tutor/store";
+import {
+  createOralReadingVerification,
+  getEnrollmentForGate,
+  getLearnerSettings,
+} from "@/lib/tutor/store";
+import { resolveAccountLearnerProgram } from "@/lib/content/repository";
+import type { Program } from "@/content";
 import { POST } from "./route";
+
+const PROGRAM = {
+  slug: "kaelyn-adaptive",
+  title: "Reading",
+  subtitle: "",
+  ageBand: "",
+  summary: "",
+  units: [
+    {
+      id: "unit-1",
+      order: 1,
+      title: "Words",
+      emoji: "📖",
+      world: "sunshine",
+      bigIdea: "",
+      phonicsFocus: "",
+      mathFocus: "",
+      project: "",
+      lessons: [
+        {
+          id: "lesson-1",
+          order: 1,
+          title: "Read",
+          activities: [
+            {
+              id: "oral-word",
+              kind: "oral-reading",
+              title: "Read there",
+              band: "ready",
+              skillTags: ["word.sight"],
+              config: {
+                instruction: "Read the word.",
+                target: "there",
+                skillTag: "word.sight",
+              },
+            },
+            {
+              id: "oral-sentence",
+              kind: "oral-reading",
+              title: "Read a sentence",
+              band: "ready",
+              skillTags: ["reading.accuracy"],
+              config: {
+                mode: "sentence",
+                instruction: "Read the sentence.",
+                passage: "We can see the cat.",
+                skillTag: "reading.accuracy",
+              },
+            },
+            {
+              id: "not-oral",
+              kind: "math-clock",
+              title: "Clock",
+              band: "ready",
+              skillTags: ["math.time"],
+              config: {
+                mode: "set",
+                instruction: "Set six o'clock.",
+                targetHour: 6,
+                targetMinute: 0,
+              },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "unit-2",
+      order: 2,
+      title: "Other",
+      emoji: "🌱",
+      world: "garden",
+      bigIdea: "",
+      phonicsFocus: "",
+      mathFocus: "",
+      project: "",
+      lessons: [],
+    },
+  ],
+} satisfies Program;
 
 function post(
   overrides: {
@@ -26,18 +116,24 @@ function post(
     passage?: string;
     learnerId?: string;
     programSlug?: string;
+    unitKey?: string;
+    activityId?: string;
     bytes?: number;
   } = {},
 ): Request {
   const form = new FormData();
-  if (overrides.mode === "sentence") {
-    form.append("mode", "sentence");
-    form.append("passage", overrides.passage ?? "We can see the cat.");
-  } else {
-    form.append("target", overrides.target ?? "there");
-  }
+  // Deliberately allow legacy/tampered content facts in tests. The route must
+  // ignore them and derive mode + expected text from the pinned activity.
+  if (overrides.mode) form.append("mode", overrides.mode);
+  if (overrides.target) form.append("target", overrides.target);
+  if (overrides.passage) form.append("passage", overrides.passage);
   form.append("learnerId", overrides.learnerId ?? "l-1");
   form.append("programSlug", overrides.programSlug ?? "kaelyn-adaptive");
+  form.append("unitKey", overrides.unitKey ?? "unit-1");
+  form.append(
+    "activityId",
+    overrides.activityId ?? (overrides.mode === "sentence" ? "oral-sentence" : "oral-word"),
+  );
   form.append(
     "file",
     new Blob([new Uint8Array(overrides.bytes ?? 12)], { type: "audio/webm" }),
@@ -54,6 +150,10 @@ beforeEach(() => {
     config: { band: "ready" },
   });
   vi.mocked(getLearnerSettings).mockResolvedValue({ oralReading: true });
+  vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+  vi.mocked(createOralReadingVerification).mockResolvedValue(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  );
   vi.mocked(transcribeOralReading).mockResolvedValue("their" as never);
   vi.mocked(matchOralReading).mockReturnValue("matched");
   vi.mocked(oralReadingAlign).mockReturnValue({
@@ -96,16 +196,17 @@ describe("POST /api/oral-reading", () => {
     expect(transcribeOralReading).not.toHaveBeenCalled();
   });
 
-  it("requires programSlug so the enrollment gate can run", async () => {
+  it("requires the full authored identity so exact-unit resolution can run", async () => {
     const form = new FormData();
-    form.append("target", "there");
     form.append("learnerId", "l-1");
+    form.append("programSlug", "kaelyn-adaptive");
     form.append("file", new Blob([new Uint8Array(12)], { type: "audio/webm" }), "reading.webm");
     const res = await POST(
       new Request("http://test/api/oral-reading", { method: "POST", body: form }),
     );
     expect(res.status).toBe(400);
     expect(getEnrollmentForGate).not.toHaveBeenCalled();
+    expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
   });
 
   it("fails closed on the §8 two-control gate: unowned learner, inactive enrollment, or mic off", async () => {
@@ -128,13 +229,35 @@ describe("POST /api/oral-reading", () => {
     expect(transcribeOralReading).not.toHaveBeenCalled();
   });
 
-  it("transcribes, matches, and returns only the tri-state result", async () => {
-    const res = await POST(post());
+  it("derives the canonical word target and persists only a bounded witness", async () => {
+    const res = await POST(post({ target: "forged browser target" }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ result: "matched" });
+    expect(await res.json()).toEqual({
+      result: "matched",
+      verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
     expect(getEnrollmentForGate).toHaveBeenCalledWith("acc-1", "l-1", "kaelyn-adaptive");
+    expect(resolveAccountLearnerProgram).toHaveBeenCalledWith(
+      "acc-1",
+      "l-1",
+      "kaelyn-adaptive",
+    );
     expect(transcribeOralReading).toHaveBeenCalledWith(expect.any(Blob), "there");
     expect(matchOralReading).toHaveBeenCalledWith("there", "their");
+    expect(createOralReadingVerification).toHaveBeenCalledWith("acc-1", {
+      learnerId: "l-1",
+      programSlug: "kaelyn-adaptive",
+      unitKey: "unit-1",
+      activityId: "oral-word",
+      mode: "word",
+      result: "matched",
+      perWord: null,
+      correctCount: 1,
+      totalWords: 1,
+      wcpm: null,
+    });
+    const persisted = vi.mocked(createOralReadingVerification).mock.calls[0]?.[1];
+    expect(JSON.stringify(persisted)).not.toMatch(/transcript|audio|target|passage|their/i);
   });
 
   it("transcribes sentence mode with timestamps and returns only derived karaoke data", async () => {
@@ -157,6 +280,7 @@ describe("POST /api/oral-reading", () => {
       result: "matched",
       words: Array.from({ length: 5 }, () => ({ state: "correct" })),
       wcpm: 42,
+      verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     });
     expect(transcribeOralReading).toHaveBeenCalledWith(
       expect.any(Blob),
@@ -172,6 +296,18 @@ describe("POST /api/oral-reading", () => {
     ]);
     expect(matchOralReading).not.toHaveBeenCalled();
     expect(JSON.stringify(body)).not.toContain("transcript");
+    expect(createOralReadingVerification).toHaveBeenCalledWith("acc-1", {
+      learnerId: "l-1",
+      programSlug: "kaelyn-adaptive",
+      unitKey: "unit-1",
+      activityId: "oral-sentence",
+      mode: "sentence",
+      result: "matched",
+      perWord: Array.from({ length: 5 }, () => ({ state: "correct" })),
+      correctCount: 5,
+      totalWords: 5,
+      wcpm: 42,
+    });
   });
 
   it("returns unavailable when the gateway drops per-word timestamps", async () => {
@@ -183,23 +319,22 @@ describe("POST /api/oral-reading", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ result: "unavailable" });
     expect(oralReadingAlign).not.toHaveBeenCalled();
+    expect(createOralReadingVerification).not.toHaveBeenCalled();
   });
 
-  it("rejects a sentence above either passage cap before transcription", async () => {
-    expect((await POST(post({ mode: "sentence", passage: "a".repeat(201) }))).status).toBe(
-      400,
-    );
-    expect(
-      (
-        await POST(
-          post({
-            mode: "sentence",
-            passage: Array.from({ length: 41 }, () => "cat").join(" "),
-          }),
-        )
-      ).status,
-    ).toBe(400);
+  it("rejects cross-unit, missing, non-oral, and malformed pinned activities", async () => {
+    expect((await POST(post({ unitKey: "unit-2" }))).status).toBe(403);
+    expect((await POST(post({ activityId: "missing" }))).status).toBe(403);
+    expect((await POST(post({ activityId: "not-oral" }))).status).toBe(403);
+
+    const malformed = structuredClone(PROGRAM) as Program;
+    const activity = malformed.units[0]?.lessons[0]?.activities[0];
+    if (activity?.kind === "oral-reading") activity.config = { target: "" } as never;
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(malformed);
+    expect((await POST(post())).status).toBe(403);
+
     expect(transcribeOralReading).not.toHaveBeenCalled();
+    expect(createOralReadingVerification).not.toHaveBeenCalled();
   });
 
   it("maps every transcriber failure to unavailable without matching", async () => {
@@ -208,5 +343,17 @@ describe("POST /api/oral-reading", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ result: "unavailable" });
     expect(matchOralReading).not.toHaveBeenCalled();
+    expect(createOralReadingVerification).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the pinned program or witness store is unavailable", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockRejectedValueOnce(new Error("pin unavailable"));
+    expect((await POST(post())).status).toBe(403);
+    expect(transcribeOralReading).not.toHaveBeenCalled();
+
+    vi.mocked(createOralReadingVerification).mockRejectedValueOnce(new Error("db unavailable"));
+    const res = await POST(post());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ result: "unavailable" });
   });
 });
