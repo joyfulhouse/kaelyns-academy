@@ -342,6 +342,18 @@ describe("recordAttemptAction canonical authored scoring", () => {
     expect(recordAttempt).not.toHaveBeenCalled();
   });
 
+  it("rejects a schema-valid wrong completion before persistence", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+
+    const result = await recordAttemptAction({
+      ...BASE_INPUT,
+      response: { attempts: 1, totalMinutes: 390 },
+    });
+
+    expect(result).toEqual({ ok: false, reason: "invalid" });
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
+
   it("fails closed when the pinned program cannot be resolved", async () => {
     vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(undefined);
 

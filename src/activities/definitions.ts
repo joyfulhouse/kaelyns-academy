@@ -19,6 +19,10 @@ import * as oralReading from "./oral-reading/logic";
 
 export interface ServerActivityDefinition<Config = unknown, Response = unknown> {
   kind: ActivityKind;
+  /** How a Player completion proves final semantic success. Direct-answer
+   * activities use the canonical score; richer response contracts validate
+   * their final facts while scoring independence; oral reading is witnessed. */
+  completionPolicy: "full-score" | "response-validated" | "server-witness";
   schema: ZodType<Config>;
   responseSchema: ZodType<Response>;
   score: (config: Config, response: Response) => ActivityScore;
@@ -28,15 +32,17 @@ export interface ServerActivityDefinition<Config = unknown, Response = unknown> 
 
 type ServerActivityLogic<Config, Response> = Omit<
   ServerActivityDefinition<Config, Response>,
-  "kind"
+  "kind" | "completionPolicy"
 >;
 
 function defineServerActivity<Config, Response>(
   kind: ActivityKind,
   logic: ServerActivityLogic<Config, Response>,
+  completionPolicy: ServerActivityDefinition["completionPolicy"],
 ): ServerActivityDefinition {
   const definition: ServerActivityDefinition<Config, Response> = {
     kind,
+    completionPolicy,
     schema: logic.schema,
     responseSchema: logic.responseSchema,
     score: logic.score,
@@ -47,24 +53,37 @@ function defineServerActivity<Config, Response>(
 }
 
 const SERVER_ACTIVITY_TYPES = {
-  "phonics-wordbuild": defineServerActivity("phonics-wordbuild", phonicsWordbuild),
-  "sightword-game": defineServerActivity("sightword-game", sightwordGame),
-  "math-tenframe": defineServerActivity("math-tenframe", mathTenframe),
-  "journal-prompt": defineServerActivity("journal-prompt", journalPrompt),
+  "phonics-wordbuild": defineServerActivity(
+    "phonics-wordbuild",
+    phonicsWordbuild,
+    "response-validated",
+  ),
+  "sightword-game": defineServerActivity(
+    "sightword-game",
+    sightwordGame,
+    "response-validated",
+  ),
+  "math-tenframe": defineServerActivity("math-tenframe", mathTenframe, "full-score"),
+  "journal-prompt": defineServerActivity(
+    "journal-prompt",
+    journalPrompt,
+    "response-validated",
+  ),
   "reading-comprehension": defineServerActivity(
     "reading-comprehension",
     readingComprehension,
+    "response-validated",
   ),
-  "math-array": defineServerActivity("math-array", mathArray),
-  "math-fraction-bar": defineServerActivity("math-fraction-bar", mathFractionBar),
-  "lang-symbol-intro": defineServerActivity("lang-symbol-intro", langSymbolIntro),
-  "lang-listen-match": defineServerActivity("lang-listen-match", langListenMatch),
-  "math-clock": defineServerActivity("math-clock", mathClock),
-  "math-money": defineServerActivity("math-money", mathMoney),
-  "math-measure": defineServerActivity("math-measure", mathMeasure),
-  "sort-categories": defineServerActivity("sort-categories", sortCategories),
-  "seq-order": defineServerActivity("seq-order", seqOrder),
-  "oral-reading": defineServerActivity("oral-reading", oralReading),
+  "math-array": defineServerActivity("math-array", mathArray, "full-score"),
+  "math-fraction-bar": defineServerActivity("math-fraction-bar", mathFractionBar, "full-score"),
+  "lang-symbol-intro": defineServerActivity("lang-symbol-intro", langSymbolIntro, "full-score"),
+  "lang-listen-match": defineServerActivity("lang-listen-match", langListenMatch, "full-score"),
+  "math-clock": defineServerActivity("math-clock", mathClock, "full-score"),
+  "math-money": defineServerActivity("math-money", mathMoney, "full-score"),
+  "math-measure": defineServerActivity("math-measure", mathMeasure, "full-score"),
+  "sort-categories": defineServerActivity("sort-categories", sortCategories, "full-score"),
+  "seq-order": defineServerActivity("seq-order", seqOrder, "full-score"),
+  "oral-reading": defineServerActivity("oral-reading", oralReading, "server-witness"),
 } satisfies Record<ActivityKind, ServerActivityDefinition>;
 
 export function getServerActivityType(kind: ActivityKind): ServerActivityDefinition {

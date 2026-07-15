@@ -73,6 +73,12 @@ export function parseAndScoreActivity(
 
   const parsedScore = activityScoreSchema.safeParse(rawScore);
   if (!parsedScore.success) return { ok: false, reason: "invalid-score" };
+  if (
+    definition.completionPolicy === "full-score" &&
+    (parsedScore.data.total === 0 || parsedScore.data.correct !== parsedScore.data.total)
+  ) {
+    return { ok: false, reason: "invalid-response" };
+  }
   if (parsedScore.data.skillEvidence.some(({ skill }) => !allowedSkills.has(skill))) {
     return { ok: false, reason: "unauthorized-skill" };
   }

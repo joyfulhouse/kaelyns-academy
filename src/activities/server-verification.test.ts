@@ -66,6 +66,82 @@ describe("parseAndScoreActivity", () => {
     ).toEqual({ ok: false, reason: "invalid-response" });
   });
 
+  it("rejects a schema-valid wrong response from a success-only activity", () => {
+    expect(
+      parseAndScoreActivity(
+        "math-clock",
+        { mode: "set", instruction: "Make six o'clock.", targetHour: 6, targetMinute: 0 },
+        { attempts: 1, totalMinutes: 390 },
+        ["math.time"],
+      ),
+    ).toEqual({ ok: false, reason: "invalid-response" });
+  });
+
+  it("rejects a partially correct final response from a multi-item success-only activity", () => {
+    expect(
+      parseAndScoreActivity(
+        "lang-listen-match",
+        {
+          locale: "zh-TW",
+          instruction: "Listen and choose.",
+          skillTags: ["zhuyin.symbols.initials"],
+          items: [
+            { spoken: "ㄅㄛ", choices: ["ㄅ", "ㄆ"], answerIndex: 0 },
+            { spoken: "ㄆㄛ", choices: ["ㄅ", "ㄆ"], answerIndex: 1 },
+          ],
+        },
+        {
+          items: [
+            { choiceIndex: 0, attempts: 1, usedHelp: false },
+            { choiceIndex: 0, attempts: 1, usedHelp: false },
+          ],
+        },
+        ["zhuyin.symbols.initials"],
+      ),
+    ).toEqual({ ok: false, reason: "invalid-response" });
+  });
+
+  it("keeps retry-success scoring when the definition validates final semantics", () => {
+    const result = parseAndScoreActivity(
+      "reading-comprehension",
+      {
+        instruction: "Read and answer.",
+        passage: "The cat sat.",
+        questions: [
+          {
+            prompt: "Who sat?",
+            choices: ["Cat", "Dog"],
+            answerIndex: 0,
+            kind: "literal",
+          },
+        ],
+      },
+      {
+        questionResults: [{ questionIndex: 0, choiceIndex: 0, attempts: 2 }],
+      },
+      [],
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      score: { correct: 0, total: 1, stars: 1 },
+    });
+  });
+
+  it("does not reinterpret oral-reading witness outcomes as client completion claims", () => {
+    expect(
+      parseAndScoreActivity(
+        "oral-reading",
+        { instruction: "Read.", target: "there", skillTag: "word.sight" },
+        { attempts: 1, results: ["unclear"], fallbackUsed: false },
+        ["word.sight"],
+      ),
+    ).toMatchObject({
+      ok: true,
+      score: { correct: 0, total: 1, stars: 1 },
+    });
+  });
+
   it("rejects derived skills outside the authoritative activity tags", () => {
     expect(
       parseAndScoreActivity(
