@@ -183,12 +183,14 @@ describe("resolveGeneratedPractice", () => {
     id: "generated-1",
     learnerId: "learner-1",
     programSlug: "kaelyn-adaptive",
+    programVersionId: "PV1",
     unitKey: "route-unit",
   };
   const activeRequestKey = generatedPracticeRequestKey(
     "learner-1",
     "kaelyn-adaptive",
     "generated-1",
+    "PV1",
   );
 
   it("stays loading until the selected account learner is ready", () => {
@@ -199,6 +201,7 @@ describe("resolveGeneratedPractice", () => {
         available: true,
         selectedLearnerId: "learner-1",
         programSlug: "kaelyn-adaptive",
+        programVersionId: "PV1",
         generatedId: "generated-1",
         activeUnitKeys: undefined,
         loaded: null,
@@ -214,6 +217,7 @@ describe("resolveGeneratedPractice", () => {
         available: true,
         selectedLearnerId: "learner-2",
         programSlug: "kaelyn-adaptive",
+        programVersionId: "PV1",
         generatedId: "generated-1",
         activeUnitKeys: undefined,
         loaded: { requestKey: activeRequestKey, row },
@@ -229,6 +233,7 @@ describe("resolveGeneratedPractice", () => {
         available: true,
         selectedLearnerId: "learner-1",
         programSlug: "kaelyn-adaptive",
+        programVersionId: "PV1",
         generatedId: "generated-1",
         activeUnitKeys: undefined,
         loaded: {
@@ -247,6 +252,7 @@ describe("resolveGeneratedPractice", () => {
         available: true,
         selectedLearnerId: "learner-1",
         programSlug: "kaelyn-adaptive",
+        programVersionId: "PV1",
         generatedId: "generated-1",
         activeUnitKeys: ["route-unit"],
         loaded: { requestKey: activeRequestKey, row },
@@ -261,6 +267,7 @@ describe("resolveGeneratedPractice", () => {
       available: false,
       selectedLearnerId: "learner-1",
       programSlug: "kaelyn-adaptive",
+      programVersionId: "PV1",
       generatedId: "generated-1",
       activeUnitKeys: undefined,
       loaded: null,
@@ -271,6 +278,7 @@ describe("resolveGeneratedPractice", () => {
       available: true,
       selectedLearnerId: "learner-1",
       programSlug: "kaelyn-adaptive",
+      programVersionId: "PV1",
       generatedId: "generated-1",
       activeUnitKeys: ["another-unit"],
       loaded: { requestKey: activeRequestKey, row },
@@ -278,5 +286,92 @@ describe("resolveGeneratedPractice", () => {
 
     expect(unavailable).toEqual({ status: "blocked" });
     expect(curatedOut).toEqual({ status: "blocked" });
+  });
+
+  it("changes request identity across a same-route enrollment repin", () => {
+    expect(
+      generatedPracticeRequestKey(
+        "learner-1",
+        "kaelyn-adaptive",
+        "generated-1",
+        "PV1",
+      ),
+    ).not.toBe(
+      generatedPracticeRequestKey(
+        "learner-1",
+        "kaelyn-adaptive",
+        "generated-1",
+        "PV2",
+      ),
+    );
+  });
+
+  it("never exposes an old-pin load after a PV1 to PV2 repin", () => {
+    expect(
+      resolveGeneratedPractice({
+        mode: "account",
+        ready: true,
+        available: true,
+        selectedLearnerId: "learner-1",
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV2",
+        generatedId: "generated-1",
+        activeUnitKeys: undefined,
+        loaded: { requestKey: activeRequestKey, row },
+      }),
+    ).toEqual({ status: "loading" });
+
+    const pv2RequestKey = generatedPracticeRequestKey(
+      "learner-1",
+      "kaelyn-adaptive",
+      "generated-1",
+      "PV2",
+    );
+    expect(
+      resolveGeneratedPractice({
+        mode: "account",
+        ready: true,
+        available: true,
+        selectedLearnerId: "learner-1",
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV2",
+        generatedId: "generated-1",
+        activeUnitKeys: undefined,
+        loaded: { requestKey: pv2RequestKey, row },
+      }),
+    ).toEqual({ status: "moved" });
+  });
+
+  it("moves calmly when the captured enrollment pin or row pin is legacy-null", () => {
+    expect(
+      resolveGeneratedPractice({
+        mode: "account",
+        ready: true,
+        available: true,
+        selectedLearnerId: "learner-1",
+        programSlug: "kaelyn-adaptive",
+        programVersionId: null,
+        generatedId: "generated-1",
+        activeUnitKeys: undefined,
+        loaded: null,
+      }),
+    ).toEqual({ status: "moved" });
+
+    expect(
+      resolveGeneratedPractice({
+        mode: "account",
+        ready: true,
+        available: true,
+        selectedLearnerId: "learner-1",
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV1",
+        generatedId: "generated-1",
+        activeUnitKeys: undefined,
+        loaded: {
+          requestKey: activeRequestKey,
+          row: { ...row, programVersionId: null },
+        },
+      }),
+    ).toEqual({ status: "moved" });
   });
 });

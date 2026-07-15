@@ -103,6 +103,7 @@ export interface LearnerExport {
   /** AI-generated practice items (B3 §4): what the AI made for this child —
    *  kind, title, config, and full generation provenance. */
   generatedActivities: {
+    programVersionId: string | null;
     unitKey: string; lessonId: string; kind: string; title: string;
     config: unknown; skillTags: string[];
     genModel: string; genRoute: string; genAt: string; createdAt: string;
@@ -173,6 +174,7 @@ export interface ShapeInput {
     createdAt: string;
   }[];
   generatedActivities: {
+    programVersionId: string | null;
     unitKey: string; lessonId: string; kind: string; title: string;
     config: unknown; skillTags: string[];
     genModel: string; genRoute: string; genAt: string; createdAt: string;
@@ -370,6 +372,7 @@ export function shapeLearnerExport(input: ShapeInput): LearnerExport {
       createdAt: c.createdAt,
     })),
     generatedActivities: input.generatedActivities.map((g) => ({
+      programVersionId: g.programVersionId,
       unitKey: g.unitKey,
       lessonId: g.lessonId,
       kind: g.kind,

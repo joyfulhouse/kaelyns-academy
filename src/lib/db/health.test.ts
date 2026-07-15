@@ -154,6 +154,7 @@ describe("REQUIRED_COLUMNS coverage (schema-drift canary)", () => {
     expect(REQUIRED_COLUMNS.enrollment).toEqual(
       expect.arrayContaining(["config", "status", "program_version_id", "updated_at"]),
     );
+    expect(REQUIRED_COLUMNS.generated_activity).toContain("program_version_id");
   });
 
   it("covers the P6 write-dependent schema (migration 0008): attempt provenance + deletion_audit", () => {

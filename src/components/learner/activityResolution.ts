@@ -105,6 +105,7 @@ export interface GeneratedPracticeRowIdentity {
   id: string;
   learnerId: string;
   programSlug: string;
+  programVersionId: string | null;
   unitKey: string;
 }
 
@@ -119,6 +120,7 @@ export interface GeneratedPracticeResolutionInput<Row extends GeneratedPracticeR
   available: boolean;
   selectedLearnerId: string | null;
   programSlug: string;
+  programVersionId: string | null;
   generatedId: string;
   activeUnitKeys: string[] | undefined;
   loaded: LoadedGeneratedPractice<Row> | null;
@@ -134,8 +136,11 @@ export function generatedPracticeRequestKey(
   learnerId: string,
   programSlug: string,
   generatedId: string,
+  programVersionId: string,
 ): string {
-  return [learnerId, programSlug, generatedId].map(encodeURIComponent).join(":");
+  return [learnerId, programSlug, generatedId, programVersionId]
+    .map(encodeURIComponent)
+    .join(":");
 }
 
 export function resolveGeneratedPractice<Row extends GeneratedPracticeRowIdentity>(
@@ -145,11 +150,13 @@ export function resolveGeneratedPractice<Row extends GeneratedPracticeRowIdentit
   if (input.mode === "guest") return { status: "moved" };
   if (!input.ready || !input.selectedLearnerId) return { status: "loading" };
   if (!input.available) return { status: "blocked" };
+  if (!input.programVersionId) return { status: "moved" };
 
   const requestKey = generatedPracticeRequestKey(
     input.selectedLearnerId,
     input.programSlug,
     input.generatedId,
+    input.programVersionId,
   );
   if (input.loaded?.requestKey !== requestKey) return { status: "loading" };
 
@@ -158,7 +165,8 @@ export function resolveGeneratedPractice<Row extends GeneratedPracticeRowIdentit
     !row ||
     row.id !== input.generatedId ||
     row.learnerId !== input.selectedLearnerId ||
-    row.programSlug !== input.programSlug
+    row.programSlug !== input.programSlug ||
+    row.programVersionId !== input.programVersionId
   ) {
     return { status: "moved" };
   }

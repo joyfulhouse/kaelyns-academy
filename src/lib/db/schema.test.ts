@@ -203,6 +203,7 @@ describe("generated_activity schema", () => {
       "id",
       "learnerId",
       "programSlug",
+      "programVersionId",
       "unitKey",
       "lessonId",
       "kind",
@@ -216,6 +217,7 @@ describe("generated_activity schema", () => {
     ]) {
       expect(cols).toContain(c);
     }
+    expect(fkOnDelete(generatedActivity, "program_version_id")).toBe("set null");
   });
 });
 

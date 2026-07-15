@@ -76,6 +76,22 @@ served until evicted, so:
 - Keep every migration expand-only across one deploy (add columns/tables; remove only in a later deploy after the code no longer references them).
 - Grow `REQUIRED_COLUMNS` in `src/lib/db/health.ts` whenever a newly-required column must gate the canary.
 
+### Journal privacy guard compatibility (migration 0017)
+
+Migration 0017 installs a `BEFORE INSERT OR UPDATE` trigger ahead of the database
+CHECK. Safe bounded journal summaries with empty skill evidence proceed. An old
+or rolled-back pod that submits raw text/drawing/evidence gets a row-level no-op
+(`RETURN NULL`), not a parameter-bearing database error: its `INSERT ...
+RETURNING` receives no row and aborts the transaction before mastery/review
+folds. Raw child artifacts therefore persist in neither PostgreSQL storage nor
+database-error telemetry. Other lesson writes remain available.
+
+The same migration re-cleans rows committed by transactions that were already
+in flight before the trigger lock, then validates the CHECK as an independent
+backstop. No two-phase application rollout is required. A rollback keeps both
+guards in place; raw legacy journal saves fail closed without persistence. Do
+not remove or weaken the trigger or constraint as part of rollback.
+
 ## Granting admin access (P4 role gate)
 
 Admin access is authorized by the user row's `role` column (`role = 'admin'`), **not**

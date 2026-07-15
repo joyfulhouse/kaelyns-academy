@@ -1,9 +1,164 @@
-ALTER TABLE "attempt" ADD COLUMN "program_slug" text;--> statement-breakpoint
-ALTER TABLE "attempt" ADD COLUMN "unit_key" text;--> statement-breakpoint
-ALTER TABLE "attempt" ADD COLUMN "program_version_id" text;--> statement-breakpoint
-ALTER TABLE "oral_reading_verification" ADD COLUMN "program_version_id" text;--> statement-breakpoint
-ALTER TABLE "attempt" ADD CONSTRAINT "attempt_program_version_id_program_version_id_fk" FOREIGN KEY ("program_version_id") REFERENCES "public"."program_version"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "oral_reading_verification" ADD CONSTRAINT "oral_reading_verification_program_version_id_program_version_id_fk" FOREIGN KEY ("program_version_id") REFERENCES "public"."program_version"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "generated_activity" ADD COLUMN "program_version_id" text;--> statement-breakpoint
+ALTER TABLE "generated_activity" ADD CONSTRAINT "generated_activity_program_version_id_program_version_id_fk" FOREIGN KEY ("program_version_id") REFERENCES "public"."program_version"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+-- A durable generated shelf row is one-shot even while an old application
+-- image is running. Lock the learner-owned shelf row to serialize concurrent
+-- first submits, then suppress every later generated attempt for that exact id.
+-- Generated attempts without a real owned shelf row remain unaffected.
+CREATE FUNCTION "attempt_generated_one_shot_guard"() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+	IF NEW."generated" IS DISTINCT FROM true THEN
+		RETURN NEW;
+	END IF;
+
+	PERFORM 1
+	FROM "generated_activity" AS "shelf"
+	WHERE "shelf"."id" = NEW."activity_id"
+		AND "shelf"."learner_id" = NEW."learner_id"
+	FOR UPDATE;
+
+	IF NOT FOUND THEN
+		RETURN NEW;
+	END IF;
+
+	IF EXISTS (
+		SELECT 1
+		FROM "attempt" AS "prior_attempt"
+		WHERE "prior_attempt"."learner_id" = NEW."learner_id"
+			AND "prior_attempt"."activity_id" = NEW."activity_id"
+			AND "prior_attempt"."generated" = true
+	) THEN
+		RETURN NULL;
+	END IF;
+
+	RETURN NEW;
+END;
+$$;--> statement-breakpoint
+CREATE TRIGGER "attempt_generated_one_shot_guard_trg"
+	BEFORE INSERT ON "attempt"
+	FOR EACH ROW EXECUTE FUNCTION "attempt_generated_one_shot_guard"();--> statement-breakpoint
+-- Install the old-pod guard before the CHECK. Unsafe journal DML becomes a
+-- no-op (RETURN NULL), not a constraint error: Drizzle therefore cannot embed
+-- the raw response parameters in a captured database exception. The old writer's
+-- INSERT ... RETURNING receives no row and aborts before mastery/review folds.
+-- Safe summary-only writes proceed to the independent CHECK below.
+CREATE FUNCTION "attempt_journal_summary_guard"() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+	IF NEW."kind" <> 'journal-prompt' THEN
+		RETURN NEW;
+	END IF;
+
+	IF COALESCE(
+		jsonb_typeof(NEW."response") = 'object'
+		AND CASE
+			WHEN jsonb_typeof(NEW."response") = 'object'
+				THEN NEW."response" ?& ARRAY['markCount', 'textLength', 'usedDictation', 'mode', 'didDraw']
+			ELSE false
+		END
+		AND CASE
+			WHEN jsonb_typeof(NEW."response") = 'object'
+				THEN NEW."response" - ARRAY['markCount', 'textLength', 'usedDictation', 'mode', 'didDraw']::text[]
+			ELSE NULL
+		END IS NOT DISTINCT FROM '{}'::jsonb
+		AND CASE
+			WHEN jsonb_typeof(NEW."response" -> 'markCount') = 'number'
+				THEN (NEW."response" ->> 'markCount')::numeric BETWEEN 0 AND 200
+					AND trunc((NEW."response" ->> 'markCount')::numeric) = (NEW."response" ->> 'markCount')::numeric
+			ELSE false
+		END
+		AND CASE
+			WHEN jsonb_typeof(NEW."response" -> 'textLength') = 'number'
+				THEN (NEW."response" ->> 'textLength')::numeric BETWEEN 0 AND 2000
+					AND trunc((NEW."response" ->> 'textLength')::numeric) = (NEW."response" ->> 'textLength')::numeric
+			ELSE false
+		END
+		AND NEW."response" -> 'usedDictation' IN ('true'::jsonb, 'false'::jsonb)
+		AND NEW."response" ->> 'mode' IN ('draw', 'scribe', 'type', 'dictate')
+		AND NEW."response" -> 'didDraw' IN ('true'::jsonb, 'false'::jsonb)
+		AND jsonb_typeof(NEW."score") = 'object'
+		AND CASE
+			WHEN jsonb_typeof(NEW."score") = 'object'
+				THEN NEW."score" ?& ARRAY['correct', 'total', 'stars', 'skillEvidence']
+			ELSE false
+		END
+		AND CASE
+			WHEN jsonb_typeof(NEW."score") = 'object'
+				THEN NEW."score" - ARRAY['correct', 'total', 'stars', 'skillEvidence']::text[]
+			ELSE NULL
+		END IS NOT DISTINCT FROM '{}'::jsonb
+		AND NEW."score" -> 'correct' = '1'::jsonb
+		AND NEW."score" -> 'total' = '1'::jsonb
+		AND CASE
+			WHEN jsonb_typeof(NEW."score" -> 'stars') = 'number'
+				THEN (NEW."score" ->> 'stars')::numeric BETWEEN 1 AND 3
+					AND trunc((NEW."score" ->> 'stars')::numeric) = (NEW."score" ->> 'stars')::numeric
+			ELSE false
+		END
+		AND NEW."score" -> 'skillEvidence' = '[]'::jsonb
+	, false) THEN
+		RETURN NEW;
+	END IF;
+
+	RETURN NULL;
+END;
+$$;--> statement-breakpoint
+CREATE TRIGGER "attempt_journal_summary_guard_trg"
+	BEFORE INSERT OR UPDATE ON "attempt"
+	FOR EACH ROW EXECUTE FUNCTION "attempt_journal_summary_guard"();--> statement-breakpoint
+-- NOT VALID tolerates existing rows while still providing an independent
+-- defense if the trigger is ever disabled. Creating the trigger takes the table
+-- lock first, so cleanup below sees every old transaction that was already in flight.
+	ALTER TABLE "attempt" ADD CONSTRAINT "attempt_journal_summary_only_ck" CHECK ("attempt"."kind" <> 'journal-prompt' OR COALESCE(
+	        jsonb_typeof("attempt"."response") = 'object'
+	        AND CASE
+	          WHEN jsonb_typeof("attempt"."response") = 'object'
+	            THEN "attempt"."response" ?& ARRAY['markCount', 'textLength', 'usedDictation', 'mode', 'didDraw']
+	          ELSE false
+	        END
+	        AND CASE
+	          WHEN jsonb_typeof("attempt"."response") = 'object'
+	            THEN "attempt"."response" - ARRAY['markCount', 'textLength', 'usedDictation', 'mode', 'didDraw']::text[]
+	          ELSE NULL
+	        END IS NOT DISTINCT FROM '{}'::jsonb
+        AND CASE
+          WHEN jsonb_typeof("attempt"."response" -> 'markCount') = 'number'
+            THEN ("attempt"."response" ->> 'markCount')::numeric BETWEEN 0 AND 200
+              AND trunc(("attempt"."response" ->> 'markCount')::numeric) = ("attempt"."response" ->> 'markCount')::numeric
+          ELSE false
+        END
+        AND CASE
+          WHEN jsonb_typeof("attempt"."response" -> 'textLength') = 'number'
+            THEN ("attempt"."response" ->> 'textLength')::numeric BETWEEN 0 AND 2000
+              AND trunc(("attempt"."response" ->> 'textLength')::numeric) = ("attempt"."response" ->> 'textLength')::numeric
+          ELSE false
+        END
+        AND "attempt"."response" -> 'usedDictation' IN ('true'::jsonb, 'false'::jsonb)
+        AND "attempt"."response" ->> 'mode' IN ('draw', 'scribe', 'type', 'dictate')
+	        AND "attempt"."response" -> 'didDraw' IN ('true'::jsonb, 'false'::jsonb)
+	        AND jsonb_typeof("attempt"."score") = 'object'
+	        AND CASE
+	          WHEN jsonb_typeof("attempt"."score") = 'object'
+	            THEN "attempt"."score" ?& ARRAY['correct', 'total', 'stars', 'skillEvidence']
+	          ELSE false
+	        END
+	        AND CASE
+	          WHEN jsonb_typeof("attempt"."score") = 'object'
+	            THEN "attempt"."score" - ARRAY['correct', 'total', 'stars', 'skillEvidence']::text[]
+	          ELSE NULL
+	        END IS NOT DISTINCT FROM '{}'::jsonb
+        AND "attempt"."score" -> 'correct' = '1'::jsonb
+        AND "attempt"."score" -> 'total' = '1'::jsonb
+        AND CASE
+          WHEN jsonb_typeof("attempt"."score" -> 'stars') = 'number'
+            THEN ("attempt"."score" ->> 'stars')::numeric BETWEEN 1 AND 3
+              AND trunc(("attempt"."score" ->> 'stars')::numeric) = ("attempt"."score" ->> 'stars')::numeric
+          ELSE false
+        END
+        AND "attempt"."score" -> 'skillEvidence' = '[]'::jsonb
+      , false)) NOT VALID;--> statement-breakpoint
 -- Historical journal prompts could emit mastery evidence before journal scoring
 -- became participation-only. Delete derived mastery only when the bounded state
 -- is an exact, untruncated multiset of well-formed journal ledger emissions and
@@ -215,11 +370,6 @@ WHERE "journal_skill_state_is_exclusive"(
 	"state"."evidence"
 );--> statement-breakpoint
 DROP FUNCTION "journal_skill_state_is_exclusive"(text, text, jsonb);--> statement-breakpoint
-
--- Mixed histories are intentionally preserved wholesale. Legacy skill_state
--- evidence has day/outcome/source but no attempt id or activity kind, so any row
--- with non-journal ledger evidence or a baseline entry is ambiguous and cannot
--- be surgically rewritten without risking legitimate mastery.
 WITH "journal_source" AS (
 	SELECT
 		"id",
@@ -276,7 +426,7 @@ WITH "journal_source" AS (
 			)
 		)::integer AS "text_length"
 	FROM "attempt"
-	WHERE kind = 'journal-prompt'
+	WHERE "kind" = 'journal-prompt'
 ),
 "journal_facts" AS (
 	SELECT
@@ -285,11 +435,11 @@ WITH "journal_source" AS (
 		"text_length" > 0
 			AND COALESCE((
 				"response" -> 'usedDictation' = 'true'::jsonb
-				OR "response" ->> 'mode' = 'dictate'
-				OR (
-					jsonb_typeof("response" -> 'transcript') = 'string'
-					AND char_length("response" ->> 'transcript') > 0
-				)
+					OR "response" ->> 'mode' = 'dictate'
+					OR (
+						jsonb_typeof("response" -> 'transcript') = 'string'
+						AND char_length("response" ->> 'transcript') > 0
+					)
 			), false) AS "used_dictation"
 	FROM "journal_source"
 ),
@@ -332,7 +482,5 @@ SET
 	"response" = "journal_summary"."response",
 	"score" = "journal_summary"."score"
 FROM "journal_summary"
-WHERE "attempt"."id" = "journal_summary"."id";
-
--- Future surgical repair of preserved mixed histories requires per-evidence
--- attempt provenance (or a full replay ledger that also captures placement events).
+WHERE "attempt"."id" = "journal_summary"."id";--> statement-breakpoint
+ALTER TABLE "attempt" VALIDATE CONSTRAINT "attempt_journal_summary_only_ck";

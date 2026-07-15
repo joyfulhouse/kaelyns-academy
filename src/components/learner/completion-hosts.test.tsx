@@ -9,8 +9,10 @@ const fixtures = vi.hoisted(() => {
   return {
     TestPlayer,
     record: vi.fn(),
+    routerReplace: vi.fn(),
     authoredRequestKey: "authored-old",
     generatedRequestKey: "generated-old",
+    programVersionId: "PV1",
     refIndex: 0,
     refValues: [] as { current: unknown }[],
     stateIndex: 0,
@@ -42,6 +44,7 @@ const fixtures = vi.hoisted(() => {
       lessonId: "lesson-1",
       unitKey: "unit-1",
       programSlug: "kaelyn-adaptive",
+      programVersionId: "PV1" as string | null,
       kind: "math-clock",
       title: "Fresh clocks",
       config: { mode: "set", targetHour: 6, targetMinute: 0 },
@@ -53,7 +56,9 @@ const fixtures = vi.hoisted(() => {
 
 vi.mock("react", async (importActual) => ({
   ...(await importActual<typeof import("react")>()),
-  useEffect: () => undefined,
+  useEffect: (effect: () => void | (() => void)) => {
+    effect();
+  },
   useRef: (initial: unknown) => {
     const index = fixtures.refIndex++;
     if (index >= fixtures.refValues.length) fixtures.refValues[index] = { current: initial };
@@ -73,7 +78,9 @@ vi.mock("react", async (importActual) => ({
   },
 }));
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: fixtures.routerReplace }),
+}));
 vi.mock("motion/react", () => ({
   AnimatePresence: "animate-presence",
   motion: { div: "motion-div", span: "motion-span" },
@@ -96,6 +103,7 @@ vi.mock("./useLearnerState", () => ({
     signedIn: true,
     config: {},
     selectedLearnerId: "L1",
+    programVersionId: fixtures.programVersionId,
     program: null,
     mode: "account",
     available: true,
@@ -104,7 +112,7 @@ vi.mock("./useLearnerState", () => ({
   }),
 }));
 vi.mock("./activityResolution", () => ({
-  generatedPracticeRequestKey: () => fixtures.generatedRequestKey,
+  generatedPracticeRequestKey: vi.fn(() => fixtures.generatedRequestKey),
   playerIdentityKey: (input: { variant?: string }) =>
     input.variant === "authored"
       ? fixtures.authoredRequestKey
@@ -134,6 +142,7 @@ vi.mock("@/components/ui/Button", () => ({ Button: "button" }));
 
 import { ActivityHost } from "./ActivityHost";
 import { GeneratedPracticeHost } from "./GeneratedPracticeHost";
+import { generatedPracticeRequestKey } from "./activityResolution";
 
 const COMPLETION_ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_COMPLETION_ID = "22222222-2222-4222-8222-222222222222";
@@ -209,6 +218,8 @@ const hostCases = [
     name: "GeneratedPracticeHost",
     render: renderGeneratedHost,
     switchIdentity: () => {
+      fixtures.programVersionId = "PV2";
+      fixtures.generatedRow.programVersionId = "PV2";
       fixtures.generatedRequestKey = "generated-new";
     },
     newRequestKey: "generated-new",
@@ -225,6 +236,8 @@ describe("completion host retry identity", () => {
     fixtures.stateSetters = [];
     fixtures.authoredRequestKey = "authored-old";
     fixtures.generatedRequestKey = "generated-old";
+    fixtures.programVersionId = "PV1";
+    fixtures.generatedRow.programVersionId = "PV1";
     vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(COMPLETION_ID);
   });
 
@@ -348,6 +361,32 @@ describe("completion host retry identity", () => {
     );
   });
 
+  it("GeneratedPracticeHost refetches and remounts on a same-route PV1 to PV2 repin", () => {
+    const first = renderGeneratedHost();
+    const firstFrame = findElement(first, (element) => element.key === "player:generated-old");
+    expect(generatedPracticeRequestKey).toHaveBeenLastCalledWith(
+      "L1",
+      "kaelyn-adaptive",
+      "gen-1",
+      "PV1",
+    );
+
+    fixtures.programVersionId = "PV2";
+    fixtures.generatedRow.programVersionId = "PV2";
+    fixtures.generatedRequestKey = "generated-pv2";
+    const second = renderGeneratedHost();
+    const secondFrame = findElement(second, (element) => element.key === "player:generated-pv2");
+
+    expect(generatedPracticeRequestKey).toHaveBeenLastCalledWith(
+      "L1",
+      "kaelyn-adaptive",
+      "gen-1",
+      "PV2",
+    );
+    expect(firstFrame).not.toBeNull();
+    expect(secondFrame).not.toBeNull();
+  });
+
   it.each(hostCases)(
     "$name ignores an old success while a newer identity is saving",
     async ({ render, switchIdentity, newRequestKey }) => {
@@ -465,5 +504,42 @@ describe("completion host retry identity", () => {
       response: RESPONSE,
       completionId: COMPLETION_ID,
     });
+  });
+
+  it("GeneratedPracticeHost leaves a spent item without offering an impossible retry", async () => {
+    fixtures.record.mockResolvedValueOnce({ ok: false, reason: "completed" });
+    const first = renderGeneratedHost();
+    const player = findElement(first, (element) => element.type === fixtures.TestPlayer);
+
+    (player?.props.onComplete as (response: unknown) => void)(RESPONSE);
+    await flushCompletion();
+
+    const redirected = renderGeneratedHost();
+    expect(fixtures.routerReplace).toHaveBeenCalledWith(
+      "/learn/kaelyn-adaptive/unit-1",
+    );
+    expect(
+      findElement(redirected, (element) => typeof element.props.onRetry === "function"),
+    ).toBeNull();
+    expect(fixtures.stateValues[0]).not.toMatchObject({ kind: "save-failed" });
+  });
+
+  it("GeneratedPracticeHost ignores an old completed result after identity changes", async () => {
+    const oldRequest = deferred<{ ok: false; reason: "completed" }>();
+    fixtures.record.mockReturnValueOnce(oldRequest.promise);
+    const first = renderGeneratedHost();
+    const player = findElement(first, (element) => element.type === fixtures.TestPlayer);
+
+    (player?.props.onComplete as (response: unknown) => void)(RESPONSE);
+    fixtures.programVersionId = "PV2";
+    fixtures.generatedRow.programVersionId = "PV2";
+    fixtures.generatedRequestKey = "generated-new";
+    renderGeneratedHost();
+
+    oldRequest.resolve({ ok: false, reason: "completed" });
+    await flushCompletion();
+    renderGeneratedHost();
+
+    expect(fixtures.routerReplace).not.toHaveBeenCalled();
   });
 });

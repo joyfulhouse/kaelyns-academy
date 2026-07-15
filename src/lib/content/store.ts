@@ -236,16 +236,15 @@ export async function getProgramVersionTreeRows(
   });
   if (!versionRow) return null;
 
-  // Resolve slug: prefer the hint (already known from the program lookup) to
-  // avoid a second query; fall back to fetching the parent program row.
-  let programSlug = slugHint;
-  if (!programSlug) {
-    const programRow = await db.query.program.findFirst({
-      where: (p) => eq(p.id, versionRow.programId),
-    });
-    if (!programRow) return null;
-    programSlug = programRow.slug;
-  }
+  // A program's publishedVersionId is intentionally a loose reference to avoid
+  // a circular FK, and enrollment pins are globally-addressable version ids.
+  // Always resolve the real parent; a hint may optimize no authority and must
+  // never relabel a version owned by another program.
+  const programRow = await db.query.program.findFirst({
+    where: (p) => eq(p.id, versionRow.programId),
+  });
+  if (!programRow || (slugHint !== undefined && programRow.slug !== slugHint)) return null;
+  const programSlug = programRow.slug;
 
   const { units, lessons, activities } = await loadVersionTreeRows(versionId);
 

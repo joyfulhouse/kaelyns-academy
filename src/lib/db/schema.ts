@@ -1,4 +1,5 @@
-import { pgTable, serial, timestamp, text, jsonb, date, boolean, uniqueIndex, index, integer } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, serial, timestamp, text, jsonb, date, boolean, uniqueIndex, index, integer, check } from "drizzle-orm/pg-core";
 import { user } from "./auth-schema";
 import type { EnrollmentConfig, LearnerSettings } from "@/lib/content/config";
 import type { QuestProgress, QuestTarget } from "@/lib/quests/config";
@@ -203,6 +204,61 @@ export const attempt = pgTable(
     // filtering every attempt row for the learner.
     index("attempt_learner_generated_idx").on(t.learnerId, t.generated),
     uniqueIndex("attempt_learner_completion_uq").on(t.learnerId, t.completionId),
+    // Privacy must survive a pre-sync rolling deploy or application rollback.
+    // Migration 0017 first adds a BEFORE trigger that turns unsafe old-pod DML
+    // into a no-op (so no parameter-bearing DB error can reach telemetry), then
+    // validates this CHECK as an independent summary-only backstop.
+    check(
+      "attempt_journal_summary_only_ck",
+	      sql`${t.kind} <> 'journal-prompt' OR COALESCE(
+	        jsonb_typeof(${t.response}) = 'object'
+	        AND CASE
+	          WHEN jsonb_typeof(${t.response}) = 'object'
+	            THEN ${t.response} ?& ARRAY['markCount', 'textLength', 'usedDictation', 'mode', 'didDraw']
+	          ELSE false
+	        END
+	        AND CASE
+	          WHEN jsonb_typeof(${t.response}) = 'object'
+	            THEN ${t.response} - ARRAY['markCount', 'textLength', 'usedDictation', 'mode', 'didDraw']::text[]
+	          ELSE NULL
+	        END IS NOT DISTINCT FROM '{}'::jsonb
+        AND CASE
+          WHEN jsonb_typeof(${t.response} -> 'markCount') = 'number'
+            THEN (${t.response} ->> 'markCount')::numeric BETWEEN 0 AND 200
+              AND trunc((${t.response} ->> 'markCount')::numeric) = (${t.response} ->> 'markCount')::numeric
+          ELSE false
+        END
+        AND CASE
+          WHEN jsonb_typeof(${t.response} -> 'textLength') = 'number'
+            THEN (${t.response} ->> 'textLength')::numeric BETWEEN 0 AND 2000
+              AND trunc((${t.response} ->> 'textLength')::numeric) = (${t.response} ->> 'textLength')::numeric
+          ELSE false
+        END
+        AND ${t.response} -> 'usedDictation' IN ('true'::jsonb, 'false'::jsonb)
+        AND ${t.response} ->> 'mode' IN ('draw', 'scribe', 'type', 'dictate')
+	        AND ${t.response} -> 'didDraw' IN ('true'::jsonb, 'false'::jsonb)
+	        AND jsonb_typeof(${t.score}) = 'object'
+	        AND CASE
+	          WHEN jsonb_typeof(${t.score}) = 'object'
+	            THEN ${t.score} ?& ARRAY['correct', 'total', 'stars', 'skillEvidence']
+	          ELSE false
+	        END
+	        AND CASE
+	          WHEN jsonb_typeof(${t.score}) = 'object'
+	            THEN ${t.score} - ARRAY['correct', 'total', 'stars', 'skillEvidence']::text[]
+	          ELSE NULL
+	        END IS NOT DISTINCT FROM '{}'::jsonb
+        AND ${t.score} -> 'correct' = '1'::jsonb
+        AND ${t.score} -> 'total' = '1'::jsonb
+        AND CASE
+          WHEN jsonb_typeof(${t.score} -> 'stars') = 'number'
+            THEN (${t.score} ->> 'stars')::numeric BETWEEN 1 AND 3
+              AND trunc((${t.score} ->> 'stars')::numeric) = (${t.score} ->> 'stars')::numeric
+          ELSE false
+        END
+        AND ${t.score} -> 'skillEvidence' = '[]'::jsonb
+      , false)`,
+    ),
   ],
 );
 
@@ -347,6 +403,10 @@ export const generatedActivity = pgTable(
       .notNull()
       .references(() => learner.id, { onDelete: "cascade" }),
     programSlug: text("program_slug").notNull(),
+    /** Exact content tree used to derive this item; null only on legacy rows. */
+    programVersionId: text("program_version_id").references(() => programVersion.id, {
+      onDelete: "set null",
+    }),
     /** Stable authored unit key (locates the shelf on the map). */
     unitKey: text("unit_key").notNull(),
     /** Stable authored lesson id the batch was generated for. */

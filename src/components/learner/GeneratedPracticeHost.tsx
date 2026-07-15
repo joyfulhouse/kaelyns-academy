@@ -66,14 +66,27 @@ export function GeneratedPracticeHost({
   // One state seam (DB-backed in account mode); the shelf route requires a
   // session, so `record` always takes the account path here.
   const learnerState = useLearnerState(learner.id, programSlug);
-  const { record, config, mode, ready, selectedLearnerId, available } = learnerState;
+  const {
+    record,
+    config,
+    mode,
+    ready,
+    selectedLearnerId,
+    available,
+    programVersionId,
+  } = learnerState;
   const [phase, setPhase] = useState<Phase>({ kind: "playing" });
   const [loaded, setLoaded] = useState<LoadedGeneratedPractice<PlayableShelfItem> | null>(null);
   const completionClaimRef = useRef<CompletionClaim | null>(null);
 
   const requestKey =
-    mode === "account" && ready && available && selectedLearnerId
-      ? generatedPracticeRequestKey(selectedLearnerId, programSlug, generatedId)
+    mode === "account" && ready && available && selectedLearnerId && programVersionId
+      ? generatedPracticeRequestKey(
+          selectedLearnerId,
+          programSlug,
+          generatedId,
+          programVersionId,
+        )
       : null;
 
   // Resolve the row only after session + selected learner + pinned program state
@@ -93,7 +106,7 @@ export function GeneratedPracticeHost({
     return () => {
       active = false;
     };
-  }, [requestKey, selectedLearnerId, programSlug, generatedId]);
+  }, [requestKey, selectedLearnerId, programSlug, generatedId, programVersionId]);
 
   const resolution = resolveGeneratedPractice({
     mode,
@@ -101,6 +114,7 @@ export function GeneratedPracticeHost({
     available,
     selectedLearnerId,
     programSlug,
+    programVersionId,
     generatedId,
     activeUnitKeys: config.activeUnitKeys,
     loaded,
@@ -122,6 +136,12 @@ export function GeneratedPracticeHost({
   const program = getProgram(programSlug);
   const world: World =
     (row && program ? getUnit(program, row.unitKey)?.world : undefined) ?? "sunshine";
+
+  useEffect(() => {
+    if (phase.kind === "completed" && phase.requestKey === requestKey) {
+      router.replace(backHref);
+    }
+  }, [backHref, phase, requestKey, router]);
 
   // Record identifiers + response facts only. The server re-loads this same
   // learner-owned row and returns the canonical score before reward. Phase keys
@@ -153,6 +173,12 @@ export function GeneratedPracticeHost({
       );
     } catch {
       settle({ kind: "save-failed", requestKey, response, completionId });
+      return;
+    }
+    if (!result.ok && result.reason === "completed") {
+      // Another tab/device completed this one-shot after this page loaded. Move
+      // calmly back to its unit instead of offering a retry that can never win.
+      settle({ kind: "completed", requestKey, completionId });
       return;
     }
     settle(
@@ -216,11 +242,14 @@ export function GeneratedPracticeHost({
       title: row.title,
       skillTags: row.skillTags,
       gen: row.gen,
+      programVersionId: row.programVersionId,
     },
     config: parsed.config,
   });
   const showReward = phase.kind === "reward" && phase.requestKey === requestKey;
-  const showSaving = phase.kind === "saving" && phase.requestKey === requestKey;
+  const showSaving =
+    (phase.kind === "saving" || phase.kind === "completed") &&
+    phase.requestKey === requestKey;
   const showSaveFailed = phase.kind === "save-failed" && phase.requestKey === requestKey;
 
   return (
@@ -230,7 +259,7 @@ export function GeneratedPracticeHost({
           <AnimatePresence mode="wait">
           {showReward && phase.kind === "reward" ? (
             <ShelfReward key="reward" stars={phase.stars} backHref={backHref} />
-          ) : showSaving && phase.kind === "saving" ? (
+          ) : showSaving ? (
             <ShelfSaving key="saving" />
           ) : showSaveFailed && phase.kind === "save-failed" ? (
             <ShelfSaveFailed
@@ -268,6 +297,7 @@ export function GeneratedPracticeHost({
 type Phase =
   | { kind: "playing" }
   | { kind: "saving"; requestKey: string; response: unknown; completionId: string }
+  | { kind: "completed"; requestKey: string; completionId: string }
   | { kind: "save-failed"; requestKey: string; response: unknown; completionId: string }
   | { kind: "reward"; requestKey: string; stars: 0 | 1 | 2 | 3 };
 

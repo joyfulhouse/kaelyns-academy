@@ -120,6 +120,7 @@ describe("useLearnerState record completion", () => {
       [],
       [],
       null,
+      "PV1",
       true,
       "L1:kaelyn-adaptive",
     ];
@@ -137,9 +138,11 @@ describe("useLearnerState record completion", () => {
       dueReviews: [],
       config: {},
       program: null,
+      programVersionId: null,
       available: false,
     });
     const state = useLearnerState("guest-1", "kaelyn-adaptive");
+    expect(state.programVersionId).toBe("PV1");
     const completionId = "11111111-1111-4111-8111-111111111111";
 
     await expect(
@@ -206,6 +209,7 @@ describe("useLearnerState record completion", () => {
       dueReviews: [],
       config: {},
       program: null,
+      programVersionId: null,
       available: false,
     });
 

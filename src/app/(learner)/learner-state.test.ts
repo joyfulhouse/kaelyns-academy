@@ -33,7 +33,7 @@ vi.mock("@/lib/tutor/store", () => ({
 
 // The resolver for the learner's pinned tree.
 vi.mock("@/lib/content/repository", () => ({
-  resolveAccountLearnerProgram: vi.fn(),
+  resolveProgramForEnrollmentVersion: vi.fn(),
   listProgramsAsync: vi.fn(),
 }));
 
@@ -44,7 +44,7 @@ vi.mock("@/content", () => ({
 }));
 
 import type { Program } from "@/content";
-import { resolveAccountLearnerProgram } from "@/lib/content/repository";
+import { resolveProgramForEnrollmentVersion } from "@/lib/content/repository";
 import {
   ensureEnrollment,
   getCompletedActivityIds,
@@ -66,7 +66,7 @@ beforeEach(() => {
   vi.mocked(getDueReviews).mockResolvedValue([]);
   vi.mocked(getEnrollmentConfig).mockResolvedValue({});
   vi.mocked(getLearnerSettings).mockResolvedValue({});
-  vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+  vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(PROGRAM);
   vi.mocked(listGeneratedShelf).mockResolvedValue([]);
   vi.mocked(getGeneratedCompletions).mockResolvedValue([]);
   // Default: an active enrollment → playable.
@@ -86,8 +86,9 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
     expect(res.status).toBe("ok");
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();
+    expect(res.programVersionId).toBeNull();
     // The pinned tree is never resolved when the gate is closed.
-    expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
+    expect(resolveProgramForEnrollmentVersion).not.toHaveBeenCalled();
   });
 
   it("returns available:false (no program) when the enrollment is removed", async () => {
@@ -126,7 +127,7 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
 
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();
-    expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
+    expect(resolveProgramForEnrollmentVersion).not.toHaveBeenCalled();
   });
 
   it("returns available:true + the pinned program for an ACTIVE enrollment", async () => {
@@ -139,6 +140,7 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(true);
     expect(res.program).toBe(PROGRAM);
+    expect(res.programVersionId).toBe("PV1");
   });
 
   it("surfaces due authored reviews for an active enrollment", async () => {
@@ -157,7 +159,8 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
     expect(getDueReviews).toHaveBeenCalledWith(
       "acc-1",
       "L1",
-      "kaelyn-adaptive",
+      PROGRAM,
+      "PV1",
       expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
     );
   });
@@ -181,7 +184,7 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
       configValid: true,
       programVersionId: "PV1",
     });
-    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(undefined);
+    vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(undefined);
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();

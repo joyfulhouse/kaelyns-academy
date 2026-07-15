@@ -120,6 +120,13 @@
       "when": 1784132785698,
       "tag": "0016_crazy_mentallo",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1784138156676,
+      "tag": "0017_lumpy_zaran",
+      "breakpoints": true
     }
   ]
 }

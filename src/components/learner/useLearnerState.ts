@@ -106,6 +106,8 @@ export interface UseLearnerState {
    * that window so the map never blanks/flickers.
    */
   program: Program | null;
+  /** Exact enrollment version captured with the active account-state snapshot. */
+  programVersionId: string | null;
   /**
    * Account-mode curation signal (Fix-F A3): whether the active learner may play
    * this program — true ONLY when they have an ACTIVE enrollment for the slug
@@ -208,6 +210,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   // Set from the same action result as the state above, so the rendered map and
   // the scoped progress are guaranteed the same version (C#5).
   const [accountProgram, setAccountProgram] = useState<Program | null>(null);
+  const [accountProgramVersionId, setAccountProgramVersionId] = useState<string | null>(null);
   // Whether the loaded (learner, program) is playable (active enrollment) — the
   // server's curation signal (Fix-F A3). Set from the same action result.
   const [accountAvailable, setAccountAvailable] = useState(false);
@@ -297,6 +300,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
         dueReviews,
         config,
         program,
+        programVersionId,
         available,
       } = result;
       setAccountSkill(skillState);
@@ -310,6 +314,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       // The resolved (pinned) tree for this load. Null on unauth/failure/unknown
       // slug → the caller keeps showing the server-passed published prop.
       setAccountProgram(program);
+      setAccountProgramVersionId(programVersionId);
       // The curation signal for this load (Fix-F A3): false → not playable, the
       // surface shows the calm "ask a grown-up" state in account mode.
       setAccountAvailable(available);
@@ -452,6 +457,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       record,
       config: accountConfig,
       program: loadedForActive ? accountProgram : null,
+      programVersionId: loadedForActive ? accountProgramVersionId : null,
       // Curation (Fix-F A3): only enforce once the loaded state belongs to the
       // active (learner, program). While loading (!loadedForActive) report
       // `true` so the surface shows the loading beat, not a flash of the block
@@ -487,6 +493,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       config: {},
       // Guest mode renders entirely from the server-passed published prop.
       program: null,
+      programVersionId: null,
       // Guests have no enrollments and play every published program — curation
       // is account-mode only, so guest mode is always available.
       available: true,
@@ -513,6 +520,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
     record,
     config: {},
     program: null,
+    programVersionId: null,
     // During the loading beat, report available so the surface shows the loading
     // state — not a flash of the "ask a grown-up" block — until mode resolves.
     available: true,

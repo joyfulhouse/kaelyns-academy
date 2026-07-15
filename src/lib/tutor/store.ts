@@ -22,7 +22,7 @@ import {
   user,
   verification,
 } from "@/lib/db/schema";
-import type { Activity, ActivityScore, Lesson, SkillOutcome, SkillTag, Unit } from "@/content";
+import type { Activity, ActivityScore, Lesson, Program, SkillOutcome, SkillTag, Unit } from "@/content";
 import type { ActivityKind } from "@/content/activity-configs";
 import { SHELF_BATCH, SHELF_LESSON_CAP } from "./shelf";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
@@ -388,6 +388,15 @@ export class EnrollmentVersionChangedError extends Error {
   }
 }
 
+/** A durable generated shelf item is a one-shot. A different completion token
+ * may not replay it after its first successful attempt. */
+export class GeneratedActivityAlreadyCompletedError extends Error {
+  constructor(activityId: string) {
+    super(`Generated shelf activity "${activityId}" was already completed`);
+    this.name = "GeneratedActivityAlreadyCompletedError";
+  }
+}
+
 /** A completion UUID may only ever identify one immutable attempt identity. */
 export class CompletionReplayMismatchError extends Error {
   constructor() {
@@ -553,6 +562,29 @@ async function recordAttemptInTransaction(
     // so an authored row can never carry gen_* metadata even if a caller passes it.
     const generated = input.generated ?? false;
     const provenance = generated ? input.provenance : undefined;
+
+    // The locked enrollment row above serializes every attempt for this
+    // learner+program. Check the one-shot shelf contract while that lock is
+    // held, before the attempt insert or ANY mastery/review/quest/ledger fold.
+    // Same-completion retries continue into the ordinary idempotent replay path.
+    if (generated && input.shelfEligible === true) {
+      const priorShelfCompletions = await tx
+        .select({ completionId: attempt.completionId })
+        .from(attempt)
+        .where(
+          and(
+            eq(attempt.learnerId, input.learnerId),
+            eq(attempt.activityId, input.activityId),
+            eq(attempt.generated, true),
+          ),
+        )
+        .limit(1);
+      const priorCompletion = priorShelfCompletions[0];
+      if (priorCompletion && priorCompletion.completionId !== input.completionId) {
+        throw new GeneratedActivityAlreadyCompletedError(input.activityId);
+      }
+    }
+
     const inserted = await tx
       .insert(attempt)
       .values({
@@ -944,51 +976,51 @@ const MAX_DUE_SKILLS = 24;
 const MAX_DUE_REVIEWS = 8;
 
 /**
- * Resolve due skill schedules to replayable authored activities in the
- * learner's version-pinned program tree. The read is account-owned, scoped to
- * one program and calendar day, and omits authored activities already played
- * today so the Warm-up row never immediately repeats completed work.
+ * Resolve due skill schedules against the caller's already-resolved exact
+ * program tree. The read is account-owned and omits only authored activities
+ * played today under that same program + version identity, so another program,
+ * an older pin, or ambiguous legacy attempts cannot suppress this Warm-up row.
  */
 export async function getDueReviews(
   accountId: string,
   learnerId: string,
-  programSlug: string,
+  program: Program,
+  programVersionId: string | null,
   today: string,
 ): Promise<DueReview[]> {
   return withOwnedLearner<DueReview[]>(
     accountId,
     learnerId,
     async () => {
-      // Lazy to keep the repository ↔ tutor-store enrollment-pin seam free of a
-      // module-initialization cycle. No resolver or DB factory runs at import time.
-      const { resolveAccountLearnerProgram } = await import("@/lib/content/repository");
-      const program = await resolveAccountLearnerProgram(accountId, learnerId, programSlug);
-      if (!program) return [];
-
+      const db = getDb();
       const [scheduled, completedToday] = await Promise.all([
-        getDb()
+        db
           .select()
           .from(reviewSchedule)
           .where(
             and(
               eq(reviewSchedule.learnerId, learnerId),
-              eq(reviewSchedule.programSlug, programSlug),
+              eq(reviewSchedule.programSlug, program.slug),
               lte(reviewSchedule.nextReviewOn, today),
             ),
           )
           .orderBy(asc(reviewSchedule.nextReviewOn), asc(reviewSchedule.skill))
           .limit(MAX_DUE_SKILLS),
-        getDb()
-          .select({ activityId: attempt.activityId })
-          .from(attempt)
-          .where(
-            and(
-              eq(attempt.learnerId, learnerId),
-              eq(attempt.day, today),
-              eq(attempt.generated, false),
-            ),
-          )
-          .limit(5000),
+        programVersionId
+          ? db
+              .select({ activityId: attempt.activityId })
+              .from(attempt)
+              .where(
+                and(
+                  eq(attempt.learnerId, learnerId),
+                  eq(attempt.programSlug, program.slug),
+                  eq(attempt.programVersionId, programVersionId),
+                  eq(attempt.day, today),
+                  eq(attempt.generated, false),
+                ),
+              )
+              .limit(5000)
+          : Promise.resolve([]),
       ]);
       const completedIds = new Set(completedToday.map((row) => row.activityId));
       const seenActivityIds = new Set<string>();
@@ -1409,6 +1441,39 @@ export async function getCompletedActivityIds(
   );
 }
 
+/** Authored completion witness for generation only. Unlike the learner-state
+ * progress read above, this is deliberately pinned to one exact content
+ * version so stable ids completed on an older tree cannot unlock fresh AI work
+ * for a newly assigned tree. */
+export async function getCompletedActivityIdsForVersion(
+  accountId: string,
+  learnerId: string,
+  programSlug: string,
+  programVersionId: string,
+): Promise<CompletedActivity[]> {
+  return withOwnedLearner<CompletedActivity[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select({ activityId: attempt.activityId, score: attempt.score })
+        .from(attempt)
+        .where(
+          and(
+            eq(attempt.learnerId, learnerId),
+            eq(attempt.generated, false),
+            eq(attempt.programSlug, programSlug),
+            eq(attempt.programVersionId, programVersionId),
+          ),
+        )
+        .orderBy(desc(attempt.createdAt))
+        .limit(5000);
+      return foldBestStars(rows);
+    },
+    [],
+  );
+}
+
 /**
  * Best stars (0..3) per GENERATED attempt (generated=true), folded like
  * {@link getCompletedActivityIds}. A generated SHELF item is a durable, one-time
@@ -1481,6 +1546,7 @@ export interface GeneratedActivityRow {
   lessonId: string;
   unitKey: string;
   programSlug: string;
+  programVersionId: string;
   kind: ActivityKind;
   title: string;
   config: unknown;
@@ -1502,6 +1568,7 @@ export interface PlayableShelfItem {
   lessonId: string;
   unitKey: string;
   programSlug: string;
+  programVersionId: string;
   kind: ActivityKind;
   title: string;
   config: unknown;
@@ -1520,13 +1587,15 @@ export async function getPlayableGeneratedActivity(
   accountId: string,
   learnerId: string,
   programSlug: string,
+  programVersionId: string,
   id: string,
 ): Promise<PlayableShelfItem | null> {
   return withOwnedLearner<PlayableShelfItem | null>(
     accountId,
     learnerId,
     async () => {
-      const rows = await getDb()
+      const db = getDb();
+      const rows = await db
         .select()
         .from(generatedActivity)
         .where(
@@ -1534,17 +1603,31 @@ export async function getPlayableGeneratedActivity(
             eq(generatedActivity.id, id),
             eq(generatedActivity.learnerId, learnerId),
             eq(generatedActivity.programSlug, programSlug),
+            eq(generatedActivity.programVersionId, programVersionId),
           ),
         )
         .limit(1);
       const row = rows[0];
       if (!row) return null;
+      const spent = await db
+        .select({ completionId: attempt.completionId })
+        .from(attempt)
+        .where(
+          and(
+            eq(attempt.learnerId, learnerId),
+            eq(attempt.activityId, row.id),
+            eq(attempt.generated, true),
+          ),
+        )
+        .limit(1);
+      if (spent[0]) return null;
       return {
         id: row.id,
         learnerId: row.learnerId,
         lessonId: row.lessonId,
         unitKey: row.unitKey,
         programSlug: row.programSlug,
+        programVersionId,
         kind: row.kind as ActivityKind,
         title: row.title,
         config: row.config,
@@ -1595,6 +1678,7 @@ function toShelfItem(r: typeof generatedActivity.$inferSelect): ShelfItem {
  */
 export interface LessonGenerationScope {
   programSlug: string;
+  programVersionId: string;
   unitKey: string;
   lessonId: string;
 }
@@ -1637,6 +1721,9 @@ export async function withLessonGenerationLock(
     ) {
       return [];
     }
+    if (activeEnrollment.programVersionId !== scope.programVersionId) {
+      throw new EnrollmentVersionChangedError(learnerId, scope.programSlug);
+    }
 
     // Re-read this lesson's shelf INSIDE the lock so the idempotency + cap
     // decisions (and the room passed to generate) race against the SAME snapshot
@@ -1648,6 +1735,7 @@ export async function withLessonGenerationLock(
         and(
           eq(generatedActivity.learnerId, learnerId),
           eq(generatedActivity.programSlug, scope.programSlug),
+          eq(generatedActivity.programVersionId, scope.programVersionId),
           eq(generatedActivity.unitKey, scope.unitKey),
           eq(generatedActivity.lessonId, scope.lessonId),
         ),
@@ -1672,9 +1760,10 @@ export async function withLessonGenerationLock(
       .values(
         newRows.slice(0, room).map((r) => ({
           learnerId,
-          programSlug: r.programSlug,
-          unitKey: r.unitKey,
-          lessonId: r.lessonId,
+          programSlug: scope.programSlug,
+          programVersionId: scope.programVersionId,
+          unitKey: scope.unitKey,
+          lessonId: scope.lessonId,
           kind: r.kind,
           title: r.title,
           config: r.config,
@@ -1698,6 +1787,7 @@ export async function listGeneratedShelf(
   accountId: string,
   learnerId: string,
   programSlug: string,
+  programVersionId: string,
 ): Promise<ShelfItem[]> {
   return withOwnedLearner<ShelfItem[]>(
     accountId,
@@ -1710,6 +1800,7 @@ export async function listGeneratedShelf(
           and(
             eq(generatedActivity.learnerId, learnerId),
             eq(generatedActivity.programSlug, programSlug),
+            eq(generatedActivity.programVersionId, programVersionId),
           ),
         )
         .orderBy(asc(generatedActivity.createdAt));
@@ -1728,6 +1819,8 @@ export async function listGeneratedShelf(
 export async function getGeneratedActivity(
   accountId: string,
   learnerId: string,
+  programSlug: string,
+  programVersionId: string,
   id: string,
 ): Promise<GeneratedActivityRow | null> {
   return withOwnedLearner<GeneratedActivityRow | null>(
@@ -1737,7 +1830,14 @@ export async function getGeneratedActivity(
       const rows = await getDb()
         .select()
         .from(generatedActivity)
-        .where(and(eq(generatedActivity.id, id), eq(generatedActivity.learnerId, learnerId)))
+        .where(
+          and(
+            eq(generatedActivity.id, id),
+            eq(generatedActivity.learnerId, learnerId),
+            eq(generatedActivity.programSlug, programSlug),
+            eq(generatedActivity.programVersionId, programVersionId),
+          ),
+        )
         .limit(1);
       const r = rows[0];
       if (!r) return null;
@@ -1746,6 +1846,7 @@ export async function getGeneratedActivity(
         lessonId: r.lessonId,
         unitKey: r.unitKey,
         programSlug: r.programSlug,
+        programVersionId,
         kind: r.kind as ActivityKind,
         title: r.title,
         config: r.config,
@@ -2282,6 +2383,7 @@ async function gatherLearnerExport(
       createdAt: r.createdAt.toISOString(),
     })),
     generatedActivities: generatedActivityRows.map((g) => ({
+      programVersionId: g.programVersionId,
       unitKey: g.unitKey,
       lessonId: g.lessonId,
       kind: g.kind,

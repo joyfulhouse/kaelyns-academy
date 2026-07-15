@@ -30,6 +30,7 @@ const enrollmentRows = {
 };
 const existingRows = { value: [] as Record<string, unknown>[] };
 const insertedRows = { value: [] as Record<string, unknown>[] };
+const insertedValues: Record<string, unknown>[] = [];
 const lockKeys: string[] = [];
 const generatedWhere = { value: [] as unknown[] };
 
@@ -58,7 +59,10 @@ function builder(op: string, table = "unknown") {
     for() {
       return chain;
     },
-    values() {
+    values(values?: Record<string, unknown> | Record<string, unknown>[]) {
+      if (table === "generated_activity" && values) {
+        insertedValues.push(...(Array.isArray(values) ? values : [values]));
+      }
       return chain;
     },
     returning() {
@@ -117,6 +121,7 @@ vi.mock("@/lib/db/schema", () => ({
     id: {},
     learnerId: "generated_activity.learner_id",
     programSlug: "generated_activity.program_slug",
+    programVersionId: "generated_activity.program_version_id",
     unitKey: "generated_activity.unit_key",
     lessonId: "generated_activity.lesson_id",
     createdAt: {},
@@ -153,6 +158,7 @@ function genRow(id: string): Record<string, unknown> {
     title: `Fresh: ${id}`,
     skillTags: [],
     createdAt: new Date("2026-07-01T00:00:00.000Z"),
+    programVersionId: "V1",
   };
 }
 
@@ -173,6 +179,7 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
     ];
     existingRows.value = [];
     insertedRows.value = [];
+    insertedValues.length = 0;
     lockKeys.length = 0;
     generatedWhere.value = [];
   });
@@ -201,7 +208,12 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
     const items = await withLessonGenerationLock(
       "acc-1",
       "L1",
-      { programSlug: "p", unitKey: "u1", lessonId: "u1-l1" },
+      {
+        programSlug: "p",
+        programVersionId: "V1",
+        unitKey: "u1",
+        lessonId: "u1-l1",
+      },
       false,
       generate,
     );
@@ -219,11 +231,20 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
     expect(generatedWhere.value).toEqual([
       { column: "generated_activity.learner_id", value: "L1" },
       { column: "generated_activity.program_slug", value: "p" },
+      { column: "generated_activity.program_version_id", value: "V1" },
       { column: "generated_activity.unit_key", value: "u1" },
       { column: "generated_activity.lesson_id", value: "u1-l1" },
     ]);
     expect(items).toHaveLength(1);
     expect(items[0]!.id).toBe("g1");
+    expect(insertedValues).toEqual([
+      expect.objectContaining({
+        programSlug: "p",
+        programVersionId: "V1",
+        unitKey: "u1",
+        lessonId: "u1-l1",
+      }),
+    ]);
   });
 
   it("a race loser sees the winner's rows under the lock and returns them WITHOUT a model call (no spend)", async () => {
@@ -238,7 +259,12 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
     const items = await withLessonGenerationLock(
       "acc-1",
       "L1",
-      { programSlug: "p", unitKey: "u1", lessonId: "u1-l1" },
+      {
+        programSlug: "p",
+        programVersionId: "V1",
+        unitKey: "u1",
+        lessonId: "u1-l1",
+      },
       false,
       generate,
     );
@@ -262,7 +288,12 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
       withLessonGenerationLock(
         "acc-2",
         "L1",
-        { programSlug: "p", unitKey: "u1", lessonId: "u1-l1" },
+        {
+          programSlug: "p",
+          programVersionId: "V1",
+          unitKey: "u1",
+          lessonId: "u1-l1",
+        },
         false,
         generate,
       ),
@@ -295,11 +326,48 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
       withLessonGenerationLock(
         "acc-1",
         "L1",
-        { programSlug: "p", unitKey: "u1", lessonId: "u1-l1" },
+        {
+          programSlug: "p",
+          programVersionId: "V1",
+          unitKey: "u1",
+          lessonId: "u1-l1",
+        },
         false,
         generate,
       ),
     ).resolves.toEqual([]);
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(ops).toEqual(["lock", "select:learner", "select:enrollment"]);
+  });
+
+  it("rejects a concurrent enrollment repin under the lock before recount or model spend", async () => {
+    enrollmentRows.value = [
+      {
+        id: "E1",
+        learnerId: "L1",
+        programSlug: "p",
+        status: "active",
+        config: {},
+        programVersionId: "V2",
+      },
+    ];
+    const generate = vi.fn();
+
+    await expect(
+      withLessonGenerationLock(
+        "acc-1",
+        "L1",
+        {
+          programSlug: "p",
+          programVersionId: "V1",
+          unitKey: "u1",
+          lessonId: "u1-l1",
+        },
+        false,
+        generate,
+      ),
+    ).rejects.toThrow(/version changed/i);
 
     expect(generate).not.toHaveBeenCalled();
     expect(ops).toEqual(["lock", "select:learner", "select:enrollment"]);

@@ -108,6 +108,35 @@ describe("resolveAccountLearnerProgram (mocked store, no DB)", () => {
     expect(result?.title).toBe("Pinned Program v2");
   });
 
+  it("fails closed when a pin names a version owned by a different program slug", async () => {
+    vi.mocked(getEnrollmentVersionId).mockResolvedValue({ programVersionId: "v-1" });
+    vi.mocked(getProgramVersionTreeRows).mockResolvedValue({
+      version: {
+        id: "v-1",
+        programId: "other-program-id",
+        version: 1,
+        status: "published",
+        title: "Other program",
+        subtitle: null,
+        ageBand: null,
+        summary: null,
+        world: null,
+        locale: "en",
+        languages: [],
+        publishedAt: new Date(),
+        createdAt: new Date(),
+        programSlug: "world-languages",
+      },
+      units: [],
+      lessons: [],
+      activities: [],
+    });
+
+    await expect(
+      resolveAccountLearnerProgram("acc-1", "l-1", "kaelyn-adaptive"),
+    ).resolves.toBeUndefined();
+  });
+
   it("falls back to the current published/static tree when unowned/no enrollment (store → null)", async () => {
     vi.mocked(getEnrollmentVersionId).mockResolvedValue(null);
     const result = await resolveAccountLearnerProgram("acc-1", "l-1", "kaelyn-adaptive");
@@ -162,5 +191,33 @@ describe("resolveProgramForEnrollmentVersion", () => {
     expect(result?.title).toBe("Exact v1");
     expect(getEnrollmentVersionId).not.toHaveBeenCalled();
     expect(getProgramVersionTreeRows).toHaveBeenCalledWith("v-1");
+  });
+
+  it("rejects an exact version whose parent program does not match the supplied slug", async () => {
+    vi.mocked(getProgramVersionTreeRows).mockResolvedValue({
+      version: {
+        id: "v-other",
+        programId: "p-other",
+        version: 1,
+        status: "published",
+        title: "Wrong parent",
+        subtitle: null,
+        ageBand: null,
+        summary: null,
+        world: null,
+        locale: "en",
+        languages: [],
+        publishedAt: new Date(),
+        createdAt: new Date(),
+        programSlug: "world-languages",
+      },
+      units: [],
+      lessons: [],
+      activities: [],
+    });
+
+    await expect(
+      resolveProgramForEnrollmentVersion("kaelyn-adaptive", "v-other"),
+    ).resolves.toBeUndefined();
   });
 });

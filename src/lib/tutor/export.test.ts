@@ -73,6 +73,7 @@ function baseInput(overrides: Partial<ShapeInput> = {}): ShapeInput {
     ],
     generatedActivities: [
       {
+        programVersionId: "version-1",
         unitKey: "unit-life-skills-math",
         lessonId: "lesson-counting-coins",
         kind: "math-tenframe",
@@ -516,6 +517,7 @@ describe("shapeLearnerExport — generatedActivities", () => {
     expect(result.generatedActivities).toHaveLength(1);
     const g = result.generatedActivities[0];
     expect(Object.keys(g)).toEqual([
+      "programVersionId",
       "unitKey",
       "lessonId",
       "kind",
@@ -527,6 +529,7 @@ describe("shapeLearnerExport — generatedActivities", () => {
       "genAt",
       "createdAt",
     ]);
+    expect(g.programVersionId).toBe("version-1");
     expect(g.unitKey).toBe("unit-life-skills-math");
     expect(g.lessonId).toBe("lesson-counting-coins");
     expect(g.kind).toBe("math-tenframe");

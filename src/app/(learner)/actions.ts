@@ -7,11 +7,12 @@ import {
   CompletionReplayMismatchError,
   EnrollmentNotActiveError,
   EnrollmentVersionChangedError,
+  GeneratedActivityAlreadyCompletedError,
   ensureDefaultLearner,
   ensureEnrollment,
   getCompletedActivityIds,
+  getCompletedActivityIdsForVersion,
   getDueReviews,
-  getEnrollmentConfig,
   getEnrollmentForGate,
   getGeneratedActivity,
   getPlayableGeneratedActivity,
@@ -48,10 +49,7 @@ import {
   shelfCompletions,
   SHELF_LESSON_CAP,
 } from "@/lib/tutor/shelf";
-import {
-  resolveAccountLearnerProgram,
-  resolveProgramForEnrollmentVersion,
-} from "@/lib/content/repository";
+import { resolveProgramForEnrollmentVersion } from "@/lib/content/repository";
 import type { SkillState } from "@/lib/tutor";
 
 /**
@@ -205,16 +203,28 @@ export async function getGeneratedPracticeAction(
 
   try {
     return await withAccount(async ({ accountId }) => {
-      const program = await resolveAccountLearnerProgram(
+      const gate = await getEnrollmentForGate(
         accountId,
         parsed.data.learnerId,
         parsed.data.programSlug,
+      );
+      if (
+        gate?.status !== "active" ||
+        !gate.configValid ||
+        !gate.programVersionId
+      ) {
+        return null;
+      }
+      const program = await resolveProgramForEnrollmentVersion(
+        parsed.data.programSlug,
+        gate.programVersionId,
       );
       if (!program) return null;
       const row = await getPlayableGeneratedActivity(
         accountId,
         parsed.data.learnerId,
         parsed.data.programSlug,
+        gate.programVersionId,
         parsed.data.generatedId,
       );
       return row && programContainsGeneratedLocation(program, row) ? row : null;
@@ -253,7 +263,13 @@ export type RecordResult =
   | { ok: true; score: ActivityScore }
   | {
       ok: false;
-      reason: "unauthenticated" | "invalid" | "inactive" | "unavailable" | "error";
+      reason:
+        | "unauthenticated"
+        | "invalid"
+        | "inactive"
+        | "unavailable"
+        | "completed"
+        | "error";
     };
 
 /**
@@ -282,6 +298,9 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
       if ("unitKey" in data && !isEnrollmentUnitActive(gate.config, data.unitKey)) {
         return { ok: false, reason: "inactive" };
       }
+      if ("generatedActivityId" in data && !gate.programVersionId) {
+        return { ok: false, reason: "unavailable" };
+      }
 
       let program: Program | null;
       try {
@@ -297,9 +316,13 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
       if (!program) return { ok: false, reason: "unavailable" };
 
       if ("generatedActivityId" in data) {
+        const programVersionId = gate.programVersionId;
+        if (!programVersionId) return { ok: false, reason: "unavailable" };
         const row = await getGeneratedActivity(
           accountId,
           data.learnerId,
+          data.programSlug,
+          programVersionId,
           data.generatedActivityId,
         );
         if (
@@ -416,6 +439,9 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
     if (error instanceof EnrollmentVersionChangedError) {
       return { ok: false, reason: "unavailable" };
     }
+    if (error instanceof GeneratedActivityAlreadyCompletedError) {
+      return { ok: false, reason: "completed" };
+    }
     captureNonCritical("recordAttemptAction failed", error);
     return { ok: false, reason: "error" };
   }
@@ -455,6 +481,8 @@ export interface LearnerStateResult {
    * in one round-trip (C#5 consistency).
    */
   program: Program | null;
+  /** Exact enrollment version captured for this state snapshot. */
+  programVersionId: string | null;
   /**
    * Whether the account learner may play this program (Fix-F A2): true ONLY when
    * the learner has an ACTIVE enrollment for `slug`. False for removed/paused/no
@@ -475,6 +503,7 @@ const EMPTY_STATE: LearnerStateResult = {
   dueReviews: [],
   config: {},
   program: null,
+  programVersionId: null,
   available: false,
 };
 
@@ -513,7 +542,10 @@ export async function getLearnerStateAction(
       // Resolve the learner's PINNED program version (C#5). State scoping AND the
       // rendered tree both derive from this same resolved tree, so they always
       // agree on the version — and they match the durable shelf-generation gate.
-      const program = await resolveAccountLearnerProgram(accountId, learnerId, programSlug);
+      const program = await resolveProgramForEnrollmentVersion(
+        programSlug,
+        gate.programVersionId,
+      );
       if (!program) return EMPTY_STATE;
       const activityIds = new Set(activityIdsForProgram(program));
       const skillTags = new Set(skillTagsForProgram(program));
@@ -522,7 +554,6 @@ export async function getLearnerStateAction(
       const [
         fullSkillState,
         completed,
-        config,
         settings,
         generatedShelf,
         generatedCompletions,
@@ -531,11 +562,18 @@ export async function getLearnerStateAction(
         await Promise.all([
           getSkillState(accountId, learnerId),
           getCompletedActivityIds(accountId, learnerId),
-          getEnrollmentConfig(accountId, learnerId, programSlug),
           getLearnerSettings(accountId, learnerId),
-          listGeneratedShelf(accountId, learnerId, programSlug),
+          gate.programVersionId
+            ? listGeneratedShelf(accountId, learnerId, programSlug, gate.programVersionId)
+            : Promise.resolve([]),
           getGeneratedCompletions(accountId, learnerId),
-          getDueReviews(accountId, learnerId, programSlug, today),
+          getDueReviews(
+            accountId,
+            learnerId,
+            program,
+            gate.programVersionId,
+            today,
+          ),
         ]);
 
       // Scope skill_state to this program's skills.
@@ -569,7 +607,7 @@ export async function getLearnerStateAction(
       // me" whenever EITHER level disables AI — matching the server gate, which
       // remains the authoritative enforcement.
       const effectiveConfig: LearnerSurfaceConfig = {
-        ...config,
+        ...gate.config,
         ...(settings?.readAloud !== undefined ? { readAloud: settings.readAloud } : undefined),
         ...(settings?.oralReading !== undefined
           ? { oralReading: settings.oralReading }
@@ -586,6 +624,7 @@ export async function getLearnerStateAction(
         dueReviews,
         config: effectiveConfig,
         program,
+        programVersionId: gate.programVersionId,
         available: true,
       };
     });
@@ -664,20 +703,23 @@ export async function ensureLessonPractice(
       const owned = await getLearner(accountId, learnerId);
       if (!owned) return { ok: false, items: [] };
 
-      const program = await resolveAccountLearnerProgram(accountId, learnerId, programSlug);
-      if (!program) return { ok: false, items: [] };
-
       const [settings, gate] = await Promise.all([
         getLearnerSettings(accountId, learnerId),
         getEnrollmentForGate(accountId, learnerId, programSlug),
       ]);
-      const aiOff =
+      if (
         settings?.aiPractice === false ||
         !gate ||
         gate.status !== "active" ||
         !gate.configValid ||
-        gate.config.aiPractice === false;
-      if (aiOff) return { ok: false, items: [] };
+        gate.config.aiPractice === false ||
+        !gate.programVersionId
+      ) {
+        return { ok: false, items: [] };
+      }
+      const programVersionId = gate.programVersionId;
+      const program = await resolveProgramForEnrollmentVersion(programSlug, programVersionId);
+      if (!program) return { ok: false, items: [] };
 
       // 2. Locate the lesson on the pinned tree (by lessonId, else the lesson
       //    containing activityId). Unknown → calm no-op.
@@ -701,7 +743,12 @@ export async function ensureLessonPractice(
 
       // The existing shelf for this lesson (needed by both the incomplete no-op
       // and the idempotency/cap returns below).
-      const shelf = await listGeneratedShelf(accountId, learnerId, programSlug);
+      const shelf = await listGeneratedShelf(
+        accountId,
+        learnerId,
+        programSlug,
+        programVersionId,
+      );
       const existing = shelf.filter(
         (s) => s.unitKey === unit.id && s.lessonId === lesson.id,
       );
@@ -709,7 +756,12 @@ export async function ensureLessonPractice(
       // 3. Completion witness: every AUTHORED activity in the lesson must be a
       //    (non-generated) completion. Incomplete → calm no-op returning existing
       //    (the client calls this after each completion, before the lesson is done).
-      const completed = await getCompletedActivityIds(accountId, learnerId);
+      const completed = await getCompletedActivityIdsForVersion(
+        accountId,
+        learnerId,
+        programSlug,
+        programVersionId,
+      );
       const completedIds = new Set(completed.map((c) => c.activityId));
       const allComplete = lesson.activities.every((a) => completedIds.has(a.id));
       if (!allComplete) return { ok: true, items: existing };
@@ -735,7 +787,7 @@ export async function ensureLessonPractice(
       const items = await withLessonGenerationLock(
         accountId,
         learnerId,
-        { programSlug, unitKey: unit.id, lessonId: lesson.id },
+        { programSlug, programVersionId, unitKey: unit.id, lessonId: lesson.id },
         more ?? false,
         async (room): Promise<NewGeneratedActivity[]> => {
           const targets = pickGenerationTargets(lesson, room);

@@ -114,6 +114,7 @@ export const REQUIRED_COLUMNS: ColumnMap = {
     "id",
     "learner_id",
     "program_slug",
+    "program_version_id",
     "unit_key",
     "lesson_id",
     "kind",

@@ -120,6 +120,17 @@ export const getProgramVersionAsync: (versionId: string) => Promise<Program | un
   },
 );
 
+/** Resolve an exact version and verify its durable parent program identity.
+ * Program-version ids are globally addressable, so a slug supplied by a route
+ * or enrollment must never relabel a version owned by another program. */
+async function getProgramVersionForSlug(
+  versionId: string,
+  expectedSlug: string,
+): Promise<Program | undefined> {
+  const resolved = await getProgramVersionAsync(versionId);
+  return resolved?.slug === expectedSlug ? resolved : undefined;
+}
+
 /**
  * List all published programs.
  * DB-preferred: assembles each program from its published version.
@@ -228,7 +239,7 @@ export const resolveProgramForEnrollmentVersion: (
   async (slug: string, programVersionId: string | null): Promise<Program | undefined> =>
     resolveProgramByVersionPin(
       { programVersionId },
-      (versionId) => getProgramVersionAsync(versionId),
+      (versionId) => getProgramVersionForSlug(versionId, slug),
       () => getProgramAsync(slug),
     ),
 );
@@ -262,7 +273,7 @@ export const resolveAccountLearnerProgram: (
     const pin = await getEnrollmentVersionId(accountId, learnerId, slug);
     return resolveProgramByVersionPin(
       pin,
-      (versionId) => getProgramVersionAsync(versionId),
+      (versionId) => getProgramVersionForSlug(versionId, slug),
       () => getProgramAsync(slug),
     );
   },

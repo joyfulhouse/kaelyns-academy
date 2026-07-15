@@ -63,7 +63,7 @@ const attemptRows = { value: [{ id: "new" }] as Record<string, unknown>[] };
 // completion id whose original attempt must be replayed without any folds.
 const attemptInsertResultRows = { value: [{ id: "new" }] as Record<string, unknown>[] };
 const attemptReplayRows = { value: [] as Record<string, unknown>[] };
-const oralCompletionRows = { value: [] as Record<string, unknown>[] };
+const generatedCompletionRows = { value: [] as Record<string, unknown>[] };
 const completedTodayRows = { value: [] as Record<string, unknown>[] };
 const generatedActivityRows = { value: [] as Record<string, unknown>[] };
 const oralVerificationRows = { value: [] as Record<string, unknown>[] };
@@ -217,15 +217,21 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
                   chain.limitValue,
                 )
             : chain.op === "select" && chain.table === "attempt"
-                ? projection && "score" in projection
+                ? projection && "kind" in projection
                   ? attemptReplayRows.value.map((row) => ({
                       programSlug: "kaelyn-adaptive",
                       unitKey: "unit-1",
                       programVersionId: "PV1",
                       ...row,
                     }))
-                  : projection && "completionId" in projection
-                    ? oralCompletionRows.value.filter((row) => matches(row, chain.predicate))
+                  : projection && "score" in projection
+                    ? completedTodayRows.value.filter((row) =>
+                        matches(row, chain.predicate),
+                      )
+                  : projection && Object.keys(projection).length === 1 && "completionId" in projection
+                    ? generatedCompletionRows.value.filter((row) =>
+                        matches(row, chain.predicate),
+                      )
                   : projection && "activityId" in projection
                   ? completedTodayRows.value.filter((row) => matches(row, chain.predicate))
                   : projection && "response" in projection
@@ -419,7 +425,9 @@ import {
   applyPlacement,
   CompletionReplayMismatchError,
   EnrollmentNotActiveError,
+  GeneratedActivityAlreadyCompletedError,
   getDueReviews,
+  getCompletedActivityIdsForVersion,
   getFluencyHistory,
   getPlayableGeneratedActivity,
   getPendingCheckpointResults,
@@ -457,11 +465,49 @@ function baseInput(): typeof input {
   return input;
 }
 
+describe("getCompletedActivityIdsForVersion (generation witness)", () => {
+  beforeEach(() => {
+    learnerRows.value = [{ id: "L1" }];
+    completedTodayRows.value = [
+      {
+        learnerId: "L1",
+        activityId: "same-stable-id",
+        generated: false,
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV0",
+        score: { stars: 3 },
+        createdAt: new Date("2026-07-01T00:00:00.000Z"),
+      },
+      {
+        learnerId: "L1",
+        activityId: "current-id",
+        generated: false,
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV1",
+        score: { stars: 2 },
+        createdAt: new Date("2026-07-02T00:00:00.000Z"),
+      },
+    ];
+  });
+
+  it("includes only authored completions from the exact program version", async () => {
+    await expect(
+      getCompletedActivityIdsForVersion(
+        "acct-1",
+        "L1",
+        "kaelyn-adaptive",
+        "PV1",
+      ),
+    ).resolves.toEqual([{ activityId: "current-id", stars: 2 }]);
+  });
+});
+
 describe("getPlayableGeneratedActivity (selected learner boundary)", () => {
   const generatedRow = {
     id: "gen-1",
     learnerId: "L1",
     programSlug: "kaelyn-adaptive",
+    programVersionId: "PV1",
     unitKey: "unit-1",
     lessonId: "lesson-1",
     kind: "math-tenframe",
@@ -478,15 +524,23 @@ describe("getPlayableGeneratedActivity (selected learner boundary)", () => {
     ops.length = 0;
     learnerRows.value = [{ id: "L1" }];
     generatedActivityRows.value = [generatedRow];
+    generatedCompletionRows.value = [];
   });
 
   it("returns a bounded playable DTO including its owning learner", async () => {
     await expect(
-      getPlayableGeneratedActivity("acct-1", "L1", "kaelyn-adaptive", "gen-1"),
+      getPlayableGeneratedActivity(
+        "acct-1",
+        "L1",
+        "kaelyn-adaptive",
+        "PV1",
+        "gen-1",
+      ),
     ).resolves.toEqual({
       id: "gen-1",
       learnerId: "L1",
       programSlug: "kaelyn-adaptive",
+      programVersionId: "PV1",
       unitKey: "unit-1",
       lessonId: "lesson-1",
       kind: "math-tenframe",
@@ -503,13 +557,83 @@ describe("getPlayableGeneratedActivity (selected learner boundary)", () => {
 
   it("returns null for another learner under the same account", async () => {
     await expect(
-      getPlayableGeneratedActivity("acct-1", "L2", "kaelyn-adaptive", "gen-1"),
+      getPlayableGeneratedActivity(
+        "acct-1",
+        "L2",
+        "kaelyn-adaptive",
+        "PV1",
+        "gen-1",
+      ),
     ).resolves.toBeNull();
   });
 
   it("returns null when the selected learner's row belongs to another program", async () => {
     await expect(
-      getPlayableGeneratedActivity("acct-1", "L1", "world-languages", "gen-1"),
+      getPlayableGeneratedActivity(
+        "acct-1",
+        "L1",
+        "world-languages",
+        "PV1",
+        "gen-1",
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("returns null when the shelf row belongs to another pinned version", async () => {
+    await expect(
+      getPlayableGeneratedActivity(
+        "acct-1",
+        "L1",
+        "kaelyn-adaptive",
+        "PV2",
+        "gen-1",
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("returns null for a spent one-shot shelf id", async () => {
+    generatedCompletionRows.value = [
+      {
+        learnerId: "L1",
+        activityId: "gen-1",
+        generated: true,
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV1",
+        completionId: "already-completed",
+      },
+    ];
+
+    await expect(
+      getPlayableGeneratedActivity(
+        "acct-1",
+        "L1",
+        "kaelyn-adaptive",
+        "PV1",
+        "gen-1",
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("treats a legacy generated attempt with nullable identity as spent", async () => {
+    generatedCompletionRows.value = [
+      {
+        learnerId: "L1",
+        activityId: "gen-1",
+        generated: true,
+        programSlug: null,
+        programVersionId: null,
+        completionId: "legacy-completion",
+      },
+    ];
+
+    await expect(
+      getPlayableGeneratedActivity(
+        "acct-1",
+        "L1",
+        "kaelyn-adaptive",
+        "PV1",
+        "gen-1",
+      ),
     ).resolves.toBeNull();
   });
 });
@@ -582,7 +706,7 @@ describe("oral-reading verification witness store", () => {
     attemptRows.value = [{ id: "new" }];
     attemptInsertResultRows.value = [{ id: "new" }];
     attemptReplayRows.value = [];
-    oralCompletionRows.value = [];
+    generatedCompletionRows.value = [];
     oralVerificationRows.value = [{ ...witness }];
     questRows.value = [];
     reviewScheduleRows.value = [];
@@ -918,7 +1042,7 @@ describe("recordAttempt (atomic persistence)", () => {
     attemptRows.value = [{ id: "new" }];
     attemptInsertResultRows.value = [{ id: "new" }];
     attemptReplayRows.value = [];
-    oralCompletionRows.value = [];
+    generatedCompletionRows.value = [];
     questRows.value = [];
     checkpointResultRows.value = [{ id: "CR1", scores: {} }];
     reviewScheduleRows.value = [];
@@ -998,6 +1122,37 @@ describe("recordAttempt (atomic persistence)", () => {
     expect(lockedSkills).toEqual([]);
     expect(reviewScheduleInserts).toEqual([]);
     expect(questUpdates).toEqual([]);
+    expect(checkpointUpdates).toEqual([]);
+  });
+
+  it("aborts before every fold when the DB privacy trigger suppresses an unsafe insert", async () => {
+    const rawSentinel = "private child journal sentinel";
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [];
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+
+    const error = await recordAttempt("acct-1", {
+      ...input,
+      kind: "journal-prompt",
+      response: { text: rawSentinel },
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("completion id conflict could not be replayed");
+    expect((error as Error).message).not.toContain(rawSentinel);
+    expect(skillStateUpdates).toEqual([]);
+    expect(reviewScheduleInserts).toEqual([]);
+    expect(questUpdates).toEqual([]);
+    expect(ledgerInserts).toEqual([]);
     expect(checkpointUpdates).toEqual([]);
   });
 
@@ -1415,17 +1570,121 @@ describe("recordAttempt (atomic persistence)", () => {
     ]);
   });
 
-  it("writes no ledger row on a REPEAT generated shelf completion (earns exactly once)", async () => {
-    // The dedupe counts prior GENERATED attempts for the same id: a prior row +
-    // the just-inserted one → alreadyCompleted → no second earn.
-    attemptRows.value = [{ id: "prev" }, { id: "new" }];
-    await recordAttempt("acct-1", {
+  it("rejects a second completion id for a one-shot generated shelf item before any fold", async () => {
+    generatedCompletionRows.value = [
+      {
+        learnerId: "L1",
+        activityId: input.activityId,
+        generated: true,
+        completionId: "prior-completion",
+      },
+    ];
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+
+    await expect(
+      recordAttempt("acct-1", {
+        ...input,
+        generated: true,
+        creditEligible: false,
+        shelfEligible: true,
+      }),
+    ).rejects.toBeInstanceOf(GeneratedActivityAlreadyCompletedError);
+
+    expect(attemptInserts).toEqual([]);
+    expect(skillStateUpdates).toEqual([]);
+    expect(reviewScheduleInserts).toEqual([]);
+    expect(questUpdates).toEqual([]);
+    expect(ledgerInserts).toEqual([]);
+    const enrollmentLock = ops.findIndex(
+      (operation) => operation.op === "select.for" && operation.table === "enrollment",
+    );
+    const completionRead = ops.findIndex(
+      (operation) => operation.op === "select" && operation.table === "attempt",
+    );
+    expect(enrollmentLock).toBeGreaterThanOrEqual(0);
+    expect(completionRead).toBeGreaterThan(enrollmentLock);
+  });
+
+  it("fails closed before every fold when the DB one-shot guard suppresses a raced shelf insert", async () => {
+    // The app precheck saw no prior completion, but the permanent DB trigger
+    // suppressed the INSERT after a serialized winner committed.
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [];
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+
+    const error = await recordAttempt("acct-1", {
       ...input,
       generated: true,
       creditEligible: false,
       shelfEligible: true,
-    });
-    expect(ledgerInserts).toHaveLength(0);
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("completion id conflict could not be replayed");
+    expect(attemptInserts).toHaveLength(1);
+    expect(skillStateUpdates).toEqual([]);
+    expect(reviewScheduleInserts).toEqual([]);
+    expect(questUpdates).toEqual([]);
+    expect(ledgerInserts).toEqual([]);
+    expect(checkpointUpdates).toEqual([]);
+  });
+
+  it("still replays the same completion id for a one-shot generated shelf item", async () => {
+    const storedScore = {
+      correct: 0,
+      total: 1,
+      stars: 1 as const,
+      skillEvidence: [{ skill: "math.add", outcome: "emerging" as const }],
+    };
+    generatedCompletionRows.value = [
+      {
+        learnerId: "L1",
+        activityId: input.activityId,
+        generated: true,
+        completionId: input.completionId,
+      },
+    ];
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [
+      {
+        activityId: input.activityId,
+        kind: input.kind,
+        generated: true,
+        score: storedScore,
+      },
+    ];
+
+    await expect(
+      recordAttempt("acct-1", {
+        ...input,
+        generated: true,
+        creditEligible: false,
+        shelfEligible: true,
+      }),
+    ).resolves.toEqual(storedScore);
+
+    expect(skillStateUpdates).toEqual([]);
+    expect(reviewScheduleInserts).toEqual([]);
+    expect(questUpdates).toEqual([]);
+    expect(ledgerInserts).toEqual([]);
   });
 
   it("a generated NON-shelf attempt still earns nothing (shelfEligible absent)", async () => {
@@ -1992,7 +2251,6 @@ describe("getDueReviews (owned authored review read)", () => {
     ops.length = 0;
     learnerRows.value = [{ id: "L1" }];
     vi.mocked(resolveAccountLearnerProgram).mockReset();
-    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(DUE_PROGRAM);
     reviewScheduleRows.value = [
       { id: "R1", learnerId: "L1", skill: "math.add", programSlug: "kaelyn-adaptive", intervalIndex: 1, nextReviewOn: "2026-07-10", lastReviewedOn: null, lastOutcome: "solid" },
       { id: "R2", learnerId: "L1", skill: "reading.fluency", programSlug: "kaelyn-adaptive", intervalIndex: 0, nextReviewOn: "2026-07-12", lastReviewedOn: null, lastOutcome: "solid" },
@@ -2000,16 +2258,26 @@ describe("getDueReviews (owned authored review read)", () => {
       { id: "R4", learnerId: "L1", skill: "math.other", programSlug: "another-program", intervalIndex: 0, nextReviewOn: "2026-07-09", lastReviewedOn: null, lastOutcome: "solid" },
     ];
     completedTodayRows.value = [
-      { learnerId: "L1", activityId: "a-today", generated: false, day: "2026-07-13" },
+      { learnerId: "L1", activityId: "a-today", programSlug: "kaelyn-adaptive", programVersionId: "PV1", generated: false, day: "2026-07-13" },
       // Yesterday's completion remains reviewable today.
-      { learnerId: "L1", activityId: "a-review", generated: false, day: "2026-07-12" },
+      { learnerId: "L1", activityId: "a-review", programSlug: "kaelyn-adaptive", programVersionId: "PV1", generated: false, day: "2026-07-12" },
+      // Same id today on an old pin cannot suppress this exact PV1 review.
+      { learnerId: "L1", activityId: "a-review", programSlug: "kaelyn-adaptive", programVersionId: "PV0", generated: false, day: "2026-07-13" },
+      // Same id in another program cannot suppress this program's review.
+      { learnerId: "L1", activityId: "a-reading", programSlug: "another-program", programVersionId: "PV1", generated: false, day: "2026-07-13" },
       // Generated attempts never suppress an authored review.
-      { learnerId: "L1", activityId: "a-reading", generated: true, day: "2026-07-13" },
+      { learnerId: "L1", activityId: "a-reading", programSlug: "kaelyn-adaptive", programVersionId: "PV1", generated: true, day: "2026-07-13" },
     ];
   });
 
-  it("filters by due day and program, excludes authored completions today, and orders most overdue first", async () => {
-    const reviews = await getDueReviews("acct-1", "L1", "kaelyn-adaptive", "2026-07-13");
+  it("filters by due day and exact version, excludes exact authored completions, and orders most overdue first", async () => {
+    const reviews = await getDueReviews(
+      "acct-1",
+      "L1",
+      DUE_PROGRAM,
+      "PV1",
+      "2026-07-13",
+    );
 
     expect(reviews.map((review) => [review.activity.id, review.skill, review.nextReviewOn])).toEqual([
       ["a-review", "math.add", "2026-07-10"],
@@ -2025,7 +2293,13 @@ describe("getDueReviews (owned authored review read)", () => {
       { id: "R1", learnerId: "L1", skill: "math.add", programSlug: "kaelyn-adaptive", intervalIndex: 1, nextReviewOn: "2026-07-10", lastReviewedOn: null, lastOutcome: "solid" },
     ];
 
-    const reviews = await getDueReviews("acct-1", "L1", "kaelyn-adaptive", "2026-07-13");
+    const reviews = await getDueReviews(
+      "acct-1",
+      "L1",
+      DUE_PROGRAM,
+      "PV1",
+      "2026-07-13",
+    );
 
     expect(reviews.filter((review) => review.skill === "math.add")).toHaveLength(1);
     expect(reviews[0].activity.id).toBe("a-today");
@@ -2039,14 +2313,20 @@ describe("getDueReviews (owned authored review read)", () => {
     reviewScheduleRows.value = [
       { id: "R1", learnerId: "L1", skill: "math.add", programSlug: "kaelyn-adaptive", intervalIndex: 1, nextReviewOn: "2026-07-10", lastReviewedOn: null, lastOutcome: "solid" },
     ];
-    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue({
+    const checkpointProgram = {
       ...DUE_PROGRAM,
       units: DUE_PROGRAM.units.map((unit) =>
         unit.id === "numbers" ? { ...unit, checkpoint: "baseline" } : unit,
       ),
-    } as unknown as Program);
+    } as unknown as Program;
 
-    const reviews = await getDueReviews("acct-1", "L1", "kaelyn-adaptive", "2026-07-13");
+    const reviews = await getDueReviews(
+      "acct-1",
+      "L1",
+      checkpointProgram,
+      "PV1",
+      "2026-07-13",
+    );
 
     expect(reviews.filter((review) => review.skill === "math.add")).toEqual([]);
   });
@@ -2055,10 +2335,25 @@ describe("getDueReviews (owned authored review read)", () => {
     learnerRows.value = [];
 
     await expect(
-      getDueReviews("acct-2", "L1", "kaelyn-adaptive", "2026-07-13"),
+      getDueReviews("acct-2", "L1", DUE_PROGRAM, "PV1", "2026-07-13"),
     ).resolves.toEqual([]);
     expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
     expect(ops.some((op) => op.table === "review_schedule")).toBe(false);
+  });
+
+  it("lets reviews remain visible when the captured enrollment has no exact version pin", async () => {
+    const reviews = await getDueReviews(
+      "acct-1",
+      "L1",
+      DUE_PROGRAM,
+      null,
+      "2026-07-13",
+    );
+
+    expect(reviews.map((review) => review.activity.id)).toEqual([
+      "a-today",
+      "a-reading",
+    ]);
   });
 });
 
