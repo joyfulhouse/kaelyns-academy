@@ -62,9 +62,9 @@ const roundConfig = z
   });
 
 /**
- * Compatibility for the excluded Program 01 source. It is normalized by the
- * Player/server into the same static rounds, so reactivation cannot restore the
- * old moving-target interaction. Active content authors rounds directly.
+ * Temporary compatibility for generated practice payloads. Authored content
+ * uses explicit rounds; the legacy shape is normalized to those same static
+ * rounds and can be removed with the central practice-generator migration.
  */
 const archivedConfig = z
   .object({

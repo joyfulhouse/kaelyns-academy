@@ -6,6 +6,7 @@ import {
   schema,
   score,
   skillsAffected,
+  validateGenerated,
   type ReadingComprehensionResponse,
 } from "./logic";
 
@@ -22,5 +23,6 @@ export const readingComprehension: ActivityType<
   Player: ReadingComprehensionPlayer,
   score,
   skillsAffected,
+  validateGenerated,
 };
 export type { ReadingComprehensionResponse };

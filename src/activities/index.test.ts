@@ -29,7 +29,9 @@ const VALID_RESPONSES = {
     mode: "type",
     didDraw: false,
   },
-  "reading-comprehension": { firstTry: [true], retold: false },
+  "reading-comprehension": {
+    questionResults: [{ questionIndex: 0, choiceIndex: 0, attempts: 1 }],
+  },
   "math-array": { mode: "build", builtRows: 2, attempts: 1 },
   "math-fraction-bar": { mode: "partition", partitionCount: 4, attempts: 1 },
   "lang-symbol-intro": { verifyAnswers: [0] },
@@ -77,7 +79,13 @@ const OVER_BOUNDED_RESPONSES = {
     mode: "type",
     didDraw: false,
   },
-  "reading-comprehension": { firstTry: Array.from({ length: 33 }, () => true), retold: false },
+  "reading-comprehension": {
+    questionResults: Array.from({ length: 13 }, (_, index) => ({
+      questionIndex: index % 12,
+      choiceIndex: 0,
+      attempts: 1,
+    })),
+  },
   "math-array": {
     mode: "area",
     filledCells: Array.from({ length: 145 }, (_, index) => index),

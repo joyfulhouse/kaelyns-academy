@@ -8,16 +8,9 @@ import type { Unit } from "../../types";
 // routes the attempt's evidence to checkpoint_result instead of skill_state
 // (parent applies the placement afterward) — see src/lib/tutor/store.ts.
 //
-// Kind choice is deliberate, not just "whatever the strand uses": each
-// activity kind's runtime `skillsAffected(config)` (src/activities/*/logic.ts)
-// is what actually gets scored, and it does not always match a content
-// author's declared `skillTags`. reading-comprehension's evidence is fixed
-// by question.kind (literal/inference/main-idea/vocabulary/author → one of
-// 5 reading.* skills) and math-array's by `mode` (build/multiply/divide/area
-// → math.equal-groups.arrays/mult.facts/div.fact-families/geometry.area-arrays).
-// Every item here is authored so its declared skillTags equal that real,
-// runtime-evidenced skill — see docs/claude/... report for the Word Study
-// caveat (phonics-wordbuild/sightword-game don't have this property).
+// Kind choice is deliberate: every item has a directly observable task whose
+// runtime evidence stays inside its authored skillTags. Comprehension questions
+// opt into a skill explicitly, while event ordering is the retell observation.
 export const readingBaselineUnit: Unit = {
   id: "reading-baseline",
   order: 0,
@@ -56,6 +49,14 @@ export const readingBaselineUnit: Unit = {
                 kind: "literal",
               },
             ],
+            structuredRetell: {
+              prompt: "Put Ben's events in order.",
+              events: [
+                { id: "find", text: "Ben finds a shiny rock." },
+                { id: "pocket", text: "Ben puts the rock in his pocket." },
+                { id: "show", text: "Ben runs home to show his sister." },
+              ],
+            },
           },
         },
         {
@@ -77,6 +78,8 @@ export const readingBaselineUnit: Unit = {
                 choices: ["Nervous", "Bored", "Angry"],
                 answerIndex: 0,
                 kind: "inference",
+                skillTag: "reading.comprehension.inference",
+                evidenceSentenceIndexes: [0, 1],
               },
             ],
           },
@@ -100,6 +103,7 @@ export const readingBaselineUnit: Unit = {
                 choices: ["WHAT DO PANDAS EAT?", "WHERE DO PANDAS LIVE?", "Neither one"],
                 answerIndex: 1,
                 kind: "main-idea",
+                skillTag: "reading.comprehension.main-idea",
               },
             ],
           },
@@ -123,6 +127,8 @@ export const readingBaselineUnit: Unit = {
                 choices: ["Very tired", "Very happy", "Very hungry"],
                 answerIndex: 0,
                 kind: "vocabulary",
+                skillTag: "reading.vocabulary.context",
+                evidenceSentenceIndexes: [1],
               },
             ],
           },
@@ -150,6 +156,7 @@ export const readingBaselineUnit: Unit = {
                 ],
                 answerIndex: 1,
                 kind: "author",
+                skillTag: "reading.comprehension.author-craft",
               },
             ],
           },

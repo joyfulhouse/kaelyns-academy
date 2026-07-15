@@ -5,106 +5,158 @@ import {
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content/types";
 import { z } from "zod";
 import { outcomeFromAccuracy, starsFromAccuracy } from "../_shared/scoring";
+import { isExactEventPermutation } from "./model";
 
-/** Server-safe schema + scoring for reading-comprehension. No "use client". */
 export const schema = readingComprehensionConfig;
 
-/** A single question's kind (literal recall, inference, etc.). */
-type QuestionKind = ReadingComprehensionConfig["questions"][number]["kind"];
-
-/**
- * What the child did: per-question, whether they got it on the first tap. The
- * retell is a "say it out loud" affordance, never graded, so it carries no
- * correctness.
- */
-export const responseSchema = z
+const questionResultSchema = z
   .object({
-    /** One entry per question, in order: true when answered correctly first try. */
-    firstTry: z.array(z.boolean()).min(1).max(32),
-    /**
-     * Historical self-attestation flag. The Player no longer asks the child to
-     * attest (the retell panel just offers Continue), so new responses always
-     * record false; kept for stored-response shape compatibility, never scored.
-     */
-    retold: z.boolean(),
+    questionIndex: z.number().int().min(0).max(11),
+    choiceIndex: z.number().int().min(0).max(5),
+    evidenceSentenceIndex: z.number().int().min(0).max(31).optional(),
+    evidenceChoiceIndex: z.number().int().min(0).max(5).optional(),
+    attempts: z.number().int().min(1).max(20),
   })
   .strict();
+
+export const responseSchema = z
+  .object({
+    questionResults: z
+      .array(questionResultSchema)
+      .max(12)
+      .refine(
+        (results) => new Set(results.map((result) => result.questionIndex)).size === results.length,
+        "question indexes must be unique",
+      ),
+    retell: z
+      .object({
+        eventIds: z
+          .array(z.string().min(1).max(32).regex(/^[a-z0-9-]+$/))
+          .min(2)
+          .max(8)
+          .refine((eventIds) => new Set(eventIds).size === eventIds.length, "event IDs must be unique"),
+        attempts: z.number().int().min(1).max(20),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .refine((response) => response.questionResults.length > 0 || response.retell !== undefined, {
+    message: "a response must contain an observed task",
+  });
 export type ReadingComprehensionResponse = z.infer<typeof responseSchema>;
 
-/**
- * Each question kind exercises a different reading muscle, mapped to the
- * canonical Program 02 reading rubric (src/content/skills.ts). Literal recall
- * is the retell/story-elements rung; word-meaning is vocabulary-in-context.
- */
-const KIND_SKILL: Record<NonNullable<QuestionKind>, SkillTag> = {
-  literal: "reading.comprehension.retell",
-  inference: "reading.comprehension.inference",
-  "main-idea": "reading.comprehension.main-idea",
-  vocabulary: "reading.vocabulary.context",
-  author: "reading.comprehension.author-craft",
-};
-
-/** The reading skills this passage exercises, de-duplicated, source order. */
-export function skillsAffected(config: ReadingComprehensionConfig): SkillTag[] {
-  const seen = new Set<SkillTag>();
-  const tags: SkillTag[] = [];
-  for (const question of config.questions) {
-    const kind = question.kind ?? "literal";
-    const tag = KIND_SKILL[kind];
-    if (!seen.has(tag)) {
-      seen.add(tag);
-      tags.push(tag);
+function assertCompleteValidResponse(
+  config: ReadingComprehensionConfig,
+  response: ReadingComprehensionResponse,
+): void {
+  if (response.questionResults.length !== config.questions.length) {
+    throw new Error("invalid comprehension response");
+  }
+  const seen = new Set<number>();
+  for (const result of response.questionResults) {
+    const question = config.questions[result.questionIndex];
+    if (
+      !question ||
+      seen.has(result.questionIndex) ||
+      result.choiceIndex !== question.answerIndex
+    ) {
+      throw new Error("invalid comprehension response");
+    }
+    seen.add(result.questionIndex);
+    if (question.evidenceSentenceIndexes) {
+      if (
+        result.evidenceSentenceIndex === undefined ||
+        !question.evidenceSentenceIndexes.includes(result.evidenceSentenceIndex) ||
+        result.evidenceChoiceIndex !== undefined
+      ) {
+        throw new Error("invalid comprehension response");
+      }
+    } else if (question.evidenceChoices) {
+      if (
+        result.evidenceChoiceIndex !== question.evidenceChoices.answerIndex ||
+        result.evidenceSentenceIndex !== undefined
+      ) {
+        throw new Error("invalid comprehension response");
+      }
+    } else if (
+      result.evidenceSentenceIndex !== undefined ||
+      result.evidenceChoiceIndex !== undefined
+    ) {
+      throw new Error("invalid comprehension response");
     }
   }
-  return tags;
+
+  if (config.structuredRetell) {
+    const expected = config.structuredRetell.events.map((event) => event.id);
+    if (!response.retell || !isExactEventPermutation(expected, response.retell.eventIds)) {
+      throw new Error("invalid comprehension response");
+    }
+  } else if (response.retell) {
+    throw new Error("invalid comprehension response");
+  }
 }
 
-/**
- * Comprehension is the one place the kid surface measures understanding, but it
- * is still forgiving: every question is answered correctly before advancing, so
- * "correct" counts first-try successes and stars reflect independence (how much
- * of the passage they understood without a second look). Showing up earns 1★.
- */
+export function skillsAffected(config: ReadingComprehensionConfig): SkillTag[] {
+  const skills: SkillTag[] = [];
+  const seen = new Set<SkillTag>();
+  for (const question of config.questions) {
+    if (question.skillTag && !seen.has(question.skillTag)) {
+      seen.add(question.skillTag);
+      skills.push(question.skillTag);
+    }
+  }
+  if (config.structuredRetell && !seen.has("reading.comprehension.retell")) {
+    skills.push("reading.comprehension.retell");
+  }
+  return skills;
+}
+
 export function score(
   config: ReadingComprehensionConfig,
   response: ReadingComprehensionResponse,
 ): ActivityScore {
-  const total = config.questions.length;
-  const correct = response.firstTry.filter(Boolean).length;
+  assertCompleteValidResponse(config, response);
+  const taskAttempts = response.questionResults.map((result) => result.attempts);
+  if (response.retell) taskAttempts.push(response.retell.attempts);
+  const total = taskAttempts.length;
+  const correct = taskAttempts.filter((attempts) => attempts === 1).length;
   const firstTryRate = total === 0 ? 1 : correct / total;
-
-  // Per-skill outcome reflects the first-try rate on questions of that kind.
-  const skillEvidence = perKindEvidence(config, response);
 
   return {
     correct,
     total,
     stars: starsFromAccuracy(firstTryRate),
-    skillEvidence,
+    skillEvidence: evidenceBySkill(config, response),
   };
 }
 
-/** First-try rate per question kind → outcome, so the tutor sees which reading
- *  muscle is solid vs emerging rather than one blended number. */
-function perKindEvidence(
+function evidenceBySkill(
   config: ReadingComprehensionConfig,
   response: ReadingComprehensionResponse,
 ): { skill: SkillTag; outcome: SkillOutcome }[] {
-  const hits = new Map<SkillTag, { correct: number; total: number }>();
-  config.questions.forEach((question, index) => {
-    const tag = KIND_SKILL[question.kind ?? "literal"];
-    const bucket = hits.get(tag) ?? { correct: 0, total: 0 };
-    bucket.total += 1;
-    if (response.firstTry[index]) bucket.correct += 1;
-    hits.set(tag, bucket);
-  });
-
-  const evidence: { skill: SkillTag; outcome: SkillOutcome }[] = [];
-  // Preserve source order via skillsAffected.
-  for (const tag of skillsAffected(config)) {
-    const bucket = hits.get(tag) ?? { correct: 0, total: 1 };
-    const rate = bucket.total === 0 ? 1 : bucket.correct / bucket.total;
-    evidence.push({ skill: tag, outcome: outcomeFromAccuracy(rate) });
+  const attemptsBySkill = new Map<SkillTag, number[]>();
+  for (const result of response.questionResults) {
+    const skill = config.questions[result.questionIndex]?.skillTag;
+    if (!skill) continue;
+    const attempts = attemptsBySkill.get(skill) ?? [];
+    attempts.push(result.attempts);
+    attemptsBySkill.set(skill, attempts);
   }
-  return evidence;
+  if (config.structuredRetell && response.retell) {
+    attemptsBySkill.set("reading.comprehension.retell", [response.retell.attempts]);
+  }
+
+  return skillsAffected(config).map((skill) => {
+    const attempts = attemptsBySkill.get(skill) ?? [];
+    const firstTry = attempts.filter((value) => value === 1).length;
+    const rate = attempts.length === 0 ? 0 : firstTry / attempts.length;
+    return { skill, outcome: outcomeFromAccuracy(rate) };
+  });
+}
+
+export function validateGenerated(config: ReadingComprehensionConfig): string | null {
+  const parsed = schema.safeParse(config);
+  if (parsed.success) return null;
+  return parsed.error.issues[0]?.message ?? "invalid comprehension config";
 }

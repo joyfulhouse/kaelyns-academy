@@ -13,6 +13,7 @@ import { readingBaselineUnit } from "./programs/kaelyn-adaptive/reading-baseline
 import { scienceNatureUnit } from "./programs/kaelyn-adaptive/science-nature";
 import { wordStudyUnit } from "./programs/kaelyn-adaptive/word-study";
 import { writingUnit } from "./programs/kaelyn-adaptive/writing";
+import { summerKToGrade1 } from "./programs/summer-k-to-grade1";
 import { getActivityType, isActivityKindRegistered } from "@/activities";
 import { SKILLS } from "./skills";
 
@@ -170,11 +171,9 @@ describe("authored program content", () => {
   it("has a baseline check-in unit per placement-enabled academic strand", () => {
     const program = PROGRAMS.find((p) => p.slug === "kaelyn-adaptive")!;
     const baselines = program.units.filter((u) => u.checkpoint === "baseline");
-    // C1 ships Reading + Math baselines only. Word Study is still deferred: B3
-    // fixed the phonics-wordbuild/sightword-game evidence (see the invariant test
-    // below), but the strand's reading-comprehension activities still emit the
-    // reading.* rubric skills — disjoint from their authored word.*/vocab.* tags —
-    // so a Word Study baseline would seed the wrong skills and fail to place.
+    // C1 ships Reading + Math baselines only. Word Study placement remains a
+    // separate curriculum decision; the invariant below ensures its current
+    // literacy interactions cannot emit evidence outside their authored skills.
     expect(baselines.map((u) => u.id).sort()).toEqual(["math-baseline", "reading-baseline"]);
     for (const u of baselines) {
       const acts = u.lessons.flatMap((l) => l.activities);
@@ -186,14 +185,10 @@ describe("authored program content", () => {
     }
   });
 
-  it("Word Study wordbuild/sightword runtime skill evidence targets their authored skillTags", () => {
+  it("Word Study literacy runtime evidence stays inside authored skillTags", () => {
     const program = PROGRAMS.find((p) => p.slug === "kaelyn-adaptive")!;
     const unit = program.units.find((u) => u.id === "word-study")!;
-    // B3 fixed these two kinds so their evidence lands on the authored word.*/
-    // vocab.* skills the recommender gates on. reading-comprehension is excluded:
-    // it emits the reading.* rubric skills by design (a separate, out-of-scope
-    // mismatch tracked for its own fix — see the baseline check-in test above).
-    const scoped = new Set(["phonics-wordbuild", "sightword-game"]);
+    const scoped = new Set(["phonics-wordbuild", "sightword-game", "reading-comprehension"]);
     let checked = 0;
     for (const lesson of unit.lessons) {
       for (const a of lesson.activities) {
@@ -207,7 +202,25 @@ describe("authored program content", () => {
       }
     }
     // Guard against the loop silently matching nothing (unit re-id, kind rename).
-    expect(checked).toBeGreaterThanOrEqual(6);
+    expect(checked).toBeGreaterThanOrEqual(10);
+  });
+
+  it("all authored sight-word games use explicit static target rounds", () => {
+    const authoredActivities = [kaelynAdaptive, summerKToGrade1].flatMap((program) =>
+      program.units.flatMap((unit) =>
+        unit.lessons.flatMap((lesson) => lesson.activities),
+      ),
+    );
+    let checked = 0;
+    for (const activity of authoredActivities) {
+      if (activity.kind !== "sightword-game") continue;
+      expect(activity.config).toHaveProperty("rounds");
+      expect(activity.config).not.toHaveProperty("words");
+      expect(activity.config).not.toHaveProperty("decoys");
+      expect(() => ACTIVITY_CONFIG_SCHEMAS["sightword-game"].parse(activity.config)).not.toThrow();
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThanOrEqual(5);
   });
 
   it("oral-reading runtime skill evidence stays inside authored skillTags", () => {

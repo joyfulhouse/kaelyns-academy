@@ -39,10 +39,10 @@ test("a reading-comprehension baseline activity renders and advances after a cor
   const correctChoice = page.getByRole("button", { name: "A shiny rock" });
   await expect(correctChoice).toBeVisible();
   await correctChoice.click();
+  await page.getByRole("button", { name: "Check answer" }).click();
 
-  // A correct answer registers (this activity has a single literal question, so
-  // it completes rather than advancing to a "Question 2").
-  await expect(page.getByText("Nice reading.")).toBeVisible();
+  // A correct answer advances into the observable event-order retell.
+  await expect(page.getByText("Nice reading. Now put the events in order.")).toBeVisible();
 });
 
 test("a math-array baseline activity renders and registers a complete row", async ({ page }) => {
