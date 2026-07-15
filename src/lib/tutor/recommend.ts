@@ -3,8 +3,8 @@ import { outcomeOf, type SkillState } from "./mastery";
 
 /**
  * The next-best recommender. Each strand (unit) advances INDEPENDENTLY: her
- * "current rung" is the first lesson not yet fully solid. The recommender never
- * lets a strong strand wait on a weak one (curriculum README §1).
+ * "current rung" is the first lesson whose progression gates are not met. The
+ * recommender never lets a strong strand wait on a weak one (curriculum README §1).
  */
 
 /** Unique skill tags exercised across a unit's activities, in ladder order. */
@@ -25,40 +25,79 @@ export function unitSkills(unit: Unit): SkillTag[] {
 }
 
 /** Skills exercised by a single lesson (rung). */
-function lessonSkills(lesson: Lesson): SkillTag[] {
+function assessedLessonSkills(lesson: Lesson): SkillTag[] {
   const seen = new Set<SkillTag>();
   for (const activity of lesson.activities) {
+    if (activity.kind === "journal-prompt") continue;
     for (const tag of activity.skillTags) seen.add(tag);
   }
   return [...seen];
 }
 
-/** Is every skill this lesson touches already solid? */
-function lessonIsSolid(lesson: Lesson, state: SkillState): boolean {
-  const skills = lessonSkills(lesson);
-  return skills.length > 0 && skills.every((s) => outcomeOf(state, s) === "solid");
+function assessedUnitSkills(unit: Unit): SkillTag[] {
+  const seen = new Set<SkillTag>();
+  for (const lesson of unit.lessons) {
+    for (const skill of assessedLessonSkills(lesson)) seen.add(skill);
+  }
+  return [...seen];
+}
+
+/**
+ * Assessed activities remain mastery-gated. Journals deliberately emit no
+ * mastery, so each journal is instead gated by its canonical completion id.
+ */
+function lessonIsComplete(
+  lesson: Lesson,
+  state: SkillState,
+  completed: ReadonlySet<string>,
+): boolean {
+  const skills = assessedLessonSkills(lesson);
+  const journals = lesson.activities.filter((activity) => activity.kind === "journal-prompt");
+  const hasProgressGate = skills.length > 0 || journals.length > 0;
+  return (
+    hasProgressGate &&
+    skills.every((skill) => outcomeOf(state, skill) === "solid") &&
+    journals.every((activity) => completed.has(activity.id))
+  );
 }
 
 export interface StrandProgress {
   unit: Unit;
   solidSkills: number;
   totalSkills: number;
-  ratio: number; // 0..1 of skills solid
-  /** The first lesson not yet fully solid (her current rung), or null if done. */
+  /** 0..1 of assessed-skill and completion-only journal gates reached. */
+  ratio: number;
+  /** The first lesson whose progression gates are not met, or null if done. */
   currentLesson: Lesson | null;
   currentLessonIndex: number; // 1-based rung number, or unit.lessons.length when done
 }
 
-export function strandProgress(program: Program, state: SkillState): StrandProgress[] {
+const NO_COMPLETIONS: ReadonlySet<string> = new Set<string>();
+
+export function strandProgress(
+  program: Program,
+  state: SkillState,
+  completed: ReadonlySet<string> = NO_COMPLETIONS,
+): StrandProgress[] {
   return program.units.map((unit) => {
-    const skills = unitSkills(unit);
+    const skills = assessedUnitSkills(unit);
     const solid = skills.filter((s) => outcomeOf(state, s) === "solid").length;
-    const idx = unit.lessons.findIndex((l) => !lessonIsSolid(l, state));
+    const journals = unit.lessons.flatMap((lesson) =>
+      lesson.activities.filter((activity) => activity.kind === "journal-prompt"),
+    );
+    const completedJournals = journals.filter((activity) => completed.has(activity.id)).length;
+    const totalProgressGates = skills.length + journals.length;
+    const idx = unit.lessons.findIndex(
+      (lesson) => !lessonIsComplete(lesson, state, completed),
+    );
     return {
       unit,
       solidSkills: solid,
       totalSkills: skills.length,
-      ratio: skills.length === 0 ? 0 : solid / skills.length,
+      ratio:
+        totalProgressGates === 0
+          ? 0
+          : (solid + completedJournals) / totalProgressGates,
       currentLesson: idx === -1 ? null : unit.lessons[idx],
       currentLessonIndex: idx === -1 ? unit.lessons.length : idx + 1,
     };
@@ -77,9 +116,9 @@ export interface Recommendation {
 
 /**
  * Pick the next activity within a strand: the first activity at her current rung
- * she hasn't completed; if she has done them all but the rung isn't solid yet,
- * recommend re-practicing the one whose skill is still emerging (the tutor can
- * then generate fresh items for it).
+ * she hasn't completed; if she has done them all but an assessed skill is not
+ * solid yet, recommend re-practicing the one whose skill is still emerging
+ * (the tutor can then generate fresh items for it).
  */
 function strandNext(
   unit: Unit,
@@ -98,9 +137,11 @@ function strandNext(
       isPractice: false,
     };
   }
-  // All done at this rung but not solid: practice the still-emerging activity.
-  const needsWork = lesson.activities.find((a) =>
-    a.skillTags.some((s) => outcomeOf(state, s) !== "solid"),
+  // All done at this rung but an assessed skill is not solid: practice that activity.
+  const needsWork = lesson.activities.find(
+    (activity) =>
+      activity.kind !== "journal-prompt" &&
+      activity.skillTags.some((skill) => outcomeOf(state, skill) !== "solid"),
   );
   if (needsWork) {
     return {
@@ -126,8 +167,8 @@ export function nextBest(
   completed: Set<string>,
 ): Recommendation[] {
   const recs: { rec: Recommendation; done: number }[] = [];
-  for (const { unit, currentLesson } of strandProgress(program, state)) {
-    if (!currentLesson) continue; // strand fully solid
+  for (const { unit, currentLesson } of strandProgress(program, state, completed)) {
+    if (!currentLesson) continue; // strand progression gates are complete
     const rec = strandNext(unit, currentLesson, state, completed);
     if (!rec) continue;
     const done = unit.lessons.reduce(
