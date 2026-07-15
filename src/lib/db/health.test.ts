@@ -37,7 +37,15 @@ describe("REQUIRED_COLUMNS coverage (schema-drift canary)", () => {
     );
     expect(REQUIRED_COLUMNS.enrollment).toEqual(expect.arrayContaining(["status", "started_at"]));
     expect(REQUIRED_COLUMNS.attempt).toEqual(
-      expect.arrayContaining(["generated", "response", "completion_id", "created_at"]),
+      expect.arrayContaining([
+        "generated",
+        "response",
+        "completion_id",
+        "program_slug",
+        "unit_key",
+        "program_version_id",
+        "created_at",
+      ]),
     );
     expect(REQUIRED_COLUMNS.skill_state).toEqual(expect.arrayContaining(["updated_at"]));
     expect(REQUIRED_COLUMNS.oral_reading_verification).toEqual(
@@ -45,6 +53,7 @@ describe("REQUIRED_COLUMNS coverage (schema-drift canary)", () => {
         "id",
         "learner_id",
         "program_slug",
+        "program_version_id",
         "unit_key",
         "activity_id",
         "mode",
@@ -68,10 +77,38 @@ describe("REQUIRED_COLUMNS coverage (schema-drift canary)", () => {
     ).toEqual(
       expect.arrayContaining([
         "oral_reading_verification.id",
+        "oral_reading_verification.program_version_id",
         "oral_reading_verification.expires_at",
         "oral_reading_verification.consumed_completion_id",
       ]),
     );
+  });
+
+  it("flags a skipped durable activity-identity migration", () => {
+    const liveAttemptColumns = REQUIRED_COLUMNS.attempt.filter(
+      (column) => !["program_slug", "unit_key", "program_version_id"].includes(column),
+    );
+    const liveWitnessColumns = REQUIRED_COLUMNS.oral_reading_verification.filter(
+      (column) => column !== "program_version_id",
+    );
+
+    expect(
+      missingColumns(
+        {
+          attempt: REQUIRED_COLUMNS.attempt,
+          oral_reading_verification: REQUIRED_COLUMNS.oral_reading_verification,
+        },
+        {
+          attempt: liveAttemptColumns,
+          oral_reading_verification: liveWitnessColumns,
+        },
+      ),
+    ).toEqual([
+      "attempt.program_slug",
+      "attempt.unit_key",
+      "attempt.program_version_id",
+      "oral_reading_verification.program_version_id",
+    ]);
   });
 
   it("includes the Better Auth tables with their key columns", () => {

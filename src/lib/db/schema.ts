@@ -169,6 +169,12 @@ export const attempt = pgTable(
       .references(() => learner.id, { onDelete: "cascade" }),
     activityId: text("activity_id").notNull(),
     kind: text("kind").notNull(),
+    /** Durable authored identity. Nullable so pre-migration attempts remain readable. */
+    programSlug: text("program_slug"),
+    unitKey: text("unit_key"),
+    programVersionId: text("program_version_id").references(() => programVersion.id, {
+      onDelete: "set null",
+    }),
     /** Browser-generated UUID that makes one completion safe to retry. */
     completionId: text("completion_id"),
     /** true when the activity was AI-generated practice (not authored content). */
@@ -215,6 +221,9 @@ export const oralReadingVerification = pgTable(
       .notNull()
       .references(() => learner.id, { onDelete: "cascade" }),
     programSlug: text("program_slug").notNull(),
+    programVersionId: text("program_version_id").references(() => programVersion.id, {
+      onDelete: "set null",
+    }),
     unitKey: text("unit_key").notNull(),
     activityId: text("activity_id").notNull(),
     mode: text("mode").notNull(),

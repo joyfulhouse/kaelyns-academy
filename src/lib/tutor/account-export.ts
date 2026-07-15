@@ -9,10 +9,10 @@
  * is ONE source of truth for what a child's data looks like and the provenance
  * addition shows up here for free.
  */
-import type { LearnerExport } from "./export";
+import { sanitizeLearnerExport, type LearnerExport } from "./export";
 
 /** Bump when the export SHAPE changes, so a consumer can tell versions apart. */
-export const ACCOUNT_EXPORT_SCHEMA_VERSION = 2;
+export const ACCOUNT_EXPORT_SCHEMA_VERSION = 3;
 
 /**
  * The self-describing data inventory (the COPPA "clear data inventory"). These
@@ -26,8 +26,8 @@ export const EXPORT_CONTENTS = [
   "account",
   "learners",
   "enrollments",
-  // "attempts" includes each complete bounded response payload. Journal attempts
-  // contain participation counts/mode flags, never text, transcripts, or drawings.
+  // "attempts" includes each kind-specific response. Journal responses contain
+  // only bounded participation facts, never text, transcript, strokes, or images.
   "skillState",
   "reviewSchedules",
   "attempts",
@@ -105,6 +105,6 @@ export function shapeAccountExport(input: ShapeAccountInput): AccountExport {
       email: input.account.email,
       createdAt: input.account.createdAt,
     },
-    learners: input.learners,
+    learners: input.learners.map(sanitizeLearnerExport),
   };
 }

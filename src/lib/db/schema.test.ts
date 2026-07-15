@@ -11,6 +11,7 @@ import {
   learner,
   oralReadingVerification,
   parentPin,
+  programVersion,
   publisher,
   reviewSchedule,
   session,
@@ -120,6 +121,21 @@ describe("attempt completion idempotency schema", () => {
   });
 });
 
+describe("attempt durable content identity schema", () => {
+  it("stores nullable program, unit, and version identity for legacy-safe replay", () => {
+    expect(attempt.programSlug.notNull).toBe(false);
+    expect(attempt.unitKey.notNull).toBe(false);
+    expect(attempt.programVersionId.notNull).toBe(false);
+    expect(fkOnDelete(attempt, "program_version_id")).toBe("set null");
+    expect(
+      getTableConfig(attempt).foreignKeys.some(
+        (foreignKey) =>
+          getTableName(foreignKey.reference().foreignTable) === getTableName(programVersion),
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("oral_reading_verification schema", () => {
   it("stores only bounded canonical facts and an atomic completion claim", () => {
     expect(Object.keys(oralReadingVerification)).toEqual(
@@ -127,6 +143,7 @@ describe("oral_reading_verification schema", () => {
         "id",
         "learnerId",
         "programSlug",
+        "programVersionId",
         "unitKey",
         "activityId",
         "mode",
@@ -144,7 +161,9 @@ describe("oral_reading_verification schema", () => {
       expect.arrayContaining(["audio", "transcript", "target", "passage"]),
     );
     expect(oralReadingVerification.expiresAt.notNull).toBe(true);
+    expect(oralReadingVerification.programVersionId.notNull).toBe(false);
     expect(oralReadingVerification.consumedCompletionId.notNull).toBe(false);
+    expect(fkOnDelete(oralReadingVerification, "program_version_id")).toBe("set null");
 
     const completionIndex = getTableConfig(oralReadingVerification).indexes.find(
       (index) => index.config.name === "oral_reading_verification_learner_completion_uq",

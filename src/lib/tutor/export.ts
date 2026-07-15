@@ -22,6 +22,14 @@ interface AiProvenanceEntry {
   generatedAt: string | null;
 }
 
+interface JournalParticipationSummary {
+  markCount: number;
+  textLength: number;
+  usedDictation: boolean;
+  mode: "draw" | "scribe" | "type" | "dictate";
+  didDraw: boolean;
+}
+
 /** Minimized per-child export (spec §8 child-data posture). */
 export interface LearnerExport {
   exportedAt: string;
@@ -53,8 +61,11 @@ export interface LearnerExport {
   attempts: {
     activityId: string;
     kind: string;
+    programSlug: string | null;
+    unitKey: string | null;
+    programVersionId: string | null;
     score: { stars: number; correct: number; total: number };
-    /** Complete bounded response for the activity kind; journal artifacts are never stored. */
+    /** Kind-specific response. Journal entries are always a bounded participation summary. */
     response: unknown;
     day: string;
     createdAt: string;
@@ -127,6 +138,10 @@ export interface ShapeInput {
   attempts: {
     activityId: string;
     kind: string;
+    /** Null for attempts recorded before durable content identity was introduced. */
+    programSlug?: string | null;
+    unitKey?: string | null;
+    programVersionId?: string | null;
     score: { stars: number; correct: number; total: number; skillEvidence: unknown[] };
     response?: unknown;
     day: string;
@@ -176,6 +191,96 @@ function toIso(value: Date | string): string {
   return typeof value === "string" ? value : value.toISOString();
 }
 
+function objectRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function boundedInteger(value: unknown, maximum: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.min(maximum, Math.max(0, Math.trunc(value)));
+}
+
+function stringLength(value: unknown): number {
+  return typeof value === "string" ? Array.from(value).length : 0;
+}
+
+function journalMode(
+  candidate: unknown,
+  summary: Omit<JournalParticipationSummary, "mode">,
+): JournalParticipationSummary["mode"] {
+  if (candidate === "draw" && summary.didDraw) return candidate;
+  if ((candidate === "scribe" || candidate === "type") && summary.textLength > 0) {
+    return candidate;
+  }
+  if (candidate === "dictate" && summary.usedDictation && summary.textLength > 0) {
+    return candidate;
+  }
+  if (summary.usedDictation) return "dictate";
+  if (summary.textLength > 0) return "type";
+  if (summary.didDraw) return "draw";
+  return "type";
+}
+
+/**
+ * Defense in depth for legacy rows that predate the journal privacy contract.
+ * Derive only bounded participation facts, then drop all child-authored content.
+ */
+function sanitizeAttemptResponse(kind: string, response: unknown): unknown {
+  if (kind !== "journal-prompt") return response;
+
+  const record = objectRecord(response);
+  const strokeCount = Array.isArray(record.strokes) ? record.strokes.length : 0;
+  const drawingIndicator =
+    record.didDraw === true ||
+    (typeof record.drawingDataUrl === "string" && record.drawingDataUrl.length > 0)
+      ? 1
+      : 0;
+  const markCount = Math.min(
+    200,
+    Math.max(boundedInteger(record.markCount, 200), strokeCount, drawingIndicator),
+  );
+  const textLength = Math.min(
+    2_000,
+    Math.max(
+      boundedInteger(record.textLength, 2_000),
+      stringLength(record.text),
+      stringLength(record.transcript),
+    ),
+  );
+  const usedDictation =
+    textLength > 0 &&
+    (record.usedDictation === true ||
+      record.mode === "dictate" ||
+      stringLength(record.transcript) > 0);
+  const withoutMode = {
+    markCount,
+    textLength,
+    usedDictation,
+    didDraw: markCount > 0,
+  };
+
+  return {
+    markCount,
+    textLength,
+    usedDictation,
+    mode: journalMode(record.mode, withoutMode),
+    didDraw: withoutMode.didDraw,
+  } satisfies JournalParticipationSummary;
+}
+
+/** Whole-account exports may receive already-shaped learner data; sanitize it again. */
+export function sanitizeLearnerExport(input: LearnerExport): LearnerExport {
+  return {
+    ...input,
+    attempts: input.attempts.map((entry) => ({
+      ...entry,
+      response: sanitizeAttemptResponse(entry.kind, entry.response),
+    })),
+  };
+}
+
 /**
  * Pure assembly: take the gathered rows and normalize them into the minimized
  * export shape. Includes only the fields declared in LearnerExport — no extra
@@ -211,14 +316,15 @@ export function shapeLearnerExport(input: ShapeInput): LearnerExport {
     attempts: input.attempts.map((a) => ({
       activityId: a.activityId,
       kind: a.kind,
+      programSlug: a.programSlug ?? null,
+      unitKey: a.unitKey ?? null,
+      programVersionId: a.programVersionId ?? null,
       score: {
         stars: a.score.stars,
         correct: a.score.correct,
         total: a.score.total,
       },
-      // Export the complete bounded response that exists. Journal text, transcripts,
-      // strokes, and images never enter attempt storage, so cannot appear here.
-      response: a.response ?? null,
+      response: sanitizeAttemptResponse(a.kind, a.response ?? null),
       day: a.day,
       createdAt:
         typeof a.createdAt === "string"

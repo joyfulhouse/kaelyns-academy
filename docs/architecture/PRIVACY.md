@@ -71,7 +71,7 @@ The **manifest** is the self-describing data inventory (`schemaVersion`,
 | `enrollments` | `enrollment` | program slug, status, config |
 | `skillState` | `skill_state` | derived outcomes + per-day evidence |
 | `reviewSchedules` | `review_schedule` | spaced-repetition skill ids, ladder position, and review dates |
-| `attempts` | `attempt` | score (stars/correct/total), the full bounded response stored for that activity kind, day, createdAt. Journal responses contain only `markCount`, `textLength`, `usedDictation`, `mode`, and `didDraw` — never journal text, transcript, strokes, or image data. |
+| `attempts` | `attempt` | activity kind plus nullable program/unit/version identity, score (stars/correct/total), bounded kind-specific response, day, createdAt. Journal responses contain only `markCount`, `textLength`, `usedDictation`, `mode`, and `didDraw` — never text, transcript, strokes, or an image/data URL. |
 | `aiProvenance` | `attempt` (generated rows) | model, route, generatedAt — metadata only |
 
 **Deliberately not exported** (`manifest.notExported`), and why:
