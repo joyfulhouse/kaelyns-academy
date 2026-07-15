@@ -1,8 +1,18 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { ACTIVITY_CONFIG_SCHEMAS } from "./activity-configs";
 import { PROGRAMS, getSkill } from "./index";
 import { getLanguage } from "./languages";
 import { kaelynAdaptive } from "./programs/kaelyn-adaptive";
+import { decodableReadersUnit } from "./programs/kaelyn-adaptive/decodable-readers";
+import { lifeSkillsMathUnit } from "./programs/kaelyn-adaptive/life-skills-math";
+import { mathUnit } from "./programs/kaelyn-adaptive/math";
+import { mathBaselineUnit } from "./programs/kaelyn-adaptive/math-baseline";
+import { readingUnit } from "./programs/kaelyn-adaptive/reading";
+import { readingBaselineUnit } from "./programs/kaelyn-adaptive/reading-baseline";
+import { scienceNatureUnit } from "./programs/kaelyn-adaptive/science-nature";
+import { wordStudyUnit } from "./programs/kaelyn-adaptive/word-study";
+import { writingUnit } from "./programs/kaelyn-adaptive/writing";
 import { getActivityType, isActivityKindRegistered } from "@/activities";
 import { SKILLS } from "./skills";
 
@@ -23,6 +33,23 @@ function everyActivity() {
 }
 
 describe("authored program content", () => {
+  it("assembles Kaelyn's adaptive units without changing serialized content or order", () => {
+    expect(kaelynAdaptive.units).toEqual([
+      readingUnit,
+      wordStudyUnit,
+      writingUnit,
+      mathUnit,
+      lifeSkillsMathUnit,
+      scienceNatureUnit,
+      decodableReadersUnit,
+      readingBaselineUnit,
+      mathBaselineUnit,
+    ]);
+    expect(
+      createHash("sha256").update(JSON.stringify(kaelynAdaptive)).digest("hex"),
+    ).toBe("c0bc69e82a34625abeaca74302fc2e53a2698e4779ee28df668a8da1259099e3");
+  });
+
   it("every activity config parses against its kind's schema", () => {
     for (const { program, activity } of everyActivity()) {
       const schema = ACTIVITY_CONFIG_SCHEMAS[activity.kind] as {
