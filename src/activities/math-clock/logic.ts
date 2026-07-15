@@ -7,12 +7,19 @@ import {
   outcomeFromAccuracy,
   starsFromAccuracy,
 } from "../_shared/scoring";
+import { normalizeHalfHour } from "./clock-model";
 
 /** Server-safe schema + scoring for math-clock. No "use client". */
 export const schema = mathClockConfig;
 
 /** The child's final action + how many checks it took (≥1). */
-const clockAttempts = z.number().int().min(1).max(100);
+const clockAttempts = z.number().int().min(1).max(20);
+const totalMinutes = z
+  .number()
+  .int()
+  .min(0)
+  .max(690)
+  .refine((value) => value % 30 === 0, "totalMinutes must be a half-hour position");
 export const responseSchema = z.union([
   z
     .object({
@@ -24,9 +31,8 @@ export const responseSchema = z.union([
   z
     .object({
       attempts: clockAttempts,
-      /** set mode: the clock the child made. */
-      setHour: z.number().int().min(1).max(12),
-      setMinute: z.union([z.literal(0), z.literal(30)]),
+      /** set mode: one coupled half-hour position after twelve. */
+      totalMinutes,
     })
     .strict(),
 ]);
@@ -36,11 +42,8 @@ export function isCorrect(config: MathClockConfig, response: MathClockResponse):
   if (config.mode === "read") {
     return "selectedIndex" in response && response.selectedIndex === config.answerIndex;
   }
-  return (
-    "setHour" in response &&
-    response.setHour === config.targetHour &&
-    response.setMinute === config.targetMinute
-  );
+  const targetMinutes = normalizeHalfHour((config.targetHour % 12) * 60 + config.targetMinute);
+  return "totalMinutes" in response && response.totalMinutes === targetMinutes;
 }
 
 export function score(config: MathClockConfig, response: MathClockResponse): ActivityScore {
