@@ -26,12 +26,14 @@ import {
   canStartOralAttempt,
   canSubmitRecording,
   createOralReadingRequestForm,
+  isModelPlaybackLocked,
   parseWordRouteResult,
   phaseAfterUnmatched,
   needsAdultModelFallback,
   shouldCompleteAfterObservation,
   subscribeStatic,
   supportedMimeType,
+  stopModelAudioBeforeRecording,
   type OralReadingPhase,
   type VerifiedWordRouteResult,
   type VerificationResult,
@@ -117,6 +119,7 @@ function WordReadingPlayer({
   }
 
   function playModel(): void {
+    if (isModelPlaybackLocked(phase)) return;
     const requestId = modelRequestRef.current + 1;
     modelRequestRef.current = requestId;
     setModelStatus("playing");
@@ -195,6 +198,7 @@ function WordReadingPlayer({
     ) {
       return;
     }
+    stopModelAudioBeforeRecording(speech.cancel);
     setPhase("requesting");
 
     try {
@@ -279,6 +283,7 @@ function WordReadingPlayer({
         presentation={parsed.presentation}
         speechSupported={speech.supported && modelStatus !== "unavailable"}
         modelStatus={modelStatus === "unavailable" ? "idle" : modelStatus}
+        disabled={isModelPlaybackLocked(phase)}
         label={`Listen to the word ${parsed.target}`}
         onPlay={playModel}
       />

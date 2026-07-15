@@ -158,7 +158,7 @@ describe("useSpeech capability and lifecycle", () => {
     await flushCleanup();
   });
 
-  it("exposes a real neural-plus-browser failure to child-facing callers", async () => {
+  it("returns a real neural-plus-browser failure to child-facing callers", async () => {
     media.narrate.mockImplementation(
       (_text: string, options: { onUnavailable: () => void }) => {
         options.onUnavailable();
@@ -168,9 +168,7 @@ describe("useSpeech capability and lifecycle", () => {
     const speech = useRenderedSpeech();
     const cleanup = setupEffect();
 
-    expect(speech.lastOutcome).toBeNull();
     await expect(speech.speak("Hear the target")).resolves.toBe("unavailable");
-    expect(useRenderedSpeech().lastOutcome).toBe("unavailable");
 
     cleanup();
     await flushCleanup();

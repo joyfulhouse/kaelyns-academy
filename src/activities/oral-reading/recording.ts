@@ -41,6 +41,20 @@ export type OralReadingPhase =
   | "unclear"
   | "fallback";
 
+/** Model playback and microphone capture never own the audio channel together. */
+export function isModelPlaybackLocked(phase: OralReadingPhase): boolean {
+  return phase === "requesting" || phase === "listening" || phase === "checking";
+}
+
+/** Stop modeled speech (and any matching visual sweep) before requesting the mic. */
+export function stopModelAudioBeforeRecording(
+  cancelSpeech: () => void,
+  cancelVisualSweep?: () => void,
+): void {
+  cancelVisualSweep?.();
+  cancelSpeech();
+}
+
 export const MIC_CLASSES: Record<"ready" | "busy" | "listening", string> = {
   ready: "bg-honey text-ink",
   busy: "bg-honey/55 text-ink",

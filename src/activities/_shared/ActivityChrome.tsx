@@ -30,6 +30,7 @@ const PRESS_CLASS: Record<SpeakerPress, string> = {
 interface SpeakerVisual {
   label?: string;
   className?: string;
+  disabled?: boolean;
   size?: SpeakerSize;
   shape?: SpeakerShape;
   tone?: SpeakerTone;
@@ -58,6 +59,7 @@ export function SpeakerButton(props: SpeakerButtonProps) {
   const {
     label = "Hear it again",
     className,
+    disabled = false,
     size = "md",
     shape = "square",
     tone = "honey",
@@ -79,9 +81,10 @@ export function SpeakerButton(props: SpeakerButtonProps) {
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       aria-label={label}
       className={cn(
-        "grid shrink-0 place-items-center border-[3px] border-ink text-ink shadow-pop",
+        "grid shrink-0 place-items-center border-[3px] border-ink text-ink shadow-pop disabled:pointer-events-none disabled:opacity-50",
         SIZE_BOX[size],
         SHAPE_CLASS[shape],
         TONE_CLASS[tone],

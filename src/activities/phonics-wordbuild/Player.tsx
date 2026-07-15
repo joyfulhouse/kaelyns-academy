@@ -14,6 +14,7 @@ import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
+import { useTargetSpeech } from "../_shared/useTargetSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
 import {
   addTileToBuild,
@@ -32,6 +33,7 @@ export function PhonicsWordbuildPlayer({
 }: ActivityPlayerProps<PhonicsWordbuildConfig, PhonicsWordbuildResponse>) {
   const parsed = useActivity(schema, config);
   const speech = useSpeech();
+  const targetSpeech = useTargetSpeech(speech);
   const reduced = useReducedMotion();
   const shake = useWrongShake();
 
@@ -100,6 +102,11 @@ export function PhonicsWordbuildPlayer({
     }
   }
 
+  function playTarget(): void {
+    const tts = wordPhonemeText(current.word, current.ipa);
+    void targetSpeech.speakTarget(current.word, tts ? { tts } : undefined);
+  }
+
   function removeTile(tileIndex: number): void {
     if (shake.wrong || sweeping) return;
     setBuiltTileIndices((previous) => releaseTileFromBuild(previous, tileIndex));
@@ -133,6 +140,7 @@ export function PhonicsWordbuildPlayer({
     setBuiltTileIndices([]);
     setAttempts(1);
     setUsedHelp(false);
+    targetSpeech.reset();
     setFeedback(null);
     setSweepLabel(null);
     setBlendLabel(null);
@@ -205,17 +213,14 @@ export function PhonicsWordbuildPlayer({
           </motion.div>
         )}
         <div className="flex items-center gap-2">
-          <SpeakerButton
-            speech={speech}
-            text={current.word}
-            tts={wordPhonemeText(current.word, current.ipa)}
-            label="Hear the target word"
-          />
+          {speech.supported ? (
+            <SpeakerButton onSpeak={playTarget} label="Hear the target word" />
+          ) : null}
           <span className="text-sm text-ink-soft">
             Word {wordIndex + 1} of {parsed.words.length}
           </span>
         </div>
-        {(!speech.supported || speech.lastOutcome === "unavailable") && !usedHelp ? (
+        {(!speech.supported || targetSpeech.unavailable) && !usedHelp ? (
           <p role="status" className="max-w-md text-center text-sm text-ink-soft">
             Audio isn’t available here. Show the target word to keep going.
           </p>

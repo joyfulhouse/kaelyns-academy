@@ -10,6 +10,7 @@ describe("OralModelStep", () => {
         presentation: "listen-repeat",
         speechSupported: true,
         modelStatus: "playing",
+        disabled: false,
         label: "Listen to the word",
         onPlay: () => undefined,
       }),
@@ -19,6 +20,7 @@ describe("OralModelStep", () => {
         presentation: "listen-repeat",
         speechSupported: true,
         modelStatus: "completed",
+        disabled: false,
         label: "Listen to the word",
         onPlay: () => undefined,
       }),
@@ -27,6 +29,22 @@ describe("OralModelStep", () => {
     expect(playing).toContain("Listening to the whole model…");
     expect(playing).not.toContain("Now it is your turn");
     expect(completed).toContain("The model finished. Now it is your turn.");
+  });
+
+  it("disables model replay while the microphone owns the audio channel", () => {
+    const recording = renderToStaticMarkup(
+      createElement(OralModelStep, {
+        presentation: "listen-repeat",
+        speechSupported: true,
+        modelStatus: "completed",
+        disabled: true,
+        label: "Listen to the word",
+        onPlay: () => undefined,
+      }),
+    );
+
+    expect(recording).toContain("disabled=\"\"");
+    expect(recording).toContain('aria-label="Listen to the word"');
   });
 
   it("announces the adult-model fallback with a real heading", () => {

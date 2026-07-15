@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { expectSingleHostReward } from "../helpers";
+import { expectSingleHostReward, installSelectiveBrowserSpeech } from "../helpers";
 
 const ACTIVITY = "/learn/kaelyn-adaptive/word-study/word-r4-a1";
 
@@ -50,27 +50,22 @@ test("speech-unavailable word builds reveal each target only through explicit he
   await page.route("**/api/tts", async (route) => {
     await route.fulfill({ status: 503 });
   });
-  await page.addInitScript(() => {
-    Object.defineProperty(window, "speechSynthesis", {
-      configurable: true,
-      value: undefined,
-    });
-    Object.defineProperty(window, "SpeechSynthesisUtterance", {
-      configurable: true,
-      value: undefined,
-    });
-  });
+  await installSelectiveBrowserSpeech(page, "^(rabbit|cocoa)$");
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(ACTIVITY);
 
-  await expect(
-    page.getByText("Audio isn’t available here. Show the target word to keep going."),
-  ).toBeVisible({ timeout: 25_000 });
+  await page.getByRole("button", { name: "Hear the target word" }).click();
+  const unavailable = page.getByText(
+    "Audio isn’t available here. Show the target word to keep going.",
+  );
+  await expect(unavailable).toBeVisible({ timeout: 25_000 });
   await expect(page.getByText("Word to build: rabbit")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Use tile rab" }).click();
+  await expect(unavailable).toBeVisible();
 
   await page.getByRole("button", { name: "Show the target word" }).click();
   await expect(page.getByText("Word to build: rabbit")).toBeVisible();
-  await page.getByRole("button", { name: "Use tile rab" }).click();
   await page.getByRole("button", { name: "Use tile bit" }).press("Enter");
   await page.getByRole("button", { name: "Check it" }).click();
 

@@ -10,6 +10,7 @@ import { shuffle } from "../_shared/shuffle";
 import { useActivity } from "../_shared/useActivity";
 import { useEffectOncePerKey } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
+import { useTargetSpeech } from "../_shared/useTargetSpeech";
 import { schema, type SightwordGameResponse } from "./logic";
 import {
   chooseSightword,
@@ -29,6 +30,7 @@ export function SightwordGamePlayer({
   const parsed = useActivity(schema, config);
   const rounds = parsed.rounds;
   const speech = useSpeech();
+  const targetSpeech = useTargetSpeech(speech);
   const [roundIndex, setRoundIndex] = useState(0);
   const [roundState, setRoundState] = useState(createSightwordRoundState);
   const [completedRounds, setCompletedRounds] = useState<SightwordGameResponse["rounds"]>([]);
@@ -44,7 +46,7 @@ export function SightwordGamePlayer({
 
   useEffectOncePerKey(
     () => {
-      if (spokenCue) speech.speak(spokenCue);
+      if (spokenCue) void targetSpeech.speakTarget(spokenCue);
     },
     roundIndex,
   );
@@ -69,6 +71,7 @@ export function SightwordGamePlayer({
       return;
     }
     setCompletedRounds(nextCompleted);
+    targetSpeech.reset();
     setRoundIndex((index) => index + 1);
     setRoundState(createSightwordRoundState());
   }
@@ -92,12 +95,15 @@ export function SightwordGamePlayer({
               {round.context}
             </p>
           )}
-          <SpeakerButton
-            speech={speech}
-            text={spokenCue}
-            label="Hear the word again"
-          />
-          {(!speech.supported || speech.lastOutcome === "unavailable") &&
+          {speech.supported ? (
+            <SpeakerButton
+              onSpeak={() => {
+                void targetSpeech.speakTarget(spokenCue);
+              }}
+              label="Hear the word again"
+            />
+          ) : null}
+          {(!speech.supported || targetSpeech.unavailable) &&
           !roundState.helpVisible ? (
             <p role="status" className="max-w-md text-sm text-ink-soft">
               Audio isn’t available here. Show the word to keep going.

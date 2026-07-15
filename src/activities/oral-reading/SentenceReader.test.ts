@@ -1,5 +1,9 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SpeechController } from "../_shared/useSpeech";
 import {
+  KaraokePassage,
   LISTEN_WORD_DWELL_MS,
   SENTENCE_WORD_CLASSES,
   SETTLE_WORD_STAGGER_MS,
@@ -77,6 +81,29 @@ describe("sentence oral-reading feedback", () => {
     for (const classes of Object.values(SENTENCE_WORD_CLASSES)) {
       expect(classes).not.toMatch(/(?:^|\s)(?:bg|text|border)-(?:danger|red|rose)(?:-|\s|$)/);
     }
+  });
+
+  it("disables unclear-word replay while the microphone owns audio", () => {
+    const speech: SpeechController = {
+      supported: true,
+      hasVoice: true,
+      speak: vi.fn<SpeechController["speak"]>(() => Promise.resolve("completed")),
+      cancel: vi.fn(),
+    };
+    const markup = renderToStaticMarkup(
+      createElement(KaraokePassage, {
+        passage: "Try me",
+        settled: [{ state: "unclear" }, { state: "correct" }],
+        revealedWordCount: 2,
+        speech,
+        playbackDisabled: true,
+      }),
+    );
+
+    expect(markup).toContain('aria-label="Hear Try"');
+    expect(markup).toMatch(
+      /<button(?=[^>]*aria-label="Hear Try")(?=[^>]*disabled="")[^>]*>/,
+    );
   });
 });
 

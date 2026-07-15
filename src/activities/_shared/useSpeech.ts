@@ -23,8 +23,6 @@ export interface SpeechController {
    * assume yes; a non-English locale is only true once a matching voice loads.
    */
   hasVoice: boolean;
-  /** Most recent delivered request outcome; null while idle or a new request is pending. */
-  lastOutcome: SpeechPlaybackOutcome | null;
   /** Speak a phrase (cancels anything in flight). Resolves with actual delivery,
    *  unavailability, or cancellation. The optional `tts` override sends phoneme
    *  markup to the neural voice only; browser synthesis always gets plain text. */
@@ -84,7 +82,6 @@ export function useSpeech(locale = "en-US"): SpeechController {
   // English is assumed available; for other locales we flip true only once a
   // matching voice resolves (drives whether callers offer that language's audio).
   const [hasVoice, setHasVoice] = useState(() => isEnglish(locale));
-  const [lastOutcome, setLastOutcome] = useState<SpeechPlaybackOutcome | null>(null);
 
   const cancel = useCallback(() => {
     requestIdRef.current += 1;
@@ -163,7 +160,6 @@ export function useSpeech(locale = "en-US"): SpeechController {
   const speak = useCallback(
     (text: string, opts?: SpeakOptions): Promise<SpeechPlaybackOutcome> => {
       cancel();
-      setLastOutcome(null);
       const trimmed = text.trim();
       const english = isEnglish(locale);
       const synth = getSynth();
@@ -173,14 +169,12 @@ export function useSpeech(locale = "en-US"): SpeechController {
           liveVoice = synth ? pickVoice(synth.getVoices(), locale) : null;
         } catch (error) {
           captureNonCritical("Speech synthesis failed", error);
-          setLastOutcome("unavailable");
           return Promise.resolve("unavailable");
         }
       }
       const liveSupported = hasPlaybackPath(locale);
       const liveHasVoice = english || liveVoice !== null;
       if (!liveSupported || !liveHasVoice || !trimmed) {
-        setLastOutcome("unavailable");
         return Promise.resolve("unavailable");
       }
       voiceRef.current = liveVoice;
@@ -193,7 +187,6 @@ export function useSpeech(locale = "en-US"): SpeechController {
           if (activeRequestRef.current?.id !== requestId) return;
           activeRequestRef.current = null;
           narrateRef.current = null;
-          setLastOutcome(outcome);
           resolve(outcome);
         };
         // TTS is an enhancement, never required (PRODUCT.md §1). A synchronous throw
@@ -228,7 +221,7 @@ export function useSpeech(locale = "en-US"): SpeechController {
   // it don't churn every render. Every member is itself stable (store/state/
   // useCallback), so the object identity only changes when one truly does.
   return useMemo(
-    () => ({ supported, hasVoice, lastOutcome, speak, cancel }),
-    [supported, hasVoice, lastOutcome, speak, cancel],
+    () => ({ supported, hasVoice, speak, cancel }),
+    [supported, hasVoice, speak, cancel],
   );
 }

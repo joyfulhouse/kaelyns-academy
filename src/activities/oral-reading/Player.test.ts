@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   MAX_RECORDING_MS,
   canRecordAnother,
@@ -8,9 +8,11 @@ import {
   canStartOralAttempt,
   parseWordRouteResult,
   needsAdultModelFallback,
+  isModelPlaybackLocked,
   phaseAfterUnmatched,
   sentenceRecordingMs,
   shouldCompleteAfterObservation,
+  stopModelAudioBeforeRecording,
 } from "./recording";
 
 describe("oral-reading recording lifecycle", () => {
@@ -24,6 +26,25 @@ describe("oral-reading recording lifecycle", () => {
     expect(needsAdultModelFallback("listen-repeat", false)).toBe(true);
     expect(needsAdultModelFallback("listen-repeat", true)).toBe(false);
     expect(needsAdultModelFallback("cold", false)).toBe(false);
+  });
+
+  it("locks model replay for every microphone-owned phase", () => {
+    expect(isModelPlaybackLocked("ready")).toBe(false);
+    expect(isModelPlaybackLocked("unclear")).toBe(false);
+    expect(isModelPlaybackLocked("fallback")).toBe(false);
+    expect(isModelPlaybackLocked("requesting")).toBe(true);
+    expect(isModelPlaybackLocked("listening")).toBe(true);
+    expect(isModelPlaybackLocked("checking")).toBe(true);
+  });
+
+  it("stops model audio and its visual sweep before requesting the microphone", () => {
+    const cancelSpeech = vi.fn();
+    const cancelVisualSweep = vi.fn();
+
+    stopModelAudioBeforeRecording(cancelSpeech, cancelVisualSweep);
+
+    expect(cancelVisualSweep).toHaveBeenCalledOnce();
+    expect(cancelSpeech).toHaveBeenCalledOnce();
   });
 
   it("settles a cold assessment on its first observation", () => {

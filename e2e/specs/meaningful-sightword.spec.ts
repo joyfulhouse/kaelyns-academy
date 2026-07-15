@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { expectSingleHostReward } from "../helpers";
+import { expectSingleHostReward, installSelectiveBrowserSpeech } from "../helpers";
 
 const ACTIVITY = "/learn/kaelyn-adaptive/word-study/word-sight-find";
 
@@ -47,21 +47,16 @@ test("speech-unavailable sight-word rounds remain completable through explicit h
   await page.route("**/api/tts", async (route) => {
     await route.fulfill({ status: 503 });
   });
-  await page.addInitScript(() => {
-    Object.defineProperty(window, "speechSynthesis", {
-      configurable: true,
-      value: undefined,
-    });
-    Object.defineProperty(window, "SpeechSynthesisUtterance", {
-      configurable: true,
-      value: undefined,
-    });
-  });
+  await installSelectiveBrowserSpeech(page, "^Find the word ");
   await page.goto(ACTIVITY);
 
-  await expect(page.getByText("Audio isn’t available here. Show the word to keep going.")).toBeVisible({
+  const unavailable = page.getByText("Audio isn’t available here. Show the word to keep going.");
+  await expect(unavailable).toBeVisible({
     timeout: 25_000,
   });
+
+  await page.getByRole("button", { name: "then", exact: true }).click();
+  await expect(unavailable).toBeVisible();
 
   for (const target of ["the", "and", "said"]) {
     await page.getByRole("button", { name: "Show the word" }).click();

@@ -66,6 +66,60 @@ export async function expectSingleHostReward(page: Page): Promise<void> {
   await expect(page.getByRole("link", { name: /Keep going|Map/ }).first()).toBeVisible();
 }
 
+/**
+ * Keep the neural route unavailable while making unrelated browser speech
+ * succeed. This catches activity UIs that accidentally treat one shared
+ * controller outcome as the status of a specific target-audio request.
+ */
+export async function installSelectiveBrowserSpeech(
+  page: Page,
+  unavailableTextPattern: string,
+): Promise<void> {
+  await page.addInitScript(({ pattern }) => {
+    class SelectiveUtterance {
+      lang = "";
+      onend: ((event: SpeechSynthesisEvent) => void) | null = null;
+      onerror: ((event: SpeechSynthesisErrorEvent) => void) | null = null;
+      pitch = 1;
+      rate = 1;
+      voice: SpeechSynthesisVoice | null = null;
+
+      constructor(readonly text: string) {}
+    }
+
+    const unavailable = new RegExp(pattern);
+    const voice = {
+      default: true,
+      lang: "en-US",
+      localService: true,
+      name: "Selective English",
+      voiceURI: "selective-english",
+    } as SpeechSynthesisVoice;
+    Object.defineProperty(window, "SpeechSynthesisUtterance", {
+      configurable: true,
+      value: SelectiveUtterance,
+    });
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: {
+        addEventListener: () => {},
+        cancel: () => {},
+        getVoices: () => [voice],
+        removeEventListener: () => {},
+        speak: (utterance: SelectiveUtterance) => {
+          queueMicrotask(() => {
+            if (unavailable.test(utterance.text)) {
+              utterance.onerror?.(new Event("error") as SpeechSynthesisErrorEvent);
+            } else {
+              utterance.onend?.(new Event("end") as SpeechSynthesisEvent);
+            }
+          });
+        },
+      },
+    });
+  }, { pattern: unavailableTextPattern });
+}
+
 /** Exercise Pointer Events directly; native dragTo dispatches HTML drag events instead. */
 export async function dragPointer(page: Page, source: Locator, target: Locator): Promise<void> {
   const sourceBox = await source.boundingBox();

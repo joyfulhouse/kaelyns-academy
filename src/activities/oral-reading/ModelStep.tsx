@@ -9,12 +9,14 @@ export function OralModelStep({
   presentation,
   speechSupported,
   modelStatus,
+  disabled,
   label,
   onPlay,
 }: {
   presentation: OralReadingPresentation;
   speechSupported: boolean;
   modelStatus: "idle" | "playing" | "completed";
+  disabled: boolean;
   label: string;
   onPlay: () => void;
 }) {
@@ -25,7 +27,13 @@ export function OralModelStep({
   return (
     <div className="grid justify-items-center gap-3 rounded-2xl border-[3px] border-ink/15 bg-paper-sunk p-4">
       <p className="font-display text-lg text-ink">Step 1: Listen to the model</p>
-      <SpeakerButton onSpeak={onPlay} label={label} size="lg" shape="round" />
+      <SpeakerButton
+        onSpeak={onPlay}
+        label={label}
+        size="lg"
+        shape="round"
+        disabled={disabled}
+      />
       <p className="text-sm text-ink-soft" role="status" aria-live="polite">
         {modelStatus === "completed"
           ? "The model finished. Now it is your turn."

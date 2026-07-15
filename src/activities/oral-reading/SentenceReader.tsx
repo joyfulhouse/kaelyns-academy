@@ -31,12 +31,14 @@ import {
   canSubmitRecording,
   createOralReadingRequestForm,
   isOpaqueVerificationId,
+  isModelPlaybackLocked,
   needsAdultModelFallback,
   phaseAfterUnmatched,
   sentenceRecordingMs,
   shouldCompleteAfterObservation,
   subscribeStatic,
   supportedMimeType,
+  stopModelAudioBeforeRecording,
   type OralReadingPhase,
   type VerificationResult,
 } from "./recording";
@@ -247,18 +249,20 @@ export function parseSentenceRouteResult(
       };
 }
 
-function KaraokePassage({
+export function KaraokePassage({
   passage,
   activeWord,
   settled,
   revealedWordCount = 0,
   speech,
+  playbackDisabled,
 }: {
   passage: string;
   activeWord?: number | null;
   settled?: SettledWord[];
   revealedWordCount?: number;
   speech: SpeechController;
+  playbackDisabled: boolean;
 }) {
   return (
     <div
@@ -279,8 +283,16 @@ function KaraokePassage({
               type="button"
               data-word-state={state}
               aria-label={`Hear ${word}`}
-              onClick={() => speech.speak(word)}
-              className={cn(WORD_BASE_CLASSES, SENTENCE_WORD_CLASSES[state])}
+              disabled={playbackDisabled}
+              onClick={() => {
+                if (playbackDisabled) return;
+                void speech.speak(word);
+              }}
+              className={cn(
+                WORD_BASE_CLASSES,
+                SENTENCE_WORD_CLASSES[state],
+                "disabled:pointer-events-none disabled:opacity-50",
+              )}
             >
               {word}
               <SpeakerHighIcon className="size-6" weight="fill" aria-hidden="true" />
@@ -490,8 +502,7 @@ export function SentenceReader({
     ) {
       return;
     }
-    cancelListenSweep();
-    speech.cancel();
+    stopModelAudioBeforeRecording(speech.cancel, cancelListenSweep);
     setPhase("requesting");
 
     try {
@@ -571,6 +582,7 @@ export function SentenceReader({
     (config.presentation === "listen-repeat" && modelStatus === "unavailable");
 
   function playModel(): void {
+    if (isModelPlaybackLocked(phase)) return;
     const requestId = modelRequestRef.current + 1;
     modelRequestRef.current = requestId;
     setModelStatus("playing");
@@ -593,6 +605,7 @@ export function SentenceReader({
           settled={feedback?.words}
           revealedWordCount={revealedWordCount}
           speech={speech}
+          playbackDisabled={isModelPlaybackLocked(phase)}
         />
       </div>
 
@@ -600,6 +613,7 @@ export function SentenceReader({
         presentation={config.presentation}
         speechSupported={speech.supported && modelStatus !== "unavailable"}
         modelStatus={modelStatus === "unavailable" ? "idle" : modelStatus}
+        disabled={isModelPlaybackLocked(phase)}
         label="Listen to the sentence"
         onPlay={playModel}
       />
