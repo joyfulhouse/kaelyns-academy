@@ -23,6 +23,26 @@ export interface Point {
 
 /** One authored measurement unit always occupies this span in the shared SVG workspace. */
 export const MEASUREMENT_UNIT_PX = 48;
+export const MAX_MEASUREMENT_UNITS = 12;
+
+export interface UnitPlacement {
+  id: string;
+  slot: number;
+}
+
+export type UnitPlacementAction =
+  | { type: "place"; placement: UnitPlacement }
+  | { type: "move"; id: string; slot: number }
+  | { type: "remove"; id: string }
+  | { type: "clear" };
+
+export type UnitPlacementIssue =
+  | "none"
+  | "alignment"
+  | "gap"
+  | "overlap"
+  | "past-target"
+  | "short";
 
 export function measurementExtent(unitCount: number): number {
   return Math.max(0, Math.floor(unitCount)) * MEASUREMENT_UNIT_PX;
@@ -90,17 +110,72 @@ export function rotatePoint(point: Point, pivot: Point, degrees: number): Point 
   };
 }
 
-export function addPlacedUnit(unitIds: string[], unitId: string, capacity: number): string[] {
-  if (unitIds.length >= capacity || unitIds.includes(unitId)) return unitIds;
-  return [...unitIds, unitId];
+function isValidSlot(slot: number): boolean {
+  return Number.isInteger(slot) && slot >= 0 && slot < MAX_MEASUREMENT_UNITS;
 }
 
-export function removePlacedUnit(unitIds: string[], unitId: string): string[] {
-  const index = unitIds.indexOf(unitId);
-  if (index === -1) return unitIds;
-  return [...unitIds.slice(0, index), ...unitIds.slice(index + 1)];
+export function reduceUnitPlacements(
+  placements: UnitPlacement[],
+  action: UnitPlacementAction,
+): UnitPlacement[] {
+  if (action.type === "clear") return placements.length === 0 ? placements : [];
+
+  if (action.type === "place") {
+    if (
+      placements.length >= MAX_MEASUREMENT_UNITS ||
+      !isValidSlot(action.placement.slot) ||
+      placements.some((placement) => placement.id === action.placement.id)
+    ) {
+      return placements;
+    }
+    return [...placements, action.placement];
+  }
+
+  const index = placements.findIndex((placement) => placement.id === action.id);
+  if (index === -1) return placements;
+
+  if (action.type === "remove") {
+    return [...placements.slice(0, index), ...placements.slice(index + 1)];
+  }
+
+  if (!isValidSlot(action.slot) || placements[index]?.slot === action.slot) return placements;
+  return placements.map((placement, placementIndex) =>
+    placementIndex === index ? { ...placement, slot: action.slot } : placement,
+  );
 }
 
-export function placedUnitCount(unitIds: string[]): number {
-  return unitIds.length;
+export function analyzeUnitPlacements(
+  placements: readonly UnitPlacement[],
+  targetLength: number,
+): { validCount: number; issue: UnitPlacementIssue } {
+  const slotCounts = Array.from({ length: MAX_MEASUREMENT_UNITS }, () => 0);
+  for (const placement of placements) {
+    if (isValidSlot(placement.slot)) slotCounts[placement.slot] += 1;
+  }
+
+  let validCount = 0;
+  while (validCount < targetLength && slotCounts[validCount] === 1) validCount += 1;
+
+  if (slotCounts.some((count) => count > 1)) return { validCount, issue: "overlap" };
+  if (placements.length > 0 && slotCounts[0] === 0) return { validCount: 0, issue: "alignment" };
+  if (slotCounts.slice(targetLength).some((count) => count > 0)) {
+    return { validCount, issue: "past-target" };
+  }
+  if (validCount < targetLength && slotCounts.slice(validCount + 1, targetLength).some(Boolean)) {
+    return { validCount, issue: "gap" };
+  }
+  if (validCount < targetLength) return { validCount, issue: "short" };
+  return { validCount, issue: "none" };
+}
+
+export function snapToUnitSlot(
+  clientX: number,
+  trackLeft: number,
+  trackWidth: number,
+  slotCount = MAX_MEASUREMENT_UNITS,
+): number | null {
+  if (trackWidth <= 0 || slotCount <= 0 || !Number.isInteger(slotCount)) return null;
+  const offset = clientX - trackLeft;
+  if (offset < 0 || offset >= trackWidth) return null;
+  return Math.floor(offset / (trackWidth / slotCount));
 }

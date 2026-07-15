@@ -33,11 +33,20 @@ describe("isCorrect", () => {
     expect(
       isCorrect(unitsCfg, {
         attempts: 1,
-        placedUnitIds: ["unit-1", "unit-2", "unit-3", "unit-4", "unit-5"],
+        placements: [0, 1, 2, 3, 4].map((slot) => ({ id: `unit-${slot}`, slot })),
       }),
     ).toBe(true);
     expect(
-      isCorrect(unitsCfg, { attempts: 1, placedUnitIds: ["unit-1", "unit-2"] }),
+      isCorrect(unitsCfg, {
+        attempts: 1,
+        placements: [
+          { id: "unit-1", slot: 0 },
+          { id: "unit-2", slot: 2 },
+          { id: "unit-3", slot: 3 },
+          { id: "unit-4", slot: 4 },
+          { id: "unit-5", slot: 5 },
+        ],
+      }),
     ).toBe(false);
   });
 });
@@ -47,15 +56,33 @@ describe("responseSchema", () => {
     expect(responseSchema.safeParse({ attempts: 1, selectedIndex: 3 }).success).toBe(true);
     expect(responseSchema.safeParse({ attempts: 1, selectedIndex: 4 }).success).toBe(false);
     expect(
-      responseSchema.safeParse({ attempts: 1, placedUnitIds: ["unit-1", "unit-2"] }).success,
+      responseSchema.safeParse({
+        attempts: 1,
+        placements: [
+          { id: "unit-1", slot: 0 },
+          { id: "unit-2", slot: 1 },
+        ],
+      }).success,
     ).toBe(true);
     expect(
-      responseSchema.safeParse({ attempts: 1, placedUnitIds: ["unit-1", "unit-1"] }).success,
+      responseSchema.safeParse({
+        attempts: 1,
+        placements: [
+          { id: "unit-1", slot: 0 },
+          { id: "unit-1", slot: 1 },
+        ],
+      }).success,
     ).toBe(false);
     expect(
       responseSchema.safeParse({
         attempts: 1,
-        placedUnitIds: Array.from({ length: 13 }, (_, index) => `unit-${index}`),
+        placements: Array.from({ length: 13 }, (_, slot) => ({ id: `unit-${slot}`, slot })),
+      }).success,
+    ).toBe(false);
+    expect(
+      responseSchema.safeParse({
+        attempts: 1,
+        placements: [{ id: "unit-1", slot: 12 }],
       }).success,
     ).toBe(false);
   });
@@ -73,7 +100,7 @@ describe("score", () => {
   it("second try → 2 stars emerging", () => {
     const s = score(unitsCfg, {
       attempts: 2,
-      placedUnitIds: ["unit-1", "unit-2", "unit-3", "unit-4", "unit-5"],
+      placements: [0, 1, 2, 3, 4].map((slot) => ({ id: `unit-${slot}`, slot })),
     });
     expect(s.stars).toBe(2);
     expect(s.skillEvidence[0].outcome).toBe("emerging");
@@ -81,7 +108,7 @@ describe("score", () => {
   it("third+ try → 1 star not_yet", () => {
     const s = score(unitsCfg, {
       attempts: 3,
-      placedUnitIds: ["unit-1", "unit-2", "unit-3", "unit-4", "unit-5"],
+      placements: [0, 1, 2, 3, 4].map((slot) => ({ id: `unit-${slot}`, slot })),
     });
     expect(s.stars).toBe(1);
     expect(s.skillEvidence[0].outcome).toBe("not_yet");

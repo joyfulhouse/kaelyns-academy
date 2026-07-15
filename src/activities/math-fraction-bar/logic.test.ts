@@ -68,10 +68,10 @@ describe("math-fraction-bar config", () => {
 describe("math-fraction-bar response", () => {
   it("bounds partition counts, selected segment indices, uniqueness, and attempts", () => {
     expect(
-      responseSchema.safeParse({ mode: "partition", partitionCount: 4, attempts: 1 }).success,
+      responseSchema.safeParse({ mode: "partition", partitionId: "equal", attempts: 1 }).success,
     ).toBe(true);
     expect(
-      responseSchema.safeParse({ mode: "partition", partitionCount: 5, attempts: 1 }).success,
+      responseSchema.safeParse({ mode: "partition", partitionId: "fourths", attempts: 1 }).success,
     ).toBe(false);
     expect(
       responseSchema.safeParse({ mode: "identify", selectedSegments: [0, 2], attempts: 1 }).success,
@@ -89,12 +89,12 @@ describe("math-fraction-bar response", () => {
 });
 
 describe("math-fraction-bar scoring", () => {
-  it("scores partitioning from the chosen equal partition count", () => {
+  it("scores partitioning from the chosen equal-share geometry", () => {
     expect(
-      isCorrect(partition, { mode: "partition", partitionCount: 4, attempts: 1 }),
+      isCorrect(partition, { mode: "partition", partitionId: "equal", attempts: 1 }),
     ).toBe(true);
     expect(
-      isCorrect(partition, { mode: "partition", partitionCount: 3, attempts: 1 }),
+      isCorrect(partition, { mode: "partition", partitionId: "narrow-first", attempts: 1 }),
     ).toBe(false);
   });
 
@@ -117,13 +117,15 @@ describe("math-fraction-bar scoring", () => {
   });
 
   it("derives stars and fraction evidence server-side", () => {
-    expect(score(partition, { mode: "partition", partitionCount: 4, attempts: 1 })).toEqual({
+    expect(score(partition, { mode: "partition", partitionId: "equal", attempts: 1 })).toEqual({
       correct: 1,
       total: 1,
       stars: 3,
       skillEvidence: [{ skill: "math.fractions.unit", outcome: "solid" }],
     });
-    expect(score(partition, { mode: "partition", partitionCount: 3, attempts: 2 })).toEqual({
+    expect(
+      score(partition, { mode: "partition", partitionId: "wide-first", attempts: 2 }),
+    ).toEqual({
       correct: 0,
       total: 1,
       stars: 1,

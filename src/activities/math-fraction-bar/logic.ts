@@ -10,6 +10,7 @@ import {
   outcomeFromAccuracy,
   starsFromAccuracy,
 } from "../_shared/scoring";
+import { PARTITION_CANDIDATE_IDS } from "./model";
 
 /** Server-safe schema + scoring for math-fraction-bar. No "use client". */
 export const schema = mathFractionBarConfig;
@@ -21,7 +22,7 @@ export const responseSchema = z
     z
       .object({
         mode: z.literal("partition"),
-        partitionCount: z.number().int().min(2).max(4),
+        partitionId: z.enum(PARTITION_CANDIDATE_IDS),
         attempts,
       })
       .strict(),
@@ -60,7 +61,7 @@ export function isCorrect(
   if (config.mode !== response.mode) return false;
 
   if (response.mode === "partition") {
-    return config.mode === "partition" && response.partitionCount === config.denominator;
+    return config.mode === "partition" && response.partitionId === "equal";
   }
 
   if (config.mode !== "identify") return false;

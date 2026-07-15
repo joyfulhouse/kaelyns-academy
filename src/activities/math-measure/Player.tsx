@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { motion } from "motion/react";
 import { ArrowCounterClockwiseIcon, PlusIcon } from "@phosphor-icons/react/dist/ssr";
 import type { MathMeasureConfig } from "@/content/activity-configs";
@@ -13,17 +13,20 @@ import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
 import {
-  addPlacedUnit,
+  analyzeUnitPlacements,
   balanceAngle,
   balanceTiltDirection,
   comparisonDescription,
   deriveComparisonIndex,
+  MAX_MEASUREMENT_UNITS,
   MEASUREMENT_UNIT_PX,
   measurementExtent,
-  placedUnitCount,
-  removePlacedUnit,
+  reduceUnitPlacements,
   rotatePoint,
   scaledExtent,
+  snapToUnitSlot,
+  type UnitPlacement,
+  type UnitPlacementIssue,
 } from "./measure-model";
 import { schema, type MathMeasureResponse } from "./logic";
 
@@ -53,8 +56,17 @@ const UNIT_META: Record<
 
 const MEASUREMENT_START_X = 28;
 const MEASUREMENT_WORKSPACE_WIDTH = MEASUREMENT_START_X * 2 + measurementExtent(12);
-const MEASUREMENT_WORKSPACE_HEIGHT = 184;
-const MEASUREMENT_UNIT_Y = 116;
+
+function measurementFeedback(issue: UnitPlacementIssue): string {
+  const message: Record<Exclude<UnitPlacementIssue, "none">, string> = {
+    alignment: "Start the first unit at the start line.",
+    gap: "There is a gap. Move the units so their edges just touch.",
+    overlap: "Some units overlap. Move them so their edges just touch.",
+    "past-target": "A unit reaches past the object. Move or remove it.",
+    short: "Your connected units stop before the object ends. Place another unit.",
+  };
+  return issue === "none" ? "The measurement is ready." : message[issue];
+}
 
 export function MathMeasurePlayer({
   config,
@@ -66,7 +78,8 @@ export function MathMeasurePlayer({
   const shake = useWrongShake();
 
   const [attempts, setAttempts] = useState(0);
-  const [placedUnitIds, setPlacedUnitIds] = useState<string[]>([]);
+  const [placements, setPlacements] = useState<UnitPlacement[]>([]);
+  const [selectedUnit, setSelectedUnit] = useState<"new" | string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const nextUnit = useRef(1);
@@ -91,47 +104,72 @@ export function MathMeasurePlayer({
     shake.trigger({ speak: () => speech.speak(message) });
   }
 
-  function addUnit() {
-    if (parsed.mode !== "units" || shake.wrong || placedUnitIds.length >= 12) return;
-    const unitId = `unit-${nextUnit.current}`;
-    nextUnit.current += 1;
-    const nextIds = addPlacedUnit(placedUnitIds, unitId, 12);
-    setPlacedUnitIds(nextIds);
+  function selectNewUnit() {
+    if (parsed.mode !== "units" || shake.wrong || placements.length >= MAX_MEASUREMENT_UNITS) {
+      return;
+    }
+    setSelectedUnit("new");
     setFeedback(null);
-    setAnnouncement(`${placedUnitCount(nextIds)} ${UNIT_META[parsed.unit].plural} placed.`);
+    setAnnouncement(`${UNIT_META[parsed.unit].singular} selected. Choose a position on the measurement line.`);
   }
 
   function removeUnit(unitId: string) {
     if (parsed.mode !== "units" || shake.wrong) return;
-    const nextIds = removePlacedUnit(placedUnitIds, unitId);
-    setPlacedUnitIds(nextIds);
+    const nextPlacements = reduceUnitPlacements(placements, { type: "remove", id: unitId });
+    if (nextPlacements === placements) return;
+    setPlacements(nextPlacements);
+    setSelectedUnit((selected) => (selected === unitId ? null : selected));
     setFeedback(null);
-    setAnnouncement(`${placedUnitCount(nextIds)} ${UNIT_META[parsed.unit].plural} placed.`);
+    const analysis = analyzeUnitPlacements(nextPlacements, parsed.length);
+    setAnnouncement(`${analysis.validCount} ${UNIT_META[parsed.unit].plural} aligned from the start.`);
   }
 
   function clearUnits() {
-    setPlacedUnitIds([]);
+    setPlacements((current) => reduceUnitPlacements(current, { type: "clear" }));
+    setSelectedUnit(null);
     setFeedback(null);
     setAnnouncement("Measurement line cleared.");
+  }
+
+  function commitUnitAtSlot(source: "new" | string, slot: number) {
+    if (parsed.mode !== "units" || shake.wrong) return;
+    const isNew = source === "new";
+    if (isNew && placements.length >= MAX_MEASUREMENT_UNITS) return;
+    const unitId = isNew ? `unit-${nextUnit.current}` : source;
+    const action = isNew
+      ? ({ type: "place", placement: { id: unitId, slot } } as const)
+      : ({ type: "move", id: unitId, slot } as const);
+    const nextPlacements = reduceUnitPlacements(placements, action);
+    if (nextPlacements === placements) return;
+    if (isNew) nextUnit.current += 1;
+    setPlacements(nextPlacements);
+    setSelectedUnit(null);
+    setFeedback(null);
+    const analysis = analyzeUnitPlacements(nextPlacements, parsed.length);
+    setAnnouncement(
+      `${UNIT_META[parsed.unit].singular} snapped to position ${slot + 1}. ${analysis.validCount} aligned from the start.`,
+    );
+  }
+
+  function placeSelectedAtSlot(slot: number) {
+    if (selectedUnit === null) return;
+    commitUnitAtSlot(selectedUnit, slot);
   }
 
   function checkUnits() {
     if (parsed.mode !== "units" || shake.wrong) return;
     const attemptCount = Math.min(attempts + 1, 20);
-    const count = placedUnitCount(placedUnitIds);
+    const analysis = analyzeUnitPlacements(placements, parsed.length);
     setAttempts(attemptCount);
-    if (count === parsed.length) {
+    if (analysis.issue === "none") {
       const response: MathMeasureResponse = {
         attempts: attemptCount,
-        placedUnitIds: [...placedUnitIds],
+        placements: placements.map((placement) => ({ ...placement })),
       };
       onComplete(response);
       return;
     }
-    const message =
-      count < parsed.length
-        ? "Keep your units in place and measure a little farther."
-        : "Your units reach past the object. Remove one and check again.";
+    const message = measurementFeedback(analysis.issue);
     setFeedback(message);
     shake.trigger({ speak: () => speech.speak(message) });
   }
@@ -151,8 +189,12 @@ export function MathMeasurePlayer({
       ) : (
         <UnitsBoard
           config={parsed}
-          unitIds={placedUnitIds}
-          onAdd={addUnit}
+          placements={placements}
+          selectedUnit={selectedUnit}
+          onSelectNew={selectNewUnit}
+          onSelectUnit={setSelectedUnit}
+          onPlaceSelected={placeSelectedAtSlot}
+          onCommitAtSlot={commitUnitAtSlot}
           onRemove={removeUnit}
           disabled={shake.wrong}
           reduced={reduced}
@@ -165,9 +207,12 @@ export function MathMeasurePlayer({
       ) : (
         <ProgressHint>
           <span className="block font-display text-lg text-ink">
-            {placedUnitCount(placedUnitIds)} {UNIT_META[parsed.unit].plural} placed
+            Measurement count: {analyzeUnitPlacements(placements, parsed.length).validCount}{" "}
+            {UNIT_META[parsed.unit].plural}
           </span>
-          <span className="block">Place equal units end to end from the start line.</span>
+          <span className="block">
+            {placements.length} placed. Snap equal units edge to edge from the start line.
+          </span>
           {feedback ? <span className="mt-2 block font-semibold text-ink">{feedback}</span> : null}
         </ProgressHint>
       )}
@@ -182,10 +227,22 @@ export function MathMeasurePlayer({
             variant="soft"
             size="md"
             onClick={clearUnits}
-            disabled={placedUnitIds.length === 0 || shake.wrong}
+            disabled={placements.length === 0 || shake.wrong}
           >
             <ArrowCounterClockwiseIcon weight="bold" aria-hidden="true" />
             Clear
+          </Button>
+        ) : null}
+        {parsed.mode === "units" ? (
+          <Button
+            variant="soft"
+            size="md"
+            onClick={() => {
+              if (selectedUnit && selectedUnit !== "new") removeUnit(selectedUnit);
+            }}
+            disabled={selectedUnit === null || selectedUnit === "new" || shake.wrong}
+          >
+            Remove selected
           </Button>
         ) : null}
         <SpeakerButton speech={speech} text={parsed.instruction} label="Hear what to do again" />
@@ -422,16 +479,24 @@ function BalancePan({
 
 function UnitsBoard({
   config,
-  unitIds,
-  onAdd,
+  placements,
+  selectedUnit,
+  onSelectNew,
+  onSelectUnit,
+  onPlaceSelected,
+  onCommitAtSlot,
   onRemove,
   disabled,
   reduced,
   shake,
 }: {
   config: UnitsConfig;
-  unitIds: string[];
-  onAdd: () => void;
+  placements: UnitPlacement[];
+  selectedUnit: "new" | string | null;
+  onSelectNew: () => void;
+  onSelectUnit: (unitId: string) => void;
+  onPlaceSelected: (slot: number) => void;
+  onCommitAtSlot: (source: "new" | string, slot: number) => void;
   onRemove: (unitId: string) => void;
   disabled: boolean;
   reduced: boolean;
@@ -440,197 +505,240 @@ function UnitsBoard({
   const meta = UNIT_META[config.unit];
   const objectLabel = config.objectLabel ?? "object";
   const targetWidth = measurementExtent(config.length);
-  const placedWidth = measurementExtent(unitIds.length);
+  const analysis = analyzeUnitPlacements(placements, config.length);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{
+    source: "new" | string;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null>(null);
+  const suppressClick = useRef(false);
+  const [dragSlot, setDragSlot] = useState<number | null>(null);
 
-  function removeWithKeyboard(event: KeyboardEvent<SVGGElement>, unitId: string) {
-    if (
-      event.key !== "Enter" &&
-      event.key !== " " &&
-      event.key !== "Delete" &&
-      event.key !== "Backspace"
-    ) {
+  function pointerSlot(clientX: number): number | null {
+    const bounds = trackRef.current?.getBoundingClientRect();
+    if (!bounds) return null;
+    return snapToUnitSlot(clientX, bounds.left, bounds.width, MAX_MEASUREMENT_UNITS);
+  }
+
+  function beginDrag(event: PointerEvent<HTMLButtonElement>, source: "new" | string) {
+    if (disabled || (event.pointerType === "mouse" && event.button !== 0)) return;
+    dragRef.current = {
+      source,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveDrag(event: PointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 6) {
+      drag.moved = true;
+      setDragSlot(pointerSlot(event.clientX));
+      event.preventDefault();
+    }
+  }
+
+  function finishDrag(event: PointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const slot = drag.moved ? pointerSlot(event.clientX) : null;
+    if (drag.moved) {
+      suppressClick.current = true;
+      window.setTimeout(() => {
+        suppressClick.current = false;
+      }, 0);
+      if (slot !== null) onCommitAtSlot(drag.source, slot);
+    }
+    dragRef.current = null;
+    setDragSlot(null);
+  }
+
+  function cancelDrag(event: PointerEvent<HTMLButtonElement>) {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    setDragSlot(null);
+  }
+
+  function selectAfterPointer(action: () => void) {
+    if (suppressClick.current) {
+      suppressClick.current = false;
       return;
     }
+    action();
+  }
+
+  function moveWithKeyboard(event: KeyboardEvent<HTMLButtonElement>, placement: UnitPlacement) {
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      onRemove(placement.id);
+      return;
+    }
+
+    let slot: number | null = null;
+    if (event.key === "ArrowLeft") slot = placement.slot - 1;
+    if (event.key === "ArrowRight") slot = placement.slot + 1;
+    if (event.key === "Home") slot = 0;
+    if (slot === null || slot < 0 || slot >= MAX_MEASUREMENT_UNITS) return;
     event.preventDefault();
-    onRemove(unitId);
+    onCommitAtSlot(placement.id, slot);
   }
 
   return (
     <motion.div className="grid gap-5" {...shake.shakeProps(reduced)}>
       <div className="overflow-x-auto pb-2">
-        <svg
-          width={MEASUREMENT_WORKSPACE_WIDTH}
-          height={MEASUREMENT_WORKSPACE_HEIGHT}
-          viewBox={`0 0 ${MEASUREMENT_WORKSPACE_WIDTH} ${MEASUREMENT_WORKSPACE_HEIGHT}`}
+        <div
           role="group"
-          aria-label={`${objectLabel} and placed ${meta.plural} aligned to one measurement start line`}
+          aria-label={`${objectLabel} and positional ${meta.plural} on one measurement line`}
           data-testid="measurement-workspace"
           data-unit-px={MEASUREMENT_UNIT_PX}
-          className="mx-auto block max-w-none"
+          className="relative mx-auto grid gap-3 rounded-3xl border-[3px] border-ink/15 bg-paper-sunk px-7 py-5"
+          style={{ width: MEASUREMENT_WORKSPACE_WIDTH }}
         >
-          <text
-            x={MEASUREMENT_START_X}
-            y="16"
-            fill="var(--color-accent-deep)"
-            fontSize="14"
-            fontWeight="700"
-          >
-            START
-          </text>
-          <line
-            x1={MEASUREMENT_START_X}
-            y1="22"
-            x2={MEASUREMENT_START_X}
-            y2="172"
-            stroke="var(--color-accent-deep)"
-            strokeWidth="5"
-          />
-          <text x={MEASUREMENT_START_X + 8} y="40" fill="var(--color-ink)" fontSize="14" fontWeight="700">
-            Target object
-          </text>
-          <rect
-            data-testid="measurement-target"
-            data-unit-count={config.length}
-            data-unit-px={MEASUREMENT_UNIT_PX}
-            data-endpoint={targetWidth}
-            x={MEASUREMENT_START_X}
-            y="48"
-            width={targetWidth}
-            height="44"
-            rx="18"
-            fill="var(--color-honey)"
-            stroke="var(--color-ink)"
-            strokeWidth="3"
-          />
-          <text
-            x={MEASUREMENT_START_X + targetWidth / 2}
-            y="70"
-            textAnchor="middle"
-            dominantBaseline="middle"
-            fill="var(--color-ink)"
-            fontSize="17"
-            fontWeight="700"
-          >
-            {objectLabel}
-          </text>
-          <text x={MEASUREMENT_START_X + 8} y="110" fill="var(--color-ink)" fontSize="14" fontWeight="700">
-            Your equal units
-          </text>
-          <line
-            x1={MEASUREMENT_START_X}
-            y1={MEASUREMENT_UNIT_Y + MEASUREMENT_UNIT_PX}
-            x2={MEASUREMENT_WORKSPACE_WIDTH - MEASUREMENT_START_X}
-            y2={MEASUREMENT_UNIT_Y + MEASUREMENT_UNIT_PX}
-            stroke="var(--color-ink)"
-            strokeWidth="4"
-          />
-          {unitIds.length === 0 ? (
-            <text
-              x={MEASUREMENT_START_X + 12}
-              y={MEASUREMENT_UNIT_Y + 30}
-              fill="var(--color-ink-soft)"
-              fontSize="14"
+          <span className="font-display text-sm text-accent-deep">START</span>
+          <div className="relative" style={{ width: measurementExtent(MAX_MEASUREMENT_UNITS) }}>
+            <div
+              data-testid="measurement-target"
+              data-unit-count={config.length}
+              data-unit-px={MEASUREMENT_UNIT_PX}
+              data-endpoint={targetWidth}
+              className="grid h-12 place-items-center rounded-2xl border-[3px] border-ink bg-honey font-display text-base text-ink"
+              style={{ width: targetWidth }}
             >
-              Place the first {meta.singular} at the start.
-            </text>
-          ) : (
-            <g
+              {objectLabel}
+            </div>
+            <div
+              aria-hidden="true"
+              className="absolute -left-1 top-0 h-36 w-1 rounded-full bg-accent-deep"
+            />
+          </div>
+
+          <span className="font-display text-sm text-ink">Your equal units</span>
+          <div
+            ref={trackRef}
+            role="group"
+            aria-label={`Twelve snap positions for ${meta.plural}`}
+            data-testid="measurement-track"
+            className="relative h-20 border-b-[4px] border-ink bg-paper-raised"
+            style={{ width: measurementExtent(MAX_MEASUREMENT_UNITS) }}
+          >
+            {Array.from({ length: MAX_MEASUREMENT_UNITS }, (_, slot) => {
+              const count = placements.filter((placement) => placement.slot === slot).length;
+              return (
+                <button
+                  key={slot}
+                  type="button"
+                  aria-label={`Position ${slot + 1}, ${count === 0 ? "empty" : `${count} ${count === 1 ? meta.singular : meta.plural}`}`}
+                  disabled={disabled || selectedUnit === null}
+                  onClick={() => onPlaceSelected(slot)}
+                  data-snap-slot={slot}
+                  className="absolute bottom-0 h-full border-r border-dashed border-ink/25 bg-transparent transition hover:bg-honey/25 focus-visible:z-30 focus-visible:bg-honey/35 focus-visible:outline-4 focus-visible:outline-accent-deep disabled:pointer-events-none"
+                  style={{ left: measurementExtent(slot), width: MEASUREMENT_UNIT_PX }}
+                />
+              );
+            })}
+
+            <div
+              aria-hidden="true"
+              data-testid="measurement-valid-span"
+              data-unit-count={analysis.validCount}
+              data-endpoint={measurementExtent(analysis.validCount)}
+              className="absolute -bottom-1 left-0 z-20 h-1 bg-success"
+              style={{ width: measurementExtent(analysis.validCount) }}
+            />
+
+            <div
               role="group"
               aria-label={`Placed ${meta.plural}`}
               data-testid="measurement-units"
-              data-unit-count={unitIds.length}
-              data-unit-px={MEASUREMENT_UNIT_PX}
-              data-endpoint={placedWidth}
+              data-unit-count={placements.length}
+              data-valid-count={analysis.validCount}
             >
-              {unitIds.map((unitId, index) => {
-                const x = MEASUREMENT_START_X + measurementExtent(index);
+              {placements.map((placement) => {
+                const stack = placements
+                  .filter((candidate) => candidate.slot === placement.slot)
+                  .findIndex((candidate) => candidate.id === placement.id);
+                const selected = selectedUnit === placement.id;
+                const acceptsSelectedUnit =
+                  selectedUnit !== null && selectedUnit !== placement.id;
                 return (
-                  <g
-                    key={unitId}
-                    role="button"
-                    tabIndex={disabled ? -1 : 0}
-                    aria-disabled={disabled}
-                    aria-label={`Remove ${meta.singular} ${index + 1}`}
-                    onClick={() => {
-                      if (!disabled) onRemove(unitId);
+                  <button
+                    key={placement.id}
+                    type="button"
+                    aria-label={
+                      acceptsSelectedUnit
+                        ? `Place selected ${meta.singular} at occupied position ${placement.slot + 1}`
+                        : `Select ${meta.singular} at position ${placement.slot + 1}`
+                    }
+                    aria-pressed={selected}
+                    disabled={disabled}
+                    onClick={() =>
+                      selectAfterPointer(() => {
+                        if (acceptsSelectedUnit && selectedUnit) {
+                          onCommitAtSlot(selectedUnit, placement.slot);
+                        } else {
+                          onSelectUnit(placement.id);
+                        }
+                      })
+                    }
+                    onKeyDown={(event) => moveWithKeyboard(event, placement)}
+                    onPointerDown={(event) => beginDrag(event, placement.id)}
+                    onPointerMove={moveDrag}
+                    onPointerUp={finishDrag}
+                    onPointerCancel={cancelDrag}
+                    onLostPointerCapture={cancelDrag}
+                    data-unit-id={placement.id}
+                    data-slot={placement.slot}
+                    className="absolute z-10 grid touch-none place-items-center rounded-lg border-[3px] border-ink font-display text-xs font-bold text-ink shadow-sm transition focus-visible:z-30 focus-visible:outline-4 focus-visible:outline-accent-deep disabled:pointer-events-none disabled:opacity-50"
+                    style={{
+                      left: measurementExtent(placement.slot),
+                      bottom: Math.min(stack, 2) * 7,
+                      width: MEASUREMENT_UNIT_PX,
+                      height: MEASUREMENT_UNIT_PX,
+                      backgroundColor: meta.fill,
+                      transform: selected ? "translateY(-4px)" : undefined,
                     }}
-                    onKeyDown={(event) => {
-                      if (!disabled) removeWithKeyboard(event, unitId);
-                    }}
-                    className="group cursor-pointer focus:outline-none"
                   >
-                    <rect
-                      x={x}
-                      y={MEASUREMENT_UNIT_Y}
-                      width={MEASUREMENT_UNIT_PX}
-                      height={MEASUREMENT_UNIT_PX}
-                      fill={meta.fill}
-                      stroke="var(--color-ink)"
-                      strokeWidth="3"
-                    />
-                    <rect
-                      x={x + 3}
-                      y={MEASUREMENT_UNIT_Y + 3}
-                      width={MEASUREMENT_UNIT_PX - 6}
-                      height={MEASUREMENT_UNIT_PX - 6}
-                      rx="5"
-                      fill="none"
-                      stroke="var(--color-accent-deep)"
-                      strokeWidth="4"
-                      className="pointer-events-none opacity-0 group-focus-visible:opacity-100"
-                    />
-                    <text
-                      x={x + MEASUREMENT_UNIT_PX / 2}
-                      y={MEASUREMENT_UNIT_Y + MEASUREMENT_UNIT_PX / 2}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fill="var(--color-ink)"
-                      fontSize="12"
-                      fontWeight="700"
-                      className="pointer-events-none"
-                    >
-                      {meta.short}
-                    </text>
-                  </g>
+                    {meta.short}
+                  </button>
                 );
               })}
-            </g>
-          )}
-          <line
-            x1={MEASUREMENT_START_X + targetWidth}
-            y1="45"
-            x2={MEASUREMENT_START_X + targetWidth}
-            y2="96"
-            stroke="var(--color-accent-deep)"
-            strokeWidth="3"
-            strokeDasharray="5 4"
-            aria-hidden="true"
-          />
-          {unitIds.length > 0 ? (
-            <line
-              x1={MEASUREMENT_START_X + placedWidth}
-              y1={MEASUREMENT_UNIT_Y - 3}
-              x2={MEASUREMENT_START_X + placedWidth}
-              y2={MEASUREMENT_UNIT_Y + MEASUREMENT_UNIT_PX + 5}
-              stroke="var(--color-accent-deep)"
-              strokeWidth="3"
-              strokeDasharray="5 4"
-              aria-hidden="true"
-            />
-          ) : null}
-        </svg>
+            </div>
+
+            {dragSlot !== null ? (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute bottom-0 z-20 h-full rounded-lg bg-accent/35 ring-4 ring-accent-deep"
+                style={{ left: measurementExtent(dragSlot), width: MEASUREMENT_UNIT_PX }}
+              />
+            ) : null}
+          </div>
+        </div>
       </div>
 
       <div className="flex justify-center">
         <Button
           variant="soft"
           size="kid"
-          onClick={onAdd}
-          disabled={disabled || unitIds.length >= 12}
-          aria-label={`Add one ${meta.singular}`}
+          onClick={() => selectAfterPointer(onSelectNew)}
+          onPointerDown={(event) => beginDrag(event, "new")}
+          onPointerMove={moveDrag}
+          onPointerUp={finishDrag}
+          onPointerCancel={cancelDrag}
+          onLostPointerCapture={cancelDrag}
+          disabled={disabled || placements.length >= MAX_MEASUREMENT_UNITS}
+          aria-label={`Select one ${meta.singular} to place`}
+          aria-pressed={selectedUnit === "new"}
+          className="touch-none"
         >
           <PlusIcon weight="bold" aria-hidden="true" />
-          Add {meta.singular}
+          Pick up a {meta.singular}
         </Button>
       </div>
     </motion.div>

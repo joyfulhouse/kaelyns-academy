@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { expectSingleHostReward } from "../helpers";
+import { dragPointer, expectSingleHostReward } from "../helpers";
 
 const UNIT_ACTIVITY =
   "/learn/kaelyn-adaptive/life-skills-math/lsm-measure-units-1";
@@ -8,47 +8,83 @@ const WEIGHT_ACTIVITY =
 const LENGTH_ACTIVITY =
   "/learn/kaelyn-adaptive/life-skills-math/lsm-measure-cmp-1";
 
-test("measurement places and removes individual equal units along the baseline", async ({
+test("measurement snaps units and lets the learner correct alignment, gaps, and overlaps", async ({
   page,
 }) => {
   await page.goto(UNIT_ACTIVITY);
 
-  const addUnit = page.getByRole("button", { name: "Add one cube" });
-  await expect(addUnit).toBeVisible({ timeout: 25_000 });
-  await addUnit.click();
-  await addUnit.click();
-  await addUnit.click();
+  const supply = page.getByRole("button", { name: "Select one cube to place" });
+  await expect(supply).toBeVisible({ timeout: 25_000 });
 
-  const placedUnits = page.getByRole("button", { name: /Remove cube \d+/ });
-  await expect(placedUnits).toHaveCount(3);
-  await placedUnits.nth(1).click();
-  await expect(placedUnits).toHaveCount(2);
+  await supply.click();
+  await page.getByRole("button", { name: "Position 2, empty" }).click();
+  await expect(page.getByText("Measurement count: 0 cubes")).toBeVisible();
 
   await page.getByRole("button", { name: "Check it" }).click();
-  await expect(page.getByText("Keep your units in place and measure a little farther.")).toBeVisible();
-  await expect(placedUnits).toHaveCount(2);
+  await expect(page.getByText("Start the first unit at the start line.")).toBeVisible();
 
-  await expect(addUnit).toBeEnabled();
-  await addUnit.focus();
-  await addUnit.press("Enter");
-  await addUnit.press("Enter");
-  await addUnit.press("Enter");
-  await expect(page.getByText("5 cubes placed", { exact: true })).toBeVisible();
+  const misplaced = page.getByRole("button", { name: "Select cube at position 2" });
+  await expect(misplaced).toBeEnabled();
+  await misplaced.focus();
+  await misplaced.press("Home");
+  await expect(page.getByText("Measurement count: 1 cube")).toBeVisible();
+
+  await dragPointer(page, supply, page.locator('[data-snap-slot="2"]'));
+  await expect(page.getByRole("button", { name: "Select cube at position 3" })).toBeVisible();
+  await page.getByRole("button", { name: "Check it" }).click();
+  await expect(page.getByText("There is a gap. Move the units so their edges just touch.")).toBeVisible();
+
+  const gapped = page.getByRole("button", { name: "Select cube at position 3" });
+  await expect(gapped).toBeEnabled();
+  await gapped.focus();
+  await gapped.press("ArrowLeft");
+  await expect(page.getByText("Measurement count: 2 cubes")).toBeVisible();
+
+  await supply.click();
+  await page
+    .getByRole("button", { name: "Place selected cube at occupied position 2" })
+    .click();
+  await page.getByRole("button", { name: "Check it" }).click();
+  await expect(
+    page.getByText("Some units overlap. Move them so their edges just touch."),
+  ).toBeVisible();
+
+  const overlapping = page.getByRole("button", { name: "Select cube at position 2" });
+  await expect(overlapping).toHaveCount(2);
+  await expect(overlapping.last()).toBeEnabled();
+  await overlapping.last().focus();
+  await overlapping.last().press("ArrowRight");
+  await expect(page.getByText("Measurement count: 3 cubes")).toBeVisible();
+
+  await supply.focus();
+  await supply.press("Enter");
+  await page.getByRole("button", { name: "Position 4, empty" }).press("Enter");
+  await supply.focus();
+  await supply.press("Space");
+  await page.getByRole("button", { name: "Position 5, empty" }).press("Space");
+  await expect(page.getByText("Measurement count: 5 cubes")).toBeVisible();
 
   const target = page.getByTestId("measurement-target");
-  const units = page.getByTestId("measurement-units");
+  const validSpan = page.getByTestId("measurement-valid-span");
   await expect(target).toHaveAttribute("data-unit-px", "48");
   await expect(target).toHaveAttribute("data-unit-count", "5");
   await expect(target).toHaveAttribute("data-endpoint", "240");
-  await expect(units).toHaveAttribute("data-unit-px", "48");
-  await expect(units).toHaveAttribute("data-unit-count", "5");
-  await expect(units).toHaveAttribute("data-endpoint", "240");
+  await expect(validSpan).toHaveAttribute("data-unit-count", "5");
+  await expect(validSpan).toHaveAttribute("data-endpoint", "240");
 
   const targetBox = await target.boundingBox();
-  const unitsBox = await units.boundingBox();
-  if (!targetBox || !unitsBox) throw new Error("Measurement geometry is not rendered");
-  expect(Math.abs(targetBox.x - unitsBox.x)).toBeLessThan(1);
-  expect(Math.abs(targetBox.width - unitsBox.width)).toBeLessThan(1);
+  const validSpanBox = await validSpan.boundingBox();
+  if (!targetBox || !validSpanBox) throw new Error("Measurement geometry is not rendered");
+  expect(Math.abs(targetBox.x - validSpanBox.x)).toBeLessThan(1);
+  expect(Math.abs(targetBox.width - validSpanBox.width)).toBeLessThan(1);
+
+  const lastUnit = page.getByRole("button", { name: "Select cube at position 5" });
+  await lastUnit.focus();
+  await lastUnit.press("Delete");
+  await expect(page.getByText("Measurement count: 4 cubes")).toBeVisible();
+  await supply.focus();
+  await supply.press("Enter");
+  await page.getByRole("button", { name: "Position 5, empty" }).press("Enter");
 
   await page.getByRole("button", { name: "Check it" }).click();
 

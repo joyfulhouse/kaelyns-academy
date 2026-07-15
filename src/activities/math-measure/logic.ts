@@ -7,7 +7,11 @@ import {
   outcomeFromAccuracy,
   starsFromAccuracy,
 } from "../_shared/scoring";
-import { deriveComparisonIndex, placedUnitCount } from "./measure-model";
+import {
+  analyzeUnitPlacements,
+  deriveComparisonIndex,
+  MAX_MEASUREMENT_UNITS,
+} from "./measure-model";
 
 /** Server-safe schema + scoring for math-measure. No "use client". */
 export const schema = mathMeasureConfig;
@@ -23,11 +27,19 @@ export const responseSchema = z.union([
   z
     .object({
       attempts: measureAttempts,
-      placedUnitIds: z
-        .array(z.string().min(1).max(24).regex(/^unit-[a-z0-9-]+$/))
-        .max(12)
+      placements: z
+        .array(
+          z
+            .object({
+              id: z.string().min(1).max(24).regex(/^unit-[a-z0-9-]+$/),
+              slot: z.number().int().min(0).max(MAX_MEASUREMENT_UNITS - 1),
+            })
+            .strict(),
+        )
+        .max(MAX_MEASUREMENT_UNITS)
         .refine(
-          (unitIds) => new Set(unitIds).size === unitIds.length,
+          (placements) =>
+            new Set(placements.map((placement) => placement.id)).size === placements.length,
           "placed unit IDs must be unique",
         ),
     })
@@ -41,9 +53,10 @@ export function isCorrect(config: MathMeasureConfig, response: MathMeasureRespon
     return "selectedIndex" in response && derived !== null && response.selectedIndex === derived;
   }
   return (
-    "placedUnitIds" in response &&
-    new Set(response.placedUnitIds).size === response.placedUnitIds.length &&
-    placedUnitCount(response.placedUnitIds) === config.length
+    "placements" in response &&
+    new Set(response.placements.map((placement) => placement.id)).size ===
+      response.placements.length &&
+    analyzeUnitPlacements(response.placements, config.length).issue === "none"
   );
 }
 

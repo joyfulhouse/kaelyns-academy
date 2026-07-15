@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
-  addPlacedUnit,
+  analyzeUnitPlacements,
   balanceAngle,
   balanceTiltDirection,
   comparisonDescription,
   deriveComparisonIndex,
   MEASUREMENT_UNIT_PX,
   measurementExtent,
-  placedUnitCount,
-  removePlacedUnit,
+  reduceUnitPlacements,
   rotatePoint,
   scaledExtent,
+  snapToUnitSlot,
 } from "./measure-model";
 
 describe("proportional comparison geometry", () => {
@@ -89,16 +89,116 @@ describe("placed units", () => {
     expect(measurementExtent(5) - measurementExtent(4)).toBe(MEASUREMENT_UNIT_PX);
   });
 
-  it("adds and removes individual stable unit IDs up to capacity", () => {
-    const one = addPlacedUnit([], "unit-1", 2);
-    const two = addPlacedUnit(one, "unit-2", 2);
-    expect(two).toEqual(["unit-1", "unit-2"]);
-    expect(addPlacedUnit(two, "unit-3", 2)).toBe(two);
-    expect(addPlacedUnit(two, "unit-2", 3)).toBe(two);
-    expect(removePlacedUnit(two, "unit-1")).toEqual(["unit-2"]);
+  it("places, moves, and removes stable units through positional actions", () => {
+    const one = reduceUnitPlacements([], {
+      type: "place",
+      placement: { id: "unit-1", slot: 0 },
+    });
+    const overlapped = reduceUnitPlacements(one, {
+      type: "place",
+      placement: { id: "unit-2", slot: 0 },
+    });
+    const moved = reduceUnitPlacements(overlapped, { type: "move", id: "unit-2", slot: 1 });
+
+    expect(overlapped).toEqual([
+      { id: "unit-1", slot: 0 },
+      { id: "unit-2", slot: 0 },
+    ]);
+    expect(moved).toEqual([
+      { id: "unit-1", slot: 0 },
+      { id: "unit-2", slot: 1 },
+    ]);
+    expect(reduceUnitPlacements(moved, { type: "remove", id: "unit-1" })).toEqual([
+      { id: "unit-2", slot: 1 },
+    ]);
+    expect(reduceUnitPlacements(moved, { type: "clear" })).toEqual([]);
   });
 
-  it("counts the units that were actually placed", () => {
-    expect(placedUnitCount(["unit-1", "unit-2", "unit-3"])).toBe(3);
+  it("ignores duplicate IDs, out-of-range slots, and placements past capacity", () => {
+    const full = Array.from({ length: 12 }, (_, slot) => ({ id: `unit-${slot}`, slot }));
+
+    expect(
+      reduceUnitPlacements(full, {
+        type: "place",
+        placement: { id: "unit-new", slot: 0 },
+      }),
+    ).toBe(full);
+    expect(
+      reduceUnitPlacements(full, {
+        type: "place",
+        placement: { id: "unit-1", slot: 1 },
+      }),
+    ).toBe(full);
+    expect(reduceUnitPlacements(full, { type: "move", id: "unit-1", slot: 12 })).toBe(full);
+  });
+
+  it("derives a count only from one contiguous unit per slot at the start line", () => {
+    expect(
+      analyzeUnitPlacements(
+        [
+          { id: "unit-1", slot: 0 },
+          { id: "unit-2", slot: 1 },
+          { id: "unit-3", slot: 2 },
+        ],
+        3,
+      ),
+    ).toEqual({ validCount: 3, issue: "none" });
+    expect(
+      analyzeUnitPlacements(
+        [
+          { id: "unit-1", slot: 1 },
+          { id: "unit-2", slot: 2 },
+        ],
+        3,
+      ),
+    ).toEqual({ validCount: 0, issue: "alignment" });
+    expect(
+      analyzeUnitPlacements(
+        [
+          { id: "unit-1", slot: 0 },
+          { id: "unit-2", slot: 2 },
+        ],
+        3,
+      ),
+    ).toEqual({ validCount: 1, issue: "gap" });
+    expect(
+      analyzeUnitPlacements(
+        [
+          { id: "unit-1", slot: 0 },
+          { id: "unit-2", slot: 1 },
+          { id: "unit-3", slot: 1 },
+        ],
+        3,
+      ),
+    ).toEqual({ validCount: 1, issue: "overlap" });
+    expect(
+      analyzeUnitPlacements(
+        [
+          { id: "unit-1", slot: 0 },
+          { id: "unit-2", slot: 1 },
+          { id: "unit-3", slot: 2 },
+          { id: "unit-4", slot: 3 },
+        ],
+        3,
+      ),
+    ).toEqual({ validCount: 3, issue: "past-target" });
+    expect(
+      analyzeUnitPlacements(
+        [
+          { id: "unit-1", slot: 0 },
+          { id: "unit-2", slot: 1 },
+        ],
+        3,
+      ),
+    ).toEqual({ validCount: 2, issue: "short" });
+  });
+
+  it("snaps a pointer coordinate to one of twelve discrete slots", () => {
+    expect(snapToUnitSlot(100, 100, 480, 12)).toBe(0);
+    expect(snapToUnitSlot(139, 100, 480, 12)).toBe(0);
+    expect(snapToUnitSlot(140, 100, 480, 12)).toBe(1);
+    expect(snapToUnitSlot(579, 100, 480, 12)).toBe(11);
+    expect(snapToUnitSlot(99, 100, 480, 12)).toBeNull();
+    expect(snapToUnitSlot(580, 100, 480, 12)).toBeNull();
   });
 });

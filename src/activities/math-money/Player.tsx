@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { motion } from "motion/react";
 import { ArrowCounterClockwiseIcon } from "@phosphor-icons/react/dist/ssr";
 import type { MathMoneyConfig } from "@/content/activity-configs";
@@ -15,9 +15,8 @@ import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
 import {
   COIN_FACTS,
-  addCoin as addCoinToken,
   hasCoinCapacity,
-  removeCoin as removeCoinToken,
+  reduceCoinTray,
   sumCoins,
   type Coin,
   type CoinToken,
@@ -46,9 +45,20 @@ export function MathMoneyPlayer({
 
   const [attempts, setAttempts] = useState(0);
   const [tray, setTray] = useState<CoinToken[]>([]);
+  const [selectedCoin, setSelectedCoin] = useState<Coin | null>(null);
+  const [draggingCoin, setDraggingCoin] = useState<Coin | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const nextToken = useRef(1);
+  const trayDropRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{
+    coin: Coin;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null>(null);
+  const suppressPaletteClick = useRef(false);
 
   useSpeakOnce(speech.speak, parsed.instruction);
 
@@ -70,12 +80,14 @@ export function MathMoneyPlayer({
     return parsed.mode === "count" && hasCoinCapacity(tray);
   }
 
-  function addCoin(coin: Coin) {
+  function placeCoin(coin: Coin) {
     if (parsed.mode !== "count" || shake.wrong || !canAddAnotherCoin()) return;
     const token: CoinToken = { id: `coin-${nextToken.current}`, type: coin };
+    const nextTray = reduceCoinTray(tray, { type: "place", token });
+    if (nextTray === tray) return;
     nextToken.current += 1;
-    const nextTray = addCoinToken(tray, token);
     setTray(nextTray);
+    setSelectedCoin(null);
     setFeedback(null);
     setAnnouncement(
       `Added ${COIN_FACTS[coin].name}. Tray total ${spokenCents(sumCoins(nextTray))}.`,
@@ -86,7 +98,8 @@ export function MathMoneyPlayer({
     if (parsed.mode !== "count" || shake.wrong) return;
     const token = tray.find((candidate) => candidate.id === tokenId);
     if (!token) return;
-    const nextTray = removeCoinToken(tray, tokenId);
+    const nextTray = reduceCoinTray(tray, { type: "remove", tokenId });
+    if (nextTray === tray) return;
     setTray(nextTray);
     setFeedback(null);
     setAnnouncement(
@@ -95,9 +108,75 @@ export function MathMoneyPlayer({
   }
 
   function clearTray() {
-    setTray([]);
+    setTray((current) => reduceCoinTray(current, { type: "clear" }));
+    setSelectedCoin(null);
     setFeedback(null);
     setAnnouncement("Cleared the tray. Tray total zero cents.");
+  }
+
+  function selectCoin(coin: Coin) {
+    if (parsed.mode !== "count" || shake.wrong || !canAddAnotherCoin()) return;
+    setSelectedCoin(coin);
+    setFeedback(null);
+    setAnnouncement(`${COIN_FACTS[coin].name} selected. Tap the tray to place it.`);
+  }
+
+  function beginCoinDrag(event: PointerEvent<HTMLButtonElement>, coin: Coin) {
+    if (parsed.mode !== "count" || shake.wrong || !canAddAnotherCoin()) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    dragRef.current = {
+      coin,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveCoinDrag(event: PointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 6) {
+      drag.moved = true;
+      setDraggingCoin(drag.coin);
+      event.preventDefault();
+    }
+  }
+
+  function endCoinDrag(event: PointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.moved) {
+      const bounds = trayDropRef.current?.getBoundingClientRect();
+      const isInside =
+        bounds !== undefined &&
+        event.clientX >= bounds.left &&
+        event.clientX <= bounds.right &&
+        event.clientY >= bounds.top &&
+        event.clientY <= bounds.bottom;
+      suppressPaletteClick.current = true;
+      window.setTimeout(() => {
+        suppressPaletteClick.current = false;
+      }, 0);
+      if (isInside) placeCoin(drag.coin);
+    }
+    dragRef.current = null;
+    setDraggingCoin(null);
+  }
+
+  function cancelCoinDrag(event: PointerEvent<HTMLButtonElement>) {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    setDraggingCoin(null);
+  }
+
+  function selectCoinAfterPointer(coin: Coin) {
+    if (suppressPaletteClick.current) {
+      suppressPaletteClick.current = false;
+      return;
+    }
+    selectCoin(coin);
   }
 
   function check() {
@@ -143,7 +222,18 @@ export function MathMoneyPlayer({
         </motion.div>
       ) : (
         <motion.div className="grid justify-items-center gap-6" {...shake.shakeProps(reduced)}>
-          <CoinTray tokens={tray} onRemove={removeCoin} disabled={shake.wrong} />
+          <div ref={trayDropRef} className="w-full max-w-2xl" data-testid="coin-tray-drop-zone">
+            <CoinTray
+              tokens={tray}
+              selectedCoin={selectedCoin}
+              onPlaceSelected={() => {
+                if (selectedCoin) placeCoin(selectedCoin);
+              }}
+              onRemove={removeCoin}
+              disabled={shake.wrong}
+              dragging={draggingCoin !== null}
+            />
+          </div>
 
           <div
             role="group"
@@ -154,8 +244,16 @@ export function MathMoneyPlayer({
               <CoinButton
                 key={`${coin}-${index}`}
                 coin={coin}
-                action="Add"
-                onClick={() => addCoin(coin)}
+                action="Select"
+                onClick={() => selectCoinAfterPointer(coin)}
+                onKeyboardPlace={() => placeCoin(coin)}
+                onPointerDown={(event) => beginCoinDrag(event, coin)}
+                onPointerMove={moveCoinDrag}
+                onPointerUp={endCoinDrag}
+                onPointerCancel={cancelCoinDrag}
+                onLostPointerCapture={cancelCoinDrag}
+                pressed={selectedCoin === coin}
+                dragging={draggingCoin === coin}
                 disabled={shake.wrong || !canAddAnotherCoin()}
               />
             ))}
@@ -173,7 +271,9 @@ export function MathMoneyPlayer({
               {tray.map((token) => COIN_FACTS[token.type].cents).join(" + ")} = {trayTotal}¢
             </span>
           ) : (
-            <span className="block">Tap a coin to add it. Tap a tray coin to remove it.</span>
+            <span className="block">
+              Select a coin, then tap the tray—or drag the coin into it. Tray coins can be removed.
+            </span>
           )}
           {feedback ? <span className="mt-2 block font-semibold text-ink">{feedback}</span> : null}
         </ProgressHint>
@@ -212,24 +312,61 @@ function CoinButton({
   coin,
   action,
   onClick,
+  onKeyboardPlace,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
+  onLostPointerCapture,
+  pressed = false,
+  dragging = false,
   disabled,
 }: {
   coin: Coin;
-  action: "Add" | "Choose";
+  action: "Select" | "Choose";
   onClick: () => void;
+  onKeyboardPlace?: () => void;
+  onPointerDown?: (event: PointerEvent<HTMLButtonElement>) => void;
+  onPointerMove?: (event: PointerEvent<HTMLButtonElement>) => void;
+  onPointerUp?: (event: PointerEvent<HTMLButtonElement>) => void;
+  onPointerCancel?: (event: PointerEvent<HTMLButtonElement>) => void;
+  onLostPointerCapture?: (event: PointerEvent<HTMLButtonElement>) => void;
+  pressed?: boolean;
+  dragging?: boolean;
   disabled: boolean;
 }) {
   const fact = COIN_FACTS[coin];
+
+  function placeWithKeyboard(event: KeyboardEvent<HTMLButtonElement>) {
+    if (!onKeyboardPlace || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    onKeyboardPlace();
+  }
+
+  const label =
+    action === "Select"
+      ? `Select ${fact.name}, ${spokenCents(fact.cents)}. Keyboard Enter places it directly in the tray.`
+      : `Choose ${fact.name}, ${spokenCents(fact.cents)}`;
   return (
     <button
       type="button"
       onClick={onClick}
+      onKeyDown={placeWithKeyboard}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onLostPointerCapture={onLostPointerCapture}
       disabled={disabled}
-      aria-label={`${action} ${fact.name}, ${spokenCents(fact.cents)}`}
+      aria-label={label}
+      aria-pressed={action === "Select" ? pressed : undefined}
+      data-dragging={dragging ? "true" : "false"}
       className={cn(
-        "grid min-h-28 min-w-24 place-items-center gap-2 rounded-2xl border-[3px] border-ink bg-paper-raised px-3 py-4 text-ink shadow-pop transition duration-200 ease-out",
+        "grid min-h-28 min-w-24 touch-none place-items-center gap-2 rounded-2xl border-[3px] border-ink bg-paper-raised px-3 py-4 text-ink shadow-pop transition duration-200 ease-out",
         "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
         "disabled:pointer-events-none disabled:opacity-40",
+        pressed && "bg-honey ring-4 ring-accent-deep ring-offset-2",
+        dragging && "-translate-y-2 scale-105 opacity-70",
       )}
     >
       <CoinFace coin={coin} />
@@ -242,12 +379,18 @@ function CoinButton({
 
 function CoinTray({
   tokens,
+  selectedCoin,
+  onPlaceSelected,
   onRemove,
   disabled,
+  dragging,
 }: {
   tokens: CoinToken[];
+  selectedCoin: Coin | null;
+  onPlaceSelected: () => void;
   onRemove: (tokenId: string) => void;
   disabled: boolean;
+  dragging: boolean;
 }) {
   function removeWithKeyboard(event: KeyboardEvent<HTMLButtonElement>, tokenId: string) {
     if (event.key !== "Delete" && event.key !== "Backspace") return;
@@ -257,31 +400,56 @@ function CoinTray({
 
   return (
     <div
-      role="list"
-      aria-label="Coins in the tray"
-      className="flex min-h-32 w-full max-w-2xl flex-wrap items-end justify-center gap-3 rounded-3xl border-[3px] border-dashed border-ink/30 bg-paper-sunk p-4"
-    >
-      {tokens.length === 0 ? (
-        <span className="self-center text-sm text-ink-soft">The tray is empty.</span>
-      ) : (
-        tokens.map((token) => {
-          const fact = COIN_FACTS[token.type];
-          return (
-            <div key={token.id} role="listitem">
-              <button
-                type="button"
-                onClick={() => onRemove(token.id)}
-                onKeyDown={(event) => removeWithKeyboard(event, token.id)}
-                disabled={disabled}
-                aria-label={`Remove ${fact.name}, ${spokenCents(fact.cents)}`}
-                className="grid min-h-24 min-w-24 place-items-center rounded-2xl border-2 border-transparent transition hover:border-ink focus-visible:border-ink focus-visible:outline-none active:translate-y-0.5 disabled:pointer-events-none disabled:opacity-50"
-              >
-                <CoinFace coin={token.type} />
-              </button>
-            </div>
-          );
-        })
+      role="group"
+      aria-label="Coin tray"
+      className={cn(
+        "grid min-h-40 w-full gap-3 rounded-3xl border-[3px] border-dashed border-ink/30 bg-paper-sunk p-4 transition",
+        dragging && "border-accent-deep bg-honey/30 ring-4 ring-accent/40",
       )}
+    >
+      <button
+        type="button"
+        aria-label={
+          selectedCoin
+            ? `Place selected ${COIN_FACTS[selectedCoin].name} in tray`
+            : "Coin tray placement target. Select a coin first."
+        }
+        disabled={disabled || selectedCoin === null}
+        onClick={onPlaceSelected}
+        className="min-h-12 rounded-2xl border-2 border-dashed border-ink/25 bg-paper-raised px-4 py-2 font-semibold text-ink transition hover:border-accent-deep hover:bg-honey/35 focus-visible:outline-4 focus-visible:outline-accent-deep disabled:opacity-60"
+      >
+        {selectedCoin
+          ? `Place ${COIN_FACTS[selectedCoin].name} here`
+          : "Select a coin, then tap here—or drag it into the tray."}
+      </button>
+
+      <div
+        role="list"
+        aria-label="Coins in the tray"
+        className="flex min-h-24 flex-wrap items-end justify-center gap-3"
+      >
+        {tokens.length === 0 ? (
+          <span className="self-center text-sm text-ink-soft">The tray is empty.</span>
+        ) : (
+          tokens.map((token) => {
+            const fact = COIN_FACTS[token.type];
+            return (
+              <div key={token.id} role="listitem">
+                <button
+                  type="button"
+                  onClick={() => onRemove(token.id)}
+                  onKeyDown={(event) => removeWithKeyboard(event, token.id)}
+                  disabled={disabled}
+                  aria-label={`Remove ${fact.name}, ${spokenCents(fact.cents)}`}
+                  className="grid min-h-24 min-w-24 place-items-center rounded-2xl border-2 border-transparent transition hover:border-ink focus-visible:border-ink focus-visible:outline-none active:translate-y-0.5 disabled:pointer-events-none disabled:opacity-50"
+                >
+                  <CoinFace coin={token.type} />
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }

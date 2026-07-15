@@ -33,7 +33,7 @@ const VALID_RESPONSES = {
     questionResults: [{ questionIndex: 0, choiceIndex: 0, attempts: 1 }],
   },
   "math-array": { mode: "build", builtRows: 2, attempts: 1 },
-  "math-fraction-bar": { mode: "partition", partitionCount: 4, attempts: 1 },
+  "math-fraction-bar": { mode: "partition", partitionId: "equal", attempts: 1 },
   "lang-symbol-intro": {
     exposures: ["one", "two", "three"].map((symbolId) => ({
       symbolId,
@@ -104,7 +104,7 @@ const OVER_BOUNDED_RESPONSES = {
     entered: 144,
     attempts: 1,
   },
-  "math-fraction-bar": { mode: "partition", partitionCount: 4, attempts: 21 },
+  "math-fraction-bar": { mode: "partition", partitionId: "equal", attempts: 21 },
   "lang-symbol-intro": {
     exposures: Array.from({ length: 9 }, (_, index) => ({
       symbolId: `symbol-${index}`,

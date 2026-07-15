@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   COIN_FACTS,
-  addCoin,
   hasCoinCapacity,
   minimumCoinsForTotal,
-  removeCoin,
+  reduceCoinTray,
   sumCoins,
   type CoinToken,
 } from "./coin-model";
@@ -29,18 +28,28 @@ describe("coin tray operations", () => {
   const second: CoinToken = { id: "coin-2", type: "nickel" };
 
   it("adds stable token instances, including duplicate coin types", () => {
-    const once = addCoin([], first);
-    const twice = addCoin(once, second);
+    const once = reduceCoinTray([], { type: "place", token: first });
+    const twice = reduceCoinTray(once, { type: "place", token: second });
 
     expect(twice).toEqual([first, second]);
     expect(twice[0]).toBe(first);
-    expect(addCoin(twice, { id: "coin-2", type: "dime" })).toBe(twice);
+    expect(
+      reduceCoinTray(twice, { type: "place", token: { id: "coin-2", type: "dime" } }),
+    ).toBe(twice);
   });
 
   it("removes only the selected token instance", () => {
-    expect(removeCoin([first, second], first.id)).toEqual([second]);
+    expect(reduceCoinTray([first, second], { type: "remove", tokenId: first.id })).toEqual([
+      second,
+    ]);
     const tray = [first, second];
-    expect(removeCoin(tray, "missing")).toBe(tray);
+    expect(reduceCoinTray(tray, { type: "remove", tokenId: "missing" })).toBe(tray);
+  });
+
+  it("clears the tray through the same reducer used for placement and removal", () => {
+    expect(reduceCoinTray([first, second], { type: "clear" })).toEqual([]);
+    const empty: CoinToken[] = [];
+    expect(reduceCoinTray(empty, { type: "clear" })).toBe(empty);
   });
 
   it("sums the selected token facts rather than a client total", () => {
@@ -57,6 +66,10 @@ describe("coin tray operations", () => {
     expect(sumCoins(expensiveTray)).toBe(475);
     expect(hasCoinCapacity(expensiveTray)).toBe(true);
     expect(hasCoinCapacity([...expensiveTray, { id: "coin-20", type: "quarter" }])).toBe(false);
+    const full = [...expensiveTray, { id: "coin-20", type: "quarter" as const }];
+    expect(
+      reduceCoinTray(full, { type: "place", token: { id: "coin-21", type: "penny" } }),
+    ).toBe(full);
   });
 });
 

@@ -18,13 +18,21 @@ export interface CoinToken {
   type: Coin;
 }
 
-export function addCoin(tokens: CoinToken[], token: CoinToken): CoinToken[] {
-  if (tokens.some((existing) => existing.id === token.id)) return tokens;
-  return [...tokens, token];
-}
+export type CoinTrayAction =
+  | { type: "place"; token: CoinToken }
+  | { type: "remove"; tokenId: string }
+  | { type: "clear" };
 
-export function removeCoin(tokens: CoinToken[], tokenId: string): CoinToken[] {
-  const index = tokens.findIndex((token) => token.id === tokenId);
+export function reduceCoinTray(tokens: CoinToken[], action: CoinTrayAction): CoinToken[] {
+  if (action.type === "clear") return tokens.length === 0 ? tokens : [];
+  if (action.type === "place") {
+    if (tokens.length >= MAX_COIN_TOKENS || tokens.some(({ id }) => id === action.token.id)) {
+      return tokens;
+    }
+    return [...tokens, action.token];
+  }
+
+  const index = tokens.findIndex((token) => token.id === action.tokenId);
   if (index === -1) return tokens;
   return [...tokens.slice(0, index), ...tokens.slice(index + 1)];
 }

@@ -222,7 +222,7 @@ function successfulResponse(activity: Activity): unknown {
     }
     case "math-fraction-bar":
       return config.mode === "partition"
-        ? { mode: config.mode, partitionCount: config.denominator, attempts: 1 }
+        ? { mode: config.mode, partitionId: "equal", attempts: 1 }
         : { mode: config.mode, selectedSegments: range(config.numerator), attempts: 1 };
     case "lang-symbol-intro":
       return {
@@ -256,7 +256,10 @@ function successfulResponse(activity: Activity): unknown {
     case "math-measure":
       return config.mode === "compare"
         ? { selectedIndex: config.answerIndex, attempts: 1 }
-        : { placedUnitIds: range(config.length).map((index) => `unit-${index}`), attempts: 1 };
+        : {
+            placements: range(config.length).map((slot) => ({ id: `unit-${slot}`, slot })),
+            attempts: 1,
+          };
     case "sort-categories":
       return {
         assignments: config.items.map(({ binId }, itemIndex) => ({ itemIndex, binId })),
