@@ -19,7 +19,7 @@ import * as oralReading from "./oral-reading/logic";
 
 export interface ServerActivityDefinition<Config = unknown, Response = unknown> {
   kind: ActivityKind;
-  /** How a Player completion proves final semantic success. Direct-answer
+  /** How a browser completion proves final semantic success. Direct-answer
    * activities use the canonical score; richer response contracts validate
    * their final facts while scoring independence; oral reading is witnessed. */
   completionPolicy: "full-score" | "response-validated" | "server-witness";
