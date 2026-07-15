@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { deriveComparisonIndex } from "@/activities/math-measure/measure-model";
+import { deriveComparisonIndex } from "./math-measure-derivation";
 
 const compareConfig = z
   .object({

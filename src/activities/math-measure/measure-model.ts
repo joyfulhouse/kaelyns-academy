@@ -1,9 +1,9 @@
-export type MeasureAttribute = "length" | "height" | "weight";
-export type ComparisonQuestion = "most" | "least";
-
-export interface SizedItem {
-  size: number;
-}
+export {
+  deriveComparisonIndex,
+  type ComparisonQuestion,
+  type MeasureAttribute,
+  type SizedItem,
+} from "@/content/activity-configs/math-measure-derivation";
 
 export type BalanceTilt = "left" | "level" | "right";
 
@@ -12,30 +12,6 @@ export function scaledExtent(size: number, largestSize: number, maximumExtent: n
   if (largestSize <= 0 || maximumExtent <= 0) return 0;
   const boundedSize = Math.min(Math.max(size, 0), largestSize);
   return (boundedSize / largestSize) * maximumExtent;
-}
-
-function valueForAttribute(attribute: MeasureAttribute, item: SizedItem): number {
-  switch (attribute) {
-    case "length":
-    case "height":
-    case "weight":
-      return item.size;
-  }
-}
-
-/** Derive the unique requested extreme; ambiguous authored comparisons fail closed. */
-export function deriveComparisonIndex(
-  attribute: MeasureAttribute,
-  question: ComparisonQuestion,
-  items: SizedItem[],
-): number | null {
-  if (items.length === 0) return null;
-  const values = items.map((item) => valueForAttribute(attribute, item));
-  const extreme = question === "most" ? Math.max(...values) : Math.min(...values);
-  const matching = values
-    .map((value, index) => ({ value, index }))
-    .filter(({ value }) => value === extreme);
-  return matching.length === 1 ? matching[0].index : null;
 }
 
 export function balanceTiltDirection(leftWeight: number, rightWeight: number): BalanceTilt {
