@@ -91,7 +91,7 @@ test("measurement snaps units and lets the learner correct alignment, gaps, and 
   await expectSingleHostReward(page);
 });
 
-test("weight comparison uses a labeled balance tilted toward the heavier object", async ({
+test("weight comparison exposes pan positions without naming the answer", async ({
   page,
 }) => {
   await page.goto(WEIGHT_ACTIVITY);
@@ -99,8 +99,9 @@ test("weight comparison uses a labeled balance tilted toward the heavier object"
   const balance = page.getByRole("img", { name: /balance comparing feather and watermelon/i });
   await expect(balance).toBeVisible({ timeout: 25_000 });
   await expect(balance).toHaveAccessibleDescription(
-    /watermelon pan is lower and watermelon is heavier; feather pan is higher and feather is lighter/i,
+    /watermelon pan is lower; feather pan is higher/i,
   );
+  await expect(balance).not.toHaveAccessibleDescription(/heavier|lighter/i);
   await expect(page.getByTestId("balance-beam")).toHaveAttribute("data-tilt", "right");
   await expect(page.getByTestId("left-balance-pan")).toHaveAttribute("data-orientation", "level");
   await expect(page.getByTestId("right-balance-pan")).toHaveAttribute("data-orientation", "level");

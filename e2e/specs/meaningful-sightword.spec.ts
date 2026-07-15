@@ -55,7 +55,7 @@ test("speech-unavailable sight-word rounds remain completable through explicit h
     timeout: 25_000,
   });
 
-  await page.getByRole("button", { name: "then", exact: true }).click();
+  await expect(page.getByRole("button", { name: "then", exact: true })).toBeDisabled();
   await expect(unavailable).toBeVisible();
 
   for (const target of ["the", "and", "said"]) {

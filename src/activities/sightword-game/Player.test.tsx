@@ -36,4 +36,14 @@ describe("sight-word Player audio-first contract", () => {
     expect(markup).toContain("Audio isn’t available");
     expect(markup).toContain("Show the word");
   });
+
+  it("locks blind guesses when audio is unavailable until the target is shown", () => {
+    const markup = renderToStaticMarkup(
+      createElement(SightwordGamePlayer, { config, onComplete: () => undefined }),
+    );
+
+    expect(markup.match(/<button[^>]*disabled=""[^>]*>(?:then|the|they)<\/button>/g)).toHaveLength(
+      3,
+    );
+  });
 });

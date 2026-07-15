@@ -52,6 +52,8 @@ export function SightwordGamePlayer({
   );
 
   if (!round) return null;
+  const choicesLocked =
+    (!speech.supported || targetSpeech.unavailable) && !roundState.helpVisible;
 
   function choose(choiceIndex: number): void {
     const choice = round.choices[choiceIndex];
@@ -134,9 +136,10 @@ export function SightwordGamePlayer({
                 type="button"
                 onClick={() => choose(card.choiceIndex)}
                 aria-pressed={tried}
+                disabled={choicesLocked}
                 className={cn(
                   "min-h-24 rounded-2xl border-[3px] border-ink px-4 py-5 font-display text-2xl text-ink shadow-pop",
-                  "transition duration-150 hover:-translate-y-0.5 focus-visible:ring-4 focus-visible:ring-honey/60 active:translate-y-1 active:shadow-none",
+                  "transition duration-150 hover:-translate-y-0.5 focus-visible:ring-4 focus-visible:ring-honey/60 active:translate-y-1 active:shadow-none disabled:cursor-not-allowed disabled:opacity-60",
                   tried ? "bg-honey" : "bg-paper-raised",
                 )}
               >
