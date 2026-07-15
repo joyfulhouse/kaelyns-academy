@@ -53,7 +53,7 @@ export function MathClockPlayer({
 
   function tapChoice(index: number) {
     if (parsed.mode !== "read" || shake.wrong) return;
-    const attemptCount = attempts + 1;
+    const attemptCount = Math.min(attempts + 1, 20);
     if (index === parsed.answerIndex) {
       const response: MathClockResponse = { attempts: attemptCount, selectedIndex: index };
       onComplete(response);
@@ -77,7 +77,7 @@ export function MathClockPlayer({
 
   function check() {
     if (parsed.mode !== "set" || shake.wrong) return;
-    const attemptCount = attempts + 1;
+    const attemptCount = Math.min(attempts + 1, 20);
     setAttempts(attemptCount);
     if (totalMinutes === authoredTime(parsed.targetHour, parsed.targetMinute)) {
       const response: MathClockResponse = { attempts: attemptCount, totalMinutes };
