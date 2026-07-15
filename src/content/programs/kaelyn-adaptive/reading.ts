@@ -16,18 +16,18 @@ export const readingUnit: Unit = {
     {
       id: "reading-r1",
       order: 1,
-      title: "Fluency on early-chapter text",
+      title: "Expression and ordered retell",
       activities: [
         {
           id: "reading-r1-a1",
           kind: "reading-comprehension",
-          title: "Read it like you mean it",
+          title: "Choose the fitting voice",
           blurb: "Pick the voice that fits the moment.",
           estMinutes: 8,
           band: "ready",
-          skillTags: ["reading.fluency.phrasing"],
+          skillTags: [],
           config: {
-            instruction: "Read this part out loud first. Then pick the voice that fits.",
+            instruction: "Read this part, then pick the voice that fits the moment.",
             title: "Frog and Toad: The Lost Button",
             passage:
               "Toad looked everywhere. He looked under the chairs and behind the door. \"I will never find my button!\" he cried. He sat down hard and put his head in his hands.",
@@ -50,13 +50,13 @@ export const readingUnit: Unit = {
         {
           id: "reading-r1-a2",
           kind: "reading-comprehension",
-          title: "Punctuation drive",
-          blurb: "Read to the marks: stop, slow, big voice.",
+          title: "Retell the eruption",
+          blurb: "Put the volcano events in order.",
           estMinutes: 6,
           band: "stretch",
-          skillTags: ["reading.fluency.phrasing", "reading.comprehension.retell"],
+          skillTags: ["reading.comprehension.retell"],
           config: {
-            instruction: "Read it to the marks. Then say in one breath who it was about and what happened.",
+            instruction: "Read the passage, then put what happened in order to retell the volcano story.",
             title: "Expedition: Volcanoes",
             passage:
               "The mountain rumbled. Smoke poured out of the top, dark and fast. Then, with a roar, it erupted! Hot lava ran down the side like a river of fire.",
@@ -69,7 +69,7 @@ export const readingUnit: Unit = {
               },
             ],
             structuredRetell: {
-              prompt: "Put the volcano events in order, then retell them in one breath.",
+              prompt: "Put the volcano events in order to retell what happened.",
               events: [
                 { id: "rumble", text: "The mountain rumbles." },
                 { id: "smoke", text: "Smoke pours from the top." },

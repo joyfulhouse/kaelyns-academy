@@ -51,8 +51,6 @@ const roundConfig = z
   .object({
     instruction: boundedInstruction,
     rounds: z.array(sightwordRoundSchema).min(1).max(8),
-    words: z.never().optional(),
-    decoys: z.never().optional(),
     skillTag: z.string().trim().min(1).max(64).optional(),
   })
   .strict()
@@ -61,40 +59,5 @@ const roundConfig = z
     if (reason) context.addIssue({ code: "custom", path: ["rounds"], message: reason });
   });
 
-/**
- * Temporary compatibility for generated practice payloads. Authored content
- * uses explicit rounds; the legacy shape is normalized to those same static
- * rounds and can be removed with the central practice-generator migration.
- */
-const archivedConfig = z
-  .object({
-    instruction: boundedInstruction,
-    rounds: z.never().optional(),
-    words: z.array(boundedWord).min(1).max(8),
-    decoys: z.array(boundedWord).max(5).default([]),
-    skillTag: z.string().trim().min(1).max(64).optional(),
-  })
-  .strict()
-  .superRefine((config, context) => {
-    const words = config.words.map(normalized);
-    const decoys = config.decoys.map(normalized);
-    if (words.length === 1 && decoys.length === 0) {
-      context.addIssue({
-        code: "custom",
-        path: ["decoys"],
-        message: "a round needs at least one bounded distractor",
-      });
-    }
-    if (new Set(words).size !== words.length) {
-      context.addIssue({ code: "custom", path: ["words"], message: "targets must be unique" });
-    }
-    if (new Set(decoys).size !== decoys.length) {
-      context.addIssue({ code: "custom", path: ["decoys"], message: "decoys must be unique" });
-    }
-    if (decoys.some((decoy) => words.includes(decoy))) {
-      context.addIssue({ code: "custom", path: ["decoys"], message: "targets and decoys must be disjoint" });
-    }
-  });
-
-export const sightwordGameConfig = z.union([roundConfig, archivedConfig]);
+export const sightwordGameConfig = roundConfig;
 export type SightwordGameConfig = z.input<typeof sightwordGameConfig>;

@@ -1,7 +1,6 @@
 import {
   sightwordGameConfig,
   type SightwordGameConfig,
-  type SightwordRound,
 } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
 import { z } from "zod";
@@ -32,24 +31,11 @@ export const responseSchema = z
   .strict();
 export type SightwordGameResponse = z.infer<typeof responseSchema>;
 
-export function normalizeSightwordRounds(config: SightwordGameConfig): SightwordRound[] {
-  if (Array.isArray(config.rounds)) return config.rounds;
-  const words = config.words ?? [];
-  const decoys = config.decoys ?? [];
-  return words.map((target) => ({
-    target,
-    choices: [
-      target,
-      ...(decoys.length > 0 ? decoys : words.filter((word) => word !== target).slice(0, 5)),
-    ],
-  }));
-}
-
 function assertCompleteCorrectRounds(
   config: SightwordGameConfig,
   response: SightwordGameResponse,
 ): void {
-  const rounds = normalizeSightwordRounds(config);
+  const rounds = config.rounds;
   if (response.rounds.length !== rounds.length) throw new Error("invalid sight-word response");
   const seen = new Set<number>();
   for (const result of response.rounds) {
@@ -71,7 +57,7 @@ export function score(
   response: SightwordGameResponse,
 ): ActivityScore {
   assertCompleteCorrectRounds(config, response);
-  const total = normalizeSightwordRounds(config).length;
+  const total = config.rounds.length;
   const independence = response.rounds.reduce((sum, round) => {
     const firstTry = round.attempts === 1 ? 1 : 0;
     return sum + (round.usedHelp ? Math.min(firstTry, 0.5) : firstTry);

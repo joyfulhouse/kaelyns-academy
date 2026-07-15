@@ -94,11 +94,11 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
         instruction: "Tap each symbol to hear it.",
         skillTags: ["zhuyin.symbols.initials"],
         symbols: [
-          { id: "zhuyin-b", symbol: "ㄅ", romanization: "b", spoken: "ㄅㄛ" },
-          { id: "zhuyin-p", symbol: "ㄆ", romanization: "p", spoken: "ㄆㄛ" },
-          { id: "zhuyin-m", symbol: "ㄇ", romanization: "m", spoken: "ㄇㄛ" },
+          { id: "zhuyin-b", symbol: "ㄅ", romanization: "b", spoken: "ㄅㄛ", audioKey: "zhuyin-b", example: "ㄅㄚˋ", exampleSpoken: "bà", meaning: "dad" },
+          { id: "zhuyin-p", symbol: "ㄆ", romanization: "p", spoken: "ㄆㄛ", audioKey: "zhuyin-p", example: "ㄆㄛˊ", exampleSpoken: "pó", meaning: "grandma" },
+          { id: "zhuyin-m", symbol: "ㄇ", romanization: "m", spoken: "ㄇㄛ", audioKey: "zhuyin-m", example: "ㄇㄚ", exampleSpoken: "mā", meaning: "mom" },
         ],
-        verify: [{ prompt: "Which one says b?", choices: ["ㄅ", "ㄆ", "ㄇ"], answerIndex: 0 }],
+        verify: [{ prompt: "Which one says b?", spokenPrompt: "Which one says b?", choices: ["ㄅ", "ㄆ", "ㄇ"], answerIndex: 0 }],
       };
     case "lang-listen-match":
       return {
@@ -106,7 +106,13 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
         instruction: "Listen, then tap the symbol you heard.",
         skillTags: ["zhuyin.symbols.initials"],
         items: [
-          { spoken: "ㄅ", choices: ["ㄅ", "ㄆ"], answerIndex: 0 },
+          {
+            spoken: "ㄅㄛ",
+            audioKey: "zhuyin-b",
+            choices: ["ㄅ", "ㄆ"],
+            choiceLabels: ["b", "p"],
+            answerIndex: 0,
+          },
         ],
       };
     case "math-clock":

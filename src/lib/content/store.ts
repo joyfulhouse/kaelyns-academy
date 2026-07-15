@@ -710,7 +710,8 @@ export async function saveVersionTree(
 
   // Validate and canonicalize all activity configs BEFORE opening the write
   // transaction. Persist the parsed output, never the raw admin JSON: this
-  // applies schema defaults and strips unknown keys at the trust boundary.
+  // applies schema defaults while exact schemas reject unknown keys at the
+  // trust boundary.
   const canonicalUnits = input.units.map((unit) => ({
     ...unit,
     lessons: unit.lessons.map((lesson) => ({

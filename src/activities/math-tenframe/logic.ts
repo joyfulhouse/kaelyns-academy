@@ -162,6 +162,6 @@ export function skillsAffected(config: MathTenframeConfig): SkillTag[] {
     case "subtract":
       return ["math.subtraction"];
     case "make-ten":
-      return ["math.regrouping"];
+      return ["math.add.make-ten"];
   }
 }

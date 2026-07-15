@@ -10,6 +10,9 @@ const symbols = [
     romanization: "b",
     spoken: "ㄅㄛ",
     audioKey: "zhuyin-b",
+    example: "ㄅㄚˋ",
+    exampleSpoken: "bà",
+    meaning: "dad",
   },
   {
     id: "zhuyin-p",
@@ -17,6 +20,9 @@ const symbols = [
     romanization: "p",
     spoken: "ㄆㄛ",
     audioKey: "zhuyin-p",
+    example: "ㄆㄛˊ",
+    exampleSpoken: "pó",
+    meaning: "grandma",
   },
   {
     id: "zhuyin-m",
@@ -24,6 +30,9 @@ const symbols = [
     romanization: "m",
     spoken: "ㄇㄛ",
     audioKey: "zhuyin-m",
+    example: "ㄇㄚ",
+    exampleSpoken: "mā",
+    meaning: "mom",
   },
 ];
 
@@ -87,6 +96,16 @@ describe("lang-symbol-intro config", () => {
       validateGenerated({
         ...config,
         symbols: [{ ...symbols[0], spoken: "wrong" }, symbols[1], symbols[2]],
+      }),
+    ).not.toBeNull();
+    expect(
+      validateGenerated({
+        ...config,
+        symbols: [
+          { ...symbols[0], example: undefined, exampleSpoken: undefined },
+          symbols[1],
+          symbols[2],
+        ],
       }),
     ).not.toBeNull();
     expect(

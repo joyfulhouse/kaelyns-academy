@@ -3,14 +3,15 @@ import { firstConfigIssueMessage, validateActivityConfig } from "./validate";
 
 describe("validateActivityConfig", () => {
   it("returns the PARSED config (zod defaults applied) on success", () => {
-    // sightword-game's `decoys` defaults to [] — proving we return parsed output,
-    // not the raw input (assembleProgram relies on this).
-    const result = validateActivityConfig("sightword-game", {
-      instruction: "Tap the word",
-      words: ["the", "and"],
+    // Ten-frame `frames` defaults to 1 — proving we return parsed output, not
+    // the raw input (assembleProgram relies on this).
+    const result = validateActivityConfig("math-tenframe", {
+      instruction: "Show five.",
+      mode: "represent",
+      target: 5,
     });
     expect(result.ok).toBe(true);
-    if (result.ok) expect((result.data as { decoys: string[] }).decoys).toEqual([]);
+    if (result.ok) expect((result.data as { frames: number }).frames).toBe(1);
   });
 
   it("flags an unknown kind without throwing", () => {

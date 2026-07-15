@@ -37,7 +37,7 @@ export type SkillDomain =
   | "spanish"
   | "japanese"
   | "korean";
-export type SkillTag = string; // "phonics.digraphs"
+export type SkillTag = string; // "phonics.decode.digraph-sh"
 type StandardTag = string; // "CCSS.RF.1.3"
 
 /** Per-program visual world (sets --accent over the stable shell). */

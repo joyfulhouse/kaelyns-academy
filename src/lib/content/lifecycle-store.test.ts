@@ -329,7 +329,7 @@ describe("saveVersionTree (Fix-F B2: in-tx draft re-check)", () => {
     expect(txInsertedValues).toEqual([]);
   });
 
-  it("persists schema-parsed configs with defaults applied and unknown fields stripped", async () => {
+  it("persists schema-parsed configs with defaults applied", async () => {
     versionFindFirst.value = { id: "v1", programId: "p1", status: "draft" };
     const input = inputWithActivities([
       {
@@ -342,7 +342,6 @@ describe("saveVersionTree (Fix-F B2: in-tx draft re-check)", () => {
           minute: 0,
           choices: ["3:00", "4:00"],
           answerIndex: 0,
-          editorOnly: "strip me",
         },
       },
       {
@@ -380,6 +379,31 @@ describe("saveVersionTree (Fix-F B2: in-tx draft re-check)", () => {
       wordBank: [],
       allowModes: ["type"],
     });
+  });
+
+  it("rejects unknown config fields instead of silently persisting model/editor residue", async () => {
+    versionFindFirst.value = { id: "v1", programId: "p1", status: "draft" };
+    const input = inputWithActivities([
+      {
+        activityKey: "clock",
+        kind: "math-clock",
+        config: {
+          mode: "read",
+          instruction: "Read the clock",
+          hour: 3,
+          minute: 0,
+          choices: ["3:00", "4:00"],
+          answerIndex: 0,
+          editorOnly: "reject me",
+        },
+      },
+    ]);
+
+    await expect(saveVersionTree("v1", input)).rejects.toBeInstanceOf(
+      ActivityConfigValidationError,
+    );
+    expect(transaction).not.toHaveBeenCalled();
+    expect(txInsertedValues).toEqual([]);
   });
 });
 

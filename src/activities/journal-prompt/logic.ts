@@ -6,6 +6,7 @@ import { z } from "zod";
 export const schema = journalPromptConfig;
 
 const journalResponseMode = z.enum(["draw", "scribe", "type", "dictate"]);
+const DISALLOWED_COMPLETION = "Journal completion path is not allowed by the configured activity.";
 
 /** Privacy-preserving participation summary. No child-created artifact leaves the Player. */
 export const responseSchema = z
@@ -48,9 +49,10 @@ export type JournalPromptResponse = z.infer<typeof responseSchema>;
  * composition or stamina evidence.
  */
 export function score(
-  _config: JournalPromptConfig,
-  _response: JournalPromptResponse,
+  config: JournalPromptConfig,
+  response: JournalPromptResponse,
 ): ActivityScore {
+  assertAllowedCompletion(config, response);
   return {
     correct: 1,
     total: 1,
@@ -61,4 +63,38 @@ export function score(
 
 export function skillsAffected(_config: JournalPromptConfig): SkillTag[] {
   return [];
+}
+
+function assertAllowedCompletion(
+  config: JournalPromptConfig,
+  response: JournalPromptResponse,
+): void {
+  const parsed = schema.parse(config);
+
+  if (parsed.mode === "draw") {
+    if ((response.didDraw && !parsed.drawing) || !["draw", "type"].includes(response.mode)) {
+      throw new Error(DISALLOWED_COMPLETION);
+    }
+    if (response.usedDictation) {
+      throw new Error(DISALLOWED_COMPLETION);
+    }
+    return;
+  }
+
+  if (response.didDraw || response.mode === "draw") {
+    throw new Error(DISALLOWED_COMPLETION);
+  }
+
+  const allowedModes = new Set(parsed.allowModes);
+  const isDictationFallback =
+    response.mode === "type" &&
+    allowedModes.has("dictate") &&
+    !allowedModes.has("type") &&
+    !allowedModes.has("scribe");
+  if (!allowedModes.has(response.mode) && !isDictationFallback) {
+    throw new Error(DISALLOWED_COMPLETION);
+  }
+  if (response.usedDictation && !allowedModes.has("dictate")) {
+    throw new Error(DISALLOWED_COMPLETION);
+  }
 }

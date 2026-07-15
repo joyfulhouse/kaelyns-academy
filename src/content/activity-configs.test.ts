@@ -51,6 +51,31 @@ describe("activity config module registry", () => {
   });
 });
 
+describe("phonics-wordbuild config", () => {
+  const base = {
+    focus: "short a CVC words",
+    instruction: "Build the word.",
+    tiles: ["c", "a", "t"],
+    words: [{ word: "cat" }],
+  };
+
+  it("accepts only bounded current phonics decode evidence routes", () => {
+    expect(
+      phonicsWordbuildModuleConfig.safeParse({
+        ...base,
+        skillTag: "phonics.decode.short-a-cvc",
+      }).success,
+    ).toBe(true);
+    expect(
+      phonicsWordbuildModuleConfig.safeParse({ ...base, skillTag: "phonics.digraphs" }).success,
+    ).toBe(false);
+    expect(
+      phonicsWordbuildModuleConfig.safeParse({ ...base, skillTag: "word.syllables.division" })
+        .success,
+    ).toBe(false);
+  });
+});
+
 describe("math-clock config", () => {
   it("accepts a read item to the half-hour", () => {
     expect(
@@ -153,15 +178,14 @@ describe("math-measure config", () => {
     expect(
       mathMeasureConfig.safeParse({
         mode: "units",
-        instruction: "How many cubes?",
+        instruction: "Measure the pencil with cubes.",
+        objectLabel: "pencil",
         unit: "cube",
         length: 5,
-        choices: [4, 5, 6],
-        answerIndex: 1,
       }).success,
     ).toBe(true);
   });
-  it("rejects an unknown attribute", () => {
+  it("rejects an unknown attribute and legacy unit-choice fields", () => {
     expect(
       mathMeasureConfig.safeParse({
         mode: "compare",
@@ -173,6 +197,16 @@ describe("math-measure config", () => {
           { label: "b", emoji: "b", size: 2 },
         ],
         answerIndex: 0,
+      }).success,
+    ).toBe(false);
+    expect(
+      mathMeasureConfig.safeParse({
+        mode: "units",
+        instruction: "How many cubes?",
+        unit: "cube",
+        length: 5,
+        choices: [4, 5, 6],
+        answerIndex: 1,
       }).success,
     ).toBe(false);
   });
@@ -207,6 +241,26 @@ describe("oral-reading config", () => {
         mode: "sentence",
         instruction: "Read.",
         passage: "The cat sat.",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects unknown fields on both exact oral-reading branches", () => {
+    expect(
+      oralReadingConfig.safeParse({
+        presentation: "listen-repeat",
+        instruction: "Read.",
+        target: "cat",
+        rawModelField: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      oralReadingConfig.safeParse({
+        mode: "sentence",
+        presentation: "cold",
+        instruction: "Read.",
+        passage: "The cat sat.",
+        rawModelField: true,
       }).success,
     ).toBe(false);
   });

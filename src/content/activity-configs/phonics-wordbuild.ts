@@ -10,6 +10,12 @@ import { validatePhonicsTileInventory } from "@/content/phonics";
 export const phonicsWordbuildConfig = z.object({
   focus: z.string(), // "sh, ch, th digraphs"
   instruction: z.string(), // kid-facing prompt (spoken aloud)
+  /** Optional evidence route supplied by trusted authored/server context. */
+  skillTag: z
+    .string()
+    .trim()
+    .regex(/^phonics\.decode\.[a-z0-9-]+$/)
+    .optional(),
   // Bounded count (.max): every tile is pre-synthesized to durable TTS, so an
   // unbounded array would let one generated config fan out hundreds of warm calls.
   tiles: z.array(z.string().min(1).max(16)).min(2).max(16), // letter / digraph / syllable tiles
@@ -32,11 +38,11 @@ export const phonicsWordbuildConfig = z.object({
         /** Optional whole-word neural-TTS override (IPA), for the rare word the
          *  default G2P gets wrong. Most words need none. */
         ipa: z.string().max(48).optional(),
-      }),
+      }).strict(),
     )
     .min(1)
     .max(12),
-}).superRefine((config, context) => {
+}).strict().superRefine((config, context) => {
   const reason = validatePhonicsTileInventory(config);
   if (reason) context.addIssue({ code: "custom", message: reason });
 });

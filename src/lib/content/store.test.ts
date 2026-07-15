@@ -225,7 +225,10 @@ describe("assembleProgram", () => {
           band: "ready",
           skillTags: ["reading.sight"],
           standardTags: [],
-          config: { instruction: "Tap the word", words: ["the", "and"], decoys: [] },
+          config: {
+            instruction: "Find the word.",
+            rounds: [{ target: "the", choices: ["the", "they"] }],
+          },
         },
       ],
     };
@@ -566,7 +569,10 @@ describe("buildVersionTreeRows", () => {
                 band: "ready",
                 skillTags: ["reading.sight"],
                 standardTags: [],
-                config: { instruction: "Tap the word", words: ["the", "and"], decoys: [] },
+                config: {
+                  instruction: "Find the word.",
+                  rounds: [{ target: "the", choices: ["the", "they"] }],
+                },
               },
             ],
           },

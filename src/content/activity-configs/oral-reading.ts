@@ -25,7 +25,7 @@ const oralReadingWordConfig = z.object({
   // Authored activities carry `skillTag` so emitted evidence stays inside the
   // activity's `skillTags`; omission is allowed for evidence-free review items.
   skillTag: z.string().trim().min(1).max(64).optional(),
-});
+}).strict();
 export type OralReadingWordConfig = z.input<typeof oralReadingWordConfig>;
 
 export const oralReadingSentenceConfig = z.object({
@@ -46,7 +46,7 @@ export const oralReadingSentenceConfig = z.object({
     )
     .refine((value) => /[a-z0-9]/i.test(value), "passage must contain a word or number"),
   skillTag: z.string().trim().min(1).max(64).optional(),
-});
+}).strict();
 export type OralReadingSentenceConfig = z.input<typeof oralReadingSentenceConfig>;
 
 export const oralReadingConfig = z.discriminatedUnion("mode", [

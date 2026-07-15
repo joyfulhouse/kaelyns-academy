@@ -48,7 +48,7 @@ describe("authored program content", () => {
     ]);
     expect(
       createHash("sha256").update(JSON.stringify(kaelynAdaptive)).digest("hex"),
-    ).toBe("c0bc69e82a34625abeaca74302fc2e53a2698e4779ee28df668a8da1259099e3");
+    ).toBe("d42e59f9730e187d0d7ba764deda2f3765377d30b1cca9ef7c021527ab580f49");
   });
 
   it("every activity config parses against its kind's schema", () => {

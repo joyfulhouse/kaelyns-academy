@@ -210,7 +210,7 @@ describe("math-tenframe score", () => {
     expect(skillsAffected(represent)).toEqual(["math.counting"]);
     expect(skillsAffected(add)).toEqual(["math.addition", "math.fluency"]);
     expect(skillsAffected(subtract)).toEqual(["math.subtraction"]);
-    expect(skillsAffected(makeTen)).toEqual(["math.regrouping"]);
+    expect(skillsAffected(makeTen)).toEqual(["math.add.make-ten"]);
   });
 });
 

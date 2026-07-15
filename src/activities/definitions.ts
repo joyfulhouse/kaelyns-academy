@@ -103,8 +103,9 @@ export type PlayableActivityConfigValidation =
 /**
  * Server-only activity config boundary. Parse through the registered kind's
  * exact schema first, then run its deterministic internal-consistency check.
- * The successful value is always the parsed output, so defaults and stripping
- * are applied once before a config is persisted or assembled for a learner.
+ * The successful value is always the parsed output, so defaults are applied
+ * once and exact schemas reject unknown fields before a config is persisted or
+ * assembled for a learner.
  */
 export function validatePlayableActivityConfig(
   kind: string,

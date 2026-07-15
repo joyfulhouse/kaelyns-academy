@@ -88,12 +88,90 @@ describe("journal-prompt scoring", () => {
       skillEvidence: [],
     });
     expect(score(config, typedResponse).stars).toBe(3);
-    expect(score(config, dictatedResponse).stars).toBe(3);
+    expect(
+      score(
+        {
+          prompt: "Tell one idea.",
+          mode: "compose",
+          allowModes: ["dictate"],
+        },
+        dictatedResponse,
+      ).stars,
+    ).toBe(3);
   });
 
   it("does not claim sentence, composition, or stamina mastery", () => {
     expect(skillsAffected(config)).toEqual([]);
     expect(score(config, typedResponse).skillEvidence).toEqual([]);
+  });
+
+  it("rejects drawing as completion when the configured surface cannot draw", () => {
+    expect(() =>
+      score(
+        {
+          prompt: "Tell one idea.",
+          mode: "compose",
+          drawing: false,
+          allowModes: ["type"],
+        },
+        markResponse,
+      ),
+    ).toThrow(/not allowed/i);
+
+    expect(() =>
+      score(
+        {
+          prompt: "Tell one idea.",
+          mode: "draw",
+          drawing: false,
+        },
+        markResponse,
+      ),
+    ).toThrow(/not allowed/i);
+  });
+
+  it("accepts only completion paths exposed by each journal mode", () => {
+    const compose: JournalPromptConfig = {
+      prompt: "Tell one idea.",
+      mode: "compose",
+      drawing: false,
+      allowModes: ["scribe", "dictate"],
+    };
+
+    expect(score(config, markResponse).stars).toBe(3);
+    expect(score(config, typedResponse).stars).toBe(3);
+    expect(() => score(config, { ...typedResponse, mode: "scribe" })).toThrow(/not allowed/i);
+    expect(score(compose, { ...typedResponse, mode: "scribe" }).stars).toBe(3);
+    expect(score(compose, dictatedResponse).stars).toBe(3);
+    expect(() => score(compose, typedResponse)).toThrow(/not allowed/i);
+  });
+
+  it("requires dictation permission whenever recognized speech remains", () => {
+    const compose: JournalPromptConfig = {
+      prompt: "Tell one idea.",
+      mode: "compose",
+      allowModes: ["type"],
+    };
+
+    expect(() =>
+      score(compose, {
+        ...typedResponse,
+        usedDictation: true,
+      }),
+    ).toThrow(/not allowed/i);
+  });
+
+  it("permits the type fallback exposed when dictation is the only compose mode", () => {
+    expect(
+      score(
+        {
+          prompt: "Tell one idea.",
+          mode: "compose",
+          allowModes: ["dictate"],
+        },
+        typedResponse,
+      ).stars,
+    ).toBe(3);
   });
 });
 

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { sightwordGameConfig } from "@/content/activity-configs";
 import type { SightwordGameConfig } from "@/content/activity-configs";
 import {
-  normalizeSightwordRounds,
   responseSchema,
   score,
   skillsAffected,
@@ -74,19 +73,13 @@ describe("sight-word round config", () => {
     ).toBe(false);
   });
 
-  it("normalizes bounded archived configs into static target rounds", () => {
+  it("rejects the retired words/decoys compatibility shape", () => {
     expect(
-      normalizeSightwordRounds({
+      sightwordGameConfig.safeParse({
         instruction: "Find the words.",
         words: ["the", "and"],
         decoys: ["teh", "nad"],
-      }),
-    ).toEqual([
-      { target: "the", choices: ["the", "teh", "nad"] },
-      { target: "and", choices: ["and", "teh", "nad"] },
-    ]);
-    expect(
-      sightwordGameConfig.safeParse({ instruction: "Find it.", words: ["the"] }).success,
+      }).success,
     ).toBe(false);
   });
 });

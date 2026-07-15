@@ -81,25 +81,9 @@ export function score(
   };
 }
 
-/**
- * Skills evidenced by a wordbuild. Authors tag activities with the canonical
- * skill (e.g. "phonics.digraphs") on the Activity; this module derives a sane
- * default from the config focus so AI-generated configs still emit evidence.
- */
+/** Evidence routing is explicit; descriptive focus text never selects a skill. */
 export function skillsAffected(config: PhonicsWordbuildConfig): SkillTag[] {
-  const focus = config.focus.toLowerCase();
-  // Ordered syllable assembly directly observes division/decoding. Merely
-  // spelling a root, prefix, or syllable-type example does not observe meaning
-  // or classification, so those richer claims intentionally emit no evidence.
-  if (focus.includes("syllable") && focus.includes("divid")) return ["word.syllables.division"];
-  if (focus.includes("syllable") || focus.includes("prefix") || focus.includes("root")) return [];
-  // Program-01 phonics (unchanged):
-  if (focus.includes("digraph")) return ["phonics.digraphs"];
-  if (focus.includes("final") && focus.includes("blend")) return ["phonics.blends.final"];
-  if (focus.includes("blend")) return ["phonics.blends.initial"];
-  if (focus.includes("diphthong")) return ["phonics.diphthongs"];
-  if (focus.includes("ending") || focus.includes("suffix")) return ["phonics.endings"];
-  return ["phonics.cvc"];
+  return config.skillTag ? [config.skillTag] : [];
 }
 
 export function validateGenerated(config: PhonicsWordbuildConfig): string | null {

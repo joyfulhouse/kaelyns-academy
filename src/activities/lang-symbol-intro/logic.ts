@@ -124,16 +124,13 @@ export function validateGenerated(config: unknown): string | null {
     if (taught.audioKey !== canonical.id) {
       return `Symbol ${taught.id} must use its canonical audio key.`;
     }
-    if (taught.example !== undefined && taught.example !== canonical.example) {
+    if (taught.example !== canonical.example) {
       return `Symbol ${taught.id} has a noncanonical example.`;
     }
-    if (
-      taught.exampleSpoken !== undefined &&
-      taught.exampleSpoken !== canonical.exampleSpoken
-    ) {
+    if (taught.exampleSpoken !== canonical.exampleSpoken) {
       return `Symbol ${taught.id} has noncanonical spoken example text.`;
     }
-    if (taught.meaning !== undefined && taught.meaning !== canonical.meaning) {
+    if (taught.meaning !== canonical.meaning) {
       return `Symbol ${taught.id} has a noncanonical meaning.`;
     }
   }

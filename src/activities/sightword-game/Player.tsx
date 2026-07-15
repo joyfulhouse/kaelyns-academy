@@ -10,11 +10,7 @@ import { shuffle } from "../_shared/shuffle";
 import { useActivity } from "../_shared/useActivity";
 import { useEffectOncePerKey } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
-import {
-  normalizeSightwordRounds,
-  schema,
-  type SightwordGameResponse,
-} from "./logic";
+import { schema, type SightwordGameResponse } from "./logic";
 import {
   chooseSightword,
   createSightwordRoundState,
@@ -31,7 +27,7 @@ export function SightwordGamePlayer({
   onComplete,
 }: ActivityPlayerProps<SightwordGameConfig, SightwordGameResponse>) {
   const parsed = useActivity(schema, config);
-  const rounds = useMemo(() => normalizeSightwordRounds(parsed), [parsed]);
+  const rounds = parsed.rounds;
   const speech = useSpeech();
   const [roundIndex, setRoundIndex] = useState(0);
   const [roundState, setRoundState] = useState(createSightwordRoundState);

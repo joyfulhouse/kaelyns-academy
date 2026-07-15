@@ -36,13 +36,13 @@ export const mathBaselineUnit: Unit = {
         {
           id: "math-baseline-a2",
           kind: "math-array",
-          title: "Say it three ways",
-          blurb: "Array, repeated addition, and the product.",
+          title: "See it three ways",
+          blurb: "Connect the array, repeated addition, and the product.",
           estMinutes: 6,
           band: "ready",
-          skillTags: ["math.mult.facts"],
+          skillTags: ["math.mult.meaning"],
           config: {
-            instruction: "Look at 4 rows of 2. Say it as 2 + 2 + 2 + 2, then as 4 x 2, and find the product.",
+            instruction: "Look at 4 rows of 2. Connect the model to 2 + 2 + 2 + 2 and 4 x 2, then find the product.",
             mode: "multiply",
             rows: 4,
             cols: 2,
@@ -72,7 +72,7 @@ export const mathBaselineUnit: Unit = {
           blurb: "Cover it with unit squares, then count.",
           estMinutes: 6,
           band: "ready",
-          skillTags: ["math.geometry.area-arrays", "math.mult.facts"],
+          skillTags: ["math.geometry.area-arrays"],
           config: {
             instruction: "Tile this rectangle with unit squares. How many squares cover it?",
             mode: "area",

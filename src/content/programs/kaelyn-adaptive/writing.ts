@@ -25,7 +25,7 @@ export const writingUnit: Unit = {
           blurb: "You bring the idea. The frame holds the words.",
           estMinutes: 8,
           band: "ready",
-          skillTags: ["writing.compose.sentence"],
+          skillTags: [],
           config: {
             prompt: "Tell one true thing about today's expedition. Say it as a whole sentence.",
             drawing: false,
@@ -49,7 +49,7 @@ export const writingUnit: Unit = {
           blurb: "Add a who, a where, a why. Trade a stronger verb.",
           estMinutes: 10,
           band: "ready",
-          skillTags: ["writing.compose.sentence-expand"],
+          skillTags: [],
           config: {
             prompt: "Start with \"The boat went on the water.\" Make it richer: add a detail, an adjective, or a stronger verb.",
             drawing: false,
@@ -73,7 +73,7 @@ export const writingUnit: Unit = {
           blurb: "Beginning, middle, end, in three sentences.",
           estMinutes: 12,
           band: "ready",
-          skillTags: ["writing.compose.narrative"],
+          skillTags: [],
           config: {
             prompt: "Tell a tiny story about a volcano with a beginning, a middle, and an end.",
             drawing: false,
@@ -90,7 +90,7 @@ export const writingUnit: Unit = {
           blurb: "Give an opinion and back it with reasons.",
           estMinutes: 10,
           band: "ready",
-          skillTags: ["writing.compose.opinion"],
+          skillTags: [],
           config: {
             prompt: "What is the best ocean animal? Tell me what you think and why.",
             drawing: false,
@@ -114,7 +114,7 @@ export const writingUnit: Unit = {
           blurb: "Open with a topic sentence, then stay on one idea.",
           estMinutes: 14,
           band: "ready",
-          skillTags: ["writing.compose.paragraph"],
+          skillTags: [],
           config: {
             prompt: "Write a short paragraph about whales. Start with a topic sentence, then add three facts you know, all about whales.",
             drawing: false,
@@ -138,7 +138,7 @@ export const writingUnit: Unit = {
           blurb: "Swap a weak word. Add a detail. Say why it's better.",
           estMinutes: 12,
           band: "stretch",
-          skillTags: ["writing.compose.revise"],
+          skillTags: [],
           config: {
             prompt: "Here is a draft sentence: \"The volcano was big and it went.\" Make it stronger. Swap a bland word for a livelier one and add one detail. Then say why your change is better.",
             drawing: false,

@@ -8,7 +8,7 @@ export const mathUnit: Unit = {
   emoji: "🎪",
   world: "bigtop",
   bigIdea:
-    "She already multiplies and reads place value into the hundreds. So we teach forward: multiplication and division, regrouping, fractions, and reasoning. Growing a mathematician, not a calculator.",
+    "She already multiplies and reads place value into the hundreds. So we teach forward: equal groups, multiplication and division, make-a-ten strategies, area, fractions, and reasoning. Growing a mathematician, not a calculator.",
   phonicsFocus: "Multiplication → fractions",
   mathFocus: "11 levels",
   project: "Author a two-step word problem for an expedition and the equation that solves it.",
@@ -44,13 +44,13 @@ export const mathUnit: Unit = {
         {
           id: "math-r2-a1",
           kind: "math-array",
-          title: "Say it three ways",
-          blurb: "Array, repeated addition, and 3 x 4 = 12.",
+          title: "See it three ways",
+          blurb: "Connect an array, repeated addition, and 3 x 4 = 12.",
           estMinutes: 8,
-          band: "ready",
+          band: "stretch",
           skillTags: ["math.mult.meaning"],
           config: {
-            instruction: "Build 3 rows of 4. Then say it as 4 + 4 + 4, as 3 x 4, and find the product.",
+            instruction: "Build 3 rows of 4. Connect the model to 4 + 4 + 4 and 3 x 4, then find the product.",
             mode: "multiply",
             rows: 3,
             cols: 4,
@@ -61,9 +61,9 @@ export const mathUnit: Unit = {
           id: "math-r2-a2",
           kind: "math-array",
           title: "Skip-count the groups",
-          blurb: "Four groups of five, counted on the frames.",
+          blurb: "Four equal rows of five, revealed and skip-counted.",
           estMinutes: 6,
-          band: "ready",
+          band: "stretch",
           skillTags: ["math.mult.meaning"],
           config: {
             instruction: "Reveal four rows of five, then skip-count the equal groups: 5, 10, 15, 20.",
@@ -86,10 +86,10 @@ export const mathUnit: Unit = {
           title: "Share the treasure",
           blurb: "15 gold coins, 3 explorers. How many each?",
           estMinutes: 8,
-          band: "ready",
+          band: "stretch",
           skillTags: ["math.div.fact-families"],
           config: {
-            instruction: "Deal 15 gold coins fairly to 3 explorers. How many does each one get? Then write all four facts this array holds.",
+            instruction: "Deal 15 gold coins fairly to 3 explorers. How many does each one get? Then finish all four related facts.",
             mode: "divide",
             total: 15,
             groups: 3,
@@ -101,18 +101,18 @@ export const mathUnit: Unit = {
     {
       id: "math-r7",
       order: 4,
-      title: "Regrouping (trading tens & ones)",
+      title: "Make a ten",
       activities: [
         {
           id: "math-r7-a1",
           kind: "math-tenframe",
-          title: "Trade up",
-          blurb: "Combine the ones. Too many? Trade ten for a ten.",
+          title: "Make a ten",
+          blurb: "Fill the first frame, then count what is left.",
           estMinutes: 10,
           band: "ready",
-          skillTags: ["math.regrouping"],
+          skillTags: ["math.add.make-ten"],
           config: {
-            instruction: "Add 7 and 8 on the frames. When the ones fill past ten, trade ten of them for one full ten. That is regrouping.",
+            instruction: "Add 7 and 8. Fill the first frame to make one ten, then count the 5 left in the next frame.",
             mode: "make-ten",
             target: 7,
             addend: 8,
@@ -124,7 +124,7 @@ export const mathUnit: Unit = {
     {
       id: "math-r8",
       order: 5,
-      title: "Fractions: equal parts of a whole",
+      title: "Area and equal parts",
       activities: [
         {
           id: "math-r8-a1",
@@ -132,8 +132,8 @@ export const mathUnit: Unit = {
           title: "Area is an array",
           blurb: "Tile the rectangle, then find its area.",
           estMinutes: 8,
-          band: "ready",
-          skillTags: ["math.geometry.area-arrays", "math.mult.facts"],
+          band: "stretch",
+          skillTags: ["math.geometry.area-arrays"],
           config: {
             instruction: "Tile this rectangle with unit squares. How many squares cover it? Notice you can multiply the rows by the columns instead of counting each one.",
             mode: "area",

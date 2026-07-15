@@ -26,11 +26,16 @@ export function spokenEnglishStrings(item: unknown): string[] {
     }
   }
   push(r.retellPrompt);
+  if (Array.isArray(r.rounds)) {
+    for (const round of r.rounds) {
+      if (!round || typeof round !== "object") continue;
+      const fields = round as Record<string, unknown>;
+      push(fields.spokenPrompt ?? fields.target);
+    }
+  }
   if (Array.isArray(r.words)) {
     for (const w of r.words) {
-      if (typeof w === "string") {
-        push(w); // sightword-game targets
-      } else if (w && typeof w === "object") {
+      if (w && typeof w === "object") {
         // phonics-wordbuild words: spoken whole, with an optional IPA override.
         const wo = w as Record<string, unknown>;
         const word = typeof wo.word === "string" ? wo.word : "";

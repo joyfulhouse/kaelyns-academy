@@ -71,13 +71,5 @@ export function validateGenerated(config: MathMeasureConfig): string | null {
     if (derived === null) return "extreme is not unique";
     return config.answerIndex === derived ? null : "answer is not the extreme";
   }
-  if (config.choices === undefined && config.answerIndex === undefined) return null;
-  if (config.choices === undefined || config.answerIndex === undefined) {
-    return "legacy choices and answerIndex must appear together";
-  }
-  if (config.answerIndex >= config.choices.length) return "answerIndex out of range";
-  if (new Set(config.choices).size !== config.choices.length) return "duplicate choices";
-  return config.choices[config.answerIndex] === config.length
-    ? null
-    : "answer choice does not equal the true length";
+  return null;
 }

@@ -11,6 +11,7 @@ import type { PhonicsWordbuildConfig } from "@/content/activity-configs";
 const config: PhonicsWordbuildConfig = {
   focus: "sh, ch, th digraphs",
   instruction: "Build the word.",
+  skillTag: "phonics.decode.digraph-sh",
   tiles: ["sh", "i", "p", "ch", "a", "t"],
   words: [{ word: "ship" }, { word: "chat" }],
 };
@@ -28,7 +29,9 @@ describe("phonics-wordbuild score", () => {
     expect(result.stars).toBe(3);
     expect(result.correct).toBe(2);
     expect(result.total).toBe(2);
-    expect(result.skillEvidence).toEqual([{ skill: "phonics.digraphs", outcome: "solid" }]);
+    expect(result.skillEvidence).toEqual([
+      { skill: "phonics.decode.digraph-sh", outcome: "solid" },
+    ]);
   });
 
   it("awards 2 stars + emerging with one retry", () => {
@@ -49,37 +52,18 @@ describe("phonics-wordbuild score", () => {
     expect(result.skillEvidence[0].outcome).toBe("not_yet");
   });
 
-  it("derives skill tags from the focus", () => {
-    expect(skillsAffected({ ...config, focus: "initial blends bl, cr" })).toEqual([
-      "phonics.blends.initial",
+  it("routes only the explicit current skill tag, never descriptive focus text", () => {
+    expect(skillsAffected({ ...config, focus: "unrelated descriptive copy" })).toEqual([
+      "phonics.decode.digraph-sh",
     ]);
-    expect(skillsAffected({ ...config, focus: "short vowels CVC" })).toEqual(["phonics.cvc"]);
-  });
-
-  it("emits only build-observable Word Study evidence", () => {
-    // The real Program-02 (kaelyn-adaptive) Word Study focus strings.
     expect(
       skillsAffected({
-        ...config,
-        focus: "the six syllable types (closed, open, silent-e, vowel team, r-controlled, consonant-le)",
+        focus: "digraphs sh / ch / th",
+        instruction: config.instruction,
+        tiles: config.tiles,
+        words: config.words,
       }),
     ).toEqual([]);
-    expect(
-      skillsAffected({ ...config, focus: "dividing multisyllable words (VC/CV, V/CV, C+le)" }),
-    ).toEqual(["word.syllables.division"]);
-    expect(
-      skillsAffected({ ...config, focus: "prefixes that change meaning (un-, re-, pre-, dis-, mis-, non-)" }),
-    ).toEqual([]);
-    expect(
-      skillsAffected({ ...config, focus: "Greek and Latin roots (tele = far, graph = write)" }),
-    ).toEqual([]);
-  });
-
-  it("leaves Program-01 phonics focus strings byte-identical", () => {
-    // A legacy string that must NOT be captured by the new Word Study checks.
-    expect(skillsAffected({ ...config, focus: "digraphs sh / ch / th" })).toEqual([
-      "phonics.digraphs",
-    ]);
   });
 
   it("bounds response builds and tile indices", () => {

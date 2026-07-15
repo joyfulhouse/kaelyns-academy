@@ -156,7 +156,7 @@ export const wordStudyUnit: Unit = {
     {
       id: "word-r4",
       order: 1,
-      title: "The six syllable types",
+      title: "Blend prepared syllable chunks",
       activities: [
         {
           id: "word-r4-a1",
@@ -165,9 +165,9 @@ export const wordStudyUnit: Unit = {
           blurb: "Join the syllable parts, then blend the whole word.",
           estMinutes: 10,
           band: "ready",
-          skillTags: ["word.syllables.types"],
+          skillTags: [],
           config: {
-            focus: "the six syllable types (closed, open, silent-e, vowel team, r-controlled, consonant-le)",
+            focus: "prepared syllable chunks in longer words",
             instruction: "Build each word from its syllable tiles. Listen to each part, then blend the whole word.",
             // Two stable `co` instances make the repeated syllable in cocoa a
             // real inventory constraint instead of an infinitely reusable label.
@@ -184,18 +184,18 @@ export const wordStudyUnit: Unit = {
     {
       id: "word-r5",
       order: 2,
-      title: "Dividing & decoding long words",
+      title: "Build and understand long words",
       activities: [
         {
           id: "word-r5-a1",
           kind: "phonics-wordbuild",
-          title: "Chop it and read it",
-          blurb: "Order the scrambled syllables, then read the whole word.",
+          title: "Build it by syllable",
+          blurb: "Order prepared syllable chunks, then read the whole word.",
           estMinutes: 10,
           band: "ready",
-          skillTags: ["word.syllables.division"],
+          skillTags: [],
           config: {
-            focus: "dividing multisyllable words (VC/CV, V/CV, C+le)",
+            focus: "prepared syllable chunks in multisyllable words",
             instruction: "These expedition words are split into syllables. Put them in order, read each part, then blend.",
             tiles: ["ad", "ven", "ture", "vol", "can", "ic", "con", "ti", "nent"],
             // Isolated misreads: ture→"tyoor" (want "cher"), ic→"ike" (want
@@ -211,13 +211,13 @@ export const wordStudyUnit: Unit = {
         {
           id: "word-r5-a2",
           kind: "reading-comprehension",
-          title: "Cold-read challenge",
-          blurb: "Chop a never-seen word, then use the sentence for its meaning.",
+          title: "Use the context clues",
+          blurb: "Use the sentence to figure out a new word's meaning.",
           estMinutes: 8,
           band: "stretch",
-          skillTags: ["word.syllables.division", "vocab.context-clues"],
+          skillTags: ["vocab.context-clues"],
           config: {
-            instruction: "Read the sentence. Chop the bold word into syllables, read it, then use the sentence to figure out what it means.",
+            instruction: "Read the sentence, then use its clues to figure out what the new word means.",
             passage:
               "The diggers found a chamber so enormous that the whole team could stand inside it. The room went back farther than their lights could reach.",
             questions: [
@@ -250,14 +250,14 @@ export const wordStudyUnit: Unit = {
         {
           id: "word-r10-a1",
           kind: "phonics-wordbuild",
-          title: "Snap on a prefix",
-          blurb: "Add the prefix, read it, say the new meaning.",
+          title: "Build the prefixed word",
+          blurb: "Join a prefix and base-word tile, then blend the whole word.",
           estMinutes: 10,
           band: "ready",
-          skillTags: ["word.morphology.prefixes"],
+          skillTags: [],
           config: {
             focus: "prefixes that change meaning (un-, re-, pre-, dis-, mis-, non-)",
-            instruction: "Snap a prefix onto each base word. Read what you made, then say what the prefix did to the meaning.",
+            instruction: "Join each prefix and base-word tile, then blend the whole word.",
             tiles: ["un", "re", "pre", "dis", "happy", "play", "heat", "appear"],
             // "re" alone reads "ray"; in "replay" it's "ree". Others read fine.
             say: { re: "ɹˈi" },
@@ -302,14 +302,14 @@ export const wordStudyUnit: Unit = {
         {
           id: "word-r11-a1",
           kind: "phonics-wordbuild",
-          title: "Build from roots",
-          blurb: "Combine roots, read the word, infer the meaning.",
+          title: "Build from word parts",
+          blurb: "Combine the prepared parts, then blend the whole word.",
           estMinutes: 12,
           band: "ready",
-          skillTags: ["word.morphology.roots"],
+          skillTags: [],
           config: {
             focus: "Greek and Latin roots (tele = far, graph = write, geo = earth, port = carry, struct = build, meter = measure)",
-            instruction: "Each tile is a root that carries meaning. Build the word, read it, then reason out what it means from its parts.",
+            instruction: "Combine the prepared word-part tiles, then blend the whole word.",
             // "y" completes the -y suffix in geography (geo+graph+y); without it
             // geography was unbuildable. Roots voice fine in isolation (citation
             // form); only the lone "y" misreads as "why" — pin it to /i/.
@@ -330,7 +330,7 @@ export const wordStudyUnit: Unit = {
           blurb: "Break a brand-new word into roots, then check the sentence.",
           estMinutes: 8,
           band: "stretch",
-          skillTags: ["word.morphology.roots", "vocab.context-clues"],
+          skillTags: ["word.morphology.roots"],
           config: {
             instruction: "You may never have seen the bold word. Break it into roots you know, build the meaning, then check it against the sentence.",
             passage:
@@ -381,7 +381,7 @@ export const wordStudyUnit: Unit = {
           id: "word-r12-a2",
           kind: "reading-comprehension",
           title: "Pick the strongest word",
-          blurb: "Order three words from weak to strong.",
+          blurb: "Choose the word with the strongest meaning.",
           estMinutes: 6,
           band: "stretch",
           skillTags: ["vocab.shades-of-meaning"],
