@@ -901,6 +901,18 @@ describe("recordAttempt (atomic persistence)", () => {
     expect(enrollIdx).toBeLessThan(attemptIdx);
   });
 
+  it("treats an empty activeUnitKeys list as all units active", async () => {
+    enrollmentRows.value = [
+      { id: "E1", status: "active", config: { activeUnitKeys: [] } },
+    ];
+    skillRows.value = [{ id: "S1", evidence: [] }];
+
+    await expect(
+      recordAttempt("acct-1", { ...input, unitId: "unit-not-listed" }),
+    ).resolves.toEqual(input.score);
+    expect(attemptInserts).toHaveLength(1);
+  });
+
   it.each([
     ["authored", { generated: false, creditEligible: true, shelfEligible: false }],
     ["generated shelf", { generated: true, creditEligible: false, shelfEligible: true }],
