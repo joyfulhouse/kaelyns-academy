@@ -20,7 +20,11 @@ vi.mock("./store", async (importActual) => ({
   getProgramVersionTreeRows: vi.fn(),
 }));
 
-const { resolveProgramByVersionPin, resolveAccountLearnerProgram } = await import("./repository");
+const {
+  resolveProgramByVersionPin,
+  resolveProgramForEnrollmentVersion,
+  resolveAccountLearnerProgram,
+} = await import("./repository");
 const { getEnrollmentVersionId } = await import("@/lib/tutor/store");
 const { getProgramVersionTreeRows } = await import("./store");
 
@@ -126,5 +130,37 @@ describe("resolveAccountLearnerProgram (mocked store, no DB)", () => {
       resolveAccountLearnerProgram("acc-1", "l-1", "kaelyn-adaptive"),
     ).rejects.toThrow("pin database unavailable");
     expect(getProgramVersionTreeRows).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveProgramForEnrollmentVersion", () => {
+  it("resolves the exact supplied version without rereading enrollment state", async () => {
+    vi.mocked(getProgramVersionTreeRows).mockResolvedValue({
+      version: {
+        id: "v-1",
+        programId: "p-1",
+        version: 1,
+        status: "published",
+        title: "Exact v1",
+        subtitle: null,
+        ageBand: "6-7",
+        summary: null,
+        world: null,
+        locale: "en",
+        languages: [],
+        publishedAt: new Date(),
+        createdAt: new Date(),
+        programSlug: "kaelyn-adaptive",
+      },
+      units: [],
+      lessons: [],
+      activities: [],
+    });
+
+    const result = await resolveProgramForEnrollmentVersion("kaelyn-adaptive", "v-1");
+
+    expect(result?.title).toBe("Exact v1");
+    expect(getEnrollmentVersionId).not.toHaveBeenCalled();
+    expect(getProgramVersionTreeRows).toHaveBeenCalledWith("v-1");
   });
 });

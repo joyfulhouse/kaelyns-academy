@@ -12,7 +12,7 @@ import {
   getEnrollmentForGate,
   getLearnerSettings,
 } from "@/lib/tutor/store";
-import { resolveAccountLearnerProgram } from "@/lib/content/repository";
+import { resolveProgramForEnrollmentVersion } from "@/lib/content/repository";
 import { getUnit } from "@/content";
 import { oralReadingConfig, type OralReadingConfig } from "@/content/activity-configs";
 import { isEnrollmentUnitActive } from "@/lib/content/config";
@@ -59,7 +59,7 @@ function sentenceResult(
 }
 
 function exactOralActivity(
-  program: Awaited<ReturnType<typeof resolveAccountLearnerProgram>>,
+  program: Awaited<ReturnType<typeof resolveProgramForEnrollmentVersion>>,
   unitKey: string,
   activityId: string,
 ): OralReadingConfig | null {
@@ -190,15 +190,15 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const { learnerId, programSlug, unitKey, activityId } = parsed.data;
   let canonicalConfig: OralReadingConfig | null = null;
+  let expectedProgramVersionId: string | null = null;
   try {
     // §8 two-control gate, same as durable shelf generation: the learner must belong to
     // this account with an ACTIVE enrollment in the program being played
     // (getEnrollmentForGate resolves ownership), AND the parent must have
     // explicitly opted this learner in (default is off). Fail closed on all.
-    const [enrollment, settings, program] = await Promise.all([
+    const [enrollment, settings] = await Promise.all([
       getEnrollmentForGate(account.accountId, learnerId, programSlug),
       getLearnerSettings(account.accountId, learnerId),
-      resolveAccountLearnerProgram(account.accountId, learnerId, programSlug),
     ]);
     if (
       !enrollment ||
@@ -209,6 +209,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     ) {
       return result("unavailable", 403);
     }
+    expectedProgramVersionId = enrollment.programVersionId;
+    const program = await resolveProgramForEnrollmentVersion(
+      programSlug,
+      expectedProgramVersionId,
+    );
     canonicalConfig = exactOralActivity(program, unitKey, activityId);
     if (!canonicalConfig) return result("unavailable", 403);
   } catch (error) {
@@ -234,6 +239,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       const verificationId = await createOralReadingVerification(account.accountId, {
         learnerId,
         programSlug,
+        expectedProgramVersionId,
         unitKey,
         activityId,
         mode: "sentence",
@@ -254,6 +260,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const verificationId = await createOralReadingVerification(account.accountId, {
       learnerId,
       programSlug,
+      expectedProgramVersionId,
       unitKey,
       activityId,
       mode: "word",

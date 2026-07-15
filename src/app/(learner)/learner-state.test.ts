@@ -74,6 +74,7 @@ beforeEach(() => {
     status: "active",
     config: {},
     configValid: true,
+    programVersionId: "PV1",
   });
 });
 afterEach(() => vi.resetAllMocks());
@@ -94,6 +95,7 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
       status: "removed",
       config: {},
       configValid: true,
+      programVersionId: "PV1",
     });
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(false);
@@ -105,6 +107,7 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
       status: "paused",
       config: {},
       configValid: true,
+      programVersionId: "PV1",
     });
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(false);
@@ -116,6 +119,7 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
       status: "active",
       config: { aiPractice: false },
       configValid: false,
+      programVersionId: "PV1",
     });
 
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
@@ -130,6 +134,7 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
       status: "active",
       config: {},
       configValid: true,
+      programVersionId: "PV1",
     });
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(true);
@@ -174,6 +179,7 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
       status: "active",
       config: {},
       configValid: true,
+      programVersionId: "PV1",
     });
     vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(undefined);
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");

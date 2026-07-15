@@ -40,7 +40,13 @@ const reviewScheduleRows = { value: [] as Record<string, unknown>[] };
 // happy-path tests persist; the gate tests override to removed/paused/none.
 const enrollmentRows = {
   value: [
-    { id: "E1", status: "active", programSlug: "kaelyn-adaptive", config: {} },
+    {
+      id: "E1",
+      status: "active",
+      programSlug: "kaelyn-adaptive",
+      programVersionId: "PV1",
+      config: {},
+    },
   ] as Record<string, unknown>[],
 };
 // The in-tx checkpoint_result upsert read (C1): default a single pending row so
@@ -203,7 +209,7 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
                   enrollmentRows.value.map((row) => ({
                     learnerId: "L1",
                     programSlug: "kaelyn-adaptive",
-                    programVersionId: null,
+                    programVersionId: "PV1",
                     ...row,
                   })),
                   chain.predicate,
@@ -212,7 +218,12 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
                 )
             : chain.op === "select" && chain.table === "attempt"
                 ? projection && "score" in projection
-                  ? attemptReplayRows.value
+                  ? attemptReplayRows.value.map((row) => ({
+                      programSlug: "kaelyn-adaptive",
+                      unitKey: "unit-1",
+                      programVersionId: "PV1",
+                      ...row,
+                    }))
                   : projection && "completionId" in projection
                     ? oralCompletionRows.value.filter((row) => matches(row, chain.predicate))
                   : projection && "activityId" in projection
@@ -301,6 +312,9 @@ vi.mock("@/lib/db/schema", () => ({
     activityId: { name: "activityId" },
     kind: { name: "kind" },
     generated: { name: "generated" },
+    programSlug: { name: "programSlug" },
+    unitKey: { name: "unitKey" },
+    programVersionId: { name: "programVersionId" },
     completionId: { name: "completionId" },
     score: { name: "score" },
     response: { name: "response" },
@@ -358,6 +372,7 @@ vi.mock("@/lib/db/schema", () => ({
     id: { name: "id" },
     learnerId: { name: "learnerId" },
     programSlug: { name: "programSlug" },
+    programVersionId: { name: "programVersionId" },
     unitKey: { name: "unitKey" },
     lessonId: { name: "lessonId" },
     kind: { name: "kind" },
@@ -402,6 +417,7 @@ vi.mock("@/lib/content/repository", () => ({
 
 import {
   applyPlacement,
+  CompletionReplayMismatchError,
   EnrollmentNotActiveError,
   getDueReviews,
   getFluencyHistory,
@@ -419,6 +435,8 @@ import type { ActivityScore, Program } from "@/content";
 const input = {
   learnerId: "L1",
   programSlug: "kaelyn-adaptive",
+  expectedProgramVersionId: "PV1",
+  unitId: "unit-1",
   completionId: "11111111-1111-4111-8111-111111111111",
   activityId: "act-1",
   kind: "math",
@@ -510,6 +528,7 @@ describe("oral-reading verification witness store", () => {
     id: verificationId,
     learnerId: "L1",
     programSlug: "kaelyn-adaptive",
+    programVersionId: "PV1",
     unitKey: "unit-1",
     activityId: "oral-1",
     mode: "word",
@@ -531,6 +550,7 @@ describe("oral-reading verification witness store", () => {
   const oralInput = () => ({
     learnerId: "L1",
     programSlug: "kaelyn-adaptive",
+    expectedProgramVersionId: "PV1",
     completionId,
     unitKey: "unit-1",
     activityId: "oral-1",
@@ -550,7 +570,13 @@ describe("oral-reading verification witness store", () => {
     transaction.mockClear();
     learnerRows.value = [{ id: "L1", settings: { oralReading: true } }];
     enrollmentRows.value = [
-      { id: "E1", status: "active", programSlug: "kaelyn-adaptive", config: {} },
+      {
+        id: "E1",
+        status: "active",
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV1",
+        config: {},
+      },
     ];
     skillRows.value = [{ id: "S1", evidence: [] }];
     attemptRows.value = [{ id: "new" }];
@@ -581,6 +607,9 @@ describe("oral-reading verification witness store", () => {
       activityId: "oral-1",
       kind: "oral-reading",
       completionId,
+      programSlug: "kaelyn-adaptive",
+      unitKey: "unit-1",
+      programVersionId: "PV1",
       response,
       score,
     });
@@ -604,7 +633,6 @@ describe("oral-reading verification witness store", () => {
 
   it.each([
     ["learner", { learnerId: "L2" }],
-    ["program", { programSlug: "world-languages" }],
     ["unit", { unitKey: "unit-2" }],
     ["activity", { activityId: "oral-2" }],
   ])("rejects a cross-%s witness without writing an attempt", async (_label, mismatch) => {
@@ -613,6 +641,16 @@ describe("oral-reading verification witness store", () => {
     ).resolves.toBeNull();
     expect(attemptInserts).toEqual([]);
     expect(oralVerificationUpdates).toEqual([]);
+  });
+
+  it("rejects a cross-program claim at the locked enrollment boundary", async () => {
+    await expect(
+      recordOralReadingAttempt("acct-1", {
+        ...oralInput(),
+        programSlug: "world-languages",
+      }),
+    ).rejects.toBeInstanceOf(EnrollmentNotActiveError);
+    expect(attemptInserts).toEqual([]);
   });
 
   it("rejects a learner not owned by the account before reading the witness", async () => {
@@ -676,6 +714,35 @@ describe("oral-reading verification witness store", () => {
     expect(lockedSkills).toEqual([]);
   });
 
+  it.each([
+    ["program", { programSlug: "world-languages" }],
+    ["unit", { unitKey: "unit-2" }],
+    ["version", { programVersionId: "PV2" }],
+    ["legacy null program", { programSlug: null }],
+    ["legacy null unit", { unitKey: null }],
+  ])("rejects an oral replay with a different %s identity", async (_label, mismatch) => {
+    oralVerificationRows.value = [];
+    attemptReplayRows.value = [
+      {
+        activityId: "oral-1",
+        kind: "oral-reading",
+        generated: false,
+        score,
+        ...mismatch,
+      },
+    ];
+
+    await expect(recordOralReadingAttempt("acct-1", oralInput())).resolves.toBeNull();
+    expect(attemptInserts).toEqual([]);
+  });
+
+  it("rejects a witness issued for a previous enrollment version", async () => {
+    oralVerificationRows.value = [{ ...witness, programVersionId: "PV0" }];
+
+    await expect(recordOralReadingAttempt("acct-1", oralInput())).resolves.toBeNull();
+    expect(attemptInserts).toEqual([]);
+  });
+
   it("rejects a replay whose stored activity identity does not match", async () => {
     oralVerificationRows.value = [];
     attemptReplayRows.value = [
@@ -729,6 +796,7 @@ describe("oral-reading verification witness store", () => {
       createOralReadingVerification("acct-1", {
         learnerId: "L1",
         programSlug: "kaelyn-adaptive",
+        expectedProgramVersionId: "PV1",
         unitKey: "unit-1",
         activityId: "oral-1",
         mode: "word",
@@ -744,6 +812,7 @@ describe("oral-reading verification witness store", () => {
     expect(oralVerificationInserts).toHaveLength(1);
     expect(oralVerificationInserts[0]).toMatchObject({
       learnerId: "L1",
+      programVersionId: "PV1",
       unitKey: "unit-1",
       activityId: "oral-1",
     });
@@ -753,6 +822,7 @@ describe("oral-reading verification witness store", () => {
     const input = {
       learnerId: "L1",
       programSlug: "kaelyn-adaptive",
+      expectedProgramVersionId: "PV1",
       unitKey: "unit-1",
       activityId: "oral-1",
       mode: "word" as const,
@@ -780,11 +850,41 @@ describe("oral-reading verification witness store", () => {
     expect(oralVerificationInserts).toEqual([]);
   });
 
+  it("refuses witness creation after the enrollment is repinned", async () => {
+    enrollmentRows.value = [
+      {
+        id: "E1",
+        status: "active",
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV2",
+        config: {},
+      },
+    ];
+
+    await expect(
+      createOralReadingVerification("acct-1", {
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+        expectedProgramVersionId: "PV1",
+        unitKey: "unit-1",
+        activityId: "oral-1",
+        mode: "word",
+        result: "matched",
+        perWord: null,
+        correctCount: 1,
+        totalWords: 1,
+        wcpm: null,
+      }),
+    ).resolves.toBeNull();
+    expect(oralVerificationInserts).toEqual([]);
+  });
+
   it("rejects inconsistent word facts before any database read", async () => {
     await expect(
       createOralReadingVerification("acct-1", {
         learnerId: "L1",
         programSlug: "kaelyn-adaptive",
+        expectedProgramVersionId: "PV1",
         unitKey: "unit-1",
         activityId: "oral-1",
         mode: "word",
@@ -851,7 +951,12 @@ describe("recordAttempt (atomic persistence)", () => {
     skillRows.value = [{ id: "S1", evidence: [] }];
 
     await expect(recordAttempt("acct-1", input)).resolves.toEqual(input.score);
-    expect(attemptInserts[0]).toMatchObject({ completionId: input.completionId });
+    expect(attemptInserts[0]).toMatchObject({
+      completionId: input.completionId,
+      programSlug: input.programSlug,
+      unitKey: input.unitId,
+      programVersionId: input.expectedProgramVersionId,
+    });
     expect(ops).toContainEqual({ op: "onConflictDoNothing", table: "attempt" });
   });
 
@@ -936,6 +1041,31 @@ describe("recordAttempt (atomic persistence)", () => {
     expect(reviewScheduleInserts).toEqual([]);
     expect(questUpdates).toEqual([]);
     expect(checkpointUpdates).toEqual([]);
+  });
+
+  it.each([
+    ["program", { programSlug: "world-languages" }],
+    ["unit", { unitKey: "unit-2" }],
+    ["version", { programVersionId: "PV2" }],
+    ["legacy null program", { programSlug: null }],
+    ["legacy null unit", { unitKey: null }],
+  ])("rejects a completion replay with a different stored %s", async (_label, mismatch) => {
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [
+      {
+        activityId: input.activityId,
+        kind: input.kind,
+        generated: false,
+        score: input.score,
+        ...mismatch,
+      },
+    ];
+
+    await expect(recordAttempt("acct-1", input)).rejects.toBeInstanceOf(
+      CompletionReplayMismatchError,
+    );
+    expect(ledgerInserts).toEqual([]);
+    expect(lockedSkills).toEqual([]);
   });
 
   it("takes the lock-then-update path on an existing skill row (upsert)", async () => {
@@ -1063,7 +1193,7 @@ describe("recordAttempt (atomic persistence)", () => {
     },
   );
 
-  it("rejects a missing attempt unit when activeUnitKeys is nonempty", async () => {
+  it("rejects a blank attempt unit when activeUnitKeys is nonempty", async () => {
     enrollmentRows.value = [
       {
         id: "E1",
@@ -1073,7 +1203,7 @@ describe("recordAttempt (atomic persistence)", () => {
     ];
 
     await expect(
-      recordAttempt("acct-1", { ...input, unitId: undefined }),
+      recordAttempt("acct-1", { ...input, unitId: "" }),
     ).rejects.toBeInstanceOf(EnrollmentNotActiveError);
     expect(ops.some((operation) => operation.table === "attempt")).toBe(false);
   });

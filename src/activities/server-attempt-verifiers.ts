@@ -15,6 +15,7 @@ export interface ServerAttemptVerifierInput {
   accountId: string;
   learnerId: string;
   programSlug: string;
+  expectedProgramVersionId: string | null;
   completionId: string;
   unitKey: string;
   activityId: string;
@@ -91,6 +92,7 @@ const verifyOralReading: ServerAttemptVerifier = async (input) => {
   return recordOralReadingAttempt(input.accountId, {
     learnerId: input.learnerId,
     programSlug: input.programSlug,
+    expectedProgramVersionId: input.expectedProgramVersionId,
     completionId: input.completionId,
     unitKey: input.unitKey,
     activityId: input.activityId,

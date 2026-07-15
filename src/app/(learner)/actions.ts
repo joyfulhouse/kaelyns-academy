@@ -6,6 +6,7 @@ import { UnauthenticatedError, requireAccount, withAccount } from "@/lib/tenancy
 import {
   CompletionReplayMismatchError,
   EnrollmentNotActiveError,
+  EnrollmentVersionChangedError,
   ensureDefaultLearner,
   ensureEnrollment,
   getCompletedActivityIds,
@@ -47,7 +48,10 @@ import {
   shelfCompletions,
   SHELF_LESSON_CAP,
 } from "@/lib/tutor/shelf";
-import { resolveAccountLearnerProgram } from "@/lib/content/repository";
+import {
+  resolveAccountLearnerProgram,
+  resolveProgramForEnrollmentVersion,
+} from "@/lib/content/repository";
 import type { SkillState } from "@/lib/tutor";
 
 /**
@@ -267,10 +271,25 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
 
   try {
     return await withAccount(async ({ accountId }): Promise<RecordResult> => {
+      const gate = await getEnrollmentForGate(
+        accountId,
+        data.learnerId,
+        data.programSlug,
+      );
+      if (!gate || gate.status !== "active" || !gate.configValid) {
+        return { ok: false, reason: "inactive" };
+      }
+      if ("unitKey" in data && !isEnrollmentUnitActive(gate.config, data.unitKey)) {
+        return { ok: false, reason: "inactive" };
+      }
+
       let program: Program | null;
       try {
         program =
-          (await resolveAccountLearnerProgram(accountId, data.learnerId, data.programSlug)) ?? null;
+          (await resolveProgramForEnrollmentVersion(
+            data.programSlug,
+            gate.programVersionId,
+          )) ?? null;
       } catch (error) {
         captureNonCritical("recordAttemptAction pinned program unavailable", error);
         return { ok: false, reason: "unavailable" };
@@ -289,6 +308,9 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
           !programContainsGeneratedLocation(program, row)
         ) {
           return { ok: false, reason: "invalid" };
+        }
+        if (!isEnrollmentUnitActive(gate.config, row.unitKey)) {
+          return { ok: false, reason: "inactive" };
         }
         // Oral verification is bound to an exact pinned authored activity.
         // Generated shelf rows never enter that trust path, and no generated
@@ -314,6 +336,7 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
         const score = await recordAttempt(accountId, {
           learnerId: data.learnerId,
           programSlug: data.programSlug,
+          expectedProgramVersionId: gate.programVersionId,
           completionId: data.completionId,
           activityId: row.id,
           kind: row.kind,
@@ -342,6 +365,7 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
           accountId,
           learnerId: data.learnerId,
           programSlug: data.programSlug,
+          expectedProgramVersionId: gate.programVersionId,
           completionId: data.completionId,
           unitKey: unit.id,
           activityId: activity.id,
@@ -368,6 +392,7 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
       const score = await recordAttempt(accountId, {
         learnerId: data.learnerId,
         programSlug: data.programSlug,
+        expectedProgramVersionId: gate.programVersionId,
         completionId: data.completionId,
         activityId: activity.id,
         kind: activity.kind,
@@ -388,6 +413,9 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
       return { ok: false, reason: "invalid" };
     }
     if (error instanceof EnrollmentNotActiveError) return { ok: false, reason: "inactive" };
+    if (error instanceof EnrollmentVersionChangedError) {
+      return { ok: false, reason: "unavailable" };
+    }
     captureNonCritical("recordAttemptAction failed", error);
     return { ok: false, reason: "error" };
   }

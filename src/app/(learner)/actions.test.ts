@@ -18,6 +18,7 @@ vi.mock("@/lib/tenancy", async (importActual) => ({
 vi.mock("@/lib/tutor/store", () => ({
   CompletionReplayMismatchError: class CompletionReplayMismatchError extends Error {},
   EnrollmentNotActiveError: class EnrollmentNotActiveError extends Error {},
+  EnrollmentVersionChangedError: class EnrollmentVersionChangedError extends Error {},
   recordAttempt: vi.fn(),
   recordOralReadingAttempt: vi.fn(),
   listLearners: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("@/lib/tutor/store", () => ({
 
 vi.mock("@/lib/content/repository", () => ({
   resolveAccountLearnerProgram: vi.fn(),
+  resolveProgramForEnrollmentVersion: vi.fn(),
 }));
 
 // The heavy AI + shelf modules are mocked so the action tests stay pure: we
@@ -65,6 +67,7 @@ vi.mock("@/lib/tutor/shelf", () => ({
 import {
   CompletionReplayMismatchError,
   EnrollmentNotActiveError,
+  EnrollmentVersionChangedError,
   recordAttempt,
   recordOralReadingAttempt,
   listLearners,
@@ -84,7 +87,10 @@ import {
   type NewGeneratedActivity,
 } from "@/lib/tutor/store";
 import { requireAccount, UnauthenticatedError } from "@/lib/tenancy";
-import { resolveAccountLearnerProgram } from "@/lib/content/repository";
+import {
+  resolveAccountLearnerProgram,
+  resolveProgramForEnrollmentVersion,
+} from "@/lib/content/repository";
 import { generatePracticeItems } from "@/lib/ai/practice";
 import { pickGenerationTargets, type GenerationTarget } from "@/lib/tutor/shelf";
 import {
@@ -279,6 +285,7 @@ describe("getLearnerStateAction learner defaults", () => {
       status: "active",
       config: { band: "ready", aiPractice: true },
       configValid: true,
+      programVersionId: "PV1",
     });
     vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
     vi.mocked(getSkillState).mockResolvedValue({});
@@ -305,6 +312,13 @@ describe("getLearnerStateAction learner defaults", () => {
 });
 
 beforeEach(() => {
+  vi.mocked(getEnrollmentForGate).mockResolvedValue({
+    status: "active",
+    config: {},
+    configValid: true,
+    programVersionId: "PV1",
+  });
+  vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(PROGRAM);
   vi.mocked(recordAttempt).mockResolvedValue({
     correct: 1,
     total: 1,
@@ -322,7 +336,7 @@ describe("recordAttemptAction canonical authored scoring", () => {
     });
 
     expect(result).toEqual({ ok: false, reason: "invalid" });
-    expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
+    expect(resolveProgramForEnrollmentVersion).not.toHaveBeenCalled();
     expect(recordAttempt).not.toHaveBeenCalled();
   });
 
@@ -357,7 +371,7 @@ describe("recordAttemptAction canonical authored scoring", () => {
   });
 
   it("fails closed when the pinned program cannot be resolved", async () => {
-    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(undefined);
+    vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(undefined);
 
     const result = await recordAttemptAction(BASE_INPUT);
 
@@ -394,6 +408,7 @@ describe("recordAttemptAction canonical authored scoring", () => {
         kind: "math-clock",
         generated: false,
         unitId: "unit-1",
+        expectedProgramVersionId: "PV1",
         creditEligible: true,
         response: BASE_INPUT.response,
         score,
@@ -438,6 +453,17 @@ describe("recordAttemptAction canonical authored scoring", () => {
       reason: "inactive",
     });
   });
+
+  it("maps a concurrent enrollment repin to unavailable", async () => {
+    vi.mocked(recordAttempt).mockRejectedValue(
+      new EnrollmentVersionChangedError("L1", "kaelyn-adaptive"),
+    );
+
+    await expect(recordAttemptAction(BASE_INPUT)).resolves.toEqual({
+      ok: false,
+      reason: "unavailable",
+    });
+  });
 });
 
 describe("recordAttemptAction oral-reading witness boundary", () => {
@@ -457,7 +483,7 @@ describe("recordAttemptAction oral-reading witness boundary", () => {
   };
 
   beforeEach(() => {
-    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(PROGRAM);
     vi.mocked(recordOralReadingAttempt).mockReset();
   });
 
@@ -503,6 +529,7 @@ describe("recordAttemptAction oral-reading witness boundary", () => {
       expect.objectContaining({
         verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         learnerId: "L1",
+        expectedProgramVersionId: "PV1",
         unitKey: "unit-1",
         activityId: "oral-1",
       }),
@@ -537,11 +564,11 @@ describe("recordAttemptAction oral-reading witness boundary", () => {
   });
 
   it("rejects a malformed opaque id before resolving pinned content", async () => {
-    vi.mocked(resolveAccountLearnerProgram).mockClear();
+    vi.mocked(resolveProgramForEnrollmentVersion).mockClear();
     await expect(
       recordAttemptAction({ ...ORAL_INPUT, verificationId: "not-a-uuid" }),
     ).resolves.toEqual({ ok: false, reason: "invalid" });
-    expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
+    expect(resolveProgramForEnrollmentVersion).not.toHaveBeenCalled();
     expect(recordOralReadingAttempt).not.toHaveBeenCalled();
   });
 
@@ -645,6 +672,7 @@ describe("recordAttemptAction generated-shelf witness (earn-once boundary)", () 
         shelfEligible: true,
         creditEligible: false,
         unitId: "unit-1",
+        expectedProgramVersionId: "PV1",
         provenance: {
           model: "ds4-fast",
           route: "shelf",
@@ -655,7 +683,9 @@ describe("recordAttemptAction generated-shelf witness (earn-once boundary)", () 
   });
 
   it("returns unavailable before reading a generated row when the enrollment pin read fails", async () => {
-    vi.mocked(resolveAccountLearnerProgram).mockRejectedValue(new Error("pin read failed"));
+    vi.mocked(resolveProgramForEnrollmentVersion).mockRejectedValue(
+      new Error("pin read failed"),
+    );
 
     const result = await recordAttemptAction(generatedInput);
 
@@ -783,6 +813,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
       status: "active",
       config: {},
       configValid: true,
+      programVersionId: "PV1",
     });
     vi.mocked(getCompletedActivityIds).mockResolvedValue([
       { activityId: "a1", stars: 3 },
@@ -833,6 +864,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
       status: "active",
       config: { band: "stretch" },
       configValid: true,
+      programVersionId: "PV1",
     });
 
     await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
@@ -856,6 +888,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
       status: "active",
       config: { band: "stretch" },
       configValid: true,
+      programVersionId: "PV1",
     });
     vi.mocked(pickGenerationTargets).mockReturnValue([
       {
@@ -897,6 +930,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
       status: "active",
       config: { aiPractice: false },
       configValid: true,
+      programVersionId: "PV1",
     });
 
     const result = await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
@@ -910,6 +944,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
       status: "active",
       config: { aiPractice: false },
       configValid: false,
+      programVersionId: "PV1",
     });
 
     const result = await ensureLessonPractice({
@@ -927,6 +962,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
       status: "active",
       config: { activeUnitKeys: ["another-unit"] },
       configValid: true,
+      programVersionId: "PV1",
     });
 
     const result = await ensureLessonPractice({
@@ -945,6 +981,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
       status: "paused",
       config: {},
       configValid: true,
+      programVersionId: "PV1",
     });
 
     const result = await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });

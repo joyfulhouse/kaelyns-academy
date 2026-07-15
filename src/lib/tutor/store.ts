@@ -72,6 +72,7 @@ export const ORAL_READING_VERIFICATION_TTL_MS = 5 * 60_000;
 const oralVerificationIdentitySchema = z.object({
   learnerId: z.string().min(1).max(100),
   programSlug: z.string().min(1).max(100),
+  expectedProgramVersionId: z.string().min(1).max(100).nullable(),
   unitKey: z.string().min(1).max(100),
   activityId: z.string().min(1).max(100),
 });
@@ -154,7 +155,12 @@ export async function createOralReadingVerification(
       parsed.programSlug,
       parsed.unitKey,
     );
-    if (!activeEnrollment) return null;
+    if (
+      !activeEnrollment ||
+      activeEnrollment.programVersionId !== parsed.expectedProgramVersionId
+    ) {
+      return null;
+    }
 
     // Operational witness facts are disposable. Clear stale rows whenever this
     // low-volume path is used; a claimed row is deleted immediately below.
@@ -170,7 +176,17 @@ export async function createOralReadingVerification(
     const rows = await tx
       .insert(oralReadingVerification)
       .values({
-        ...parsed,
+        learnerId: parsed.learnerId,
+        programSlug: parsed.programSlug,
+        programVersionId: activeEnrollment.programVersionId,
+        unitKey: parsed.unitKey,
+        activityId: parsed.activityId,
+        mode: parsed.mode,
+        result: parsed.result,
+        perWord: parsed.perWord,
+        correctCount: parsed.correctCount,
+        totalWords: parsed.totalWords,
+        wcpm: parsed.wcpm,
         expiresAt: new Date(Date.now() + ORAL_READING_VERIFICATION_TTL_MS),
       })
       .returning({ id: oralReadingVerification.id });
@@ -364,6 +380,14 @@ export class EnrollmentNotActiveError extends Error {
   }
 }
 
+/** The learner's enrollment moved after server-side content was resolved. */
+export class EnrollmentVersionChangedError extends Error {
+  constructor(learnerId: string, programSlug: string) {
+    super(`Enrollment version changed for learner "${learnerId}" in program "${programSlug}"`);
+    this.name = "EnrollmentVersionChangedError";
+  }
+}
+
 /** A completion UUID may only ever identify one immutable attempt identity. */
 export class CompletionReplayMismatchError extends Error {
   constructor() {
@@ -421,6 +445,8 @@ export interface RecordAttemptInput {
   learnerId: string;
   /** The program the activity belongs to — the active-enrollment gate keys on it. */
   programSlug: string;
+  /** Server-resolved enrollment pin used to score this exact content tree. */
+  expectedProgramVersionId: string | null;
   /** One browser completion token, reused verbatim for every retry. */
   completionId: string;
   activityId: string;
@@ -439,7 +465,7 @@ export interface RecordAttemptInput {
   /** Quest-fold context (Adventure 2.0): the containing unit id, resolved
    *  server-side by the action from the learner's pinned tree. Null when
    *  unresolvable — complete_n still counts; unit-targeted quests just miss. */
-  unitId?: string | null;
+  unitId: string;
   /**
    * Server-derived in the action — TRUE only when the activityId was verified
    * to belong to the learner's pinned authored tree. Never client-supplied.
@@ -515,6 +541,12 @@ async function recordAttemptInTransaction(
     if (!activeEnrollment) {
       throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
     }
+    if (!input.unitId?.trim()) {
+      throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
+    }
+    if (activeEnrollment.programVersionId !== input.expectedProgramVersionId) {
+      throw new EnrollmentVersionChangedError(input.learnerId, input.programSlug);
+    }
     const enrollmentId = activeEnrollment.id;
 
     // Provenance is written ONLY for a generated attempt (and only when supplied),
@@ -528,6 +560,9 @@ async function recordAttemptInTransaction(
         completionId: input.completionId,
         activityId: input.activityId,
         kind: input.kind,
+        programSlug: input.programSlug,
+        unitKey: input.unitId,
+        programVersionId: activeEnrollment.programVersionId,
         generated,
         score: input.score,
         response: input.response ?? null,
@@ -548,6 +583,9 @@ async function recordAttemptInTransaction(
         .select({
           activityId: attempt.activityId,
           kind: attempt.kind,
+          programSlug: attempt.programSlug,
+          unitKey: attempt.unitKey,
+          programVersionId: attempt.programVersionId,
           generated: attempt.generated,
           score: attempt.score,
         })
@@ -566,7 +604,12 @@ async function recordAttemptInTransaction(
       if (
         original.activityId !== input.activityId ||
         original.kind !== input.kind ||
-        original.generated !== generated
+        original.generated !== generated ||
+        original.programSlug === null ||
+        original.unitKey === null ||
+        original.programSlug !== input.programSlug ||
+        original.unitKey !== input.unitId ||
+        original.programVersionId !== activeEnrollment.programVersionId
       ) {
         throw new CompletionReplayMismatchError();
       }
@@ -707,6 +750,7 @@ export interface OralReadingWitnessFacts {
 export interface RecordOralReadingAttemptInput {
   learnerId: string;
   programSlug: string;
+  expectedProgramVersionId: string | null;
   completionId: string;
   unitKey: string;
   activityId: string;
@@ -738,12 +782,26 @@ export async function recordOralReadingAttempt(
       .for("update");
     if (!owned[0]) return null;
 
+    const activeEnrollment = await lockActiveEnrollment(
+      tx,
+      input.learnerId,
+      input.programSlug,
+      input.unitKey,
+    );
+    if (!activeEnrollment) {
+      throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
+    }
+    if (activeEnrollment.programVersionId !== input.expectedProgramVersionId) return null;
+
     // A retry replays the canonical attempt, not the disposable witness. Keep
     // the same active-enrollment and active-unit gate as a first submission.
     const replayed = await tx
       .select({
         activityId: attempt.activityId,
         kind: attempt.kind,
+        programSlug: attempt.programSlug,
+        unitKey: attempt.unitKey,
+        programVersionId: attempt.programVersionId,
         generated: attempt.generated,
         score: attempt.score,
       })
@@ -757,18 +815,14 @@ export async function recordOralReadingAttempt(
       .limit(1);
     const original = replayed[0];
     if (original) {
-      const activeEnrollment = await lockActiveEnrollment(
-        tx,
-        input.learnerId,
-        input.programSlug,
-        input.unitKey,
-      );
-      if (!activeEnrollment) {
-        throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
-      }
       return original.activityId === input.activityId &&
         original.kind === "oral-reading" &&
-        original.generated === false
+        original.generated === false &&
+        original.programSlug !== null &&
+        original.unitKey !== null &&
+        original.programSlug === input.programSlug &&
+        original.unitKey === input.unitKey &&
+        original.programVersionId === activeEnrollment.programVersionId
         ? original.score
         : null;
     }
@@ -801,6 +855,7 @@ export async function recordOralReadingAttempt(
         !witnessRow ||
         witnessRow.learnerId !== input.learnerId ||
         witnessRow.programSlug !== input.programSlug ||
+        witnessRow.programVersionId !== activeEnrollment.programVersionId ||
         witnessRow.unitKey !== input.unitKey ||
         witnessRow.activityId !== input.activityId
       ) {
@@ -835,6 +890,7 @@ export async function recordOralReadingAttempt(
     const score = await recordAttemptInTransaction(tx, accountId, {
       learnerId: input.learnerId,
       programSlug: input.programSlug,
+      expectedProgramVersionId: activeEnrollment.programVersionId,
       completionId: input.completionId,
       activityId: input.activityId,
       kind: "oral-reading",
@@ -1959,17 +2015,23 @@ export async function getEnrollmentForGate(
   status: EnrollmentStatus;
   config: EnrollmentConfig;
   configValid: boolean;
+  programVersionId: string | null;
 } | null> {
   return withOwnedLearner<{
     status: EnrollmentStatus;
     config: EnrollmentConfig;
     configValid: boolean;
+    programVersionId: string | null;
   } | null>(
     accountId,
     learnerId,
     async () => {
       const rows = await getDb()
-        .select({ status: enrollment.status, config: enrollment.config })
+        .select({
+          status: enrollment.status,
+          config: enrollment.config,
+          programVersionId: enrollment.programVersionId,
+        })
         .from(enrollment)
         .where(enrollmentKey(learnerId, slug))
         .limit(1);
@@ -1983,6 +2045,7 @@ export async function getEnrollmentForGate(
         status: rows[0].status as EnrollmentStatus,
         config: parsed.data,
         configValid: parsed.valid,
+        programVersionId: rows[0].programVersionId,
       };
     },
     null,
@@ -2179,6 +2242,9 @@ async function gatherLearnerExport(
     attempts: attemptRows.map((a) => ({
       activityId: a.activityId,
       kind: a.kind,
+      programSlug: a.programSlug,
+      unitKey: a.unitKey,
+      programVersionId: a.programVersionId,
       score: a.score as { stars: number; correct: number; total: number; skillEvidence: unknown[] },
       // Export the complete bounded response that was persisted for this kind.
       // Journal responses are privacy-safe summaries, never text or drawing data.

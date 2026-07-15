@@ -50,7 +50,14 @@ function builder() {
 vi.mock("@/lib/db", () => ({ getDb: () => ({ select: () => builder() }) }));
 vi.mock("@/lib/db/schema", () => ({
   learner: { _name: "learner", id: {}, accountId: {}, settings: {} },
-  enrollment: { _name: "enrollment", learnerId: {}, programSlug: {}, status: {}, config: {} },
+  enrollment: {
+    _name: "enrollment",
+    learnerId: {},
+    programSlug: {},
+    status: {},
+    config: {},
+    programVersionId: {},
+  },
   attempt: { _name: "attempt" },
   skillState: { _name: "skill_state" },
 }));
@@ -84,17 +91,26 @@ describe("getEnrollmentForGate", () => {
   });
 
   it("returns the parsed status + config for an active enrollment", async () => {
-    enrollmentRows.value = [{ status: "active", config: { aiPractice: true, band: "ready" } }];
+    enrollmentRows.value = [
+      {
+        status: "active",
+        config: { aiPractice: true, band: "ready" },
+        programVersionId: "PV1",
+      },
+    ];
     const got = await getEnrollmentForGate("acc-1", "L1", "prog");
     expect(got).toEqual({
       status: "active",
       config: { aiPractice: true, band: "ready" },
       configValid: true,
+      programVersionId: "PV1",
     });
   });
 
   it("preserves a removed status (soft-remove is not resurrected)", async () => {
-    enrollmentRows.value = [{ status: "removed", config: { aiPractice: false } }];
+    enrollmentRows.value = [
+      { status: "removed", config: { aiPractice: false }, programVersionId: null },
+    ];
     const got = await getEnrollmentForGate("acc-1", "L1", "prog");
     expect(got?.status).toBe("removed");
   });
@@ -103,12 +119,15 @@ describe("getEnrollmentForGate", () => {
     // A hand-edited row storing the STRING "false" must not satisfy === false
     // via the raw value; safeParse fails → config fails CLOSED to
     // { aiPractice: false } (blocks AI for the corrupt row), and is reported.
-    enrollmentRows.value = [{ status: "active", config: { aiPractice: "false" } }];
+    enrollmentRows.value = [
+      { status: "active", config: { aiPractice: "false" }, programVersionId: "PV1" },
+    ];
     const got = await getEnrollmentForGate("acc-1", "L1", "prog");
     expect(got).toEqual({
       status: "active",
       config: { aiPractice: false },
       configValid: false,
+      programVersionId: "PV1",
     });
     expect(got?.config.aiPractice).toBe(false);
     expect(captureException).toHaveBeenCalledOnce();

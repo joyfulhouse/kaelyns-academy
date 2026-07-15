@@ -109,6 +109,7 @@ describe("server attempt verifier registry", () => {
       accountId: "acc-1",
       learnerId: "L1",
       programSlug: "kaelyn-adaptive",
+      expectedProgramVersionId: "PV1",
       completionId: "11111111-1111-4111-8111-111111111111",
       unitKey: "unit-1",
       activityId: "oral-1",
@@ -125,6 +126,7 @@ describe("server attempt verifier registry", () => {
       expect.objectContaining({
         learnerId: "L1",
         activityId: "oral-1",
+        expectedProgramVersionId: "PV1",
         verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       }),
     );

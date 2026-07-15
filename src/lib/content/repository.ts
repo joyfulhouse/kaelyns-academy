@@ -217,6 +217,23 @@ export async function resolveProgramByVersionPin(
 }
 
 /**
+ * Resolve content from a version identity already read at an authorization
+ * boundary. Callers pair this with a later locked enrollment comparison, so a
+ * concurrent repin cannot relabel results derived from another content tree.
+ */
+export const resolveProgramForEnrollmentVersion: (
+  slug: string,
+  programVersionId: string | null,
+) => Promise<Program | undefined> = cache(
+  async (slug: string, programVersionId: string | null): Promise<Program | undefined> =>
+    resolveProgramByVersionPin(
+      { programVersionId },
+      (versionId) => getProgramVersionAsync(versionId),
+      () => getProgramAsync(slug),
+    ),
+);
+
+/**
  * Resolve the program a specific learner should see for `slug`, honoring the
  * enrollment's version pin (C#5). The single seam both the learner state action
  * (tree + progress scoping) and the §8 AI gate go through, so all three agree on

@@ -11,7 +11,7 @@ vi.mock("@/lib/tutor/store", () => ({
   getLearnerSettings: vi.fn(),
 }));
 vi.mock("@/lib/content/repository", () => ({
-  resolveAccountLearnerProgram: vi.fn(),
+  resolveProgramForEnrollmentVersion: vi.fn(),
 }));
 vi.mock("@/lib/capture", () => ({ captureNonCritical: vi.fn() }));
 
@@ -25,7 +25,7 @@ import {
   getEnrollmentForGate,
   getLearnerSettings,
 } from "@/lib/tutor/store";
-import { resolveAccountLearnerProgram } from "@/lib/content/repository";
+import { resolveProgramForEnrollmentVersion } from "@/lib/content/repository";
 import type { Program } from "@/content";
 import { POST } from "./route";
 
@@ -151,9 +151,10 @@ beforeEach(() => {
     status: "active",
     config: { band: "ready" },
     configValid: true,
+    programVersionId: "PV1",
   });
   vi.mocked(getLearnerSettings).mockResolvedValue({ oralReading: true });
-  vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+  vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(PROGRAM);
   vi.mocked(createOralReadingVerification).mockResolvedValue(
     "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   );
@@ -209,7 +210,7 @@ describe("POST /api/oral-reading", () => {
     );
     expect(res.status).toBe(400);
     expect(getEnrollmentForGate).not.toHaveBeenCalled();
-    expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
+    expect(resolveProgramForEnrollmentVersion).not.toHaveBeenCalled();
   });
 
   it("fails closed on the §8 two-control gate: unowned learner, inactive enrollment, or mic off", async () => {
@@ -223,6 +224,7 @@ describe("POST /api/oral-reading", () => {
       status: "paused",
       config: { band: "ready" },
       configValid: true,
+      programVersionId: "PV1",
     });
     expect((await POST(post())).status).toBe(403);
     expect(transcribeOralReading).not.toHaveBeenCalled();
@@ -238,6 +240,7 @@ describe("POST /api/oral-reading", () => {
       status: "active",
       config: { aiPractice: false },
       configValid: false,
+      programVersionId: "PV1",
     });
     expect((await POST(post())).status).toBe(403);
     expect(transcribeOralReading).not.toHaveBeenCalled();
@@ -246,6 +249,7 @@ describe("POST /api/oral-reading", () => {
       status: "active",
       config: { activeUnitKeys: ["unit-2"] },
       configValid: true,
+      programVersionId: "PV1",
     });
     expect((await POST(post())).status).toBe(403);
     expect(transcribeOralReading).not.toHaveBeenCalled();
@@ -268,16 +272,16 @@ describe("POST /api/oral-reading", () => {
       verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     });
     expect(getEnrollmentForGate).toHaveBeenCalledWith("acc-1", "l-1", "kaelyn-adaptive");
-    expect(resolveAccountLearnerProgram).toHaveBeenCalledWith(
-      "acc-1",
-      "l-1",
+    expect(resolveProgramForEnrollmentVersion).toHaveBeenCalledWith(
       "kaelyn-adaptive",
+      "PV1",
     );
     expect(transcribeOralReading).toHaveBeenCalledWith(expect.any(Blob), "there");
     expect(matchOralReading).toHaveBeenCalledWith("there", "their");
     expect(createOralReadingVerification).toHaveBeenCalledWith("acc-1", {
       learnerId: "l-1",
       programSlug: "kaelyn-adaptive",
+      expectedProgramVersionId: "PV1",
       unitKey: "unit-1",
       activityId: "oral-word",
       mode: "word",
@@ -330,6 +334,7 @@ describe("POST /api/oral-reading", () => {
     expect(createOralReadingVerification).toHaveBeenCalledWith("acc-1", {
       learnerId: "l-1",
       programSlug: "kaelyn-adaptive",
+      expectedProgramVersionId: "PV1",
       unitKey: "unit-1",
       activityId: "oral-sentence",
       mode: "sentence",
@@ -361,7 +366,7 @@ describe("POST /api/oral-reading", () => {
     const malformed = structuredClone(PROGRAM) as Program;
     const activity = malformed.units[0]?.lessons[0]?.activities[0];
     if (activity?.kind === "oral-reading") activity.config = { target: "" } as never;
-    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(malformed);
+    vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(malformed);
     expect((await POST(post())).status).toBe(403);
 
     expect(transcribeOralReading).not.toHaveBeenCalled();
@@ -378,7 +383,9 @@ describe("POST /api/oral-reading", () => {
   });
 
   it("fails closed when the pinned program or witness store is unavailable", async () => {
-    vi.mocked(resolveAccountLearnerProgram).mockRejectedValueOnce(new Error("pin unavailable"));
+    vi.mocked(resolveProgramForEnrollmentVersion).mockRejectedValueOnce(
+      new Error("pin unavailable"),
+    );
     expect((await POST(post())).status).toBe(403);
     expect(transcribeOralReading).not.toHaveBeenCalled();
 
