@@ -215,7 +215,7 @@ export function PhonicsWordbuildPlayer({
             Word {wordIndex + 1} of {parsed.words.length}
           </span>
         </div>
-        {!speech.supported && !usedHelp ? (
+        {(!speech.supported || speech.lastOutcome === "unavailable") && !usedHelp ? (
           <p role="status" className="max-w-md text-center text-sm text-ink-soft">
             Audio isn’t available here. Show the target word to keep going.
           </p>

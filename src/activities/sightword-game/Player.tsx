@@ -97,7 +97,8 @@ export function SightwordGamePlayer({
             text={spokenCue}
             label="Hear the word again"
           />
-          {!speech.supported && !roundState.helpVisible ? (
+          {(!speech.supported || speech.lastOutcome === "unavailable") &&
+          !roundState.helpVisible ? (
             <p role="status" className="max-w-md text-sm text-ink-soft">
               Audio isn’t available here. Show the word to keep going.
             </p>

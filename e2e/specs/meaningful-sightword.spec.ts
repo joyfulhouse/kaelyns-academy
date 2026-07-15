@@ -44,6 +44,9 @@ test("spoken sight-word rounds retain a wrong card and advance only on the targe
 test("speech-unavailable sight-word rounds remain completable through explicit help", async ({
   page,
 }) => {
+  await page.route("**/api/tts", async (route) => {
+    await route.fulfill({ status: 503 });
+  });
   await page.addInitScript(() => {
     Object.defineProperty(window, "speechSynthesis", {
       configurable: true,
