@@ -13,7 +13,7 @@ import {
 /** Server-safe schema + scoring for phonics-wordbuild. No "use client". */
 export const schema = phonicsWordbuildConfig;
 
-/** What the Player reports back: per-word, how many tries it took to build it. */
+/** What the Player reports back: bounded attempts and help provenance per word. */
 export const responseSchema = z
   .object({
     /** One completed entry per target word. Text is derived from stable tile indexes. */
@@ -30,6 +30,7 @@ export const responseSchema = z
                 message: "tile indices must be unique within a build",
               }),
             attempts: z.number().int().min(1).max(MAX_PHONICS_ATTEMPTS),
+            usedHelp: z.boolean(),
           })
           .strict(),
       )
@@ -72,12 +73,23 @@ export function score(
   const correct = response.builds.length;
   const firstTry = firstTryCount(response);
   const firstTryRate = total === 0 ? 1 : firstTry / total;
+  const unassisted = response.builds.filter((build) => !build.usedHelp);
+  const unassistedRate =
+    unassisted.length === 0
+      ? 0
+      : unassisted.filter((build) => build.attempts === 1).length / unassisted.length;
+  const evidenceRate = response.builds.some((build) => build.usedHelp)
+    ? Math.min(unassistedRate, 0.5)
+    : unassistedRate;
 
   return {
     correct,
     total,
     stars: starsFromAccuracy(firstTryRate),
-    skillEvidence: evenSkillEvidence(skillsAffected(config), outcomeFromAccuracy(firstTryRate)),
+    skillEvidence:
+      unassisted.length === 0
+        ? []
+        : evenSkillEvidence(skillsAffected(config), outcomeFromAccuracy(evidenceRate)),
   };
 }
 

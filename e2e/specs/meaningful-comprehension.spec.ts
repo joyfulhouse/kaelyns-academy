@@ -8,6 +8,26 @@ test("an inference answer needs retained supporting sentence evidence", async ({
   await page.getByRole("button", { name: "Continue to questions" }).click();
 
   const answer = page.getByRole("button", { name: "Worried and looking for its mother" });
+  const readingOrder = await page.evaluate(() => {
+    const question = [...document.querySelectorAll("p")].find(
+      (element) => element.textContent === "How does the little whale most likely feel?",
+    );
+    const answerChoice = [...document.querySelectorAll("button")].find(
+      (element) => element.textContent?.trim() === "Worried and looking for its mother",
+    );
+    const evidence = document.querySelector('[aria-label="Passage evidence sentences"]');
+    if (!question || !answerChoice || !evidence) return null;
+    return {
+      answerBeforeEvidence: Boolean(
+        answerChoice.compareDocumentPosition(evidence) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+      questionBeforeEvidence: Boolean(
+        question.compareDocumentPosition(evidence) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    };
+  });
+  expect(readingOrder).toEqual({ answerBeforeEvidence: true, questionBeforeEvidence: true });
+
   await answer.click();
   const wrongEvidence = page.getByRole("button", {
     name: /Evidence sentence 1: The little whale swam in circles/,

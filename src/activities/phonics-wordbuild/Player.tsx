@@ -38,6 +38,7 @@ export function PhonicsWordbuildPlayer({
   const [wordIndex, setWordIndex] = useState(0);
   const [builtTileIndices, setBuiltTileIndices] = useState<number[]>([]);
   const [attempts, setAttempts] = useState(1);
+  const [usedHelp, setUsedHelp] = useState(false);
   const [builds, setBuilds] = useState<PhonicsWordbuildResponse["builds"]>([]);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [activeTileIndex, setActiveTileIndex] = useState<number | null>(null);
@@ -131,6 +132,7 @@ export function PhonicsWordbuildPlayer({
     setWordIndex((index) => index + 1);
     setBuiltTileIndices([]);
     setAttempts(1);
+    setUsedHelp(false);
     setFeedback(null);
     setSweepLabel(null);
     setBlendLabel(null);
@@ -150,7 +152,7 @@ export function PhonicsWordbuildPlayer({
 
     setSweeping(true);
     setFeedback("You built it. Listen to the sounds, then the whole word.");
-    const responseBuild = { wordIndex, tileIndices: builtTileIndices, attempts };
+    const responseBuild = { wordIndex, tileIndices: builtTileIndices, attempts, usedHelp };
     cancelSweepRef.current = startPhonemeSweep({
       tileIndices: builtTileIndices,
       tiles: parsed.tiles,
@@ -193,7 +195,11 @@ export function PhonicsWordbuildPlayer({
             animate={{ scale: 1, opacity: 1 }}
             transition={{ duration: reduced ? 0 : 0.24, ease: [0.16, 1, 0.3, 1] }}
           >
-            <span className="text-7xl" role="img" aria-label={current.word}>
+            <span
+              className="text-7xl"
+              role="img"
+              aria-label="Picture clue for the target word"
+            >
               {current.picture}
             </span>
           </motion.div>
@@ -203,12 +209,31 @@ export function PhonicsWordbuildPlayer({
             speech={speech}
             text={current.word}
             tts={wordPhonemeText(current.word, current.ipa)}
-            label={`Say the word ${current.word}`}
+            label="Hear the target word"
           />
           <span className="text-sm text-ink-soft">
             Word {wordIndex + 1} of {parsed.words.length}
           </span>
         </div>
+        {!speech.supported && !usedHelp ? (
+          <p role="status" className="max-w-md text-center text-sm text-ink-soft">
+            Audio isn’t available here. Show the target word to keep going.
+          </p>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => setUsedHelp(true)}
+          aria-pressed={usedHelp}
+          disabled={usedHelp}
+          className="min-h-11 rounded-full border-2 border-ink bg-honey/20 px-5 py-2 font-display text-ink transition active:translate-y-0.5 disabled:cursor-default disabled:bg-paper-raised"
+        >
+          {usedHelp ? "Target word shown" : "Show the target word"}
+        </button>
+        {usedHelp ? (
+          <p className="font-display text-4xl text-ink" aria-live="polite">
+            Word to build: {current.word}
+          </p>
+        ) : null}
       </div>
 
       <motion.div

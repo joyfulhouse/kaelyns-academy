@@ -5,6 +5,8 @@ const UNIT_ACTIVITY =
   "/learn/kaelyn-adaptive/life-skills-math/lsm-measure-units-1";
 const WEIGHT_ACTIVITY =
   "/learn/kaelyn-adaptive/life-skills-math/lsm-measure-cmp-2";
+const LENGTH_ACTIVITY =
+  "/learn/kaelyn-adaptive/life-skills-math/lsm-measure-cmp-1";
 
 test("measurement places and removes individual equal units along the baseline", async ({
   page,
@@ -60,6 +62,9 @@ test("weight comparison uses a labeled balance tilted toward the heavier object"
 
   const balance = page.getByRole("img", { name: /balance comparing feather and watermelon/i });
   await expect(balance).toBeVisible({ timeout: 25_000 });
+  await expect(balance).toHaveAccessibleDescription(
+    /watermelon pan is lower and watermelon is heavier; feather pan is higher and feather is lighter/i,
+  );
   await expect(page.getByTestId("balance-beam")).toHaveAttribute("data-tilt", "right");
   await expect(page.getByTestId("left-balance-pan")).toHaveAttribute("data-orientation", "level");
   await expect(page.getByTestId("right-balance-pan")).toHaveAttribute("data-orientation", "level");
@@ -76,5 +81,22 @@ test("weight comparison uses a labeled balance tilted toward the heavier object"
   await expect(page.getByText("Look at which pan sits lower, then try again.")).toBeVisible();
   await page.getByRole("button", { name: "Choose watermelon" }).click();
 
+  await expectSingleHostReward(page);
+});
+
+test("length comparison exposes every named extent and remains keyboard completable", async ({
+  page,
+}) => {
+  await page.goto(LENGTH_ACTIVITY);
+
+  const comparison = page.getByRole("img", { name: "Length comparison" });
+  await expect(comparison).toBeVisible({ timeout: 25_000 });
+  await expect(comparison).toHaveAccessibleDescription(
+    /pencil extends 3 relative units; crayon extends 2 relative units; marker extends 4 relative units/i,
+  );
+
+  const marker = page.getByRole("button", { name: "Choose marker" });
+  await marker.focus();
+  await marker.press("Enter");
   await expectSingleHostReward(page);
 });

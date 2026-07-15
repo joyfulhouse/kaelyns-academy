@@ -223,46 +223,52 @@ function MultiplyMode({ config, onComplete, reduced, speech }: ModeProps<Multipl
       </p>
 
       <motion.div
-        className="grid justify-items-center gap-4"
+        className="grid min-w-0 justify-items-center gap-4"
         {...shake.shakeProps(reduced)}
       >
-        <div role="group" aria-label={`${config.rows} rows of ${config.cols}`} className="grid gap-3">
-          {Array.from({ length: config.rows }, (_, rowIndex) => {
-            const revealed = rowIndex < revealedRows;
-            const isNext = rowIndex === revealedRows;
-            return (
-              <button
-                key={rowIndex}
-                type="button"
-                onClick={() => revealRow(rowIndex)}
-                disabled={!isNext || shake.wrong}
-                aria-label={
-                  revealed
-                    ? `Row ${rowIndex + 1} revealed, total ${(rowIndex + 1) * config.cols}`
-                    : `Reveal row ${rowIndex + 1}`
-                }
-                className={cn(
-                  "grid min-h-20 gap-1 rounded-2xl border-[3px] border-ink p-2 shadow-pop transition",
-                  arrayGridClass(config.cols),
-                  revealed ? "bg-accent" : "bg-paper-sunk",
-                  isNext && "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
-                )}
-              >
-                {Array.from({ length: config.cols }, (_, colIndex) => (
-                  <span
-                    key={colIndex}
-                    aria-hidden="true"
-                    className={cn(
-                      "grid size-14 place-items-center rounded-xl border-2 border-ink/25",
-                      revealed ? "bg-paper-raised" : "border-dashed bg-paper-sunk",
-                    )}
-                  >
-                    {revealed && <TileFill emoji={config.emoji} reduced={reduced} compact />}
-                  </span>
-                ))}
-              </button>
-            );
-          })}
+        <div className="w-full overflow-x-auto pb-1" data-testid="multiply-array-scroll">
+          <div
+            role="group"
+            aria-label={`${config.rows} rows of ${config.cols}`}
+            className="mx-auto grid w-fit min-w-max gap-3"
+          >
+            {Array.from({ length: config.rows }, (_, rowIndex) => {
+              const revealed = rowIndex < revealedRows;
+              const isNext = rowIndex === revealedRows;
+              return (
+                <button
+                  key={rowIndex}
+                  type="button"
+                  onClick={() => revealRow(rowIndex)}
+                  disabled={!isNext || shake.wrong}
+                  aria-label={
+                    revealed
+                      ? `Row ${rowIndex + 1} revealed, total ${(rowIndex + 1) * config.cols}`
+                      : `Reveal row ${rowIndex + 1}`
+                  }
+                  className={cn(
+                    "grid min-h-20 gap-1 rounded-2xl border-[3px] border-ink p-2 shadow-pop transition",
+                    arrayGridClass(config.cols),
+                    revealed ? "bg-accent" : "bg-paper-sunk",
+                    isNext && "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
+                  )}
+                >
+                  {Array.from({ length: config.cols }, (_, colIndex) => (
+                    <span
+                      key={colIndex}
+                      aria-hidden="true"
+                      className={cn(
+                        "grid size-14 place-items-center rounded-xl border-2 border-ink/25",
+                        revealed ? "bg-paper-raised" : "border-dashed bg-paper-sunk",
+                      )}
+                    >
+                      {revealed && <TileFill emoji={config.emoji} reduced={reduced} compact />}
+                    </span>
+                  ))}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <ProgressHint>

@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
-  CheckCircleIcon,
   MicrophoneIcon,
   StopCircleIcon,
 } from "@phosphor-icons/react/dist/ssr";
@@ -11,13 +10,12 @@ import type {
   OralReadingWordConfig,
 } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
-import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
-import { PlayerControls } from "../_shared/ActivityChrome";
 import { useActivity } from "../_shared/useActivity";
 import { useSpeech } from "../_shared/useSpeech";
 import { schema, type OralReadingResponse } from "./logic";
 import { ModeledAudioFallback, OralModelStep } from "./ModelStep";
+import { OralSupportPanel } from "./OralSupportPanel";
 import { SentenceReader } from "./SentenceReader";
 import {
   MAX_RECORDING_MS,
@@ -277,43 +275,23 @@ function WordReadingPlayer({
       {adultModelFallback ? (
         <ModeledAudioFallback onComplete={completeFallback} />
       ) : fallbackMode ? (
-        <div className="grid gap-4 rounded-3xl border-[3px] border-ink bg-honey/30 p-6">
-          <p className="font-display text-2xl text-ink">Read it to a grown-up.</p>
-          <p className="text-ink-soft">The microphone is optional. You can still finish this one.</p>
-          <PlayerControls>
-            {micAllowed && micSupported && readyForAttempt && canRecordAnother(submitted) && (
-              <Button size="kid" variant="honey" onClick={() => void startListening()}>
-                <MicrophoneIcon size={34} weight="fill" aria-hidden="true" />
-                Try again
-              </Button>
-            )}
-            <Button size="kid" variant="honey" onClick={completeFallback}>
-              <CheckCircleIcon size={30} weight="fill" aria-hidden="true" />
-              A grown-up listened - I read it
-            </Button>
-            <Button size="kid" variant="soft" onClick={completeFallback}>
-              Keep going
-            </Button>
-          </PlayerControls>
-        </div>
+        <OralSupportPanel
+          title="Read it to a grown-up."
+          description="The microphone is optional. You can still finish this one."
+          focusOnMount={phase === "fallback"}
+          canRetry={micAllowed && micSupported && readyForAttempt && canRecordAnother(submitted)}
+          onRetry={() => void startListening()}
+          onComplete={completeFallback}
+        />
       ) : phase === "unclear" ? (
-        <div className="grid gap-4 rounded-3xl border-[3px] border-ink bg-honey/35 p-6">
-          <p className="font-display text-2xl text-ink">I couldn&apos;t quite hear that</p>
-          <p className="text-ink-soft">Listen again, try once more, or ask a grown-up to listen.</p>
-          <PlayerControls>
-            <Button size="kid" variant="honey" onClick={() => void startListening()}>
-              <MicrophoneIcon size={34} weight="fill" aria-hidden="true" />
-              Try again
-            </Button>
-            <Button size="kid" variant="honey" onClick={completeFallback}>
-              <CheckCircleIcon size={30} weight="fill" aria-hidden="true" />
-              A grown-up listened - I read it
-            </Button>
-            <Button size="kid" variant="soft" onClick={completeFallback}>
-              Keep going
-            </Button>
-          </PlayerControls>
-        </div>
+        <OralSupportPanel
+          title="I couldn't quite hear that"
+          description="Listen again, try once more, or ask a grown-up to listen."
+          focusOnMount
+          canRetry
+          onRetry={() => void startListening()}
+          onComplete={completeFallback}
+        />
       ) : (
         <div className="grid place-items-center gap-4">
           <button

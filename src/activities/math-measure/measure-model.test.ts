@@ -3,6 +3,7 @@ import {
   addPlacedUnit,
   balanceAngle,
   balanceTiltDirection,
+  comparisonDescription,
   deriveComparisonIndex,
   MEASUREMENT_UNIT_PX,
   measurementExtent,
@@ -49,6 +50,34 @@ describe("balance geometry", () => {
     expect(right.y).toBeGreaterThan(88);
     expect(left.x).toBeCloseTo(136.41, 2);
     expect(right.x).toBeCloseTo(423.59, 2);
+  });
+});
+
+describe("nonvisual comparison descriptions", () => {
+  it("names every relative length and height from the shared origin", () => {
+    const items = [
+      { label: "pencil", size: 3 },
+      { label: "crayon", size: 2 },
+      { label: "marker", size: 4 },
+    ];
+
+    expect(comparisonDescription("length", items)).toBe(
+      "Length comparison from one shared start line. pencil extends 3 relative units; crayon extends 2 relative units; marker extends 4 relative units.",
+    );
+    expect(comparisonDescription("height", items)).toBe(
+      "Height comparison from one shared baseline. pencil stands 3 relative units tall; crayon stands 2 relative units tall; marker stands 4 relative units tall.",
+    );
+  });
+
+  it("names the lower heavier and higher lighter balance pans", () => {
+    expect(
+      comparisonDescription("weight", [
+        { label: "feather", size: 1 },
+        { label: "watermelon", size: 4 },
+      ]),
+    ).toBe(
+      "Balance comparison. watermelon pan is lower and watermelon is heavier; feather pan is higher and feather is lighter.",
+    );
   });
 });
 

@@ -145,7 +145,15 @@ test("symbol introduction guides every spoken batch before forgiving verificatio
   await page.getByRole("button", { name: "Show sound help" }).click();
   await expect(page.getByText("b", { exact: true })).toBeVisible();
   const firstSymbol = page.getByRole("button", { name: /ㄅ, dad.*Hear this sound/ });
-  await page.getByRole("button", { name: "Hear example ㄅㄚˋ" }).click();
+  const exampleButton = page.getByRole("button", { name: "Hear example ㄅㄚˋ" });
+  const exampleBox = await exampleButton.boundingBox();
+  expect(exampleBox).not.toBeNull();
+  if (exampleBox) {
+    expect(exampleBox.width).toBeGreaterThanOrEqual(44);
+    expect(exampleBox.height).toBeGreaterThanOrEqual(44);
+  }
+  await exampleButton.focus();
+  await page.keyboard.press("Enter");
   await expect(firstSymbol).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("Example heard", { exact: true })).toBeVisible();
   for (const symbol of ["ㄆ", "ㄇ", "ㄈ"]) {

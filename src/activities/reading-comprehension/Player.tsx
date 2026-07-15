@@ -132,26 +132,6 @@ export function ReadingComprehensionPlayer({
 
       {stage === "questions" && current && (
         <div className="grid gap-6">
-          {current.evidenceSentenceIndexes ? (
-            <SentenceEvidencePanel
-              sentences={sentences}
-              selectedSentence={selectedSentence}
-              onSelect={(index) => {
-                setSelectedSentence(index);
-                setFeedback(null);
-              }}
-            />
-          ) : (
-            <details className="rounded-2xl border-[3px] border-ink/15 bg-paper-raised px-5 py-3">
-              <summary className="cursor-pointer select-none font-display text-lg text-ink-soft">
-                Read the story again
-              </summary>
-              <p className="mt-3 whitespace-pre-line font-body text-lg leading-relaxed text-ink">
-                {parsed.passage}
-              </p>
-            </details>
-          )}
-
           <div className="flex items-center justify-center gap-3">
             <SpeakerButton speech={speech} text={current.prompt} label="Hear the question again" />
             <span className="text-sm text-ink-soft">
@@ -176,6 +156,26 @@ export function ReadingComprehensionPlayer({
               />
             ))}
           </div>
+
+          {current.evidenceSentenceIndexes ? (
+            <SentenceEvidencePanel
+              sentences={sentences}
+              selectedSentence={selectedSentence}
+              onSelect={(index) => {
+                setSelectedSentence(index);
+                setFeedback(null);
+              }}
+            />
+          ) : (
+            <details className="rounded-2xl border-[3px] border-ink/15 bg-paper-raised px-5 py-3">
+              <summary className="cursor-pointer select-none font-display text-lg text-ink-soft">
+                Read the story again
+              </summary>
+              <p className="mt-3 whitespace-pre-line font-body text-lg leading-relaxed text-ink">
+                {parsed.passage}
+              </p>
+            </details>
+          )}
 
           {current.evidenceChoices && (
             <div className="grid gap-3 rounded-2xl border-[3px] border-ink/15 bg-paper-sunk p-4">

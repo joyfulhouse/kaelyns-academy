@@ -16,6 +16,7 @@ import {
   addPlacedUnit,
   balanceAngle,
   balanceTiltDirection,
+  comparisonDescription,
   deriveComparisonIndex,
   MEASUREMENT_UNIT_PX,
   measurementExtent,
@@ -252,15 +253,22 @@ function CompareBoard({
 
 function ProportionalComparison({ config }: { config: CompareConfig }) {
   const largest = Math.max(...config.items.map((item) => item.size));
+  const description = comparisonDescription(config.attribute, config.items);
+  const descriptionId = "measurement-comparison-description";
   if (config.attribute === "height") {
     const baselineY = 188;
     return (
-      <svg
-        viewBox="0 0 600 220"
-        role="img"
-        aria-label="Height comparison with every object standing on the same baseline"
-        className="mx-auto h-auto w-full max-w-3xl"
-      >
+      <>
+        <p id={descriptionId} className="sr-only">
+          {description}
+        </p>
+        <svg
+          viewBox="0 0 600 220"
+          role="img"
+          aria-label="Height comparison"
+          aria-describedby={descriptionId}
+          className="mx-auto h-auto w-full max-w-3xl"
+        >
         <line x1="40" y1={baselineY} x2="560" y2={baselineY} stroke="var(--color-ink)" strokeWidth="4" />
         {config.items.map((item, index) => {
           const x = ((index + 1) * 560) / (config.items.length + 1);
@@ -283,19 +291,25 @@ function ProportionalComparison({ config }: { config: CompareConfig }) {
             </g>
           );
         })}
-      </svg>
+        </svg>
+      </>
     );
   }
 
   const rowHeight = 46;
   const viewHeight = config.items.length * rowHeight + 24;
   return (
-    <svg
-      viewBox={`0 0 600 ${viewHeight}`}
-      role="img"
-      aria-label="Length comparison with every object starting at the same line"
-      className="mx-auto h-auto w-full max-w-3xl"
-    >
+    <>
+      <p id={descriptionId} className="sr-only">
+        {description}
+      </p>
+      <svg
+        viewBox={`0 0 600 ${viewHeight}`}
+        role="img"
+        aria-label="Length comparison"
+        aria-describedby={descriptionId}
+        className="mx-auto h-auto w-full max-w-3xl"
+      >
       <line x1="120" y1="8" x2="120" y2={viewHeight - 8} stroke="var(--color-ink)" strokeWidth="4" />
       {config.items.map((item, index) => {
         const y = 16 + index * rowHeight;
@@ -318,7 +332,8 @@ function ProportionalComparison({ config }: { config: CompareConfig }) {
           </g>
         );
       })}
-    </svg>
+      </svg>
+    </>
   );
 }
 
@@ -329,13 +344,19 @@ function WeightBalance({ config }: { config: CompareConfig }) {
   const pivot = { x: 280, y: 88 };
   const leftAttachment = rotatePoint({ x: 135, y: 88 }, pivot, angle);
   const rightAttachment = rotatePoint({ x: 425, y: 88 }, pivot, angle);
+  const descriptionId = "measurement-comparison-description";
   return (
-    <svg
-      viewBox="0 0 560 270"
-      role="img"
-      aria-label={`Balance comparing ${left.label} and ${right.label}; the beam tilts toward the heavier object`}
-      className="mx-auto h-auto w-full max-w-2xl"
-    >
+    <>
+      <p id={descriptionId} className="sr-only">
+        {comparisonDescription(config.attribute, config.items)}
+      </p>
+      <svg
+        viewBox="0 0 560 270"
+        role="img"
+        aria-label={`Balance comparing ${left.label} and ${right.label}`}
+        aria-describedby={descriptionId}
+        className="mx-auto h-auto w-full max-w-2xl"
+      >
       <path d="M280 88 L225 222 H335 Z" fill="var(--color-honey)" stroke="var(--color-ink)" strokeWidth="4" />
       <line x1="190" y1="225" x2="370" y2="225" stroke="var(--color-ink)" strokeWidth="6" strokeLinecap="round" />
       <g
@@ -355,7 +376,8 @@ function WeightBalance({ config }: { config: CompareConfig }) {
       <text x="425" y="259" textAnchor="middle" fill="var(--color-ink)" fontSize="17" fontWeight="700">
         {right.label}
       </text>
-    </svg>
+      </svg>
+    </>
   );
 }
 

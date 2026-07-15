@@ -458,12 +458,13 @@ function ClockHandControl({
     >
       {interactive ? (
         <line
+          data-testid={`${hand}-hand-hit-target`}
           x1={CENTER}
           y1={CENTER + 12}
           x2={CENTER}
           y2={endpointY - 10}
           stroke="transparent"
-          strokeWidth={30}
+          strokeWidth={40}
           strokeLinecap="round"
         />
       ) : null}

@@ -1,3 +1,8 @@
+import type {
+  MeasureAttribute,
+  SizedItem,
+} from "@/content/activity-configs/math-measure-derivation";
+
 export {
   deriveComparisonIndex,
   type ComparisonQuestion,
@@ -6,6 +11,10 @@ export {
 } from "@/content/activity-configs/math-measure-derivation";
 
 export type BalanceTilt = "left" | "level" | "right";
+
+interface LabeledSizedItem extends SizedItem {
+  label: string;
+}
 
 export interface Point {
   x: number;
@@ -38,6 +47,36 @@ export function balanceAngle(leftWeight: number, rightWeight: number): -8 | 0 | 
   if (direction === "left") return -8;
   if (direction === "right") return 8;
   return 0;
+}
+
+/** Describe the same relative measurement facts conveyed by the comparison graphic. */
+export function comparisonDescription(
+  attribute: MeasureAttribute,
+  items: readonly LabeledSizedItem[],
+): string {
+  if (attribute === "length") {
+    const extents = items
+      .map((item) => `${item.label} extends ${item.size} relative units`)
+      .join("; ");
+    return `Length comparison from one shared start line. ${extents}.`;
+  }
+
+  if (attribute === "height") {
+    const extents = items
+      .map((item) => `${item.label} stands ${item.size} relative units tall`)
+      .join("; ");
+    return `Height comparison from one shared baseline. ${extents}.`;
+  }
+
+  const [left, right] = items;
+  if (!left || !right) return "Balance comparison.";
+  const tilt = balanceTiltDirection(left.size, right.size);
+  if (tilt === "level") {
+    return `Balance comparison. ${left.label} and ${right.label} pans are level because the objects have equal relative weight.`;
+  }
+  const lower = tilt === "left" ? left : right;
+  const higher = tilt === "left" ? right : left;
+  return `Balance comparison. ${lower.label} pan is lower and ${lower.label} is heavier; ${higher.label} pan is higher and ${higher.label} is lighter.`;
 }
 
 /** Locate a beam attachment after tilt so its hanging pan can remain upright. */

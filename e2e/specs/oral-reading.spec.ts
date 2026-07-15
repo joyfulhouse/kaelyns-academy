@@ -175,7 +175,12 @@ test("an opted-in signed-in learner settles a check and gets one host reward", a
     await page.goto(ACTIVITY);
     await page.getByRole("button", { name: "Listen to the word the" }).click();
     await page.getByRole("button", { name: "Read it aloud" }).click();
-    await expect(page.getByText("Read it to a grown-up.")).toBeVisible();
+    const fallbackHeading = page.getByRole("heading", { name: "Read it to a grown-up." });
+    await expect(fallbackHeading).toBeVisible();
+    await expect(fallbackHeading).toBeFocused();
+    await expect(
+      page.getByRole("status").filter({ hasText: "The microphone is optional" }),
+    ).toBeAttached();
 
     await context.grantPermissions(["microphone"]);
     await page.evaluate(() => localStorage.setItem("e2e-oral-mic", "allow"));
@@ -186,7 +191,12 @@ test("an opted-in signed-in learner settles a check and gets one host reward", a
     await mic.click();
     await expect(page.getByRole("button", { name: "Stop listening" })).toBeVisible();
     await page.getByRole("button", { name: "Stop listening" }).click();
-    await expect(page.getByText("I couldn't quite hear that")).toBeVisible();
+    const unclearHeading = page.getByRole("heading", { name: "I couldn't quite hear that" });
+    await expect(unclearHeading).toBeVisible();
+    await expect(unclearHeading).toBeFocused();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Listen again, try once more" }),
+    ).toBeAttached();
     await page.getByRole("button", { name: "A grown-up listened - I read it" }).click();
     await expectSingleHostReward(page);
   } finally {
@@ -298,13 +308,25 @@ test("sentence reading keeps mic denial safe and finishes through one host rewar
 
     await context.grantPermissions(["microphone"]);
     await page.evaluate(() => localStorage.setItem("e2e-oral-mic", "allow"));
+    await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto(SENTENCE_ACTIVITY);
     await page.getByRole("button", { name: "Listen to the sentence" }).click();
     const mic = page.getByRole("button", { name: "Read it aloud" });
     await expect(mic).toBeVisible({ timeout: 25_000 });
     await mic.click();
+    const checked = page.waitForResponse("**/api/oral-reading");
     await page.getByRole("button", { name: "Stop listening" }).click();
-    await expect(page.getByText("Let's try the honey words once more")).toBeVisible();
+    await checked;
+    await expect(page.locator('[data-word-state="unclear"]')).toHaveCount(1);
+    await expect(page.locator('[data-word-state="correct"]')).toHaveCount(4);
+    const sentenceUnclearHeading = page.getByRole("heading", {
+      name: "Let's try the honey words once more",
+    });
+    await expect(sentenceUnclearHeading).toBeVisible();
+    await expect(sentenceUnclearHeading).toBeFocused();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Tap a honey word to hear it" }),
+    ).toBeAttached();
     await page.getByRole("button", { name: "A grown-up listened - I read it" }).click();
     await expectSingleHostReward(page);
   } finally {

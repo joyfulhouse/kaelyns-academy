@@ -11,7 +11,7 @@ const KINDS = Object.keys(ACTIVITY_CONFIG_SCHEMAS) as ActivityKind[];
 
 const VALID_RESPONSES = {
   "phonics-wordbuild": {
-    builds: [{ wordIndex: 0, tileIndices: [0], attempts: 1 }],
+    builds: [{ wordIndex: 0, tileIndices: [0], attempts: 1, usedHelp: false }],
   },
   "sightword-game": {
     rounds: [{ roundIndex: 0, choiceIndex: 0, attempts: 1, usedHelp: false }],
@@ -67,6 +67,7 @@ const OVER_BOUNDED_RESPONSES = {
       wordIndex: index % 12,
       tileIndices: [0],
       attempts: 1,
+      usedHelp: false,
     })),
   },
   "sightword-game": {

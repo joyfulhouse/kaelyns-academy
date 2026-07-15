@@ -137,7 +137,7 @@ describe("sentence modeled-read karaoke timeline", () => {
     };
 
     const complete = vi.fn();
-    startSettleWordReveal(settled.length, record, complete);
+    startSettleWordReveal(settled.length, false, record, complete);
     expect(reveals).toEqual([["correct", "neutral", "neutral"]]);
     vi.advanceTimersByTime(SETTLE_WORD_STAGGER_MS);
     expect(reveals.at(-1)).toEqual(["correct", "unclear", "neutral"]);
@@ -152,5 +152,16 @@ describe("sentence modeled-read karaoke timeline", () => {
         );
       }
     }
+  });
+
+  it("reveals every settled word immediately when reduced motion is requested", () => {
+    const reveal = vi.fn();
+    const complete = vi.fn();
+
+    startSettleWordReveal(4, true, reveal, complete);
+
+    expect(reveal).toHaveBeenCalledExactlyOnceWith(4);
+    expect(complete).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

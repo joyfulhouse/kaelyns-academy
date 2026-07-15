@@ -39,8 +39,15 @@ test("sorting supports free placement, preserved wrong work, moving, and keyboar
   await expect(page.getByRole("status")).toContainText("One item needs another look");
 
   const livingItems = page.getByRole("list", { name: "Living group items" });
-  await expect(livingItems.getByRole("button", { name: /Rock, in Living/ })).toBeVisible();
-  await livingItems.getByRole("button", { name: /Rock, in Living/ }).click();
+  const reviewItem = livingItems.getByRole("button", {
+    name: /Rock, in Living.*Needs another look/i,
+  });
+  await expect(reviewItem).toBeVisible();
+  await expect(reviewItem.getByText("Needs another look", { exact: true })).toBeVisible();
+  await expect(
+    livingItems.getByRole("button", { name: /Dog, in Living.*Needs another look/i }),
+  ).toHaveCount(0);
+  await reviewItem.click();
   await expect(page.getByRole("button", { name: "Return Rock to tray" })).toBeVisible();
   await page.getByRole("button", { name: "Put Rock in Nonliving" }).click();
 

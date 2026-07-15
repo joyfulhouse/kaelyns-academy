@@ -23,8 +23,8 @@ function resp(builds: PhonicsWordbuildResponse["builds"]): PhonicsWordbuildRespo
 describe("phonics-wordbuild score", () => {
   it("awards 3 stars + solid when every word is built first try", () => {
     const result = score(config, resp([
-      { wordIndex: 0, tileIndices: [0, 1, 2], attempts: 1 },
-      { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 1 },
+      { wordIndex: 0, tileIndices: [0, 1, 2], attempts: 1, usedHelp: false },
+      { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 1, usedHelp: false },
     ]));
     expect(result.stars).toBe(3);
     expect(result.correct).toBe(2);
@@ -36,8 +36,8 @@ describe("phonics-wordbuild score", () => {
 
   it("awards 2 stars + emerging with one retry", () => {
     const result = score(config, resp([
-      { wordIndex: 0, tileIndices: [0, 1, 2], attempts: 1 },
-      { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 3 },
+      { wordIndex: 0, tileIndices: [0, 1, 2], attempts: 1, usedHelp: false },
+      { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 3, usedHelp: false },
     ]));
     expect(result.stars).toBe(2);
     expect(result.skillEvidence[0].outcome).toBe("emerging");
@@ -45,8 +45,8 @@ describe("phonics-wordbuild score", () => {
 
   it("never drops below 1 star when finished, and flags not_yet on heavy help", () => {
     const result = score(config, resp([
-      { wordIndex: 0, tileIndices: [0, 1, 2], attempts: 4 },
-      { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 5 },
+      { wordIndex: 0, tileIndices: [0, 1, 2], attempts: 4, usedHelp: false },
+      { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 5, usedHelp: false },
     ]));
     expect(result.stars).toBe(1);
     expect(result.skillEvidence[0].outcome).toBe("not_yet");
@@ -69,45 +69,112 @@ describe("phonics-wordbuild score", () => {
   it("bounds response builds and tile indices", () => {
     expect(
       responseSchema.safeParse({
-        builds: [{ wordIndex: 0, tileIndices: [0, 1, 2], attempts: 20 }],
+        builds: [{ wordIndex: 0, tileIndices: [0, 1, 2], attempts: 20, usedHelp: false }],
       }).success,
     ).toBe(true);
     expect(
       responseSchema.safeParse({
-        builds: [{ wordIndex: 0, tileIndices: [0, 0], attempts: 1 }],
+        builds: [{ wordIndex: 0, tileIndices: [0, 0], attempts: 1, usedHelp: false }],
       }).success,
     ).toBe(false);
     expect(
       responseSchema.safeParse({
-        builds: [{ wordIndex: 12, tileIndices: [0], attempts: 1 }],
+        builds: [{ wordIndex: 12, tileIndices: [0], attempts: 1, usedHelp: false }],
       }).success,
     ).toBe(false);
+  });
+
+  it("requires bounded per-word help provenance in the strict response", () => {
+    expect(
+      responseSchema.safeParse({
+        builds: [
+          {
+            wordIndex: 0,
+            tileIndices: [0, 1, 2],
+            attempts: 1,
+            usedHelp: false,
+          },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      responseSchema.safeParse({
+        builds: [{ wordIndex: 0, tileIndices: [0, 1, 2], attempts: 1 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      responseSchema.safeParse({
+        builds: [
+          {
+            wordIndex: 0,
+            tileIndices: [0, 1, 2],
+            attempts: 1,
+            usedHelp: false,
+            targetText: "ship",
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps completion stars but emits no mastery evidence when every word was revealed", () => {
+    const result = score(config, {
+      builds: [
+        { wordIndex: 0, tileIndices: [0, 1, 2], attempts: 1, usedHelp: true },
+        { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 1, usedHelp: true },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      correct: 2,
+      total: 2,
+      stars: 3,
+      skillEvidence: [],
+    });
+  });
+
+  it("uses only unassisted observations and caps partially assisted evidence at emerging", () => {
+    const result = score(config, {
+      builds: [
+        { wordIndex: 0, tileIndices: [0, 1, 2], attempts: 1, usedHelp: false },
+        { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 1, usedHelp: true },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      correct: 2,
+      total: 2,
+      stars: 3,
+      skillEvidence: [{ skill: "phonics.digraphs", outcome: "emerging" }],
+    });
   });
 
   it("derives constructed text and rejects reuse, unknown indices, or wrong words", () => {
     expect(() =>
       score(config, resp([
-        { wordIndex: 0, tileIndices: [0, 1, 1], attempts: 1 },
-        { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 1 },
+        { wordIndex: 0, tileIndices: [0, 1, 1], attempts: 1, usedHelp: false },
+        { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 1, usedHelp: false },
       ])),
     ).toThrow("invalid phonics build");
     expect(() =>
       score(config, resp([
-        { wordIndex: 0, tileIndices: [0, 1, 99], attempts: 1 },
-        { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 1 },
+        { wordIndex: 0, tileIndices: [0, 1, 99], attempts: 1, usedHelp: false },
+        { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 1, usedHelp: false },
       ])),
     ).toThrow("invalid phonics build");
     expect(() =>
       score(config, resp([
-        { wordIndex: 0, tileIndices: [3, 4, 5], attempts: 1 },
-        { wordIndex: 1, tileIndices: [0, 1, 2], attempts: 1 },
+        { wordIndex: 0, tileIndices: [3, 4, 5], attempts: 1, usedHelp: false },
+        { wordIndex: 1, tileIndices: [0, 1, 2], attempts: 1, usedHelp: false },
       ])),
     ).toThrow("invalid phonics build");
   });
 
   it("requires every target word exactly once", () => {
     expect(() =>
-      score(config, resp([{ wordIndex: 0, tileIndices: [0, 1, 2], attempts: 1 }])),
+      score(config, resp([
+        { wordIndex: 0, tileIndices: [0, 1, 2], attempts: 1, usedHelp: false },
+      ])),
     ).toThrow("invalid phonics build");
   });
 

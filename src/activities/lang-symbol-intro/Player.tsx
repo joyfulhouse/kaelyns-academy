@@ -220,7 +220,7 @@ export function LangSymbolIntroPlayer({
                       <button
                         type="button"
                         onClick={() => playExample(symbol.id, symbol.exampleSpoken ?? symbol.spoken)}
-                        className="min-h-10 rounded-full bg-honey/20 px-3 py-1 text-sm font-semibold text-ink transition hover:bg-honey/35 active:translate-y-0.5"
+                        className="min-h-11 rounded-full bg-honey/20 px-3 py-1 text-sm font-semibold text-ink transition hover:bg-honey/35 active:translate-y-0.5"
                         aria-label={`Hear example ${symbol.example}`}
                       >
                         Hear example

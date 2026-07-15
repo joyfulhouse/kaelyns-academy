@@ -29,6 +29,46 @@ test("multiply mode reveals rows and announces the skip-count trail", async ({ p
   await expect(page.getByText("Skip count: 2, 4")).toBeVisible();
 });
 
+test("five-column multiply rows stay reachable without widening a narrow page", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto("/learn/kaelyn-adaptive/math/math-r2-a2");
+
+  const scroller = page.getByTestId("multiply-array-scroll");
+  await expect(scroller).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByRole("button", { name: "Reveal row 1" })).toBeVisible();
+
+  const before = await scroller.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(before.scrollWidth).toBeGreaterThan(before.clientWidth);
+
+  await scroller.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+  });
+
+  const finalCell = page.getByRole("button", { name: "Reveal row 1" }).locator("span").last();
+  const [scrollerBox, finalCellBox] = await Promise.all([
+    scroller.boundingBox(),
+    finalCell.boundingBox(),
+  ]);
+  expect(scrollerBox).not.toBeNull();
+  expect(finalCellBox).not.toBeNull();
+  if (scrollerBox && finalCellBox) {
+    expect(finalCellBox.x + finalCellBox.width).toBeLessThanOrEqual(
+      scrollerBox.x + scrollerBox.width + 1,
+    );
+  }
+
+  const pageWidths = await page.evaluate(() => ({
+    client: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+  }));
+  expect(pageWidths.scroll).toBe(pageWidths.client);
+});
+
 test("divide mode deals one visible item at a time around labeled groups", async ({ page }) => {
   await page.goto(`${MATH}/math-baseline-a3`);
 

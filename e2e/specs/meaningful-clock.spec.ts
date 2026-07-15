@@ -7,6 +7,7 @@ const ACTIVITY =
 test("set mode manipulates one coupled analog time with pointer, keyboard, and tap", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 320, height: 800 });
   await page.goto(ACTIVITY);
 
   const clock = page.getByRole("group", { name: /interactive clock showing 12:00/i });
@@ -14,6 +15,13 @@ test("set mode manipulates one coupled analog time with pointer, keyboard, and t
 
   const minuteHand = page.getByRole("slider", { name: "Minute hand" });
   const hourHand = page.getByRole("slider", { name: "Hour hand" });
+  const minuteHitTarget = page.getByTestId("minute-hand-hit-target");
+  const hitWidth = await minuteHitTarget.evaluate((line) => {
+    const strokeWidth = Number(line.getAttribute("stroke-width"));
+    const scale = (line as SVGGraphicsElement).getScreenCTM()?.a ?? 0;
+    return strokeWidth * scale;
+  });
+  expect(hitWidth).toBeGreaterThanOrEqual(44);
   const clockBox = await clock.boundingBox();
   const minuteBox = await minuteHand.boundingBox();
   expect(clockBox).not.toBeNull();

@@ -257,10 +257,10 @@ function ItemButton({
       ref={ref}
       type="button"
       onClick={onClick}
-      aria-label={label}
+      aria-label={needsReview ? `${label}. Needs another look` : label}
       aria-pressed={selected}
       className={cn(
-        "flex min-h-14 w-full items-center justify-center gap-2 rounded-xl border-[3px] border-ink bg-paper-raised px-4 py-3 text-ink shadow-pop",
+        "flex min-h-14 w-full flex-wrap items-center justify-center gap-2 rounded-xl border-[3px] border-ink bg-paper-raised px-4 py-3 text-ink shadow-pop",
         "transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
         selected && "bg-honey ring-4 ring-honey/50",
         needsReview && "border-accent-deep bg-accent/12",
@@ -273,6 +273,11 @@ function ItemButton({
         </span>
       )}
       <span className="font-display">{item.label}</span>
+      {needsReview ? (
+        <span className="rounded-full border-2 border-accent-deep bg-paper-raised px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-accent-deep">
+          Needs another look
+        </span>
+      ) : null}
     </button>
   );
 }
