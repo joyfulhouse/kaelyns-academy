@@ -9,6 +9,8 @@ const fixtures = vi.hoisted(() => {
   return {
     TestPlayer,
     record: vi.fn(),
+    authoredRequestKey: "authored-old",
+    generatedRequestKey: "generated-old",
     refIndex: 0,
     refValues: [] as { current: unknown }[],
     stateIndex: 0,
@@ -102,8 +104,11 @@ vi.mock("./useLearnerState", () => ({
   }),
 }));
 vi.mock("./activityResolution", () => ({
-  generatedPracticeRequestKey: () => "request-key",
-  playerIdentityKey: () => "player-key",
+  generatedPracticeRequestKey: () => fixtures.generatedRequestKey,
+  playerIdentityKey: (input: { variant?: string }) =>
+    input.variant === "authored"
+      ? fixtures.authoredRequestKey
+      : `player:${fixtures.generatedRequestKey}`,
   resolveGeneratedPractice: () => ({ status: "ready", row: fixtures.generatedRow }),
   resolvePlayableActivity: () => ({
     status: "ready",
@@ -131,6 +136,7 @@ import { ActivityHost } from "./ActivityHost";
 import { GeneratedPracticeHost } from "./GeneratedPracticeHost";
 
 const COMPLETION_ID = "11111111-1111-4111-8111-111111111111";
+const SECOND_COMPLETION_ID = "22222222-2222-4222-8222-222222222222";
 const RESPONSE = { attempts: 1, totalMinutes: 360 };
 const SCORE = {
   correct: 1,
@@ -180,6 +186,35 @@ async function flushCompletion() {
   await Promise.resolve();
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
+
+const hostCases = [
+  {
+    name: "ActivityHost",
+    render: renderActivityHost,
+    switchIdentity: () => {
+      fixtures.authoredRequestKey = "authored-new";
+    },
+    newRequestKey: "authored-new",
+  },
+  {
+    name: "GeneratedPracticeHost",
+    render: renderGeneratedHost,
+    switchIdentity: () => {
+      fixtures.generatedRequestKey = "generated-new";
+    },
+    newRequestKey: "generated-new",
+  },
+] as const;
+
 describe("completion host retry identity", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -188,6 +223,8 @@ describe("completion host retry identity", () => {
     fixtures.stateIndex = 0;
     fixtures.stateValues = [];
     fixtures.stateSetters = [];
+    fixtures.authoredRequestKey = "authored-old";
+    fixtures.generatedRequestKey = "generated-old";
     vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(COMPLETION_ID);
   });
 
@@ -310,6 +347,95 @@ describe("completion host retry identity", () => {
       COMPLETION_ID,
     );
   });
+
+  it.each(hostCases)(
+    "$name ignores an old success while a newer identity is saving",
+    async ({ render, switchIdentity, newRequestKey }) => {
+      const oldRequest = deferred<{ ok: true; score: typeof SCORE }>();
+      const newRequest = deferred<{ ok: true; score: typeof SCORE }>();
+      fixtures.record
+        .mockReturnValueOnce(oldRequest.promise)
+        .mockReturnValueOnce(newRequest.promise);
+      vi.mocked(globalThis.crypto.randomUUID)
+        .mockReturnValueOnce(COMPLETION_ID)
+        .mockReturnValueOnce(SECOND_COMPLETION_ID);
+
+      const first = render();
+      const firstPlayer = findElement(first, (element) => element.type === fixtures.TestPlayer);
+      (firstPlayer?.props.onComplete as (response: unknown) => void)(RESPONSE);
+
+      switchIdentity();
+      const second = render();
+      const secondPlayer = findElement(second, (element) => element.type === fixtures.TestPlayer);
+      (secondPlayer?.props.onComplete as (response: unknown) => void)({
+        ...RESPONSE,
+        attempts: 2,
+      });
+      expect(fixtures.stateValues[0]).toMatchObject({
+        kind: "saving",
+        requestKey: newRequestKey,
+        completionId: SECOND_COMPLETION_ID,
+      });
+
+      oldRequest.resolve({ ok: true, score: SCORE });
+      await flushCompletion();
+      expect(fixtures.stateValues[0]).toMatchObject({
+        kind: "saving",
+        requestKey: newRequestKey,
+        completionId: SECOND_COMPLETION_ID,
+      });
+
+      newRequest.resolve({ ok: true, score: SCORE });
+      await flushCompletion();
+      expect(fixtures.stateValues[0]).toMatchObject({
+        kind: "reward",
+        requestKey: newRequestKey,
+        stars: 3,
+      });
+    },
+  );
+
+  it.each(hostCases)(
+    "$name ignores an old failure after a newer identity is rewarded",
+    async ({ render, switchIdentity, newRequestKey }) => {
+      const oldRequest = deferred<{ ok: true; score: typeof SCORE }>();
+      const newRequest = deferred<{ ok: true; score: typeof SCORE }>();
+      fixtures.record
+        .mockReturnValueOnce(oldRequest.promise)
+        .mockReturnValueOnce(newRequest.promise);
+      vi.mocked(globalThis.crypto.randomUUID)
+        .mockReturnValueOnce(COMPLETION_ID)
+        .mockReturnValueOnce(SECOND_COMPLETION_ID);
+
+      const first = render();
+      const firstPlayer = findElement(first, (element) => element.type === fixtures.TestPlayer);
+      (firstPlayer?.props.onComplete as (response: unknown) => void)(RESPONSE);
+
+      switchIdentity();
+      const second = render();
+      const secondPlayer = findElement(second, (element) => element.type === fixtures.TestPlayer);
+      (secondPlayer?.props.onComplete as (response: unknown) => void)({
+        ...RESPONSE,
+        attempts: 2,
+      });
+
+      newRequest.resolve({ ok: true, score: SCORE });
+      await flushCompletion();
+      expect(fixtures.stateValues[0]).toMatchObject({
+        kind: "reward",
+        requestKey: newRequestKey,
+        stars: 3,
+      });
+
+      oldRequest.reject(new Error("old request failed"));
+      await flushCompletion();
+      expect(fixtures.stateValues[0]).toMatchObject({
+        kind: "reward",
+        requestKey: newRequestKey,
+        stars: 3,
+      });
+    },
+  );
 
   it("ActivityHost converts a rejected record call into the retry posture", async () => {
     fixtures.record.mockRejectedValueOnce(new Error("network unavailable"));

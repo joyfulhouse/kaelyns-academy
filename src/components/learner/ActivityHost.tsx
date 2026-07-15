@@ -34,7 +34,11 @@ import {
   resolvePlayableActivity,
   safeParsePlayerConfig,
 } from "./activityResolution";
-import { claimPlayerCompletion, type CompletionClaim } from "./completionClaim";
+import {
+  claimPlayerCompletion,
+  settlePlayerCompletion,
+  type CompletionClaim,
+} from "./completionClaim";
 
 /**
  * The next activity within the SAME (resolved) unit — kept inside the world so a
@@ -152,18 +156,23 @@ export function ActivityHost({
     if (!effectiveActivity || !completionKey) return;
     stopSpeaking();
     setPhase({ kind: "saving", requestKey: completionKey, response, completionId });
+    const settle = (settled: Phase) => {
+      setPhase((current) =>
+        settlePlayerCompletion(current, { requestKey: completionKey, completionId }, settled),
+      );
+    };
     let result;
     try {
       result = await record(effectiveActivity, response, { unitKey }, completionId);
     } catch {
-      setPhase({ kind: "save-failed", requestKey: completionKey, response, completionId });
+      settle({ kind: "save-failed", requestKey: completionKey, response, completionId });
       return;
     }
     if (!result.ok) {
-      setPhase({ kind: "save-failed", requestKey: completionKey, response, completionId });
+      settle({ kind: "save-failed", requestKey: completionKey, response, completionId });
       return;
     }
-    setPhase({ kind: "reward", requestKey: completionKey, stars: result.score.stars });
+    settle({ kind: "reward", requestKey: completionKey, stars: result.score.stars });
     // Eager shelf warm-up (B3 §4): once an authored activity is done, nudge the
     // server to fill this lesson's "fresh practice" shelf. Fire-and-forget and
     // idempotent — the server no-ops unless this completion finished the lesson,

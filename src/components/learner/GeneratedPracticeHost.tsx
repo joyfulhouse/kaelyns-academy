@@ -31,7 +31,11 @@ import {
   safeParsePlayerConfig,
   type LoadedGeneratedPractice,
 } from "./activityResolution";
-import { claimPlayerCompletion, type CompletionClaim } from "./completionClaim";
+import {
+  claimPlayerCompletion,
+  settlePlayerCompletion,
+  type CompletionClaim,
+} from "./completionClaim";
 
 /**
  * The play host for a generated SHELF item (Adventure 2.0 B3). A minimal mirror
@@ -125,6 +129,11 @@ export function GeneratedPracticeHost({
     if (!row || !requestKey) return;
     stopSpeaking();
     setPhase({ kind: "saving", requestKey, response, completionId });
+    const settle = (settled: Phase) => {
+      setPhase((current) =>
+        settlePlayerCompletion(current, { requestKey, completionId }, settled),
+      );
+    };
     const activity = {
       id: row.id,
       title: row.title,
@@ -142,10 +151,10 @@ export function GeneratedPracticeHost({
         completionId,
       );
     } catch {
-      setPhase({ kind: "save-failed", requestKey, response, completionId });
+      settle({ kind: "save-failed", requestKey, response, completionId });
       return;
     }
-    setPhase(
+    settle(
       result.ok
         ? { kind: "reward", requestKey, stars: result.score.stars }
         : { kind: "save-failed", requestKey, response, completionId },
