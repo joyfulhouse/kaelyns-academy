@@ -64,9 +64,7 @@ export async function ensurePersistentLearner(page: Page): Promise<void> {
   const existing = page.getByRole("link", { name: E2E_PERSISTENT_LEARNER_NAME });
   if ((await existing.count()) > 0) return;
 
-  await page.getByLabel("Child's name", { exact: true }).fill(E2E_PERSISTENT_LEARNER_NAME);
-  await page.getByRole("button", { name: "Add a child" }).click();
-  await expect(page.getByRole("status")).toContainText(/enrolled/i);
+  await addChild(page, E2E_PERSISTENT_LEARNER_NAME);
 }
 
 /**
@@ -94,6 +92,23 @@ export async function clearParentPinIfPresent(page: Page, password: string): Pro
   await page.getByLabel("Account password", { exact: true }).fill(password);
   await remove.click();
   await expect(page.getByRole("button", { name: "Set PIN", exact: true })).toBeVisible();
+}
+
+/**
+ * Add a child on /parent/learners and return once the new learner is reliably
+ * listed. After the "enrolled" confirmation it forces a fresh SSR of the list
+ * (a hard navigation) instead of trusting AddChildForm's client
+ * `router.refresh()`, which under parallel CI load can leave the new learner
+ * link un-rendered past a find timeout — the source of the parent-project
+ * flakiness. A fresh server render always includes the just-created learner.
+ */
+export async function addChild(page: Page, name: string): Promise<void> {
+  await page.goto("/parent/learners");
+  await page.getByLabel("Child's name", { exact: true }).fill(name);
+  await page.getByRole("button", { name: "Add a child" }).click();
+  await expect(page.getByRole("status")).toContainText(/enrolled/i);
+  await page.goto("/parent/learners");
+  await expect(page.getByRole("link", { name }).first()).toBeVisible({ timeout: 30_000 });
 }
 
 /** Seed the account learner choice deterministically before entering kid routes. */

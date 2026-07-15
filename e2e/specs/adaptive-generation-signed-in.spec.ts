@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { uniqueTag, E2E_LEARNER_PREFIX, selectAccountLearner } from "../helpers";
+import { uniqueTag, E2E_LEARNER_PREFIX, addChild, selectAccountLearner } from "../helpers";
 
 /**
  * Adventure 2.0 B3 adaptive-generation affordance smoke — SIGNED-IN half
@@ -35,10 +35,7 @@ test("a signed-in learner is offered AI 'More' practice on the reward screen", a
 
   // Create the throwaway learner (auto-enrolled in kaelyn-adaptive by
   // createLearnerAction, so it can reach the adaptive world immediately).
-  await page.goto("/parent/learners");
-  await page.getByLabel("Child's name", { exact: true }).fill(name);
-  await page.getByRole("button", { name: "Add a child" }).click();
-  await expect(page.getByRole("status")).toContainText(/enrolled/i);
+  await addChild(page, name);
 
   try {
     // Seed this learner before entering the kid route so both the world map and

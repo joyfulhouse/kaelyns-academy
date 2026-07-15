@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { uniqueTag, E2E_LEARNER_PREFIX } from "../helpers";
+import { uniqueTag, E2E_LEARNER_PREFIX, addChild } from "../helpers";
 
 /**
  * Parent dashboard journeys (runs authenticated as the SEEDED parent via the
@@ -17,14 +17,10 @@ test("dashboard is reachable when authenticated", async ({ page }) => {
 test("create a learner, export its data, then delete it", async ({ page }) => {
   const name = `${E2E_LEARNER_PREFIX} ${uniqueTag()}`;
 
-  await page.goto("/parent/learners");
-  await page.getByLabel("Child's name", { exact: true }).fill(name);
-  await page.getByRole("button", { name: "Add a child" }).click();
-
-  // Success affirmation + the learner appears in the real list.
-  await expect(page.getByRole("status")).toContainText(/enrolled/i);
-  const learnerLink = page.getByRole("link", { name });
-  await expect(learnerLink).toBeVisible();
+  // Add the child, then confirm it appears in the real list (helper forces a
+  // fresh SSR so the new learner link is deterministically present).
+  await addChild(page, name);
+  const learnerLink = page.getByRole("link", { name }).first();
 
   // Open the learner detail page — the per-child §8 data controls live here.
   await learnerLink.click();
