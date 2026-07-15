@@ -10,7 +10,7 @@ import {
   type SeqOrderResponse,
 } from "./logic";
 
-/** seq-order activity-type plugin: tap cards into their correct sequence. */
+/** Free-arrangement sequencing with numbered, reversible slots. */
 export const seqOrder: ActivityType<SeqOrderConfig, SeqOrderResponse> = {
   kind: "seq-order",
   label: "Order",

@@ -7,6 +7,7 @@ import {
   outcomeFromAccuracy,
   starsFromAccuracy,
 } from "../_shared/scoring";
+import { sequenceComplete } from "./model";
 
 /** Server-safe schema + scoring for seq-order. No "use client". */
 export const schema = seqOrderConfig;
@@ -14,8 +15,12 @@ export const schema = seqOrderConfig;
 /** The card indices in the order the child tapped them + attempts. */
 export const responseSchema = z
   .object({
-    attempts: z.number().int().min(1).max(100),
-    order: z.array(z.number().int().min(0).max(5)).min(3).max(6),
+    attempts: z.number().int().min(1).max(20),
+    order: z
+      .array(z.number().int().min(0).max(5))
+      .min(3)
+      .max(6)
+      .refine((order) => new Set(order).size === order.length, "card indices must be unique"),
   })
   .strict();
 export type SeqOrderResponse = z.infer<typeof responseSchema>;
@@ -23,7 +28,7 @@ export type SeqOrderResponse = z.infer<typeof responseSchema>;
 /** Correct when the child tapped the cards in their config (array) order:
  *  the pos-th tap must be card index pos, for all positions. */
 export function isCorrect(config: SeqOrderConfig, response: SeqOrderResponse): boolean {
-  if (response.order.length !== config.cards.length) return false;
+  if (!sequenceComplete(response.order, config.cards.length)) return false;
   return response.order.every((cardIndex, position) => cardIndex === position);
 }
 
