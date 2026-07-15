@@ -76,6 +76,20 @@ describe("audioPlaybackReducer", () => {
     });
   });
 
+  it("lets stop supersede the current request", () => {
+    const playing = audioPlaybackReducer(initialAudioPlaybackState, {
+      type: "play",
+      requestId: 1,
+      request,
+    });
+
+    expect(audioPlaybackReducer(playing, { type: "stop", requestId: 2 })).toMatchObject({
+      status: "idle",
+      requestId: 2,
+      lastRequest: request,
+    });
+  });
+
   it("ignores stale async completion after a new item starts", () => {
     const first = audioPlaybackReducer(initialAudioPlaybackState, {
       type: "play",

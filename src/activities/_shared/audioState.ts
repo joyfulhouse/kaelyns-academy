@@ -46,6 +46,10 @@ export function audioPlaybackReducer(
     return { ...state, status: "playing", requestId: event.requestId };
   }
 
+  if (event.type === "stop") {
+    return { ...state, status: "idle", requestId: event.requestId };
+  }
+
   if (event.requestId !== state.requestId) return state;
 
   if (event.type === "finished") {
@@ -54,5 +58,5 @@ export function audioPlaybackReducer(
   if (event.type === "fallback") {
     return { ...state, status: event.available ? "ready" : "unavailable" };
   }
-  return { ...state, status: "idle", requestId: event.requestId };
+  return state;
 }
