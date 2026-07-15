@@ -92,12 +92,72 @@ describe("sight-word round config", () => {
 });
 
 describe("sight-word response and score", () => {
+  it("requires bounded help provenance without accepting child-authored text", () => {
+    expect(
+      responseSchema.safeParse({
+        rounds: [{ roundIndex: 0, choiceIndex: 1, attempts: 1 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      responseSchema.safeParse({
+        rounds: [
+          {
+            roundIndex: 0,
+            choiceIndex: 1,
+            attempts: 1,
+            usedHelp: false,
+            typedWord: "the",
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps forgiving stars but emits no mastery evidence when every target was revealed", () => {
+    const helped = {
+      rounds: [
+        { roundIndex: 0, choiceIndex: 1, attempts: 1, usedHelp: true },
+        { roundIndex: 1, choiceIndex: 1, attempts: 1, usedHelp: true },
+      ],
+    } as unknown as SightwordGameResponse;
+
+    expect(score(config, helped)).toMatchObject({
+      correct: 2,
+      total: 2,
+      stars: 2,
+      skillEvidence: [],
+    });
+  });
+
+  it("uses only unhelped observations and caps partially helped evidence below solid", () => {
+    const threeRounds: SightwordGameConfig = {
+      ...config,
+      rounds: [
+        { target: "the", choices: ["and", "the", "they"] },
+        { target: "you", choices: ["your", "you", "young"] },
+        { target: "we", choices: ["way", "were", "we"] },
+      ],
+    };
+    const partiallyHelped = response([
+      { roundIndex: 0, choiceIndex: 1, attempts: 1, usedHelp: false },
+      { roundIndex: 1, choiceIndex: 1, attempts: 2, usedHelp: true },
+      { roundIndex: 2, choiceIndex: 2, attempts: 2, usedHelp: true },
+    ]);
+
+    expect(score(threeRounds, partiallyHelped)).toMatchObject({
+      correct: 3,
+      total: 3,
+      stars: 1,
+      skillEvidence: [{ skill: "reading.sight-words", outcome: "emerging" }],
+    });
+  });
+
   it("awards three stars for every correct target on the first try", () => {
     const result = score(
       config,
       response([
-        { roundIndex: 0, choiceIndex: 1, attempts: 1 },
-        { roundIndex: 1, choiceIndex: 1, attempts: 1 },
+        { roundIndex: 0, choiceIndex: 1, attempts: 1, usedHelp: false },
+        { roundIndex: 1, choiceIndex: 1, attempts: 1, usedHelp: false },
       ]),
     );
     expect(result).toMatchObject({ correct: 2, total: 2, stars: 3 });
@@ -110,28 +170,31 @@ describe("sight-word response and score", () => {
     const result = score(
       config,
       response([
-        { roundIndex: 0, choiceIndex: 1, attempts: 2 },
-        { roundIndex: 1, choiceIndex: 1, attempts: 1 },
+        { roundIndex: 0, choiceIndex: 1, attempts: 2, usedHelp: false },
+        { roundIndex: 1, choiceIndex: 1, attempts: 1, usedHelp: false },
       ]),
     );
     expect(result.stars).toBe(2);
     expect(result.skillEvidence[0]?.outcome).toBe("emerging");
     expect(
       responseSchema.safeParse({
-        rounds: [{ roundIndex: 0, choiceIndex: 1, attempts: 21 }],
+        rounds: [{ roundIndex: 0, choiceIndex: 1, attempts: 21, usedHelp: false }],
       }).success,
     ).toBe(false);
   });
 
   it("rejects missing rounds, duplicate round indexes, and a forged final choice", () => {
     expect(() =>
-      score(config, response([{ roundIndex: 0, choiceIndex: 1, attempts: 1 }])),
+      score(
+        config,
+        response([{ roundIndex: 0, choiceIndex: 1, attempts: 1, usedHelp: false }]),
+      ),
     ).toThrow("invalid sight-word response");
     expect(
       responseSchema.safeParse({
         rounds: [
-          { roundIndex: 0, choiceIndex: 1, attempts: 1 },
-          { roundIndex: 0, choiceIndex: 1, attempts: 1 },
+          { roundIndex: 0, choiceIndex: 1, attempts: 1, usedHelp: false },
+          { roundIndex: 0, choiceIndex: 1, attempts: 1, usedHelp: false },
         ],
       }).success,
     ).toBe(false);
@@ -139,8 +202,8 @@ describe("sight-word response and score", () => {
       score(
         config,
         response([
-          { roundIndex: 0, choiceIndex: 0, attempts: 1 },
-          { roundIndex: 1, choiceIndex: 1, attempts: 1 },
+          { roundIndex: 0, choiceIndex: 0, attempts: 1, usedHelp: false },
+          { roundIndex: 1, choiceIndex: 1, attempts: 1, usedHelp: false },
         ]),
       ),
     ).toThrow("invalid sight-word response");

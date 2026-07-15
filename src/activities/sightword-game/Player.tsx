@@ -15,6 +15,11 @@ import {
   schema,
   type SightwordGameResponse,
 } from "./logic";
+import {
+  chooseSightword,
+  createSightwordRoundState,
+  revealSightword,
+} from "./model";
 
 interface ChoiceCard {
   choiceIndex: number;
@@ -29,10 +34,8 @@ export function SightwordGamePlayer({
   const rounds = useMemo(() => normalizeSightwordRounds(parsed), [parsed]);
   const speech = useSpeech();
   const [roundIndex, setRoundIndex] = useState(0);
-  const [attempts, setAttempts] = useState(1);
+  const [roundState, setRoundState] = useState(createSightwordRoundState);
   const [completedRounds, setCompletedRounds] = useState<SightwordGameResponse["rounds"]>([]);
-  const [wrongChoiceIndexes, setWrongChoiceIndexes] = useState<number[]>([]);
-  const [feedback, setFeedback] = useState<string | null>(null);
 
   const round = rounds[roundIndex];
   const cards = useMemo<ChoiceCard[]>(() => {
@@ -56,18 +59,14 @@ export function SightwordGamePlayer({
     const choice = round.choices[choiceIndex];
     if (choice === undefined) return;
     const correct = choice.toLocaleLowerCase() === round.target.toLocaleLowerCase();
-    if (!correct) {
-      setAttempts((value) => Math.min(20, value + 1));
-      setWrongChoiceIndexes((previous) =>
-        previous.includes(choiceIndex) ? previous : [...previous, choiceIndex],
-      );
-      setFeedback("Keep that card here. Listen once more and try again.");
+    const transition = chooseSightword(roundState, choiceIndex, correct, roundIndex);
+    if (!transition.result) {
+      setRoundState(transition.state);
       speech.speak("Listen once more and try again.");
       return;
     }
 
-    const result = { roundIndex, choiceIndex, attempts };
-    const nextCompleted = [...completedRounds, result];
+    const nextCompleted = [...completedRounds, transition.result];
     const isLast = roundIndex === rounds.length - 1;
     if (isLast) {
       onComplete({ rounds: nextCompleted });
@@ -75,9 +74,7 @@ export function SightwordGamePlayer({
     }
     setCompletedRounds(nextCompleted);
     setRoundIndex((index) => index + 1);
-    setAttempts(1);
-    setWrongChoiceIndexes([]);
-    setFeedback(null);
+    setRoundState(createSightwordRoundState());
   }
 
   return (
@@ -94,7 +91,6 @@ export function SightwordGamePlayer({
             <EarIcon size={30} weight="bold" aria-hidden="true" />
           </span>
           <p className="text-sm font-bold uppercase tracking-[0.14em] text-ink-soft">Listen, then find</p>
-          <p className="font-display text-4xl text-ink">Target word: {round.target}</p>
           {round.context && (
             <p className="max-w-xl rounded-xl bg-paper-raised px-4 py-3 text-lg text-ink">
               {round.context}
@@ -103,13 +99,32 @@ export function SightwordGamePlayer({
           <SpeakerButton
             speech={speech}
             text={spokenCue}
-            label={`Hear target ${round.target}`}
+            label="Hear the word again"
           />
+          {!speech.supported && !roundState.helpVisible ? (
+            <p role="status" className="max-w-md text-sm text-ink-soft">
+              Audio isn’t available here. Show the word to keep going.
+            </p>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setRoundState(revealSightword)}
+            aria-pressed={roundState.helpVisible}
+            disabled={roundState.helpVisible}
+            className="min-h-11 rounded-full border-2 border-ink bg-honey/20 px-5 py-2 font-display text-ink transition active:translate-y-0.5 disabled:cursor-default disabled:bg-paper-raised"
+          >
+            {roundState.helpVisible ? "Word shown" : "Show the word"}
+          </button>
+          {roundState.helpVisible ? (
+            <p className="font-display text-4xl text-ink" aria-live="polite">
+              Word to find: {round.target}
+            </p>
+          ) : null}
         </div>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3" aria-label="Word choices">
           {cards.map((card) => {
-            const tried = wrongChoiceIndexes.includes(card.choiceIndex);
+            const tried = roundState.wrongChoiceIndexes.includes(card.choiceIndex);
             return (
               <button
                 key={card.choiceIndex}
@@ -130,7 +145,11 @@ export function SightwordGamePlayer({
       </section>
 
       <div className="min-h-7 text-center" aria-live="polite" aria-atomic="true">
-        {feedback && <p className="font-display text-lg text-ink">{feedback}</p>}
+        {roundState.feedback === "try-again" ? (
+          <p className="font-display text-lg text-ink">
+            Keep that card here. Listen once more and try again.
+          </p>
+        ) : null}
       </div>
     </div>
   );

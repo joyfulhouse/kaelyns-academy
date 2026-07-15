@@ -14,6 +14,7 @@ const roundResponse = z
     roundIndex: z.number().int().min(0).max(7),
     choiceIndex: z.number().int().min(0).max(5),
     attempts: z.number().int().min(1).max(20),
+    usedHelp: z.boolean(),
   })
   .strict();
 
@@ -71,13 +72,27 @@ export function score(
 ): ActivityScore {
   assertCompleteCorrectRounds(config, response);
   const total = normalizeSightwordRounds(config).length;
-  const firstTry = response.rounds.filter((round) => round.attempts === 1).length;
-  const rate = total === 0 ? 1 : firstTry / total;
+  const independence = response.rounds.reduce((sum, round) => {
+    const firstTry = round.attempts === 1 ? 1 : 0;
+    return sum + (round.usedHelp ? Math.min(firstTry, 0.5) : firstTry);
+  }, 0);
+  const starRate = total === 0 ? 1 : independence / total;
+  const unhelped = response.rounds.filter((round) => !round.usedHelp);
+  const unhelpedRate =
+    unhelped.length === 0
+      ? 0
+      : unhelped.filter((round) => round.attempts === 1).length / unhelped.length;
+  const evidenceRate = response.rounds.some((round) => round.usedHelp)
+    ? Math.min(unhelpedRate, 0.5)
+    : unhelpedRate;
   return {
     correct: total,
     total,
-    stars: starsFromAccuracy(rate),
-    skillEvidence: evenSkillEvidence(skillsAffected(config), outcomeFromAccuracy(rate)),
+    stars: starsFromAccuracy(starRate),
+    skillEvidence:
+      unhelped.length === 0
+        ? []
+        : evenSkillEvidence(skillsAffected(config), outcomeFromAccuracy(evidenceRate)),
   };
 }
 

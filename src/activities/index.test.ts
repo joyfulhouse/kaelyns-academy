@@ -14,7 +14,7 @@ const VALID_RESPONSES = {
     builds: [{ wordIndex: 0, tileIndices: [0], attempts: 1 }],
   },
   "sightword-game": {
-    rounds: [{ roundIndex: 0, choiceIndex: 0, attempts: 1 }],
+    rounds: [{ roundIndex: 0, choiceIndex: 0, attempts: 1, usedHelp: false }],
   },
   "math-tenframe": {
     mode: "represent",
@@ -74,6 +74,7 @@ const OVER_BOUNDED_RESPONSES = {
       roundIndex,
       choiceIndex: 0,
       attempts: 1,
+      usedHelp: false,
     })),
   },
   "math-tenframe": {
