@@ -15,6 +15,10 @@ test("set mode manipulates one coupled analog time with pointer, keyboard, and t
 
   const minuteHand = page.getByRole("slider", { name: "Minute hand" });
   const hourHand = page.getByRole("slider", { name: "Hour hand" });
+  const check = page.getByRole("button", { name: "Check it" });
+  await expect(check).toBeDisabled();
+  await expect(page.getByRole("button", { name: /by 30 minutes/i })).toHaveCount(0);
+
   const minuteHitTarget = page.getByTestId("minute-hand-hit-target");
   const hitWidth = await minuteHitTarget.evaluate((line) => {
     const strokeWidth = Number(line.getAttribute("stroke-width"));
@@ -37,6 +41,7 @@ test("set mode manipulates one coupled analog time with pointer, keyboard, and t
 
   await expect(page.getByText("Current time: 12:30")).toBeVisible();
   await expect(hourHand).toHaveAttribute("data-angle", "15");
+  await expect(check).toBeEnabled();
 
   await minuteHand.focus();
   await minuteHand.press("ArrowRight");
@@ -44,19 +49,33 @@ test("set mode manipulates one coupled analog time with pointer, keyboard, and t
   await minuteHand.press("ArrowLeft");
   await expect(page.getByText("Current time: 12:30")).toBeVisible();
 
-  await page.getByRole("button", { name: "Earlier by 30 minutes" }).click();
-  await expect(page.getByText("Current time: 12:00")).toBeVisible();
-  await page.getByRole("button", { name: "Later by 30 minutes" }).click();
+  await minuteHand.click();
+  await expect(page.getByText("Current time: 1:00")).toBeVisible();
+  await minuteHand.press("ArrowLeft");
   await expect(page.getByText("Current time: 12:30")).toBeVisible();
 
-  await page.getByRole("button", { name: "Check it" }).click();
+  await check.click();
   await expect(page.getByText("That time is not quite right. Keep the hands and try again.")).toBeVisible();
   await expect(page.getByText("Current time: 12:30")).toBeVisible();
 
-  await page.getByRole("button", { name: "Earlier by 30 minutes" }).click();
-  await page.getByRole("button", { name: "Earlier by 30 minutes" }).click();
+  await expect(minuteHand).toHaveAttribute("aria-disabled", "false");
+  await minuteHand.press("ArrowLeft");
+  await minuteHand.press("ArrowLeft");
   await expect(page.getByText("Current time: 11:30")).toBeVisible();
-  await page.getByRole("button", { name: "Check it" }).click();
+  await check.click();
 
   await expectSingleHostReward(page);
+});
+
+test("read mode names the analog task without announcing the digital answer", async ({
+  page,
+}) => {
+  await page.goto("/learn/kaelyn-adaptive/life-skills-math/lsm-time-read-1");
+
+  await expect(
+    page.getByRole("img", {
+      name: "Analog clock face. Read the hour and minute hands, then choose the matching digital time.",
+    }),
+  ).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByRole("img", { name: /3:00/ })).toHaveCount(0);
 });

@@ -2,11 +2,6 @@
 
 import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { motion } from "motion/react";
-import {
-  ArrowCounterClockwiseIcon,
-  ArrowLeftIcon,
-  ArrowRightIcon,
-} from "@phosphor-icons/react/dist/ssr";
 import type { MathClockConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { Button } from "@/components/ui/Button";
@@ -47,6 +42,7 @@ export function MathClockPlayer({
 
   const [attempts, setAttempts] = useState(0);
   const [totalMinutes, setTotalMinutes] = useState(0);
+  const [hasManipulatedHands, setHasManipulatedHands] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
   useSpeakOnce(speech.speak, parsed.instruction);
@@ -65,18 +61,17 @@ export function MathClockPlayer({
     shake.trigger({ speak: () => speech.speak("Try another time.") });
   }
 
-  function changeTime(nextTotalMinutes: number) {
+  function changeTimeFromHands(nextTotalMinutes: number) {
     if (shake.wrong) return;
+    const normalized = normalizeHalfHour(nextTotalMinutes);
+    if (normalized === totalMinutes) return;
     setFeedback(null);
-    setTotalMinutes(normalizeHalfHour(nextTotalMinutes));
-  }
-
-  function stepTime(delta: number) {
-    changeTime(totalMinutes + delta);
+    setHasManipulatedHands(true);
+    setTotalMinutes(normalized);
   }
 
   function check() {
-    if (parsed.mode !== "set" || shake.wrong) return;
+    if (parsed.mode !== "set" || shake.wrong || !hasManipulatedHands) return;
     const attemptCount = Math.min(attempts + 1, 20);
     setAttempts(attemptCount);
     if (totalMinutes === authoredTime(parsed.targetHour, parsed.targetMinute)) {
@@ -101,7 +96,7 @@ export function MathClockPlayer({
           totalMinutes={shownTotalMinutes}
           interactive={parsed.mode === "set"}
           disabled={shake.wrong}
-          onChange={changeTime}
+          onChange={changeTimeFromHands}
         />
 
         {parsed.mode === "read" ? (
@@ -123,30 +118,7 @@ export function MathClockPlayer({
               </button>
             ))}
           </div>
-        ) : (
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            <Button
-              variant="soft"
-              size="md"
-              onClick={() => stepTime(-30)}
-              disabled={shake.wrong}
-              aria-label="Earlier by 30 minutes"
-            >
-              <ArrowLeftIcon weight="bold" aria-hidden="true" />
-              Earlier
-            </Button>
-            <Button
-              variant="soft"
-              size="md"
-              onClick={() => stepTime(30)}
-              disabled={shake.wrong}
-              aria-label="Later by 30 minutes"
-            >
-              Later
-              <ArrowRightIcon weight="bold" aria-hidden="true" />
-            </Button>
-          </div>
-        )}
+        ) : null}
       </motion.div>
 
       <ProgressHint>
@@ -156,7 +128,7 @@ export function MathClockPlayer({
               Current time: {displayTime(totalMinutes)}
             </span>
             <span className="block">
-              Move either hand, use the arrow keys, or tap Earlier and Later.
+              Drag or tap either hand. You can also focus a hand and use the arrow keys.
             </span>
           </>
         ) : (
@@ -166,21 +138,14 @@ export function MathClockPlayer({
       </ProgressHint>
 
       <PlayerControls>
-        {parsed.mode === "set" ? (
-          <Button
-            variant="soft"
-            size="md"
-            onClick={() => changeTime(0)}
-            disabled={(totalMinutes === 0 && feedback === null) || shake.wrong}
-            aria-label="Reset clock to 12:00"
-          >
-            <ArrowCounterClockwiseIcon weight="bold" aria-hidden="true" />
-            Reset
-          </Button>
-        ) : null}
         <SpeakerButton speech={speech} text={parsed.instruction} label="Hear what to do again" />
         {parsed.mode === "set" ? (
-          <Button variant="primary" size="kid" onClick={check} disabled={shake.wrong}>
+          <Button
+            variant="primary"
+            size="kid"
+            onClick={check}
+            disabled={shake.wrong || !hasManipulatedHands}
+          >
             Check it
           </Button>
         ) : null}
@@ -226,6 +191,7 @@ interface DragState {
   startTotalMinutes: number;
   startPointerAngle: number;
   lastPointerAngle: number;
+  changed: boolean;
 }
 
 function ClockFace({
@@ -254,6 +220,7 @@ function ClockFace({
       startTotalMinutes: totalMinutes,
       startPointerAngle: angle,
       lastPointerAngle: angle,
+      changed: false,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
@@ -265,18 +232,20 @@ function ClockFace({
     const wrapped = pointerAngle(event.clientX, event.clientY, svgRef.current.getBoundingClientRect());
     const unwrapped = unwrapAngle(active.lastPointerAngle, wrapped);
     active.lastPointerAngle = unwrapped;
-    onChange(
-      snapPointerToHalfHour(
-        active.startTotalMinutes,
-        unwrapped - active.startPointerAngle,
-        active.hand,
-      ),
+    const nextTotalMinutes = snapPointerToHalfHour(
+      active.startTotalMinutes,
+      unwrapped - active.startPointerAngle,
+      active.hand,
     );
+    if (nextTotalMinutes !== active.startTotalMinutes) active.changed = true;
+    onChange(nextTotalMinutes);
   }
 
   function endDrag(event: PointerEvent<SVGGElement>) {
-    if (drag.current?.pointerId !== event.pointerId) return;
+    const active = drag.current;
+    if (!active || active.pointerId !== event.pointerId) return;
     drag.current = null;
+    if (!active.changed) onChange(active.startTotalMinutes + 30);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -314,7 +283,7 @@ function ClockFace({
   const role = interactive ? "group" : "img";
   const label = interactive
     ? `Interactive clock showing ${timeLabel}`
-    : `Clock showing ${timeLabel}`;
+    : "Analog clock face. Read the hour and minute hands, then choose the matching digital time.";
 
   return (
     <svg
