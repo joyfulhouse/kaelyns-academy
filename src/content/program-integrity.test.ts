@@ -83,6 +83,7 @@ function successfulResponse(activity: Activity): unknown {
           wordIndex,
           tileIndices: tileIndexesForWord(config, word),
           attempts: 1,
+          usedHelp: false,
         })),
       };
     case "sightword-game":

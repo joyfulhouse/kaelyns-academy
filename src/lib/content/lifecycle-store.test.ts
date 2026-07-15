@@ -86,6 +86,7 @@ vi.mock("@/lib/db", () => ({
       activityKey: {},
       kind: {},
       config: {},
+      skillTags: {},
     },
   },
 }));
@@ -270,6 +271,7 @@ describe("publishVersion (draft-status guard)", () => {
         lessonId: "l1",
         activityKey: "journal",
         kind: "journal-prompt",
+        skillTags: [],
         config: { prompt: "Draw one true thing." },
       },
     ];
@@ -303,6 +305,7 @@ describe("publishVersion (draft-status guard)", () => {
         lessonId: "l1",
         activityKey: "same-key",
         kind: "math-clock",
+        skillTags: ["math.time"],
         config: { mode: "set", instruction: "Set it.", targetHour: 3, targetMinute: 0 },
       },
       {
@@ -310,11 +313,34 @@ describe("publishVersion (draft-status guard)", () => {
         lessonId: "l1",
         activityKey: "same-key",
         kind: "math-clock",
+        skillTags: ["math.time"],
         config: { mode: "set", instruction: "Set it.", targetHour: 4, targetMinute: 30 },
       },
     ];
 
     await expect(publishVersion("v1")).rejects.toBeInstanceOf(DuplicateKeyError);
+    expect(txOps).not.toContain("update:archived");
+    expect(txOps).not.toContain("update:published");
+  });
+
+  it("rejects a stored activity whose outer skills do not match runtime routing", async () => {
+    versionFindFirst.value = { id: "v1", programId: "p1", status: "draft" };
+    findManyRows.units = [{ id: "u1", programVersionId: "v1" }];
+    findManyRows.lessons = [{ id: "l1", unitId: "u1" }];
+    findManyRows.activities = [
+      {
+        id: "a1",
+        lessonId: "l1",
+        activityKey: "clock",
+        kind: "math-clock",
+        skillTags: ["math.money"],
+        config: { mode: "set", instruction: "Set it.", targetHour: 3, targetMinute: 0 },
+      },
+    ];
+
+    await expect(publishVersion("v1")).rejects.toThrow(
+      /runtime skill is missing from outer skills: math\.time/,
+    );
     expect(txOps).not.toContain("update:archived");
     expect(txOps).not.toContain("update:published");
   });
@@ -378,7 +404,12 @@ describe("saveVersionTree (Fix-F B2: in-tx draft re-check)", () => {
   };
 
   function inputWithActivities(
-    activities: { activityKey: string; kind: string; config: unknown }[],
+    activities: {
+      activityKey: string;
+      kind: string;
+      config: unknown;
+      skillTags?: string[];
+    }[],
   ) {
     return {
       metadata: { title: "T", languages: ["en-US"] },
@@ -395,7 +426,7 @@ describe("saveVersionTree (Fix-F B2: in-tx draft re-check)", () => {
                 ...activity,
                 title: activity.activityKey,
                 band: "ready",
-                skillTags: [],
+                skillTags: activity.skillTags ?? [],
                 standardTags: [],
               })),
             },
@@ -488,6 +519,7 @@ describe("saveVersionTree (Fix-F B2: in-tx draft re-check)", () => {
       {
         activityKey: "clock",
         kind: "math-clock",
+        skillTags: ["math.time"],
         config: {
           mode: "read",
           instruction: "Read the clock",

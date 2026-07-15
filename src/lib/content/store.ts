@@ -7,6 +7,7 @@
  */
 import { eq, max, and, desc, inArray } from "drizzle-orm";
 import { validatePlayableActivityConfig } from "@/activities/definitions";
+import { exactSkillRoutingIssue } from "@/activities/skill-routing";
 import type { Activity, Band, Program, SkillTag, Unit, Lesson, World } from "@/content/types";
 import { firstConfigIssueMessage } from "@/content/validate";
 import { captureNonCritical } from "@/lib/capture";
@@ -136,6 +137,15 @@ function assembleActivity(row: ActivityRow): Activity | null {
         : result.reason === "unplayable"
           ? new Error(`Unplayable activity config: ${result.message} (id=${row.id})`)
           : result.error,
+    );
+    return null;
+  }
+
+  const routingIssue = exactSkillRoutingIssue(row.kind, result.data, row.skillTags);
+  if (routingIssue) {
+    captureNonCritical(
+      "activity skill routing invalid",
+      new Error(`${routingIssue} (id=${row.id})`),
     );
     return null;
   }
@@ -427,6 +437,7 @@ function canonicalActivityConfig(
   activityKey: string,
   kind: string,
   config: unknown,
+  skillTags: readonly string[],
 ): unknown {
   const result = validatePlayableActivityConfig(kind, config);
   if (!result.ok) {
@@ -437,6 +448,10 @@ function canonicalActivityConfig(
           ? result.message
           : firstConfigIssueMessage(result.error, { fallback: "invalid config" });
     throw new ActivityConfigValidationError(activityKey, message);
+  }
+  const routingIssue = exactSkillRoutingIssue(kind, result.data, skillTags);
+  if (routingIssue) {
+    throw new ActivityConfigValidationError(activityKey, routingIssue);
   }
   return result.data;
 }
@@ -737,11 +752,12 @@ export async function saveVersionTree(
       ...lesson,
       activities: lesson.activities.map((activity) => ({
         ...activity,
-        config: canonicalActivityConfig(
-          activity.activityKey,
-          activity.kind,
-          activity.config,
-        ),
+          config: canonicalActivityConfig(
+            activity.activityKey,
+            activity.kind,
+            activity.config,
+            activity.skillTags,
+          ),
       })),
     })),
   }));
@@ -859,6 +875,7 @@ export async function publishVersion(versionId: string): Promise<void> {
               activityKey: schema.activity.activityKey,
               kind: schema.activity.kind,
               config: schema.activity.config,
+              skillTags: schema.activity.skillTags,
             })
             .from(schema.activity)
             .where(inArray(schema.activity.lessonId, lessonIds));
@@ -875,6 +892,7 @@ export async function publishVersion(versionId: string): Promise<void> {
         activityRow.activityKey,
         activityRow.kind,
         activityRow.config,
+        activityRow.skillTags,
       );
       await tx
         .update(schema.activity)

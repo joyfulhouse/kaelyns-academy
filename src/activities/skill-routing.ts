@@ -3,8 +3,8 @@ import { getSkill } from "@/content/skills";
 import type { SkillTag } from "@/content/types";
 import { getServerActivityType, validatePlayableActivityConfig } from "./definitions";
 
-function duplicateSkill(skills: readonly SkillTag[]): SkillTag | undefined {
-  const seen = new Set<SkillTag>();
+function duplicateSkill(skills: readonly string[]): string | undefined {
+  const seen = new Set<string>();
   for (const skill of skills) {
     if (seen.has(skill)) return skill;
     seen.add(skill);
@@ -21,9 +21,9 @@ function duplicateSkill(skills: readonly SkillTag[]): SkillTag | undefined {
  * PURE + server-safe: no DB, browser component, or provider import.
  */
 export function exactSkillRoutingIssue(
-  kind: ActivityKind,
+  kind: string,
   config: unknown,
-  outerSkills: readonly SkillTag[],
+  outerSkills: readonly string[],
 ): string | null {
   const playable = validatePlayableActivityConfig(kind, config);
   if (!playable.ok) return `invalid or unplayable ${kind} config`;
@@ -35,7 +35,7 @@ export function exactSkillRoutingIssue(
 
   let runtimeSkills: SkillTag[];
   try {
-    runtimeSkills = getServerActivityType(kind).skillsAffected(playable.data);
+    runtimeSkills = getServerActivityType(kind as ActivityKind).skillsAffected(playable.data);
   } catch {
     return `${kind} runtime skill routing failed`;
   }

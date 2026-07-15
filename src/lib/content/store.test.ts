@@ -128,9 +128,15 @@ describe("assembleProgram", () => {
           blurb: null,
           estMinutes: 5,
           band: "ready",
-          skillTags: ["math.counting"],
+          skillTags: ["math.add.make-ten"],
           standardTags: [],
-          config: { instruction: "Count the dots", mode: "represent", target: 5 },
+          config: {
+            instruction: "Make ten, then keep going.",
+            mode: "make-ten",
+            target: 5,
+            addend: 7,
+            frames: 2,
+          },
         },
         {
           id: "a1",
@@ -142,9 +148,15 @@ describe("assembleProgram", () => {
           blurb: null,
           estMinutes: 5,
           band: "ready",
-          skillTags: ["math.counting"],
+          skillTags: ["math.add.make-ten"],
           standardTags: [],
-          config: { instruction: "Count the dots", mode: "represent", target: 3 },
+          config: {
+            instruction: "Make ten, then keep going.",
+            mode: "make-ten",
+            target: 3,
+            addend: 8,
+            frames: 2,
+          },
         },
       ],
     };
@@ -223,7 +235,7 @@ describe("assembleProgram", () => {
           blurb: null,
           estMinutes: 5,
           band: "ready",
-          skillTags: ["reading.sight"],
+          skillTags: [],
           standardTags: [],
           config: {
             instruction: "Find the word.",
@@ -288,9 +300,15 @@ describe("assembleProgram", () => {
           blurb: "Use ten frames",
           estMinutes: 10,
           band: "stretch",
-          skillTags: ["math.tenframe"],
+          skillTags: ["math.add.make-ten"],
           standardTags: ["CCSS.MATH.1.OA"],
-          config: { instruction: "Show 7 on the ten frame", mode: "represent", target: 7 },
+          config: {
+            instruction: "Make ten, then keep going.",
+            mode: "make-ten",
+            target: 7,
+            addend: 5,
+            frames: 2,
+          },
         },
       ],
     };
@@ -304,10 +322,10 @@ describe("assembleProgram", () => {
     expect(activity.blurb).toBe("Use ten frames");
     expect(activity.estMinutes).toBe(10);
     expect(activity.band).toBe("stretch");
-    expect(activity.skillTags).toEqual(["math.tenframe"]);
+    expect(activity.skillTags).toEqual(["math.add.make-ten"]);
     if (activity.kind === "math-tenframe") {
       expect(activity.config.target).toBe(7);
-      expect(activity.config.mode).toBe("represent");
+      expect(activity.config.mode).toBe("make-ten");
     }
   });
 
@@ -351,9 +369,15 @@ describe("assembleProgram", () => {
           blurb: null,
           estMinutes: 5,
           band: "ready",
-          skillTags: [],
+          skillTags: ["math.add.make-ten"],
           standardTags: [],
-          config: { instruction: "Count", mode: "represent", target: 4 },
+          config: {
+            instruction: "Make ten.",
+            mode: "make-ten",
+            target: 4,
+            addend: 7,
+            frames: 2,
+          },
         },
         {
           id: "bad-act",
