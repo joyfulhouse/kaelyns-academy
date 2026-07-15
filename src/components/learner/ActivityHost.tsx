@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
@@ -11,7 +11,7 @@ import {
   SparkleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import type { Activity, ActivityScore, Unit, World } from "@/content";
-import { findActivity, getSkill, getUnit } from "@/content";
+import { getSkill } from "@/content";
 import { ensureLessonPractice } from "@/app/(learner)/actions";
 import { isGenerableKind } from "@/lib/ai/generable";
 import "@/activities"; // side-effect: registers every available activity-type plugin
@@ -31,6 +31,12 @@ import { shouldAutoRead } from "@/lib/content/config";
 import { accountLearnerSelectionRequired } from "./learnerAccess";
 import { AccountLearnerPicker } from "./AccountLearnerPicker";
 import { AccountSessionError } from "./AccountSessionError";
+import { KidLoadingShell } from "@/components/boundaries/KidLoadingShell";
+import {
+  playerIdentityKey,
+  resolvePlayableActivity,
+  safeParsePlayerConfig,
+} from "./activityResolution";
 
 /** How many AI-generated items may be played back to back, so the loop stays
  *  bounded no matter how much a child taps "more". */
@@ -123,20 +129,24 @@ export function ActivityHost({
   const [phase, setPhase] = useState<Phase>({ kind: "play" });
   const [generatedCount, setGeneratedCount] = useState(0);
 
-  // Version pinning (Fix-E Layer 2): resolve the activity + its owning unit from
-  // the learner's PINNED tree, falling back to the server's published activity
-  // only while that tree is loading (or in guest mode). findActivity/getUnit key
-  // on the stable authored keys, so the same key resolves in either tree.
-  const pinnedFound = program ? findActivity(program, activityKey) : undefined;
-  const effectiveActivity: Activity | null = pinnedFound?.activity ?? ssrActivity;
-  // The owning unit drives the world theme + the next/back links. Prefer the
-  // pinned activity's own unit; else the pinned tree's unit for the route key
-  // (a pinned activity whose route unitKey still resolves); else the server's
-  // published unit (guest mode / pre-hydration, so the in-unit "Next" link and
-  // world theme work without a pinned tree).
-  const pinnedUnit: Unit | null =
-    pinnedFound?.unit ?? (program ? getUnit(program, unitKey) : undefined) ?? null;
-  const effectiveUnit: Unit | null = pinnedUnit ?? ssrUnit;
+  // Fail closed until the surface mode + selected account learner's pinned tree
+  // are ready. Account mode never falls back to the published SSR activity, and
+  // the activity must belong to the exact route unit (a duplicate id elsewhere
+  // in the program cannot satisfy this route). Guests use the exact SSR unit.
+  const resolution = resolvePlayableActivity({
+    mode,
+    ready,
+    available,
+    program,
+    activeUnitKeys: config.activeUnitKeys,
+    unitKey,
+    activityKey,
+    ssrUnit,
+    ssrActivity,
+  });
+  const effectiveActivity: Activity | null =
+    resolution.status === "ready" ? resolution.activity : null;
+  const effectiveUnit: Unit | null = resolution.status === "ready" ? resolution.unit : null;
 
   // back = the world map for this (pinned) unit, by its stable key from params.
   const backHref = `/learn/${programSlug}/${unitKey}`;
@@ -148,56 +158,58 @@ export function ActivityHost({
   const effectiveWorld: World = effectiveUnit?.world ?? world;
 
   const activityType = effectiveActivity ? getActivityType(effectiveActivity.kind) : undefined;
+  const authoredConfig =
+    activityType && effectiveActivity
+      ? safeParsePlayerConfig(activityType.schema, effectiveActivity.config)
+      : null;
 
   // The authored activity records both star progress and skill evidence. Guarded
   // on the resolved activity so the callbacks stay declared unconditionally
   // (rules-of-hooks) while the "moved" state below short-circuits the render.
-  const handleComplete = useCallback(
-    (response: unknown, score: ActivityScore) => {
-      if (!effectiveActivity) return;
-      stopSpeaking();
-      record(effectiveActivity, response, score);
-      setPhase({ kind: "reward", stars: score.stars });
-      // Eager shelf warm-up (B3 §4): once an authored activity is done, nudge the
-      // server to fill this lesson's "fresh practice" shelf. Fire-and-forget and
-      // idempotent — the server no-ops unless this completion finished the lesson,
-      // so the kid never waits and repeat completions don't over-generate.
-      // Belt-and-suspenders (final review Critical): never even ask on a
-      // baseline/mid/final CHECK-IN unit — a check-in must not grow practice whose
-      // evidence folds into skill_state (C1 placement integrity). The server guard
-      // in ensureLessonPractice is authoritative; this just skips the round-trip.
-      if (signedIn && selectedLearnerId && !effectiveUnit?.checkpoint) {
-        void ensureLessonPractice({
-          learnerId: selectedLearnerId,
-          programSlug,
-          activityId: effectiveActivity.id,
-        }).catch(() => {});
-      }
-    },
-    [effectiveActivity, effectiveUnit, record, signedIn, selectedLearnerId, programSlug],
-  );
+  const handleComplete = (response: unknown, score: ActivityScore) => {
+    if (!effectiveActivity) return;
+    stopSpeaking();
+    record(effectiveActivity, response, score);
+    setPhase({ kind: "reward", stars: score.stars });
+    // Eager shelf warm-up (B3 §4): once an authored activity is done, nudge the
+    // server to fill this lesson's "fresh practice" shelf. Fire-and-forget and
+    // idempotent — the server no-ops unless this completion finished the lesson,
+    // so the kid never waits and repeat completions don't over-generate.
+    // Belt-and-suspenders (final review Critical): never even ask on a
+    // baseline/mid/final CHECK-IN unit — a check-in must not grow practice whose
+    // evidence folds into skill_state (C1 placement integrity). The server guard
+    // in ensureLessonPractice is authoritative; this just skips the round-trip.
+    if (signedIn && selectedLearnerId && !effectiveUnit?.checkpoint) {
+      void ensureLessonPractice({
+        learnerId: selectedLearnerId,
+        programSlug,
+        activityId: effectiveActivity.id,
+      }).catch(() => {});
+    }
+  };
 
   // A generated practice item records skill evidence too (it exercises the same
   // skills), but not star progress: it isn't an authored, trackable activity. The
   // `gen` provenance (from /api/practice) is relayed so the attempt records which
   // model/route/when made it (P6 / §8); null when generation returned none.
-  const handlePracticeComplete = useCallback(
-    (response: unknown, score: ActivityScore, gen: GenProvenance | null) => {
-      if (!effectiveActivity) return;
-      stopSpeaking();
-      record(effectiveActivity, response, score, {
-        generated: true,
-        ...(gen ? { gen } : undefined),
-      });
-      setPhase({ kind: "reward", stars: score.stars });
-    },
-    [effectiveActivity, record],
-  );
+  const handlePracticeComplete = (
+    response: unknown,
+    score: ActivityScore,
+    gen: GenProvenance | null,
+  ) => {
+    if (!effectiveActivity) return;
+    stopSpeaking();
+    record(effectiveActivity, response, score, {
+      generated: true,
+      ...(gen ? { gen } : undefined),
+    });
+    setPhase({ kind: "reward", stars: score.stars });
+  };
 
-  const handleExit = useCallback(() => {
+  const handleExit = () => {
     stopSpeaking();
     router.push(backHref);
-  }, [router, backHref]);
+  };
 
   // Ask the bounded generator for one more item at this activity's level. Two
   // flows, matching /api/practice: a SIGNED-IN account sends only IDENTIFIERS and
@@ -205,7 +217,7 @@ export function ActivityHost({
   // activity (the model can't be steered off-curriculum from here); a GUEST
   // (public "explore") has no enrollment, so it sends the bounded params
   // directly. Output stays schema-validated server-side either way.
-  const handleMore = useCallback(async () => {
+  const handleMore = async () => {
     if (!effectiveActivity) return;
     stopSpeaking();
     setPhase({ kind: "generating" });
@@ -267,7 +279,7 @@ export function ActivityHost({
     } finally {
       clearTimeout(timer);
     }
-  }, [effectiveActivity, signedIn, selectedLearnerId, programSlug, config.band]);
+  };
 
   if (mode === "error") {
     return <AccountSessionError backHref={backHref} retry={learnerState.retrySession} />;
@@ -277,27 +289,22 @@ export function ActivityHost({
     return <AccountLearnerPicker state={learnerState} />;
   }
 
-  // Account-mode curation gate (Fix-F A3), checked AFTER every hook above so hook
-  // order stays stable. Enforced ONLY in account mode and ONLY once state has
-  // loaded (`ready`) — guest mode is unaffected and the loading beat isn't a
-  // flash-of-block. Blocked when the program isn't playable (available:false) OR
-  // this route's unit key is curated out of a non-empty activeUnitKeys (closes
-  // the direct-URL hole for the activity route, mirroring UnitView + the map).
-  const curatedOut =
-    config.activeUnitKeys !== undefined &&
-    config.activeUnitKeys.length > 0 &&
-    !config.activeUnitKeys.includes(unitKey);
-  if (mode === "account" && ready && (!available || curatedOut)) {
+  if (resolution.status === "loading") {
+    return <ActivityReadyLoading />;
+  }
+
+  if (resolution.status === "blocked") {
     return <NotAssigned programSlug={programSlug} />;
   }
 
-  // The key resolved in neither the pinned nor the published tree → the activity
-  // moved out of the learner's version (or a bogus URL). Calm "moved" state, not
-  // a crash. Declared AFTER every hook above so hook order stays stable.
-  if (!effectiveActivity) {
+  // Missing exact-unit content and malformed plugin config share one calm
+  // recovery posture. safeParse above never lets malformed content reach Player.
+  if (resolution.status === "moved" || authoredConfig?.status === "malformed") {
     return <ActivityMoved backHref={backHref} programSlug={programSlug} />;
   }
-  const activity = effectiveActivity;
+  const activity = resolution.activity;
+  const unit = resolution.unit;
+  const learnerIdentity = selectedLearnerId ?? learner.id;
 
   // Auto-offer more when this activity's primary skill is still emerging, and
   // only while we're under the generation cap and the kind is renderable.
@@ -339,25 +346,62 @@ export function ActivityHost({
               nextHref={nextHref}
             />
           ) : phase.kind === "practice" && activityType ? (
-            <PlayerFrame key={`practice-${generatedCount}`}>
-              <activityType.Player
-                config={phase.config}
-                learnerContext={
-                  signedIn && selectedLearnerId
-                    ? { learnerId: selectedLearnerId, programSlug, oralReading: config.oralReading === true }
-                    : undefined
-                }
-                // Relay this generated item's provenance to the recorder (P6 / §8).
-                onComplete={(response, score) =>
-                  handlePracticeComplete(response, score, phase.gen)
-                }
-                onExit={handleExit}
-              />
-            </PlayerFrame>
+            (() => {
+              const parsedPractice = safeParsePlayerConfig(activityType.schema, phase.config);
+              if (parsedPractice.status === "malformed") {
+                return (
+                  <PracticeFailed
+                    key="practice-malformed"
+                    backHref={backHref}
+                    nextHref={nextHref}
+                  />
+                );
+              }
+              const practiceKey = playerIdentityKey({
+                learnerId: learnerIdentity,
+                programSlug,
+                unitKey: unit.id,
+                activityKey: activity.id,
+                kind: activity.kind,
+                variant: "generated-practice",
+                sequence: generatedCount,
+                content: activity,
+                config: parsedPractice.config,
+              });
+              return (
+                <PlayerFrame key={practiceKey}>
+                  <activityType.Player
+                    config={parsedPractice.config}
+                    learnerContext={
+                      signedIn && selectedLearnerId
+                        ? { learnerId: selectedLearnerId, programSlug, oralReading: config.oralReading === true }
+                        : undefined
+                    }
+                    // Relay this generated item's provenance to the recorder (P6 / §8).
+                    onComplete={(response, score) =>
+                      handlePracticeComplete(response, score, phase.gen)
+                    }
+                    onExit={handleExit}
+                  />
+                </PlayerFrame>
+              );
+            })()
           ) : activityType ? (
-            <PlayerFrame key="play">
+            <PlayerFrame
+              key={playerIdentityKey({
+                learnerId: learnerIdentity,
+                programSlug,
+                unitKey: unit.id,
+                activityKey: activity.id,
+                kind: activity.kind,
+                variant: "authored",
+                sequence: 0,
+                content: activity,
+                config: authoredConfig?.status === "ready" ? authoredConfig.config : activity.config,
+              })}
+            >
               <activityType.Player
-                config={activity.config}
+                config={authoredConfig?.status === "ready" ? authoredConfig.config : activity.config}
                 learnerContext={
                   signedIn && selectedLearnerId
                     ? { learnerId: selectedLearnerId, programSlug, oralReading: config.oralReading === true }
@@ -374,6 +418,17 @@ export function ActivityHost({
         </ReadAloudDefaultProvider>
       </AppShellKid>
     </div>
+  );
+}
+
+function ActivityReadyLoading() {
+  return (
+    <KidLoadingShell ariaLabel="Getting this ready" message="Getting this ready..." mood="think">
+      <div
+        aria-hidden
+        className="mt-9 h-72 w-full rounded-2xl border-[3px] border-ink bg-accent/8 shadow-pop motion-safe:animate-pulse"
+      />
+    </KidLoadingShell>
   );
 }
 
