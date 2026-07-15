@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isCorrect, score, skillsAffected, validateGenerated } from "./logic";
+import { isCorrect, responseSchema, score, skillsAffected, validateGenerated } from "./logic";
 
 const compareCfg = {
   mode: "compare" as const,
@@ -22,10 +22,43 @@ const unitsCfg = {
 };
 
 describe("isCorrect", () => {
-  it("both modes match the selected choice index", () => {
+  it("compare derives the answer from the requested size extreme", () => {
     expect(isCorrect(compareCfg, { attempts: 1, selectedIndex: 0 })).toBe(true);
     expect(isCorrect(compareCfg, { attempts: 1, selectedIndex: 1 })).toBe(false);
-    expect(isCorrect(unitsCfg, { attempts: 1, selectedIndex: 1 })).toBe(true);
+    expect(
+      isCorrect({ ...compareCfg, answerIndex: 1 }, { attempts: 1, selectedIndex: 0 }),
+    ).toBe(true);
+  });
+
+  it("units scores the IDs actually placed", () => {
+    expect(
+      isCorrect(unitsCfg, {
+        attempts: 1,
+        placedUnitIds: ["unit-1", "unit-2", "unit-3", "unit-4", "unit-5"],
+      }),
+    ).toBe(true);
+    expect(
+      isCorrect(unitsCfg, { attempts: 1, placedUnitIds: ["unit-1", "unit-2"] }),
+    ).toBe(false);
+  });
+});
+
+describe("responseSchema", () => {
+  it("bounds compare choices and placed unit IDs", () => {
+    expect(responseSchema.safeParse({ attempts: 1, selectedIndex: 3 }).success).toBe(true);
+    expect(responseSchema.safeParse({ attempts: 1, selectedIndex: 4 }).success).toBe(false);
+    expect(
+      responseSchema.safeParse({ attempts: 1, placedUnitIds: ["unit-1", "unit-2"] }).success,
+    ).toBe(true);
+    expect(
+      responseSchema.safeParse({ attempts: 1, placedUnitIds: ["unit-1", "unit-1"] }).success,
+    ).toBe(false);
+    expect(
+      responseSchema.safeParse({
+        attempts: 1,
+        placedUnitIds: Array.from({ length: 13 }, (_, index) => `unit-${index}`),
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -39,12 +72,18 @@ describe("score", () => {
     });
   });
   it("second try → 2 stars emerging", () => {
-    const s = score(unitsCfg, { attempts: 2, selectedIndex: 1 });
+    const s = score(unitsCfg, {
+      attempts: 2,
+      placedUnitIds: ["unit-1", "unit-2", "unit-3", "unit-4", "unit-5"],
+    });
     expect(s.stars).toBe(2);
     expect(s.skillEvidence[0].outcome).toBe("emerging");
   });
   it("third+ try → 1 star not_yet", () => {
-    const s = score(unitsCfg, { attempts: 3, selectedIndex: 1 });
+    const s = score(unitsCfg, {
+      attempts: 3,
+      placedUnitIds: ["unit-1", "unit-2", "unit-3", "unit-4", "unit-5"],
+    });
     expect(s.stars).toBe(1);
     expect(s.skillEvidence[0].outcome).toBe("not_yet");
   });

@@ -7,21 +7,44 @@ import {
   outcomeFromAccuracy,
   starsFromAccuracy,
 } from "../_shared/scoring";
+import { deriveComparisonIndex, placedUnitCount } from "./measure-model";
 
 /** Server-safe schema + scoring for math-measure. No "use client". */
 export const schema = mathMeasureConfig;
 
-/** Both modes are tap-a-choice; the child's pick + attempts. */
-export const responseSchema = z
-  .object({
-    attempts: z.number().int().min(1).max(100),
-    selectedIndex: z.number().int().min(0).max(3),
-  })
-  .strict();
+const measureAttempts = z.number().int().min(1).max(20);
+export const responseSchema = z.union([
+  z
+    .object({
+      attempts: measureAttempts,
+      selectedIndex: z.number().int().min(0).max(3),
+    })
+    .strict(),
+  z
+    .object({
+      attempts: measureAttempts,
+      placedUnitIds: z
+        .array(z.string().min(1).max(24).regex(/^unit-[a-z0-9-]+$/))
+        .max(12)
+        .refine(
+          (unitIds) => new Set(unitIds).size === unitIds.length,
+          "placed unit IDs must be unique",
+        ),
+    })
+    .strict(),
+]);
 export type MathMeasureResponse = z.infer<typeof responseSchema>;
 
 export function isCorrect(config: MathMeasureConfig, response: MathMeasureResponse): boolean {
-  return response.selectedIndex === config.answerIndex;
+  if (config.mode === "compare") {
+    const derived = deriveComparisonIndex(config.attribute, config.question, config.items);
+    return "selectedIndex" in response && derived !== null && response.selectedIndex === derived;
+  }
+  return (
+    "placedUnitIds" in response &&
+    new Set(response.placedUnitIds).size === response.placedUnitIds.length &&
+    placedUnitCount(response.placedUnitIds) === config.length
+  );
 }
 
 export function score(config: MathMeasureConfig, response: MathMeasureResponse): ActivityScore {
@@ -44,10 +67,13 @@ export function skillsAffected(_config: MathMeasureConfig): SkillTag[] {
 export function validateGenerated(config: MathMeasureConfig): string | null {
   if (config.mode === "compare") {
     if (config.answerIndex >= config.items.length) return "answerIndex out of range";
-    const sizes = config.items.map((i) => i.size);
-    const extreme = config.question === "most" ? Math.max(...sizes) : Math.min(...sizes);
-    if (sizes.filter((s) => s === extreme).length !== 1) return "extreme is not unique";
-    return sizes[config.answerIndex] === extreme ? null : "answer is not the extreme";
+    const derived = deriveComparisonIndex(config.attribute, config.question, config.items);
+    if (derived === null) return "extreme is not unique";
+    return config.answerIndex === derived ? null : "answer is not the extreme";
+  }
+  if (config.choices === undefined && config.answerIndex === undefined) return null;
+  if (config.choices === undefined || config.answerIndex === undefined) {
+    return "legacy choices and answerIndex must appear together";
   }
   if (config.answerIndex >= config.choices.length) return "answerIndex out of range";
   if (new Set(config.choices).size !== config.choices.length) return "duplicate choices";
