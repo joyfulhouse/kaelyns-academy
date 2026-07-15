@@ -119,10 +119,10 @@ export function GeneratedPracticeHost({
   // Record identifiers + response facts only. The server re-loads this same
   // learner-owned row and returns the canonical score before reward. Phase keys
   // prevent an older sibling's in-flight save from rendering after a switch.
-  const persistCompletion = async (response: unknown) => {
+  const persistCompletion = async (response: unknown, completionId: string) => {
     if (!row || !requestKey) return;
     stopSpeaking();
-    setPhase({ kind: "saving", requestKey, response });
+    setPhase({ kind: "saving", requestKey, response, completionId });
     const activity = {
       id: row.id,
       title: row.title,
@@ -131,16 +131,27 @@ export function GeneratedPracticeHost({
       kind: row.kind,
       config: row.config,
     } as Activity;
-    const result = await record(activity, response, { generatedActivityId: row.id });
+    let result;
+    try {
+      result = await record(
+        activity,
+        response,
+        { generatedActivityId: row.id },
+        completionId,
+      );
+    } catch {
+      setPhase({ kind: "save-failed", requestKey, response, completionId });
+      return;
+    }
     setPhase(
       result.ok
         ? { kind: "reward", requestKey, stars: result.score.stars }
-        : { kind: "save-failed", requestKey, response },
+        : { kind: "save-failed", requestKey, response, completionId },
     );
   };
 
   const handleComplete = (response: unknown) => {
-    void persistCompletion(response);
+    void persistCompletion(response, globalThis.crypto.randomUUID());
   };
 
   const handleExit = () => {
@@ -217,7 +228,7 @@ export function GeneratedPracticeHost({
             <ShelfSaveFailed
               key="save-failed"
               onRetry={() => {
-                void persistCompletion(phase.response);
+                void persistCompletion(phase.response, phase.completionId);
               }}
               onExit={handleExit}
             />
@@ -248,8 +259,8 @@ export function GeneratedPracticeHost({
 
 type Phase =
   | { kind: "playing" }
-  | { kind: "saving"; requestKey: string; response: unknown }
-  | { kind: "save-failed"; requestKey: string; response: unknown }
+  | { kind: "saving"; requestKey: string; response: unknown; completionId: string }
+  | { kind: "save-failed"; requestKey: string; response: unknown; completionId: string }
   | { kind: "reward"; requestKey: string; stars: 0 | 1 | 2 | 3 };
 
 function GeneratedReadyLoading() {

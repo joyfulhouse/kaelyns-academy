@@ -37,7 +37,7 @@ describe("REQUIRED_COLUMNS coverage (schema-drift canary)", () => {
     );
     expect(REQUIRED_COLUMNS.enrollment).toEqual(expect.arrayContaining(["status", "started_at"]));
     expect(REQUIRED_COLUMNS.attempt).toEqual(
-      expect.arrayContaining(["generated", "response", "created_at"]),
+      expect.arrayContaining(["generated", "response", "completion_id", "created_at"]),
     );
     expect(REQUIRED_COLUMNS.skill_state).toEqual(expect.arrayContaining(["updated_at"]));
   });

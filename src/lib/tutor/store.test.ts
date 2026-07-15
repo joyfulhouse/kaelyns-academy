@@ -51,6 +51,10 @@ const checkpointResultRows = {
 // row (only the just-inserted attempt) so the happy path is a first completion;
 // the repeat-completion test overrides to two rows (prior + just-inserted).
 const attemptRows = { value: [{ id: "new" }] as Record<string, unknown>[] };
+// INSERT ... ON CONFLICT ... RETURNING rows. Empty simulates a duplicate
+// completion id whose original attempt must be replayed without any folds.
+const attemptInsertResultRows = { value: [{ id: "new" }] as Record<string, unknown>[] };
+const attemptReplayRows = { value: [] as Record<string, unknown>[] };
 const completedTodayRows = { value: [] as Record<string, unknown>[] };
 const generatedActivityRows = { value: [] as Record<string, unknown>[] };
 // The day's learner_quest rows (Adventure 2.0 fold); applyAttemptToQuests only
@@ -148,6 +152,9 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
       ops.push({ op: "onConflictDoUpdate", table: chain.table });
       return chain;
     },
+    returning() {
+      return chain;
+    },
     limit(value?: number) {
       chain.limitValue = value;
       return chain;
@@ -163,7 +170,9 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
     then<T>(resolve: (rows: unknown[]) => T) {
       ops.push({ op: chain.op, table: chain.table });
       const rows =
-        chain.op === "select" && chain.table === "learner"
+        chain.op === "insert" && chain.table === "attempt"
+          ? attemptInsertResultRows.value
+          : chain.op === "select" && chain.table === "learner"
           ? learnerRows.value
           : chain.op === "select" && chain.table === "skill_state"
             ? skillRows.value
@@ -172,7 +181,9 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
             : chain.op === "select" && chain.table === "enrollment"
               ? enrollmentRows.value
             : chain.op === "select" && chain.table === "attempt"
-                ? projection && "activityId" in projection
+                ? projection && "score" in projection
+                  ? attemptReplayRows.value
+                  : projection && "activityId" in projection
                   ? completedTodayRows.value.filter((row) => matches(row, chain.predicate))
                   : projection && "response" in projection
                     ? applyQueryShape(
@@ -246,6 +257,8 @@ vi.mock("@/lib/db/schema", () => ({
     activityId: { name: "activityId" },
     kind: { name: "kind" },
     generated: { name: "generated" },
+    completionId: { name: "completionId" },
+    score: { name: "score" },
     response: { name: "response" },
     day: { name: "day" },
     createdAt: { name: "createdAt" },
@@ -342,6 +355,7 @@ import type { Program } from "@/content";
 const input = {
   learnerId: "L1",
   programSlug: "kaelyn-adaptive",
+  completionId: "11111111-1111-4111-8111-111111111111",
   activityId: "act-1",
   kind: "math",
   score: {
@@ -433,6 +447,8 @@ describe("recordAttempt (atomic persistence)", () => {
     skillRows.value = [];
     enrollmentRows.value = [{ id: "E1", status: "active", programSlug: "kaelyn-adaptive" }];
     attemptRows.value = [{ id: "new" }];
+    attemptInsertResultRows.value = [{ id: "new" }];
+    attemptReplayRows.value = [];
     questRows.value = [];
     checkpointResultRows.value = [{ id: "CR1", scores: {} }];
     reviewScheduleRows.value = [];
@@ -459,6 +475,97 @@ describe("recordAttempt (atomic persistence)", () => {
     const learnerIdx = ops.findIndex((o) => o.op === "select" && o.table === "learner");
     expect(learnerIdx).toBeGreaterThanOrEqual(0);
     expect(learnerIdx).toBeLessThan(attemptIdx);
+  });
+
+  it("persists the completion id and returns the stored canonical score", async () => {
+    skillRows.value = [{ id: "S1", evidence: [] }];
+
+    await expect(recordAttempt("acct-1", input)).resolves.toEqual(input.score);
+    expect(attemptInserts[0]).toMatchObject({ completionId: input.completionId });
+    expect(ops).toContainEqual({ op: "onConflictDoNothing", table: "attempt" });
+  });
+
+  it("replays the original score and skips every non-checkpoint fold", async () => {
+    const storedScore = {
+      correct: 1,
+      total: 3,
+      stars: 1 as const,
+      skillEvidence: [{ skill: "math.add", outcome: "emerging" as const }],
+    };
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [
+      {
+        activityId: input.activityId,
+        kind: input.kind,
+        generated: false,
+        score: storedScore,
+      },
+    ];
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+
+    await expect(
+      recordAttempt("acct-1", {
+        ...input,
+        score: { ...input.score, stars: 3 },
+      }),
+    ).resolves.toEqual(storedScore);
+
+    expect(ledgerInserts).toEqual([]);
+    expect(lockedSkills).toEqual([]);
+    expect(reviewScheduleInserts).toEqual([]);
+    expect(questUpdates).toEqual([]);
+    expect(checkpointUpdates).toEqual([]);
+  });
+
+  it("skips the checkpoint fold when replaying a checkpoint completion", async () => {
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [
+      {
+        activityId: input.activityId,
+        kind: input.kind,
+        generated: false,
+        score: input.score,
+      },
+    ];
+
+    await recordAttempt("acct-1", { ...input, checkpointPhase: "baseline" });
+
+    expect(checkpointUpdates).toEqual([]);
+    expect(ops.some((operation) => operation.table === "checkpoint_result")).toBe(false);
+  });
+
+  it.each([
+    ["activity id", { activityId: "act-other" }],
+    ["kind", { kind: "reading" }],
+    ["generated identity", { generated: true }],
+  ])("rejects a completion replay with a different %s", async (_label, identity) => {
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [
+      {
+        activityId: input.activityId,
+        kind: input.kind,
+        generated: false,
+        score: input.score,
+      },
+    ];
+
+    await expect(recordAttempt("acct-1", { ...input, ...identity })).rejects.toThrow(
+      /completion id/i,
+    );
+    expect(ledgerInserts).toEqual([]);
+    expect(lockedSkills).toEqual([]);
+    expect(reviewScheduleInserts).toEqual([]);
+    expect(questUpdates).toEqual([]);
+    expect(checkpointUpdates).toEqual([]);
   });
 
   it("takes the lock-then-update path on an existing skill row (upsert)", async () => {

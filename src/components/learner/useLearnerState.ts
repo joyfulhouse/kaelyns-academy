@@ -90,6 +90,7 @@ export interface UseLearnerState {
     activity: Activity,
     response: unknown,
     source: { unitKey: string } | { generatedActivityId: string },
+    completionId: string,
   ) => Promise<RecordResult>;
   /**
    * The parent-set per-child, per-program enrollment config. Empty object in
@@ -141,6 +142,7 @@ const EMPTY_COMPLETED: ReadonlySet<string> = new Set();
 /** Stable empty shelf so guest/loading returns keep a referentially-stable []. */
 const EMPTY_SHELF: ShelfItem[] = Object.freeze([]) as unknown as ShelfItem[];
 const EMPTY_DUE_REVIEWS: DueReview[] = Object.freeze([]) as unknown as DueReview[];
+type AccountStateLoadOutcome = "loaded" | "error" | "stale";
 
 /** The remembered account-learner id from storage (pure; snapshot-cache safe). */
 function readRememberedAccountLearner(raw: string | null): string | null {
@@ -254,8 +256,19 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   // (async), satisfying react-hooks/set-state-in-effect.
   const reloadToken = useRef(0);
   const loadAccountState = useCallback(
-    async (learnerId: string, slug: string) => {
+    async (learnerId: string, slug: string): Promise<AccountStateLoadOutcome> => {
       const token = ++reloadToken.current;
+      let result;
+      try {
+        result = await getLearnerStateAction(learnerId, slug);
+      } catch {
+        return "error";
+      }
+      // An operational action failure is deliberately non-publishable. In
+      // particular, a post-write reconcile must never replace the last good
+      // progress snapshot with the action's empty error payload.
+      if (!mountedRef.current || token !== reloadToken.current) return "stale";
+      if (result.status === "error") return "error";
       const {
         skillState,
         completedActivityIds,
@@ -265,9 +278,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
         config,
         program,
         available,
-      } = await getLearnerStateAction(learnerId, slug);
-      // Stale-response guard: ignore all but the latest in-flight load.
-      if (!mountedRef.current || token !== reloadToken.current) return;
+      } = result;
       setAccountSkill(skillState);
       setAccountCompleted(new Set(completedActivityIds));
       // Server best-stars become the source of truth on load; this also clears
@@ -283,6 +294,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       // surface shows the calm "ask a grown-up" state in account mode.
       setAccountAvailable(available);
       setLoadedKey(`${learnerId}:${slug}`);
+      return "loaded";
     },
     [],
   );
@@ -297,7 +309,17 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   const accountLearnerToLoad = mode === "account" ? selectedLearnerId : null;
   useEffect(() => {
     if (!accountLearnerToLoad) return;
-    void loadAccountState(accountLearnerToLoad, programSlug);
+    const requestedKey = `${accountLearnerToLoad}:${programSlug}`;
+    void (async () => {
+      const outcome = await loadAccountState(accountLearnerToLoad, programSlug);
+      if (
+        outcome === "error" &&
+        mountedRef.current &&
+        activeAccountKeyRef.current === requestedKey
+      ) {
+        setSessionStatus("error");
+      }
+    })();
   }, [accountLearnerToLoad, programSlug, loadAccountState]);
 
   const selectLearner = useCallback((id: string) => {
@@ -324,7 +346,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
 
   // ── Unified record ────────────────────────────────────────────────────────
   const record = useCallback<UseLearnerState["record"]>(
-    async (activity, response, source) => {
+    async (activity, response, source, completionId) => {
       const destination = recordingDestination(mode, selectedLearnerId);
       if (destination === "account" && selectedLearnerId) {
         const recordKey = `${selectedLearnerId}:${programSlug}`;
@@ -333,12 +355,14 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
             ? {
                 learnerId: selectedLearnerId,
                 programSlug,
+                completionId,
                 generatedActivityId: source.generatedActivityId,
                 response,
               }
             : {
                 learnerId: selectedLearnerId,
                 programSlug,
+                completionId,
                 unitKey: source.unitKey,
                 activityId: activity.id,
                 response,
@@ -349,7 +373,11 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
           mountedRef.current &&
           activeAccountKeyRef.current === recordKey
         ) {
-          await loadAccountState(selectedLearnerId, programSlug);
+          // The write result is canonical and must reach the host even when this
+          // post-write reconcile is slow or unavailable. loadAccountState only
+          // publishes after a successful read, so a rejection leaves the last
+          // known-good state intact.
+          void loadAccountState(selectedLearnerId, programSlug).catch(() => {});
         }
         return result;
       }

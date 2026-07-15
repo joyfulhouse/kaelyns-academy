@@ -2,6 +2,7 @@ import { pgTable, serial, timestamp, text, jsonb, date, boolean, uniqueIndex, in
 import { user } from "./auth-schema";
 import type { EnrollmentConfig, LearnerSettings } from "@/lib/content/config";
 import type { QuestProgress, QuestTarget } from "@/lib/quests/config";
+import type { ActivityScore } from "@/content";
 
 const uuid = () => globalThis.crypto.randomUUID();
 
@@ -168,6 +169,8 @@ export const attempt = pgTable(
       .references(() => learner.id, { onDelete: "cascade" }),
     activityId: text("activity_id").notNull(),
     kind: text("kind").notNull(),
+    /** Browser-generated UUID that makes one completion safe to retry. */
+    completionId: text("completion_id"),
     /** true when the activity was AI-generated practice (not authored content). */
     generated: boolean("generated").notNull().default(false),
     // ── AI provenance (P6 / spec §8 "what the AI made" trail) ────────────────
@@ -181,14 +184,7 @@ export const attempt = pgTable(
     genRoute: text("gen_route"),
     /** When generation happened (may differ from createdAt, which is when the attempt was recorded). */
     genAt: timestamp("gen_at", { withTimezone: true }),
-    score: jsonb("score")
-      .$type<{
-        correct: number;
-        total: number;
-        stars: number;
-        skillEvidence: { skill: string; outcome: string }[];
-      }>()
-      .notNull(),
+    score: jsonb("score").$type<ActivityScore>().notNull(),
     response: jsonb("response").$type<unknown>(),
     /** Calendar day (YYYY-MM-DD) the attempt happened — the mastery gate keys on it. */
     day: date("day").notNull(),
@@ -200,6 +196,7 @@ export const attempt = pgTable(
     // this composite lets that authored-only scan use an index instead of
     // filtering every attempt row for the learner.
     index("attempt_learner_generated_idx").on(t.learnerId, t.generated),
+    uniqueIndex("attempt_learner_completion_uq").on(t.learnerId, t.completionId),
   ],
 );
 

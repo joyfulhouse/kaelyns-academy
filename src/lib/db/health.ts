@@ -24,6 +24,7 @@ export const REQUIRED_COLUMNS: ColumnMap = {
     "learner_id",
     "activity_id",
     "kind",
+    "completion_id",
     "generated",
     "score",
     "response",

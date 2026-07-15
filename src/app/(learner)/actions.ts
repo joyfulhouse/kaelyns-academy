@@ -4,6 +4,7 @@ import { z } from "zod";
 import { captureNonCritical } from "@/lib/capture";
 import { UnauthenticatedError, requireAccount, withAccount } from "@/lib/tenancy";
 import {
+  CompletionReplayMismatchError,
   EnrollmentNotActiveError,
   ensureDefaultLearner,
   ensureEnrollment,
@@ -220,6 +221,7 @@ export async function getGeneratedPracticeAction(
 const recordAttemptIdentitySchema = z.object({
   learnerId: z.string().min(1),
   programSlug: z.string().min(1),
+  completionId: z.string().uuid(),
   response: z.unknown(),
   /** Reserved for a kind-specific, server-stored verification result. Ordinary
    * deterministic plugins reject it; oral reading is the first planned user. */
@@ -302,9 +304,10 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
               at: new Date(row.gen.at),
             }
           : undefined;
-        await recordAttempt(accountId, {
+        const score = await recordAttempt(accountId, {
           learnerId: data.learnerId,
           programSlug: data.programSlug,
+          completionId: data.completionId,
           activityId: row.id,
           kind: row.kind,
           generated: true,
@@ -317,7 +320,7 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
           shelfEligible: true,
           checkpointPhase: null,
         });
-        return { ok: true, score: canonical.score };
+        return { ok: true, score };
       }
 
       const unit = getUnit(program, data.unitKey);
@@ -334,9 +337,10 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
       );
       if (!canonical.ok) return { ok: false, reason: "invalid" };
 
-      await recordAttempt(accountId, {
+      const score = await recordAttempt(accountId, {
         learnerId: data.learnerId,
         programSlug: data.programSlug,
+        completionId: data.completionId,
         activityId: activity.id,
         kind: activity.kind,
         generated: false,
@@ -348,10 +352,13 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
         shelfEligible: false,
         checkpointPhase: unit.checkpoint ?? null,
       });
-      return { ok: true, score: canonical.score };
+      return { ok: true, score };
     });
   } catch (error) {
     if (error instanceof UnauthenticatedError) return { ok: false, reason: "unauthenticated" };
+    if (error instanceof CompletionReplayMismatchError) {
+      return { ok: false, reason: "invalid" };
+    }
     if (error instanceof EnrollmentNotActiveError) return { ok: false, reason: "inactive" };
     captureNonCritical("recordAttemptAction failed", error);
     return { ok: false, reason: "error" };
@@ -359,6 +366,8 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
 }
 
 export interface LearnerStateResult {
+  /** Operational failures are non-publishable; legitimate empty states are ok. */
+  status: "ok" | "error";
   skillState: SkillState;
   /**
    * Distinct activity ids the learner has completed: authored activity ids PLUS
@@ -402,6 +411,7 @@ export interface LearnerStateResult {
 }
 
 const EMPTY_STATE: LearnerStateResult = {
+  status: "ok",
   skillState: {},
   completedActivityIds: [],
   starsByActivity: {},
@@ -411,6 +421,8 @@ const EMPTY_STATE: LearnerStateResult = {
   program: null,
   available: false,
 };
+
+const ERROR_STATE: LearnerStateResult = { ...EMPTY_STATE, status: "error" };
 
 /**
  * Read a learner's mastery state + completed authored activities for ONE program
@@ -510,6 +522,7 @@ export async function getLearnerStateAction(
       };
 
       return {
+        status: "ok",
         skillState,
         completedActivityIds,
         starsByActivity,
@@ -524,7 +537,7 @@ export async function getLearnerStateAction(
     if (!(error instanceof UnauthenticatedError)) {
       captureNonCritical("getLearnerStateAction failed", error);
     }
-    return EMPTY_STATE;
+    return ERROR_STATE;
   }
 }
 

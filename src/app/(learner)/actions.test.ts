@@ -16,6 +16,8 @@ vi.mock("@/lib/tenancy", async (importActual) => ({
 }));
 
 vi.mock("@/lib/tutor/store", () => ({
+  CompletionReplayMismatchError: class CompletionReplayMismatchError extends Error {},
+  EnrollmentNotActiveError: class EnrollmentNotActiveError extends Error {},
   recordAttempt: vi.fn(),
   listLearners: vi.fn(),
   // The generated-shelf star witness (B3): recordAttemptAction reads this for a
@@ -60,6 +62,7 @@ vi.mock("@/lib/tutor/shelf", () => ({
 }));
 
 import {
+  CompletionReplayMismatchError,
   recordAttempt,
   listLearners,
   getGeneratedActivity,
@@ -234,6 +237,7 @@ describe("getGeneratedPracticeAction", () => {
 const BASE_INPUT: RecordAttemptInput = {
   learnerId: "L1",
   programSlug: "kaelyn-adaptive",
+  completionId: "11111111-1111-4111-8111-111111111111",
   unitKey: "unit-1",
   activityId: "act-1",
   response: { attempts: 1, setHour: 6, setMinute: 0 },
@@ -284,11 +288,27 @@ describe("getLearnerStateAction learner defaults", () => {
 });
 
 beforeEach(() => {
-  vi.mocked(recordAttempt).mockResolvedValue(undefined);
+  vi.mocked(recordAttempt).mockResolvedValue({
+    correct: 1,
+    total: 1,
+    stars: 3,
+    skillEvidence: [{ skill: "math.time", outcome: "solid" }],
+  });
 });
 afterEach(() => vi.resetAllMocks());
 
 describe("recordAttemptAction canonical authored scoring", () => {
+  it("requires a UUID completion id before resolving content", async () => {
+    const result = await recordAttemptAction({
+      ...BASE_INPUT,
+      completionId: "not-a-uuid",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "invalid" });
+    expect(resolveLearnerProgram).not.toHaveBeenCalled();
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
+
   it("rejects an activity that is not inside the claimed route unit", async () => {
     vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
 
@@ -341,6 +361,7 @@ describe("recordAttemptAction canonical authored scoring", () => {
       "acc-1",
       expect.objectContaining({
         activityId: "act-1",
+        completionId: BASE_INPUT.completionId,
         kind: "math-clock",
         generated: false,
         unitId: "unit-1",
@@ -350,6 +371,32 @@ describe("recordAttemptAction canonical authored scoring", () => {
       }),
     );
   });
+
+  it("returns the original stored score when the store replays a completion", async () => {
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+    const originalScore = {
+      correct: 0,
+      total: 1,
+      stars: 1 as const,
+      skillEvidence: [{ skill: "math.time", outcome: "emerging" as const }],
+    };
+    vi.mocked(recordAttempt).mockResolvedValue(originalScore);
+
+    await expect(recordAttemptAction(BASE_INPUT)).resolves.toEqual({
+      ok: true,
+      score: originalScore,
+    });
+  });
+
+  it("maps a completion identity conflict to an invalid result", async () => {
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(recordAttempt).mockRejectedValue(new CompletionReplayMismatchError());
+
+    await expect(recordAttemptAction(BASE_INPUT)).resolves.toEqual({
+      ok: false,
+      reason: "invalid",
+    });
+  });
 });
 
 // ── Adventure 2.0 B3: the generated-shelf star witness ───────────────────────
@@ -358,6 +405,7 @@ describe("recordAttemptAction generated-shelf witness (earn-once boundary)", () 
   const generatedInput = {
     learnerId: "L1",
     programSlug: "kaelyn-adaptive",
+    completionId: "22222222-2222-4222-8222-222222222222",
     generatedActivityId: "gen-1",
     response: { attempts: 1, setHour: 6, setMinute: 0 },
   } as RecordAttemptInput;
@@ -407,6 +455,7 @@ describe("recordAttemptAction generated-shelf witness (earn-once boundary)", () 
       "acc-1",
       expect.objectContaining({
         activityId: "gen-1",
+        completionId: generatedInput.completionId,
         kind: "math-clock",
         generated: true,
         shelfEligible: true,

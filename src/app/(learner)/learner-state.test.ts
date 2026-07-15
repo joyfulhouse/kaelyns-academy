@@ -78,6 +78,7 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
   it("returns available:false (no program) when there is no enrollment", async () => {
     vi.mocked(getEnrollmentForGate).mockResolvedValue(null);
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
+    expect(res.status).toBe("ok");
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();
     // The pinned tree is never resolved when the gate is closed.
@@ -142,6 +143,16 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
     vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
     vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(undefined);
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
+    expect(res.available).toBe(false);
+    expect(res.program).toBeNull();
+  });
+
+  it("distinguishes an operational read failure from a legitimate unavailable state", async () => {
+    vi.mocked(getEnrollmentForGate).mockRejectedValue(new Error("database unavailable"));
+
+    const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
+
+    expect(res.status).toBe("error");
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();
   });

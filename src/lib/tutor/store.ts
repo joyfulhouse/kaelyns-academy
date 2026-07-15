@@ -246,6 +246,14 @@ export class EnrollmentNotActiveError extends Error {
   }
 }
 
+/** A completion UUID may only ever identify one immutable attempt identity. */
+export class CompletionReplayMismatchError extends Error {
+  constructor() {
+    super("completion id belongs to a different attempt identity");
+    this.name = "CompletionReplayMismatchError";
+  }
+}
+
 /** The (learner, program) composite predicate shared by every single-enrollment
  *  query (keyed on the `enrollment_learner_program_uq` unique index). */
 function enrollmentKey(learnerId: string, programSlug: string) {
@@ -256,6 +264,8 @@ export interface RecordAttemptInput {
   learnerId: string;
   /** The program the activity belongs to — the active-enrollment gate keys on it. */
   programSlug: string;
+  /** One browser completion token, reused verbatim for every retry. */
+  completionId: string;
   activityId: string;
   kind: string;
   generated?: boolean;
@@ -306,14 +316,17 @@ export interface RecordAttemptInput {
  *   (learner, programSlug) pair — nothing is persisted (server-authoritative
  *   curation gate, Fix-F A4).
  */
-export async function recordAttempt(accountId: string, input: RecordAttemptInput): Promise<void> {
+export async function recordAttempt(
+  accountId: string,
+  input: RecordAttemptInput,
+): Promise<ActivityScore> {
   // The attempt row and every per-skill fold must commit together: a partial
   // write (attempt saved, skill_state not) loses mastery evidence, and two
   // concurrent submits racing the read-modify-write would otherwise either
   // throw a unique violation after the attempt row is already in, or drop one
   // submit's evidence (last-writer-wins). One transaction + a row lock per
   // (learner,skill) makes the whole thing atomic and serialized.
-  await getDb().transaction(async (tx) => {
+  return getDb().transaction(async (tx) => {
     // Tenancy boundary, re-checked inside the tx so it shares the snapshot.
     const owned = await tx
       .select({ id: learner.id })
@@ -344,18 +357,57 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
     // so an authored row can never carry gen_* metadata even if a caller passes it.
     const generated = input.generated ?? false;
     const provenance = generated ? input.provenance : undefined;
-    await tx.insert(attempt).values({
-      learnerId: input.learnerId,
-      activityId: input.activityId,
-      kind: input.kind,
-      generated,
-      score: input.score,
-      response: input.response ?? null,
-      day: input.day,
-      genModel: provenance?.model ?? null,
-      genRoute: provenance?.route ?? null,
-      genAt: provenance?.at ?? null,
-    });
+    const inserted = await tx
+      .insert(attempt)
+      .values({
+        learnerId: input.learnerId,
+        completionId: input.completionId,
+        activityId: input.activityId,
+        kind: input.kind,
+        generated,
+        score: input.score,
+        response: input.response ?? null,
+        day: input.day,
+        genModel: provenance?.model ?? null,
+        genRoute: provenance?.route ?? null,
+        genAt: provenance?.at ?? null,
+      })
+      .onConflictDoNothing({ target: [attempt.learnerId, attempt.completionId] })
+      .returning({ id: attempt.id });
+
+    // A concurrent or retried completion lost the unique-key insert. Replay the
+    // original canonical score and return before ANY derived fold. PostgreSQL's
+    // INSERT conflict check waits for an in-flight winner, and the following
+    // READ COMMITTED statement can then see that committed row.
+    if (!inserted[0]) {
+      const replayed = await tx
+        .select({
+          activityId: attempt.activityId,
+          kind: attempt.kind,
+          generated: attempt.generated,
+          score: attempt.score,
+        })
+        .from(attempt)
+        .where(
+          and(
+            eq(attempt.learnerId, input.learnerId),
+            eq(attempt.completionId, input.completionId),
+          ),
+        )
+        .limit(1);
+      const original = replayed[0];
+      if (!original) {
+        throw new Error("completion id conflict could not be replayed");
+      }
+      if (
+        original.activityId !== input.activityId ||
+        original.kind !== input.kind ||
+        original.generated !== generated
+      ) {
+        throw new CompletionReplayMismatchError();
+      }
+      return original.score;
+    }
 
     // Star economy (Adventure 2.0): first authored completion earns score.stars
     // into the append-only ledger, inside this same transaction (all-or-nothing
@@ -476,6 +528,7 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
         });
       }
     }
+    return input.score;
   });
 }
 

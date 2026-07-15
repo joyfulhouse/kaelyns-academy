@@ -99,6 +99,22 @@ describe("parent_pin schema", () => {
   });
 });
 
+describe("attempt completion idempotency schema", () => {
+  it("stores a nullable completion id with one unique key per learner", () => {
+    expect(attempt.completionId.notNull).toBe(false);
+
+    const completionIndex = getTableConfig(attempt).indexes.find(
+      (index) => index.config.name === "attempt_learner_completion_uq",
+    );
+    expect(completionIndex?.config.unique).toBe(true);
+    expect(
+      completionIndex?.config.columns.map((column) =>
+        "name" in column ? column.name : undefined,
+      ),
+    ).toEqual(["learner_id", "completion_id"]);
+  });
+});
+
 describe("checkpoint_result schema", () => {
   it("exposes the Phase C capture columns", () => {
     const cols = Object.keys(checkpointResult);

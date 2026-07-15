@@ -51,8 +51,8 @@ function nextActivityHref(programSlug: string, unit: Unit, activityKey: string):
 
 type Phase =
   | { kind: "play" }
-  | { kind: "saving"; requestKey: string }
-  | { kind: "save-failed"; requestKey: string; response: unknown }
+  | { kind: "saving"; requestKey: string; response: unknown; completionId: string }
+  | { kind: "save-failed"; requestKey: string; response: unknown; completionId: string }
   | { kind: "reward"; requestKey: string; stars: 0 | 1 | 2 | 3 };
 
 /**
@@ -146,13 +146,19 @@ export function ActivityHost({
 
   // Keep the response in memory across a retry, but trust only the canonical
   // score returned after the server re-resolves this exact unit/activity.
-  const persistCompletion = async (response: unknown) => {
+  const persistCompletion = async (response: unknown, completionId: string) => {
     if (!effectiveActivity || !completionKey) return;
     stopSpeaking();
-    setPhase({ kind: "saving", requestKey: completionKey });
-    const result = await record(effectiveActivity, response, { unitKey });
+    setPhase({ kind: "saving", requestKey: completionKey, response, completionId });
+    let result;
+    try {
+      result = await record(effectiveActivity, response, { unitKey }, completionId);
+    } catch {
+      setPhase({ kind: "save-failed", requestKey: completionKey, response, completionId });
+      return;
+    }
     if (!result.ok) {
-      setPhase({ kind: "save-failed", requestKey: completionKey, response });
+      setPhase({ kind: "save-failed", requestKey: completionKey, response, completionId });
       return;
     }
     setPhase({ kind: "reward", requestKey: completionKey, stars: result.score.stars });
@@ -174,7 +180,7 @@ export function ActivityHost({
   };
 
   const handleComplete = (response: unknown) => {
-    void persistCompletion(response);
+    void persistCompletion(response, globalThis.crypto.randomUUID());
   };
 
   const handleExit = () => {
@@ -228,7 +234,7 @@ export function ActivityHost({
             <SaveFailed
               key="save-failed"
               onRetry={() => {
-                void persistCompletion(phase.response);
+                void persistCompletion(phase.response, phase.completionId);
               }}
               onExit={handleExit}
             />
