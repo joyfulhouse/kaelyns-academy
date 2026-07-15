@@ -23,20 +23,25 @@ export type MathArrayResponse = z.infer<typeof responseSchema>;
 
 /** The total quantity in the full array (the dividend in "divide"). */
 export function totalFor(config: MathArrayConfig): number {
+  if (config.mode === "divide") return config.total;
   return config.rows * config.cols;
 }
 
 /**
  * The number the child must reach:
- *  - multiply / area → the product (rows*cols), or an explicit `answer`.
- *  - divide → the quotient: total shared into `rows` groups = cols per group,
- *    or an explicit `answer`.
+ *  - multiply / area → the product (rows*cols).
+ *  - divide → the equal share: total / groups.
  *  - build → the array's tile count (rows*cols); building it *is* the answer.
  */
 export function expectedFor(config: MathArrayConfig): number {
-  if (config.answer !== undefined) return config.answer;
-  if (config.mode === "divide") return config.cols; // rows groups of `cols`
+  if (config.mode === "divide") return config.total / config.groups;
   return totalFor(config); // multiply | area | build
+}
+
+/** Plugin-local invariant hook. Central generated-content wiring lands later. */
+export function validateGenerated(config: unknown): string | null {
+  const parsed = schema.safeParse(config);
+  return parsed.success ? null : (parsed.error.issues[0]?.message ?? "Invalid array model.");
 }
 
 export function score(config: MathArrayConfig, response: MathArrayResponse): ActivityScore {

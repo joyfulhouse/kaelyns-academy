@@ -116,8 +116,8 @@ export function MathArrayPlayer({
       <motion.div className="w-full overflow-x-auto pb-1" {...shake.shakeProps(reduced)}>
         <div className="flex min-w-max justify-center">
           <ArrayGrid
-            rows={parsed.rows}
-            cols={parsed.cols}
+            rows={parsed.mode === "divide" ? parsed.groups : parsed.rows}
+            cols={parsed.mode === "divide" ? expectedFor(parsed) : parsed.cols}
             filled={filled}
             emoji={parsed.emoji}
             interactive={isBuild && !shake.wrong}
@@ -309,7 +309,7 @@ function equationText(config: MathArrayConfig): string | null {
     case "area":
       return `${config.rows} × ${config.cols} = ? squares`;
     case "divide":
-      return `${totalFor(config)} ÷ ${config.rows} = ?`;
+      return `${config.total} ÷ ${config.groups} = ?`;
     case "build":
       return null;
   }
@@ -319,7 +319,7 @@ function equationText(config: MathArrayConfig): string | null {
 function countingHint(config: MathArrayConfig): string {
   switch (config.mode) {
     case "divide":
-      return `Share ${totalFor(config)} into ${config.rows} equal rows. How many in each?`;
+      return `Share ${config.total} into ${config.groups} equal groups. How many in each?`;
     case "area":
       return "How many squares cover the shape?";
     default:

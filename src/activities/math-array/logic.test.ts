@@ -1,18 +1,62 @@
 import { describe, it, expect } from "vitest";
-import { expectedFor, score, skillsAffected, totalFor } from "./logic";
-import type { MathArrayConfig } from "@/content/activity-configs";
+import { mathArrayConfig, type MathArrayConfig } from "@/content/activity-configs";
+import { expectedFor, score, skillsAffected, totalFor, validateGenerated } from "./logic";
 
 const multiply: MathArrayConfig = { instruction: "3 times 4.", mode: "multiply", rows: 3, cols: 4 };
 const area: MathArrayConfig = { instruction: "Cover it.", mode: "area", rows: 2, cols: 5 };
-const divide: MathArrayConfig = { instruction: "Share it.", mode: "divide", rows: 3, cols: 4 };
-const build: MathArrayConfig = { instruction: "Build it.", mode: "build", rows: 2, cols: 3 };
-const withAnswer: MathArrayConfig = {
-  instruction: "Tricky.",
-  mode: "multiply",
-  rows: 3,
-  cols: 4,
-  answer: 99,
+const divideInput = {
+  instruction: "Share it.",
+  mode: "divide" as const,
+  total: 12,
+  groups: 3,
 };
+const divide: MathArrayConfig = divideInput;
+const build: MathArrayConfig = { instruction: "Build it.", mode: "build", rows: 2, cols: 3 };
+
+describe("math-array config", () => {
+  it("rejects a contradictory authored answer instead of overriding the model", () => {
+    const contradictory = {
+      instruction: "Tricky.",
+      mode: "multiply",
+      rows: 2,
+      cols: 3,
+      ...{ ["answer"]: 99 },
+    };
+
+    expect(mathArrayConfig.safeParse(contradictory).success).toBe(false);
+  });
+
+  it("accepts exact bounded sharing and rejects an inexact share", () => {
+    expect(mathArrayConfig.safeParse(divideInput).success).toBe(true);
+    expect(
+      mathArrayConfig.safeParse({
+        instruction: "Share it.",
+        mode: "divide",
+        total: 10,
+        groups: 3,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("exports a plugin-local generated-config validator", async () => {
+    const logic = await import("./logic");
+    expect(logic).toHaveProperty("validateGenerated");
+  });
+
+  it("exposes the validator through the plugin contract", async () => {
+    const { mathArray } = await import("./index");
+    expect(mathArray.validateGenerated).toBeTypeOf("function");
+  });
+
+  it("validates bounded dimensions, exact division, and contradictory fields", () => {
+    expect(validateGenerated(multiply)).toBeNull();
+    expect(validateGenerated({ ...multiply, rows: 0 })).not.toBeNull();
+    expect(validateGenerated({ ...divideInput, total: 10 })).not.toBeNull();
+    expect(
+      validateGenerated({ ...multiply, ...{ ["answer"]: 99 } }),
+    ).not.toBeNull();
+  });
+});
 
 describe("math-array totalFor / expectedFor", () => {
   it("total is rows*cols", () => {
@@ -25,7 +69,7 @@ describe("math-array totalFor / expectedFor", () => {
     expect(expectedFor(area)).toBe(10);
   });
 
-  it("divide expects the quotient: total shared into `rows` groups = cols", () => {
+  it("divide derives the equal share from total and groups", () => {
     expect(expectedFor(divide)).toBe(4); // 12 ÷ 3 = 4
   });
 
@@ -33,9 +77,6 @@ describe("math-array totalFor / expectedFor", () => {
     expect(expectedFor(build)).toBe(6);
   });
 
-  it("an explicit answer overrides the derived value", () => {
-    expect(expectedFor(withAnswer)).toBe(99);
-  });
 });
 
 describe("math-array score", () => {

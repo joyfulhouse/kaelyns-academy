@@ -8,6 +8,7 @@ import {
   score,
   skillsAffected,
   totalFor,
+  validateGenerated,
   type MathArrayResponse,
 } from "./logic";
 
@@ -21,5 +22,6 @@ export const mathArray: ActivityType<MathArrayConfig, MathArrayResponse> = {
   Player: MathArrayPlayer,
   score,
   skillsAffected,
+  validateGenerated,
 };
 export type { MathArrayResponse };
