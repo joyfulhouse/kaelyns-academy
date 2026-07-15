@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { schema, score, skillsAffected } from "./logic";
+import { describe, expect, it } from "vitest";
 import type { JournalPromptConfig } from "@/content/activity-configs";
+import { responseSchema, schema, score, skillsAffected } from "./logic";
 
 const config: JournalPromptConfig = {
   prompt: "Draw your favorite animal.",
@@ -8,60 +8,123 @@ const config: JournalPromptConfig = {
   drawing: true,
 };
 
-describe("journal-prompt score", () => {
-  it("always awards 3 stars (expression, not graded)", () => {
-    const blank = score(config, { text: "", didDraw: false });
-    const full = score(config, { text: "My favorite animal is a cat", didDraw: true });
-    expect(blank.stars).toBe(3);
-    expect(full.stars).toBe(3);
-    expect(blank.correct).toBe(1);
-    expect(blank.total).toBe(1);
+const markResponse = {
+  markCount: 1,
+  textLength: 0,
+  usedDictation: false,
+  mode: "draw" as const,
+  didDraw: true,
+};
+const typedResponse = {
+  markCount: 0,
+  textLength: 3,
+  usedDictation: false,
+  mode: "type" as const,
+  didDraw: false,
+};
+const dictatedResponse = {
+  markCount: 0,
+  textLength: 12,
+  usedDictation: true,
+  mode: "dictate" as const,
+  didDraw: false,
+};
+
+describe("journal-prompt response privacy and participation", () => {
+  it("rejects a blank response", () => {
+    expect(
+      responseSchema.safeParse({
+        markCount: 0,
+        textLength: 0,
+        usedDictation: false,
+        mode: "type",
+        didDraw: false,
+      }).success,
+    ).toBe(false);
   });
 
-  it("marks writing + stamina skills solid", () => {
-    const result = score(config, { text: "hi", didDraw: true });
-    expect(result.skillEvidence).toEqual([
-      { skill: "writing.sentence", outcome: "solid" },
-      { skill: "habits.stamina", outcome: "solid" },
-    ]);
+  it("accepts one pointer mark, contributed text, scribed text, or successful dictation", () => {
+    expect(responseSchema.safeParse(markResponse).success).toBe(true);
+    expect(responseSchema.safeParse(typedResponse).success).toBe(true);
+    expect(
+      responseSchema.safeParse({ ...typedResponse, mode: "scribe" }).success,
+    ).toBe(true);
+    expect(responseSchema.safeParse(dictatedResponse).success).toBe(true);
   });
 
-  it("reports the writing + stamina skill tags", () => {
-    expect(skillsAffected(config)).toEqual(["writing.sentence", "habits.stamina"]);
+  it("rejects inconsistent drawing and dictation summaries", () => {
+    expect(responseSchema.safeParse({ ...markResponse, didDraw: false }).success).toBe(false);
+    expect(responseSchema.safeParse({ ...typedResponse, mode: "dictate" }).success).toBe(false);
+    expect(
+      responseSchema.safeParse({ ...dictatedResponse, usedDictation: false }).success,
+    ).toBe(false);
+  });
+
+  it("cannot carry text, transcript, strokes, images, or a client-authored score", () => {
+    for (const extra of [
+      { text: "a child sentence" },
+      { transcript: "spoken words" },
+      { strokes: [{ x: 1, y: 2 }] },
+      { drawingDataUrl: "data:image/png;base64,secret" },
+      { image: "secret" },
+      { score: { stars: 3 } },
+    ]) {
+      expect(responseSchema.safeParse({ ...typedResponse, ...extra }).success).toBe(false);
+    }
+  });
+
+  it("caps every integer field", () => {
+    expect(responseSchema.safeParse({ ...markResponse, markCount: 201 }).success).toBe(false);
+    expect(responseSchema.safeParse({ ...typedResponse, textLength: 2_001 }).success).toBe(false);
   });
 });
 
-describe("journal-prompt compose mode (writing bridge)", () => {
-  it("defaults mode to draw and allowModes to [type], preserving draw activities", () => {
-    const parsed = schema.parse({ prompt: "Tell me about it." });
-    expect(parsed.mode).toBe("draw");
-    expect(parsed.drawing).toBe(true);
-    expect(parsed.allowModes).toEqual(["type"]);
-    expect(parsed.frames).toEqual([]);
-    expect(parsed.wordBank).toEqual([]);
-  });
-
-  it("parses a compose config with frames, word bank, and dictate", () => {
-    const compose = schema.parse({
-      prompt: "What happened at the volcano?",
-      mode: "compose",
-      frames: ["The ___ erupted because ___."],
-      wordBank: ["lava", "ash", "rumble"],
-      allowModes: ["type", "dictate"],
+describe("journal-prompt scoring", () => {
+  it("celebrates genuine participation without grading its quality", () => {
+    expect(score(config, markResponse)).toEqual({
+      correct: 1,
+      total: 1,
+      stars: 3,
+      skillEvidence: [],
     });
-    expect(compose.mode).toBe("compose");
-    expect(compose.frames).toHaveLength(1);
-    expect(compose.allowModes).toContain("dictate");
+    expect(score(config, typedResponse).stars).toBe(3);
+    expect(score(config, dictatedResponse).stars).toBe(3);
   });
 
-  it("still celebrates compose with 3 stars (ideas, never spelling)", () => {
-    const compose: JournalPromptConfig = { prompt: "Tell a story.", mode: "compose" };
-    const result = score(compose, { text: "the dog ran fast", didDraw: false });
-    expect(result.stars).toBe(3);
-    expect(result.correct).toBe(1);
-    expect(result.skillEvidence).toEqual([
-      { skill: "writing.sentence", outcome: "solid" },
-      { skill: "habits.stamina", outcome: "solid" },
-    ]);
+  it("does not claim sentence, composition, or stamina mastery", () => {
+    expect(skillsAffected(config)).toEqual([]);
+    expect(score(config, typedResponse).skillEvidence).toEqual([]);
+  });
+});
+
+describe("journal-prompt config", () => {
+  it("keeps bounded draw defaults", () => {
+    const parsed = schema.parse({ prompt: "Tell me about it." });
+    expect(parsed).toMatchObject({
+      mode: "draw",
+      drawing: true,
+      allowModes: ["type"],
+      frames: [],
+      wordBank: [],
+    });
+  });
+
+  it("accepts bounded compose supports and rejects duplicate modes", () => {
+    expect(
+      schema.safeParse({
+        prompt: "What happened?",
+        mode: "compose",
+        frames: ["First, ______."],
+        wordBank: ["lava"],
+        allowModes: ["scribe", "type", "dictate"],
+      }).success,
+    ).toBe(true);
+    expect(
+      schema.safeParse({
+        prompt: "What happened?",
+        mode: "compose",
+        allowModes: ["type", "type"],
+      }).success,
+    ).toBe(false);
   });
 });

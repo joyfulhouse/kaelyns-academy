@@ -62,6 +62,8 @@ export interface Dictation {
   supported: boolean;
   /** True while the mic is actively listening. */
   listening: boolean;
+  /** Calm, child-facing fallback when recognition cannot start or continue. */
+  message: string | null;
   /** Start a listening session; `onText` receives the recognized phrase. */
   start: (onText: (text: string) => void) => void;
   /** Stop listening now. */
@@ -72,6 +74,7 @@ export function useDictation(lang = "en-US"): Dictation {
   const recognitionRef = useRef<RecognitionInstance | null>(null);
   const supported = useSyncExternalStore(subscribeSupport, isRecognitionSupported, () => false);
   const [listening, setListening] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -81,15 +84,23 @@ export function useDictation(lang = "en-US"): Dictation {
   }, []);
 
   const stop = useCallback(() => {
-    recognitionRef.current?.stop();
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      // The browser may have ended the one-shot session between tap and stop.
+    }
     setListening(false);
   }, []);
 
   const start = useCallback(
     (onText: (text: string) => void) => {
       const Ctor = getRecognitionCtor();
-      if (!Ctor) return;
+      if (!Ctor) {
+        setMessage("The microphone is not available here. You can type or ask a grown-up to write.");
+        return;
+      }
       recognitionRef.current?.abort();
+      setMessage(null);
 
       const recognition = new Ctor();
       recognition.lang = lang;
@@ -100,14 +111,22 @@ export function useDictation(lang = "en-US"): Dictation {
         if (text) onText(text);
       };
       recognition.onend = () => setListening(false);
-      recognition.onerror = () => setListening(false);
+      recognition.onerror = () => {
+        setListening(false);
+        setMessage("The microphone needs a break. Your words are safe, and you can keep typing.");
+      };
 
       recognitionRef.current = recognition;
-      setListening(true);
-      recognition.start();
+      try {
+        recognition.start();
+        setListening(true);
+      } catch {
+        setListening(false);
+        setMessage("The microphone needs a break. Your words are safe, and you can keep typing.");
+      }
     },
     [lang],
   );
 
-  return { supported, listening, start, stop };
+  return { supported, listening, message, start, stop };
 }
