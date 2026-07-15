@@ -1,8 +1,22 @@
 ALTER TABLE "generated_activity" ADD COLUMN "program_version_id" text;--> statement-breakpoint
 ALTER TABLE "generated_activity" ADD CONSTRAINT "generated_activity_program_version_id_program_version_id_fk" FOREIGN KEY ("program_version_id") REFERENCES "public"."program_version"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+-- A rejected old-pod write must abort its whole transaction without raising from
+-- the parameterized attempt statement. Each guard inserts one of these fixed,
+-- pre-seeded reasons. Both known writers use an explicit transaction and leave
+-- constraints deferred, so the duplicate is detected only at their parameterless
+-- COMMIT; the error contains no child response parameters, and every downstream
+-- fold is rolled back with the suppressed attempt.
+CREATE TABLE "attempt_write_abort_signal" (
+	"reason" text NOT NULL,
+	CONSTRAINT "attempt_write_abort_signal_uq" UNIQUE("reason") DEFERRABLE INITIALLY DEFERRED
+);--> statement-breakpoint
+INSERT INTO "attempt_write_abort_signal" ("reason") VALUES
+	('generated_one_shot'),
+	('unsafe_journal');--> statement-breakpoint
 -- A durable generated shelf row is one-shot even while an old application
 -- image is running. Lock the learner-owned shelf row to serialize concurrent
--- first submits, then suppress every later generated attempt for that exact id.
+-- first submits. Same-token retries reach the completion-id conflict handler;
+-- every other later attempt schedules a transaction abort before being suppressed.
 -- Generated attempts without a real owned shelf row remain unaffected.
 CREATE FUNCTION "attempt_generated_one_shot_guard"() RETURNS trigger
 LANGUAGE plpgsql
@@ -29,6 +43,17 @@ BEGIN
 			AND "prior_attempt"."activity_id" = NEW."activity_id"
 			AND "prior_attempt"."generated" = true
 	) THEN
+		IF NEW."completion_id" IS NOT NULL AND EXISTS (
+			SELECT 1
+			FROM "attempt" AS "same_completion"
+			WHERE "same_completion"."learner_id" = NEW."learner_id"
+				AND "same_completion"."completion_id" = NEW."completion_id"
+		) THEN
+			RETURN NEW;
+		END IF;
+
+		INSERT INTO "attempt_write_abort_signal" ("reason")
+		VALUES ('generated_one_shot');
 		RETURN NULL;
 	END IF;
 
@@ -39,9 +64,9 @@ CREATE TRIGGER "attempt_generated_one_shot_guard_trg"
 	BEFORE INSERT ON "attempt"
 	FOR EACH ROW EXECUTE FUNCTION "attempt_generated_one_shot_guard"();--> statement-breakpoint
 -- Install the old-pod guard before the CHECK. Unsafe journal DML becomes a
--- no-op (RETURN NULL), not a constraint error: Drizzle therefore cannot embed
--- the raw response parameters in a captured database exception. The old writer's
--- INSERT ... RETURNING receives no row and aborts before mastery/review folds.
+-- row-level no-op, while a fixed deferred duplicate schedules a COMMIT failure.
+-- The parameterized statement never raises, so raw response values cannot enter
+-- telemetry; the commit failure rolls back every old-writer mastery/review fold.
 -- Safe summary-only writes proceed to the independent CHECK below.
 CREATE FUNCTION "attempt_journal_summary_guard"() RETURNS trigger
 LANGUAGE plpgsql
@@ -102,6 +127,8 @@ BEGIN
 		RETURN NEW;
 	END IF;
 
+	INSERT INTO "attempt_write_abort_signal" ("reason")
+	VALUES ('unsafe_journal');
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint

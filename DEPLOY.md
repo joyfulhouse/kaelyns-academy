@@ -81,10 +81,19 @@ served until evicted, so:
 Migration 0017 installs a `BEFORE INSERT OR UPDATE` trigger ahead of the database
 CHECK. Safe bounded journal summaries with empty skill evidence proceed. An old
 or rolled-back pod that submits raw text/drawing/evidence gets a row-level no-op
-(`RETURN NULL`), not a parameter-bearing database error: its `INSERT ...
-RETURNING` receives no row and aborts the transaction before mastery/review
-folds. Raw child artifacts therefore persist in neither PostgreSQL storage nor
-database-error telemetry. Other lesson writes remain available.
+plus a fixed deferred abort signal. Its parameterized INSERT succeeds without a
+query error, any legacy mastery/review folds may run inside the transaction, and
+the parameter-free COMMIT then fails and rolls the entire transaction back. Raw
+child artifacts therefore persist in neither PostgreSQL storage nor database-
+error telemetry. Other lesson writes remain available.
+
+This compatibility guarantee relies on the known writers' explicit transactions
+and default deferred-constraint mode; neither writer issues `SET CONSTRAINTS`.
+The signal's `23505` is terminal when its constraint is
+`attempt_write_abort_signal_uq` and must never enter a generic unique-key retry.
+Drizzle's schema metadata cannot express `DEFERRABLE INITIALLY DEFERRED`, so the
+raw migration is authoritative (and tested through `pg_constraint`); do not use
+`drizzle-kit push` or schema recreation in place of the migration pipeline.
 
 The same migration re-cleans rows committed by transactions that were already
 in flight before the trigger lock, then validates the CHECK as an independent

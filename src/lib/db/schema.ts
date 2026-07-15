@@ -1,5 +1,18 @@
 import { sql } from "drizzle-orm";
-import { pgTable, serial, timestamp, text, jsonb, date, boolean, uniqueIndex, index, integer, check } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  check,
+  date,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 import { user } from "./auth-schema";
 import type { EnrollmentConfig, LearnerSettings } from "@/lib/content/config";
 import type { QuestProgress, QuestTarget } from "@/lib/quests/config";
@@ -161,6 +174,22 @@ export const enrollment = pgTable(
   (t) => [uniqueIndex("enrollment_learner_program_uq").on(t.learnerId, t.programSlug)],
 );
 
+/**
+ * Fixed database-only signals used by migration 0017 to abort an old writer at
+ * COMMIT without echoing child response parameters through a query error. The
+ * migration makes this UNIQUE constraint deferred and seeds the allowed reasons;
+ * guarded writes insert a duplicate reason that can never commit. Drizzle does
+ * not model DEFERRABLE here, so the raw migration and its pg_constraint test are
+ * the source of truth; this schema must be applied through migrations, not push.
+ */
+export const attemptWriteAbortSignal = pgTable(
+  "attempt_write_abort_signal",
+  {
+    reason: text("reason").notNull(),
+  },
+  (t) => [unique("attempt_write_abort_signal_uq").on(t.reason)],
+);
+
 export const attempt = pgTable(
   "attempt",
   {
@@ -205,9 +234,8 @@ export const attempt = pgTable(
     index("attempt_learner_generated_idx").on(t.learnerId, t.generated),
     uniqueIndex("attempt_learner_completion_uq").on(t.learnerId, t.completionId),
     // Privacy must survive a pre-sync rolling deploy or application rollback.
-    // Migration 0017 first adds a BEFORE trigger that turns unsafe old-pod DML
-    // into a no-op (so no parameter-bearing DB error can reach telemetry), then
-    // validates this CHECK as an independent summary-only backstop.
+    // Migration 0017 suppresses unsafe old-pod DML and schedules a parameter-free
+    // COMMIT failure, then validates this CHECK as an independent backstop.
     check(
       "attempt_journal_summary_only_ck",
 	      sql`${t.kind} <> 'journal-prompt' OR COALESCE(

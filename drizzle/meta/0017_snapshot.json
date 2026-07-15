@@ -335,6 +335,33 @@
       },
       "isRLSEnabled": false
     },
+    "public.attempt_write_abort_signal": {
+      "name": "attempt_write_abort_signal",
+      "schema": "",
+      "columns": {
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "attempt_write_abort_signal_uq": {
+          "name": "attempt_write_abort_signal_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "reason"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.checkpoint_result": {
       "name": "checkpoint_result",
       "schema": "",

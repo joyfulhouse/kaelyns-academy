@@ -25,6 +25,10 @@ describe("0017 generated-version identity and durable journal privacy", () => {
     expect(sql).toContain('CONSTRAINT "attempt_journal_summary_only_ck" CHECK');
     expect(sql).toContain('CREATE TRIGGER "attempt_generated_one_shot_guard_trg"');
     expect(sql).toContain('CREATE TRIGGER "attempt_journal_summary_guard_trg"');
+    expect(sql).toContain('CREATE TABLE "attempt_write_abort_signal"');
+    expect(sql).toContain(
+      'CONSTRAINT "attempt_write_abort_signal_uq" UNIQUE("reason") DEFERRABLE INITIALLY DEFERRED',
+    );
     expect(sql).toContain('FROM "generated_activity" AS "shelf"');
     expect(sql).toContain("FOR UPDATE");
     expect(sql).toContain("NOT VALID");
@@ -32,6 +36,7 @@ describe("0017 generated-version identity and durable journal privacy", () => {
       'VALIDATE CONSTRAINT "attempt_journal_summary_only_ck"',
     );
 
+    const abortSignal = sql.indexOf('CREATE TABLE "attempt_write_abort_signal"');
     const generatedTrigger = sql.indexOf(
       'CREATE TRIGGER "attempt_generated_one_shot_guard_trg"',
     );
@@ -43,7 +48,8 @@ describe("0017 generated-version identity and durable journal privacy", () => {
     const validate = sql.indexOf(
       'VALIDATE CONSTRAINT "attempt_journal_summary_only_ck"',
     );
-    expect(generatedTrigger).toBeGreaterThanOrEqual(0);
+    expect(abortSignal).toBeGreaterThanOrEqual(0);
+    expect(generatedTrigger).toBeGreaterThan(abortSignal);
     expect(trigger).toBeGreaterThan(generatedTrigger);
     expect(guard).toBeGreaterThan(trigger);
     expect(reviewCleanup).toBeGreaterThan(guard);
@@ -319,6 +325,18 @@ describe("0017 generated-version identity and durable journal privacy", () => {
 
       await db.exec(migrationSql().replaceAll("--> statement-breakpoint", ""));
 
+      const abortConstraint = await db.query<{
+        condeferrable: boolean;
+        condeferred: boolean;
+      }>(`
+        SELECT condeferrable, condeferred
+        FROM pg_constraint
+        WHERE conname = 'attempt_write_abort_signal_uq'
+      `);
+      expect(abortConstraint.rows).toEqual([
+        { condeferrable: true, condeferred: true },
+      ]);
+
       const migrated = await db.query<{ response: unknown; score: unknown }>(
         "SELECT response, score FROM attempt WHERE id = 'rolling-legacy'",
       );
@@ -424,24 +442,33 @@ describe("0017 generated-version identity and durable journal privacy", () => {
       ]);
 
       await db.exec("BEGIN");
-      const oldPodInsert = await db.query<{ id: string }>(`
-        INSERT INTO attempt (id, learner_id, kind, response, score) VALUES
-          ('raw-text', 'learner-1', 'journal-prompt',
+      await db.exec(`
+        INSERT INTO attempt (id, learner_id, activity_id, kind, day, response, score) VALUES
+          ('raw-text', 'learner-1', 'legacy-journal-activity', 'journal-prompt', '2026-07-15',
             '{"text":"must not reach storage or telemetry"}',
             '{"correct":1,"total":1,"stars":3,"skillEvidence":[{"skill":"writing.private","outcome":"solid"}]}')
-        RETURNING id
       `);
-      if (oldPodInsert.rows[0]) {
-        await db.exec(`
-          INSERT INTO skill_state (id, learner_id, skill, outcome, evidence)
-          VALUES ('unsafe-fold', 'learner-1', 'writing.private', 'solid', '[]');
-          INSERT INTO review_schedule (id, learner_id, skill)
-          VALUES ('unsafe-fold', 'learner-1', 'writing.private');
-        `);
+      // ba2008c did not request RETURNING or inspect the affected-row count. It
+      // continued every derived fold after a trigger-level RETURN NULL, so the
+      // database guard must abort the whole old-writer transaction at commit.
+      await db.exec(`
+        INSERT INTO skill_state (id, learner_id, skill, outcome, evidence)
+        VALUES ('unsafe-fold', 'learner-1', 'writing.private', 'solid', '[]');
+        INSERT INTO review_schedule (id, learner_id, skill)
+        VALUES ('unsafe-fold', 'learner-1', 'writing.private');
+      `);
+      let unsafeCommitError: unknown;
+      try {
+        await db.exec("COMMIT");
+      } catch (error) {
+        unsafeCommitError = error;
       }
-      await db.exec("COMMIT");
 
-      expect(oldPodInsert.rows).toEqual([]);
+      expect(unsafeCommitError).toMatchObject({
+        code: "23505",
+        constraint: "attempt_write_abort_signal_uq",
+      });
+      expect(String(unsafeCommitError)).not.toContain("must not reach storage or telemetry");
       const unsafePersistence = await db.query<{ count: number }>(`
         SELECT (
           (SELECT count(*) FROM attempt WHERE id = 'raw-text')
@@ -451,22 +478,22 @@ describe("0017 generated-version identity and durable journal privacy", () => {
       `);
       expect(unsafePersistence.rows[0]?.count).toBe(0);
 
-      const scalarResponse = await db.query<{ id: string }>(`
-        INSERT INTO attempt (id, learner_id, kind, response, score) VALUES
-          ('scalar-response', 'learner-1', 'journal-prompt',
-            '42',
-            '{"correct":1,"total":1,"stars":1,"skillEvidence":[]}')
-        RETURNING id
-      `);
-      const scalarScore = await db.query<{ id: string }>(`
-        INSERT INTO attempt (id, learner_id, kind, response, score) VALUES
-          ('scalar-score', 'learner-1', 'journal-prompt',
-            '{"markCount":0,"textLength":0,"usedDictation":false,"mode":"type","didDraw":false}',
-            '42')
-        RETURNING id
-      `);
-      expect(scalarResponse.rows).toEqual([]);
-      expect(scalarScore.rows).toEqual([]);
+      await expect(
+        db.exec(`
+          INSERT INTO attempt (id, learner_id, kind, response, score) VALUES
+            ('scalar-response', 'learner-1', 'journal-prompt',
+              '42',
+              '{"correct":1,"total":1,"stars":1,"skillEvidence":[]}')
+        `),
+      ).rejects.toThrow(/attempt_write_abort_signal_uq/i);
+      await expect(
+        db.exec(`
+          INSERT INTO attempt (id, learner_id, kind, response, score) VALUES
+            ('scalar-score', 'learner-1', 'journal-prompt',
+              '{"markCount":0,"textLength":0,"usedDictation":false,"mode":"type","didDraw":false}',
+              '42')
+        `),
+      ).rejects.toThrow(/attempt_write_abort_signal_uq/i);
 
       const firstShelf = await db.query<{ id: string }>(`
         INSERT INTO attempt (
@@ -496,26 +523,53 @@ describe("0017 generated-version identity and durable journal privacy", () => {
           '{}',
           '{"correct":0,"total":1,"stars":1,"skillEvidence":[]}'
         )
+        ON CONFLICT (learner_id, completion_id) DO NOTHING
         RETURNING id
       `);
-      const differentCompletion = await db.query<{ id: string }>(`
+      await db.exec("BEGIN");
+      await db.exec(`
         INSERT INTO attempt (
-          id, learner_id, activity_id, completion_id, kind, generated, response, score
+          id, learner_id, activity_id, kind, generated, response, score
         ) VALUES (
-          'shelf-different-token',
+          'old-pod-shelf-duplicate',
           'learner-shelf',
           'shelf-first',
-          'shelf-different-completion',
           'number-sense',
           true,
           '{}',
           '{"correct":0,"total":1,"stars":1,"skillEvidence":[]}'
         )
-        RETURNING id
       `);
+      // The deployed ba2008c writer kept folding after its attempt INSERT. A
+      // second shelf completion must therefore invalidate the whole transaction,
+      // not merely suppress this row.
+      await db.exec(`
+        INSERT INTO skill_state (id, learner_id, skill, outcome, evidence)
+        VALUES ('duplicate-shelf-fold', 'learner-shelf', 'math.duplicate-shelf', 'solid', '[]');
+        INSERT INTO review_schedule (id, learner_id, skill)
+        VALUES ('duplicate-shelf-fold', 'learner-shelf', 'math.duplicate-shelf');
+      `);
+      let duplicateShelfCommitError: unknown;
+      try {
+        await db.exec("COMMIT");
+      } catch (error) {
+        duplicateShelfCommitError = error;
+      }
+
       expect(firstShelf.rows).toEqual([{ id: "shelf-first-attempt" }]);
       expect(sameCompletionRetry.rows).toEqual([]);
-      expect(differentCompletion.rows).toEqual([]);
+      expect(duplicateShelfCommitError).toMatchObject({
+        code: "23505",
+        constraint: "attempt_write_abort_signal_uq",
+      });
+      const duplicateShelfPersistence = await db.query<{ count: number }>(`
+        SELECT (
+          (SELECT count(*) FROM attempt WHERE id = 'old-pod-shelf-duplicate')
+          + (SELECT count(*) FROM skill_state WHERE id = 'duplicate-shelf-fold')
+          + (SELECT count(*) FROM review_schedule WHERE id = 'duplicate-shelf-fold')
+        )::int AS count
+      `);
+      expect(duplicateShelfPersistence.rows[0]?.count).toBe(0);
       const replayableOriginal = await db.query<{
         id: string;
         completion_id: string;
@@ -533,22 +587,22 @@ describe("0017 generated-version identity and durable journal privacy", () => {
         },
       ]);
 
-      const legacySpent = await db.query<{ id: string }>(`
-        INSERT INTO attempt (
-          id, learner_id, activity_id, completion_id, kind, generated, response, score
-        ) VALUES (
-          'legacy-second-attempt',
-          'learner-legacy',
-          'shelf-legacy',
-          'legacy-second-completion',
-          'number-sense',
-          true,
-          '{}',
-          '{"correct":1,"total":1,"stars":2,"skillEvidence":[]}'
-        )
-        RETURNING id
-      `);
-      expect(legacySpent.rows).toEqual([]);
+      await expect(
+        db.exec(`
+          INSERT INTO attempt (
+            id, learner_id, activity_id, completion_id, kind, generated, response, score
+          ) VALUES (
+            'legacy-second-attempt',
+            'learner-legacy',
+            'shelf-legacy',
+            'legacy-second-completion',
+            'number-sense',
+            true,
+            '{}',
+            '{"correct":1,"total":1,"stars":2,"skillEvidence":[]}'
+          )
+        `),
+      ).rejects.toThrow(/attempt_write_abort_signal_uq/i);
 
       const nonShelfFirst = await db.query<{ id: string }>(`
         INSERT INTO attempt (
@@ -582,21 +636,22 @@ describe("0017 generated-version identity and durable journal privacy", () => {
       `);
       expect(authoredOnShelfId.rows).toEqual([{ id: "authored-on-shelf-id" }]);
 
-      const unsafeGeneratedJournal = await db.query<{ id: string }>(`
-        INSERT INTO attempt (
-          id, learner_id, activity_id, completion_id, kind, generated, response, score
-        ) VALUES (
-          'unsafe-generated-journal',
-          'learner-journal-new',
-          'generated-journal-new',
-          'unsafe-generated-journal-completion',
-          'journal-prompt',
-          true,
-          '{"text":"must not persist"}',
-          '{"correct":1,"total":1,"stars":2,"skillEvidence":[]}'
-        ) RETURNING id
-      `);
-      expect(unsafeGeneratedJournal.rows).toEqual([]);
+      await expect(
+        db.exec(`
+          INSERT INTO attempt (
+            id, learner_id, activity_id, completion_id, kind, generated, response, score
+          ) VALUES (
+            'unsafe-generated-journal',
+            'learner-journal-new',
+            'generated-journal-new',
+            'unsafe-generated-journal-completion',
+            'journal-prompt',
+            true,
+            '{"text":"must not persist"}',
+            '{"correct":1,"total":1,"stars":2,"skillEvidence":[]}'
+          )
+        `),
+      ).rejects.toThrow(/attempt_write_abort_signal_uq/i);
 
       await expect(
         db.exec(`
@@ -610,14 +665,14 @@ describe("0017 generated-version identity and durable journal privacy", () => {
       const beforeUnsafeUpdate = await db.query<{ response: unknown; score: unknown }>(
         "SELECT response, score FROM attempt WHERE id = 'safe-summary'",
       );
-      const unsafeUpdate = await db.query<{ id: string }>(`
-        UPDATE attempt
-        SET response = '{"text":"update sentinel"}',
-            score = '{"correct":1,"total":1,"stars":3,"skillEvidence":[{"skill":"writing.private","outcome":"solid"}]}'
-        WHERE id = 'safe-summary'
-        RETURNING id
-      `);
-      expect(unsafeUpdate.rows).toEqual([]);
+      await expect(
+        db.exec(`
+          UPDATE attempt
+          SET response = '{"text":"update sentinel"}',
+              score = '{"correct":1,"total":1,"stars":3,"skillEvidence":[{"skill":"writing.private","outcome":"solid"}]}'
+          WHERE id = 'safe-summary'
+        `),
+      ).rejects.toThrow(/attempt_write_abort_signal_uq/i);
       const afterUnsafeUpdate = await db.query<{ response: unknown; score: unknown }>(
         "SELECT response, score FROM attempt WHERE id = 'safe-summary'",
       );
