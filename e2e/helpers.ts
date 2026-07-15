@@ -69,6 +69,33 @@ export async function ensurePersistentLearner(page: Page): Promise<void> {
   await expect(page.getByRole("status")).toContainText(/enrolled/i);
 }
 
+/**
+ * Remove any grown-up PIN from the currently signed-in parent account, whether
+ * the account is currently locked (recover via password) or unlocked (remove
+ * via password). No-op when no PIN is set. Used by auth setup to guarantee a
+ * PIN-free baseline — a parent-pin run that failed before its own cleanup must
+ * not leave the shared seeded account gated for the next run's parent project.
+ */
+export async function clearParentPinIfPresent(page: Page, password: string): Promise<void> {
+  await page.goto("/parent/settings#pin");
+
+  const challenge = page.getByRole("heading", { name: "Grown-up area", exact: true });
+  if (await challenge.isVisible()) {
+    await page.getByRole("button", { name: "Forgot PIN?", exact: true }).click();
+    await page.getByLabel("Account password", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Remove PIN", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("PIN removed");
+    return;
+  }
+
+  const remove = page.getByRole("button", { name: "Remove PIN", exact: true });
+  if ((await remove.count()) === 0) return;
+
+  await page.getByLabel("Account password", { exact: true }).fill(password);
+  await remove.click();
+  await expect(page.getByRole("button", { name: "Set PIN", exact: true })).toBeVisible();
+}
+
 /** Seed the account learner choice deterministically before entering kid routes. */
 export async function selectAccountLearner(page: Page, displayName: string): Promise<void> {
   const href = await page.getByRole("link", { name: displayName }).first().getAttribute("href");

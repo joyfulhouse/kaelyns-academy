@@ -1,6 +1,7 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
 import {
   E2E_PERSISTENT_LEARNER_NAME,
+  clearParentPinIfPresent,
   creds,
   ensurePersistentLearner,
 } from "../helpers";
@@ -17,7 +18,7 @@ test.describe.serial("shared-device handoff and grown-up PIN", () => {
     page,
   }, testInfo) => {
     const { password } = creds.parent();
-    await clearPinIfPresent(page, password);
+    await clearParentPinIfPresent(page, password);
     let lockedContext: BrowserContext | null = null;
 
     try {
@@ -69,7 +70,7 @@ test.describe.serial("shared-device handoff and grown-up PIN", () => {
       ).toBeVisible();
     } finally {
       await lockedContext?.close();
-      await clearPinIfPresent(page, password);
+      await clearParentPinIfPresent(page, password);
     }
   });
 
@@ -114,7 +115,7 @@ test.describe.serial("shared-device handoff and grown-up PIN", () => {
 
   test("first-PIN nudge relocks the parent area when GO is pressed", async ({ page }) => {
     const { password } = creds.parent();
-    await clearPinIfPresent(page, password);
+    await clearParentPinIfPresent(page, password);
 
     try {
       const learnerId = await startPersistentLearnerHandoff(page);
@@ -145,7 +146,7 @@ test.describe.serial("shared-device handoff and grown-up PIN", () => {
         page.getByRole("heading", { name: "Grown-up area", exact: true }),
       ).toBeVisible();
     } finally {
-      await clearPinIfPresent(page, password);
+      await clearParentPinIfPresent(page, password);
     }
   });
 });
@@ -170,24 +171,4 @@ async function startPersistentLearnerHandoff(page: Page): Promise<string> {
     new RegExp(`/learn/kaelyn-adaptive\\?handoff=${encodeURIComponent(learnerId)}$`),
   );
   return learnerId;
-}
-
-async function clearPinIfPresent(page: Page, password: string): Promise<void> {
-  await page.goto("/parent/settings#pin");
-
-  const challenge = page.getByRole("heading", { name: "Grown-up area", exact: true });
-  if (await challenge.isVisible()) {
-    await page.getByRole("button", { name: "Forgot PIN?", exact: true }).click();
-    await page.getByLabel("Account password", { exact: true }).fill(password);
-    await page.getByRole("button", { name: "Remove PIN", exact: true }).click();
-    await expect(page.getByRole("status")).toContainText("PIN removed");
-    return;
-  }
-
-  const remove = page.getByRole("button", { name: "Remove PIN", exact: true });
-  if ((await remove.count()) === 0) return;
-
-  await page.getByLabel("Account password", { exact: true }).fill(password);
-  await remove.click();
-  await expect(page.getByRole("button", { name: "Set PIN", exact: true })).toBeVisible();
 }
