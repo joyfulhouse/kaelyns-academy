@@ -18,7 +18,13 @@ const VALID_RESPONSES = {
     placements: [0, 1, 2],
     attempts: 1,
   },
-  "journal-prompt": { text: "A cat.", didDraw: false },
+  "journal-prompt": {
+    markCount: 0,
+    textLength: 6,
+    usedDictation: false,
+    mode: "type",
+    didDraw: false,
+  },
   "reading-comprehension": { firstTry: [true], retold: false },
   "math-array": { mode: "build", builtRows: 2, attempts: 1 },
   "math-fraction-bar": { mode: "partition", partitionCount: 4, attempts: 1 },
@@ -27,7 +33,14 @@ const VALID_RESPONSES = {
   "math-clock": { attempts: 1, selectedIndex: 0 },
   "math-money": { attempts: 1, tappedCoin: "penny" },
   "math-measure": { attempts: 1, selectedIndex: 0 },
-  "sort-categories": { attempts: 1, placements: ["animals", "plants", "animals"] },
+  "sort-categories": {
+    attempts: 1,
+    assignments: [
+      { itemIndex: 0, binId: "animals" },
+      { itemIndex: 1, binId: "plants" },
+      { itemIndex: 2, binId: "animals" },
+    ],
+  },
   "seq-order": { attempts: 1, order: [0, 1, 2] },
   "oral-reading": { attempts: 1, results: ["matched"], fallbackUsed: false },
 } satisfies Record<ActivityKind, unknown>;
@@ -46,7 +59,13 @@ const OVER_BOUNDED_RESPONSES = {
     placements: [0, 1, 2],
     attempts: 21,
   },
-  "journal-prompt": { text: "x".repeat(2_001), didDraw: false },
+  "journal-prompt": {
+    markCount: 0,
+    textLength: 2_001,
+    usedDictation: false,
+    mode: "type",
+    didDraw: false,
+  },
   "reading-comprehension": { firstTry: Array.from({ length: 33 }, () => true), retold: false },
   "math-array": {
     mode: "area",
@@ -65,7 +84,10 @@ const OVER_BOUNDED_RESPONSES = {
   "math-measure": { attempts: 1, selectedIndex: 4 },
   "sort-categories": {
     attempts: 1,
-    placements: Array.from({ length: 9 }, () => "animals"),
+    assignments: Array.from({ length: 9 }, (_, itemIndex) => ({
+      itemIndex,
+      binId: "animals",
+    })),
   },
   "seq-order": { attempts: 1, order: Array.from({ length: 7 }, (_, index) => index) },
   "oral-reading": {
