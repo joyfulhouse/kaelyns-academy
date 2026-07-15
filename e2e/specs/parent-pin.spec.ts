@@ -54,9 +54,16 @@ test.describe.serial("shared-device handoff and grown-up PIN", () => {
 
       await lockedPage.getByLabel("Enter your grown-up PIN", { exact: true }).fill(PIN);
       await lockedPage.getByRole("button", { name: "Unlock", exact: true }).click();
-      // Deterministic: a fresh SSR of /parent carrying the just-set unlock cookie
-      // renders the dashboard. The in-place client router.refresh() render is
-      // flaky under parallel CI load.
+      // Wait for the unlock grant to actually land (the server action sets the
+      // cookie) BEFORE navigating — clicking Unlock and immediately goto()-ing
+      // races the in-flight action and can cancel the cookie write. Then a fresh
+      // SSR of /parent carrying the cookie renders the dashboard deterministically
+      // (the in-place client router.refresh() render is flaky under CI load).
+      await expect
+        .poll(() =>
+          lockedContext!.cookies().then((cs) => cs.some((c) => c.name === "ka-parent-unlock")),
+        )
+        .toBe(true);
       await lockedPage.goto("/parent");
       await expect(
         lockedPage.getByRole("heading", { name: /How .* is doing|Welcome/ }),
