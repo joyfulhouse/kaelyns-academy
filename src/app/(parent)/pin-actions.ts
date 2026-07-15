@@ -46,12 +46,22 @@ const passwordSchema = z
   .min(1, "Enter your account password.")
   .max(128, "That password is too long.");
 
-const cookieOptions = {
-  httpOnly: true,
-  secure: true,
-  sameSite: "lax" as const,
-  path: "/parent",
-};
+/**
+ * Cookie attributes for the unlock grant. `secure` is derived from the app's
+ * base URL (https ⇒ Secure), mirroring better-auth's own `useSecureCookies` so
+ * the unlock cookie behaves exactly like the session cookie: Secure in
+ * production behind TLS, and honored over the plain http the e2e app container
+ * serves (a hardcoded `secure:true` is silently dropped by the browser on http).
+ * Computed per-call (not at module load) to keep `next build` env-free.
+ */
+function unlockCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: getEnv("BETTER_AUTH_URL", "http://localhost:3000").startsWith("https://"),
+    sameSite: "lax" as const,
+    path: "/parent",
+  };
+}
 
 /** Verify the account-scoped PIN and grant this browser a 15-minute grace window. */
 export async function verifyParentPinAction(pin: string) {
@@ -242,11 +252,11 @@ function setUnlockCookie(
 ): void {
   const secret = getEnv("BETTER_AUTH_SECRET");
   cookieStore.set(UNLOCK_COOKIE, mintUnlockToken(accountId, now, secret), {
-    ...cookieOptions,
+    ...unlockCookieOptions(),
     maxAge: UNLOCK_TTL_MS / 1000,
   });
 }
 
 function expireUnlockCookie(cookieStore: Awaited<ReturnType<typeof cookies>>): void {
-  cookieStore.set(UNLOCK_COOKIE, "", { ...cookieOptions, maxAge: 0 });
+  cookieStore.set(UNLOCK_COOKIE, "", { ...unlockCookieOptions(), maxAge: 0 });
 }
