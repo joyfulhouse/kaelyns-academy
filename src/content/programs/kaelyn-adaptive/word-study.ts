@@ -19,6 +19,38 @@ export const wordStudyUnit: Unit = {
       title: "Sight-word fluency warm-up",
       activities: [
         {
+          id: "word-sight-find",
+          kind: "sightword-game",
+          title: "Listen and find the word",
+          blurb: "Hear one familiar word, then find its steady word card.",
+          estMinutes: 4,
+          band: "ready",
+          // This is a warm-up participation activity. The current adaptive
+          // rubric has no isolated sight-word-recognition rung, so it does not
+          // fabricate fluency or morphology evidence.
+          skillTags: [],
+          config: {
+            instruction: "Listen to one word. Find the matching word card. The cards will stay still.",
+            rounds: [
+              {
+                target: "the",
+                choices: ["then", "the", "they"],
+                spokenPrompt: "Find the word the.",
+              },
+              {
+                target: "and",
+                choices: ["an", "and", "any"],
+                spokenPrompt: "Find the word and.",
+              },
+              {
+                target: "said",
+                choices: ["sad", "sail", "said"],
+                spokenPrompt: "Find the word said.",
+              },
+            ],
+          },
+        },
+        {
           id: "word-oral-the",
           kind: "oral-reading",
           title: "Read the word: the",
