@@ -8,13 +8,12 @@ import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { PlayerControls, Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
-import { goalFor, schema, score, type MathTenframeResponse } from "./logic";
+import { goalFor, schema, type MathTenframeResponse } from "./logic";
 
 const CELLS_PER_FRAME = 10;
 export const TEN_FRAME_GRID_CLASS = "grid-cols-5";
@@ -36,23 +35,11 @@ export function MathTenframePlayer({
 
   const [added, setAdded] = useState(0); // dots the child placed
   const [attempts, setAttempts] = useState(0);
-  const [done, setDone] = useState<MathTenframeResponse | null>(null);
 
   const total = preset + added;
 
   // Read the instruction aloud once when the activity opens.
   useSpeakOnce(speech.speak, parsed.instruction);
-
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message={parsed.mode === "add" ? "You made the number." : "You filled it just right."}
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
 
   function toggleCell(index: number) {
     if (shake.wrong) return;
@@ -75,7 +62,8 @@ export function MathTenframePlayer({
     const attemptCount = attempts + 1;
     setAttempts(attemptCount);
     if (total === goal) {
-      setDone({ count: total, attempts: attemptCount });
+      const response: MathTenframeResponse = { count: total, attempts: attemptCount };
+      onComplete(response);
     } else {
       shake.trigger({
         speak: () =>

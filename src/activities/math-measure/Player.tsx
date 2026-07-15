@@ -6,13 +6,12 @@ import type { MathMeasureConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { PlayerControls, Prompt, SpeakerButton } from "../_shared/ActivityChrome";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
-import { schema, score, type MathMeasureResponse } from "./logic";
+import { schema, type MathMeasureResponse } from "./logic";
 
 type CompareConfig = Extract<MathMeasureConfig, { mode: "compare" }>;
 type UnitsConfig = Extract<MathMeasureConfig, { mode: "units" }>;
@@ -56,7 +55,6 @@ export function MathMeasurePlayer({
   const shake = useWrongShake();
 
   const [attempts, setAttempts] = useState(0);
-  const [done, setDone] = useState<MathMeasureResponse | null>(null);
 
   // Read the instruction aloud once when the activity opens.
   useSpeakOnce(speech.speak, parsed.instruction);
@@ -66,22 +64,12 @@ export function MathMeasurePlayer({
     [parsed],
   );
 
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message={parsed.mode === "compare" ? "You found the right one." : "You measured it right."}
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
-
   function tapChoice(index: number) {
     if (shake.wrong) return;
     const attemptCount = attempts + 1;
     if (index === parsed.answerIndex) {
-      setDone({ attempts: attemptCount, selectedIndex: index });
+      const response: MathMeasureResponse = { attempts: attemptCount, selectedIndex: index };
+      onComplete(response);
     } else {
       setAttempts(attemptCount);
       shake.trigger({ speak: () => speech.speak("Try another one.") });

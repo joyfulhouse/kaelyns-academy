@@ -8,7 +8,6 @@ import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { PlayerControls, Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
@@ -17,7 +16,6 @@ import { useWrongShake } from "../_shared/useWrongShake";
 import {
   expectedFor,
   schema,
-  score,
   totalFor,
   type MathArrayResponse,
 } from "./logic";
@@ -59,21 +57,9 @@ export function MathArrayPlayer({
   const [filled, setFilled] = useState(isBuild ? 0 : total);
   const [answer, setAnswer] = useState(0); // the product / quotient being entered
   const [attempts, setAttempts] = useState(0);
-  const [done, setDone] = useState<MathArrayResponse | null>(null);
 
   // Read the instruction aloud once when the activity opens.
   useSpeakOnce(speech.speak, parsed.instruction);
-
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message={isBuild ? "You built the whole array." : "You found the number."}
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
 
   function tapTile(index: number) {
     if (!isBuild || shake.wrong) return;
@@ -92,14 +78,16 @@ export function MathArrayPlayer({
 
   function finishBuild() {
     // Building the array is the answer; it always "reaches" (no wrong state).
-    setDone({ entered: total, attempts: 1 });
+    const response: MathArrayResponse = { entered: total, attempts: 1 };
+    onComplete(response);
   }
 
   function check() {
     const attemptCount = attempts + 1;
     setAttempts(attemptCount);
     if (answer === expected) {
-      setDone({ entered: answer, attempts: attemptCount });
+      const response: MathArrayResponse = { entered: answer, attempts: attemptCount };
+      onComplete(response);
     } else {
       shake.trigger({
         speak: () =>

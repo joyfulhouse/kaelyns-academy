@@ -8,13 +8,12 @@ import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { PlayerControls, Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
-import { schema, score, type MathClockResponse } from "./logic";
+import { schema, type MathClockResponse } from "./logic";
 
 const HOURS = Array.from({ length: 12 }, (_, i) => i + 1);
 const MINUTES = [0, 30] as const;
@@ -36,27 +35,16 @@ export function MathClockPlayer({
   // set mode only: the clock the child is building. Null hour = nothing picked yet.
   const [pickedHour, setPickedHour] = useState<number | null>(null);
   const [pickedMinute, setPickedMinute] = useState<0 | 30>(0);
-  const [done, setDone] = useState<MathClockResponse | null>(null);
 
   // Read the instruction aloud once when the activity opens.
   useSpeakOnce(speech.speak, parsed.instruction);
-
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message={parsed.mode === "read" ? "You read the clock." : "You made the right time."}
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
 
   function tapChoice(index: number) {
     if (parsed.mode !== "read" || shake.wrong) return;
     const attemptCount = attempts + 1;
     if (index === parsed.answerIndex) {
-      setDone({ attempts: attemptCount, selectedIndex: index });
+      const response: MathClockResponse = { attempts: attemptCount, selectedIndex: index };
+      onComplete(response);
     } else {
       setAttempts(attemptCount);
       shake.trigger({ speak: () => speech.speak("Try another time.") });
@@ -68,7 +56,12 @@ export function MathClockPlayer({
     const attemptCount = attempts + 1;
     setAttempts(attemptCount);
     if (pickedHour === parsed.targetHour && pickedMinute === parsed.targetMinute) {
-      setDone({ attempts: attemptCount, setHour: pickedHour, setMinute: pickedMinute });
+      const response: MathClockResponse = {
+        attempts: attemptCount,
+        setHour: pickedHour,
+        setMinute: pickedMinute,
+      };
+      onComplete(response);
     } else {
       shake.trigger({ speak: () => speech.speak("Not quite. Try again.") });
     }

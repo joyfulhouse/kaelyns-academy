@@ -8,13 +8,12 @@ import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { PlayerControls, Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
-import { coinsTotal, schema, score, type Coin, type MathMoneyResponse } from "./logic";
+import { coinsTotal, schema, type Coin, type MathMoneyResponse } from "./logic";
 
 /** Per-coin display: a static map (JIT-safe, no dynamic class construction). */
 const COIN_META: Record<Coin, { label: string; cents: string; emoji: string }> = {
@@ -35,27 +34,16 @@ export function MathMoneyPlayer({
 
   const [attempts, setAttempts] = useState(0);
   const [tray, setTray] = useState<Coin[]>([]); // count mode only: coins dropped so far
-  const [done, setDone] = useState<MathMoneyResponse | null>(null);
 
   // Read the instruction aloud once when the activity opens.
   useSpeakOnce(speech.speak, parsed.instruction);
-
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message={parsed.mode === "identify" ? "You found the right coin." : "You made the right amount."}
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
 
   function tapIdentify(coin: Coin) {
     if (parsed.mode !== "identify" || shake.wrong) return;
     const attemptCount = attempts + 1;
     if (coin === parsed.targetCoin) {
-      setDone({ attempts: attemptCount, tappedCoin: coin });
+      const response: MathMoneyResponse = { attempts: attemptCount, tappedCoin: coin };
+      onComplete(response);
     } else {
       setAttempts(attemptCount);
       shake.trigger({ speak: () => speech.speak("Try another coin.") });
@@ -82,7 +70,8 @@ export function MathMoneyPlayer({
     setAttempts(attemptCount);
     const total = coinsTotal(tray);
     if (total === parsed.targetCents) {
-      setDone({ attempts: attemptCount, tappedCoins: tray });
+      const response: MathMoneyResponse = { attempts: attemptCount, tappedCoins: tray };
+      onComplete(response);
     } else {
       shake.trigger({
         speak: () =>
