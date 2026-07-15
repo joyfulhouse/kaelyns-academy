@@ -60,7 +60,15 @@ vi.mock("next/headers", () => ({
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("@/lib/env", () => ({ getEnv: () => "test-secret" }));
+// Key-aware so the unlock cookie's `secure` derivation (BETTER_AUTH_URL https)
+// is exercised; https here mirrors production behind TLS. Hoisted vi.fn() so a
+// single test can flip the base URL to http and assert the non-Secure cookie.
+const { getEnvMock, getEnvDefault } = vi.hoisted(() => {
+  const getEnvDefault = (key: string): string =>
+    key === "BETTER_AUTH_URL" ? "https://kaelyns.academy" : "test-secret";
+  return { getEnvMock: vi.fn(getEnvDefault), getEnvDefault };
+});
+vi.mock("@/lib/env", () => ({ getEnv: (key: string) => getEnvMock(key) }));
 
 const {
   clearParentPinByPasswordAction,
@@ -71,6 +79,7 @@ const {
 const { mintUnlockToken } = await import("@/lib/parent-pin");
 
 beforeEach(() => {
+  getEnvMock.mockImplementation(getEnvDefault);
   vi.useFakeTimers();
   vi.setSystemTime(1_700_000_000_000);
   ipIndex += 1;
@@ -180,6 +189,25 @@ describe("verifyParentPinAction", () => {
         path: "/parent",
         maxAge: 900,
       }),
+    );
+  });
+
+  it("derives a non-Secure unlock cookie when the base URL is http", async () => {
+    getEnvMock.mockImplementation((key: string) =>
+      key === "BETTER_AUTH_URL" ? "http://localhost:3000" : "test-secret",
+    );
+    mocks.getParentPinState.mockResolvedValueOnce({
+      pinHash: "stored-hash",
+      failedAttempts: 0,
+      lockedUntil: null,
+    });
+
+    await verifyParentPinAction("1234");
+
+    expect(mocks.cookieSet).toHaveBeenCalledWith(
+      "ka-parent-unlock",
+      expect.any(String),
+      expect.objectContaining({ secure: false, httpOnly: true, path: "/parent" }),
     );
   });
 });
