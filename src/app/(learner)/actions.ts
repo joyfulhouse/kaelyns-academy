@@ -31,7 +31,8 @@ import {
   getUnit,
   skillTagsForProgram,
 } from "@/content";
-import type { Band, Lesson, Program, Unit } from "@/content";
+import type { ActivityScore, Band, Lesson, Program, Unit } from "@/content";
+import { parseAndScoreActivity } from "@/activities/server-verification";
 import { generatePracticeItems, provenanceForGeneration } from "@/lib/ai/practice";
 import {
   pickGenerationTargets,
@@ -39,7 +40,6 @@ import {
   SHELF_LESSON_CAP,
 } from "@/lib/tutor/shelf";
 import { resolveLearnerProgram } from "@/lib/content/repository";
-import { findUnitIdOfActivity } from "@/lib/quests/logic";
 import type { SkillState } from "@/lib/tutor";
 
 /**
@@ -163,163 +163,134 @@ export async function getEnrollmentsAction(learnerId: string): Promise<string[]>
   }
 }
 
-const skillEvidenceSchema = z.object({
-  skill: z.string().min(1).max(60),
-  outcome: z.enum(["not_yet", "emerging", "solid"]),
-});
-
-/**
- * AI provenance echoed back from /api/practice for a generated item (P6 / §8).
- * Bound metadata only (model/route names + a generation timestamp); the route
- * derives these server-side, the client just relays them onto the attempt. The
- * model/route are short audit tags (bounded like `kind`); `at` is an ISO string.
- * Only honored when `generated` is true (see below) — never persisted on authored
- * rows. Light bounds because this is non-authoritative display metadata, not a
- * gate; the §8 enforcement lives in /api/practice + the active-enrollment check.
- */
-const provenanceSchema = z.object({
-  model: z.string().min(1).max(60),
-  route: z.string().min(1).max(60),
-  at: z.string().datetime(),
-});
-
-const recordAttemptSchema = z.object({
+const recordAttemptIdentitySchema = z.object({
   learnerId: z.string().min(1),
   programSlug: z.string().min(1),
-  activityId: z.string().min(1),
-  kind: z.string().min(1).max(60),
-  generated: z.boolean().optional(),
-  response: z.unknown().optional(),
-  score: z.object({
-    correct: z.number().int().min(0),
-    total: z.number().int().min(0),
-    stars: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]),
-    skillEvidence: z.array(skillEvidenceSchema),
-  }),
-  /** Provenance for a generated attempt; ignored unless `generated` is true. */
-  gen: provenanceSchema.optional(),
+  response: z.unknown(),
+  /** Reserved for a kind-specific, server-stored verification result. Ordinary
+   * deterministic plugins reject it; oral reading is the first planned user. */
+  verificationId: z.string().min(1).max(128).optional(),
 });
+
+const recordAttemptSchema = z.union([
+  recordAttemptIdentitySchema.extend({
+    unitKey: z.string().min(1).max(100),
+    activityId: z.string().min(1).max(100),
+  }),
+  recordAttemptIdentitySchema.extend({
+    generatedActivityId: z.string().min(1).max(100),
+  }),
+]);
 
 export type RecordAttemptInput = z.infer<typeof recordAttemptSchema>;
 
 export type RecordResult =
-  | { ok: true }
-  | { ok: false; reason: "unauthenticated" | "invalid" | "inactive" | "error" };
+  | { ok: true; score: ActivityScore }
+  | {
+      ok: false;
+      reason: "unauthenticated" | "invalid" | "inactive" | "unavailable" | "error";
+    };
 
 /**
- * Persist one completed activity (authored or AI-generated practice) and fold
- * its skill evidence into the learner's skill_state. The day is stamped from
- * the server clock so the mastery gate's "distinct days" rule is consistent.
- *
- * Server-authoritative curation gate (Fix-F A4): `recordAttempt` verifies the
- * learner has an ACTIVE enrollment for `programSlug` inside the same transaction
- * (after the tenancy re-check). A removed/paused/missing enrollment throws
- * EnrollmentNotActiveError → no attempt or skill_state is written, and the
- * caller gets `reason: "inactive"`. This makes the kid-surface render-block (A3)
- * non-bypassable even via a direct API call with a stale/unassigned program.
- *
- * Star-economy membership witness (Codex critical): the client supplies
- * `activityId` and `score.stars`, so an authored attempt (`generated: false`)
- * MUST be verified against the learner's own pinned program tree before it can
- * earn ledger stars — otherwise a forged request with a fresh, never-authored
- * activityId would credit `activity_complete` stars unbounded (no prior attempt
- * exists to trip the "already completed" guard). `findUnitIdOfActivity` doubles
- * as that witness: a non-null `unitId` proves `activityId` belongs to the
- * resolved tree. A resolved tree with no match is rejected outright (`invalid`)
- * — a legitimate client only ever plays authored activities from that tree. An
- * UNRESOLVABLE tree (DB blip) stays forgiving: the attempt is still recorded
- * (mastery/skill folds are unaffected either way) but `creditEligible` is
- * false, so no star ledger row is written off an unverifiable claim.
+ * Persist one completed activity using identifiers plus bounded response facts.
+ * The browser is never authoritative for kind, config, score, evidence, unit,
+ * generated status, or generation provenance. Authored attempts resolve inside
+ * the exact route unit of the learner's pinned program; generated attempts
+ * resolve a shelf row owned by that learner. Config and response are parsed and
+ * scored through the server-only plugin registry before the store sees them.
  */
 export async function recordAttemptAction(input: RecordAttemptInput): Promise<RecordResult> {
   const parsed = recordAttemptSchema.safeParse(input);
   if (!parsed.success) return { ok: false, reason: "invalid" };
   const data = parsed.data;
 
-  const generated = data.generated ?? false;
-  // Provenance is honored only for a generated attempt: parse the echoed ISO
-  // timestamp into a Date here (the store column is timestamptz). recordAttempt
-  // additionally drops it for non-generated rows as defense-in-depth.
-  const provenance =
-    generated && data.gen
-      ? { model: data.gen.model, route: data.gen.route, at: new Date(data.gen.at) }
-      : undefined;
-
   try {
     return await withAccount(async ({ accountId }): Promise<RecordResult> => {
-      // Quest-fold context (Adventure 2.0) AND the star-earn membership witness:
-      // locate the containing unit on the learner's pinned tree, server-derived —
-      // never trusted from the client. Unresolvable (resolver failure/unknown
-      // program) degrades to complete_n-only quest matching and no star credit,
-      // rather than failing the attempt write.
-      let program: Program | null = null;
-      try {
-        program = (await resolveLearnerProgram(accountId, data.learnerId, data.programSlug)) ?? null;
-      } catch {
-        program = null;
-      }
-      const unitId: string | null = program ? findUnitIdOfActivity(program, data.activityId) : null;
-      const unit = program && unitId ? getUnit(program, unitId) : null;
-      const checkpointPhase = unit?.checkpoint ?? null;
+      // A verification id cannot be interpreted generically. Until a resolved
+      // activity kind registers the narrow oral-reading verifier, fail closed.
+      if (data.verificationId) return { ok: false, reason: "invalid" };
 
-      // Generated shelf witness (Adventure 2.0 B3): a GENERATED attempt whose
-      // activityId is a real shelf row OWNED BY THIS LEARNER is a legitimate
-      // one-time star earner. The ownership-checked read is the witness (scoped
-      // to accountId AND learnerId), exactly like `creditEligible` is for
-      // authored activities — a forged shelf id from another learner returns null
-      // and earns nothing. A found row also gives the containing unit (for
-      // unit-targeted quests). The in-session "More" practice path (generated but
-      // activityId = an AUTHORED id) finds no shelf row → shelfEligible stays
-      // false, unchanged. Only queried for generated attempts (authored ids are
-      // never on the shelf).
-      let shelfEligible = false;
-      let shelfUnitId: string | null = null;
-      if (generated) {
-        const shelfRow = await getGeneratedActivity(accountId, data.learnerId, data.activityId);
-        if (shelfRow) {
-          shelfEligible = true;
-          shelfUnitId = shelfRow.unitKey;
-        }
-      }
-
-      // An authored attempt whose activityId is NOT in the learner's resolved
-      // tree is a forgery attempt (a fresh/arbitrary id) — reject before any
-      // write. A generated (AI practice) attempt is exempt: synthetic practice
-      // ids are legitimate there and never earn ledger stars anyway.
-      if (!generated && program && unitId === null) {
-        return { ok: false, reason: "invalid" };
-      }
-
-      // Server-derived, never client-supplied: true only for an authored attempt
-      // verified against the learner's own pinned tree. Gates the star-ledger
-      // earn in recordAttempt; the attempt/skill_state folds are unaffected.
-      const creditEligible = !generated && unitId !== null;
-      if (!program) {
-        captureNonCritical(
-          "recordAttemptAction: program unresolvable; attempt recorded without star credit",
-          new Error(`learnerId=${data.learnerId} programSlug=${data.programSlug}`),
+      if ("generatedActivityId" in data) {
+        const row = await getGeneratedActivity(
+          accountId,
+          data.learnerId,
+          data.generatedActivityId,
         );
+        if (!row || row.programSlug !== data.programSlug) {
+          return { ok: false, reason: "invalid" };
+        }
+        const canonical = parseAndScoreActivity(
+          row.kind,
+          row.config,
+          data.response,
+          row.skillTags,
+        );
+        if (!canonical.ok) return { ok: false, reason: "invalid" };
+
+        const provenance = row.gen
+          ? {
+              model: row.gen.model,
+              route: row.gen.route,
+              at: new Date(row.gen.at),
+            }
+          : undefined;
+        await recordAttempt(accountId, {
+          learnerId: data.learnerId,
+          programSlug: data.programSlug,
+          activityId: row.id,
+          kind: row.kind,
+          generated: true,
+          response: canonical.response,
+          score: canonical.score,
+          day: new Date().toISOString().slice(0, 10),
+          provenance,
+          unitId: row.unitKey,
+          creditEligible: false,
+          shelfEligible: true,
+          checkpointPhase: null,
+        });
+        return { ok: true, score: canonical.score };
       }
+
+      let program: Program | null;
+      try {
+        program =
+          (await resolveLearnerProgram(accountId, data.learnerId, data.programSlug)) ?? null;
+      } catch (error) {
+        captureNonCritical("recordAttemptAction pinned program unavailable", error);
+        return { ok: false, reason: "unavailable" };
+      }
+      if (!program) return { ok: false, reason: "unavailable" };
+
+      const unit = getUnit(program, data.unitKey);
+      const activity = unit?.lessons
+        .flatMap((lesson) => lesson.activities)
+        .find((candidate) => candidate.id === data.activityId);
+      if (!unit || !activity) return { ok: false, reason: "invalid" };
+
+      const canonical = parseAndScoreActivity(
+        activity.kind,
+        activity.config,
+        data.response,
+        activity.skillTags,
+      );
+      if (!canonical.ok) return { ok: false, reason: "invalid" };
 
       await recordAttempt(accountId, {
         learnerId: data.learnerId,
         programSlug: data.programSlug,
-        activityId: data.activityId,
-        kind: data.kind,
-        generated,
-        response: data.response,
-        score: data.score,
+        activityId: activity.id,
+        kind: activity.kind,
+        generated: false,
+        response: canonical.response,
+        score: canonical.score,
         day: new Date().toISOString().slice(0, 10),
-        provenance,
-        // A verified shelf item carries its own unit (for unit-targeted quests);
-        // otherwise the authored-tree unit (null when unresolvable / generated
-        // in-session practice keeps its authored unit).
-        unitId: shelfEligible ? shelfUnitId : unitId,
-        creditEligible,
-        shelfEligible,
-        checkpointPhase,
+        unitId: unit.id,
+        creditEligible: true,
+        shelfEligible: false,
+        checkpointPhase: unit.checkpoint ?? null,
       });
-      return { ok: true };
+      return { ok: true, score: canonical.score };
     });
   } catch (error) {
     if (error instanceof UnauthenticatedError) return { ok: false, reason: "unauthenticated" };

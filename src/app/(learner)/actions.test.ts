@@ -1,14 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// recordAttemptAction's star-economy membership witness (Codex critical, see the
-// doc comment above recordAttemptAction in ./actions.ts): for a non-generated
-// (authored) attempt, the action resolves the learner's pinned program and
-// verifies `activityId` belongs to that tree via findUnitIdOfActivity BEFORE
-// calling recordAttempt. A resolved tree with no match is a forgery attempt and
-// must be rejected outright (`invalid`) with recordAttempt never called — that
-// is the boundary that closes the star-mint exploit. There is no live test DB;
-// the store + resolver + witness are mocked and we assert the derivation
-// (reject-without-write vs. creditEligible) rather than any store internals.
+// recordAttemptAction is the trust boundary for progress. The browser sends
+// identifiers plus bounded response facts only; the action resolves the exact
+// pinned activity (including route unit), validates config/response through the
+// server-safe plugin contract, computes the canonical score/evidence, and only
+// then calls recordAttempt. There is no live test DB here, so the store and
+// pinned-program resolver are mocked while real plugin scoring stays exercised.
 
 vi.mock("@/lib/tenancy", async (importActual) => ({
   ...(await importActual<typeof import("@/lib/tenancy")>()),
@@ -41,10 +38,6 @@ vi.mock("@/lib/tutor/store", () => ({
 
 vi.mock("@/lib/content/repository", () => ({
   resolveLearnerProgram: vi.fn(),
-}));
-
-vi.mock("@/lib/quests/logic", () => ({
-  findUnitIdOfActivity: vi.fn(),
 }));
 
 // The heavy AI + shelf modules are mocked so the action tests stay pure: we
@@ -84,7 +77,6 @@ import {
 } from "@/lib/tutor/store";
 import { requireAccount, UnauthenticatedError } from "@/lib/tenancy";
 import { resolveLearnerProgram } from "@/lib/content/repository";
-import { findUnitIdOfActivity } from "@/lib/quests/logic";
 import { generatePracticeItems } from "@/lib/ai/practice";
 import { pickGenerationTargets, type GenerationTarget } from "@/lib/tutor/shelf";
 import {
@@ -96,15 +88,67 @@ import {
 } from "./actions";
 import type { Program } from "@/content";
 
-const PROGRAM = { slug: "kaelyn-adaptive", title: "T", subtitle: "", ageBand: "", summary: "", units: [] } as unknown as Program;
+const PROGRAM = {
+  slug: "kaelyn-adaptive",
+  title: "T",
+  subtitle: "",
+  ageBand: "",
+  summary: "",
+  units: [
+    {
+      id: "unit-1",
+      order: 1,
+      title: "Time",
+      emoji: "🕐",
+      world: "sunshine",
+      bigIdea: "",
+      phonicsFocus: "",
+      mathFocus: "",
+      project: "",
+      lessons: [
+        {
+          id: "lesson-1",
+          order: 1,
+          title: "Clock",
+          activities: [
+            {
+              id: "act-1",
+              kind: "math-clock",
+              title: "Set the clock",
+              band: "ready",
+              skillTags: ["math.time"],
+              config: {
+                mode: "set",
+                instruction: "Make six o'clock.",
+                targetHour: 6,
+                targetMinute: 0,
+              },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "unit-2",
+      order: 2,
+      title: "Other",
+      emoji: "🌱",
+      world: "garden",
+      bigIdea: "",
+      phonicsFocus: "",
+      mathFocus: "",
+      project: "",
+      lessons: [],
+    },
+  ],
+} satisfies Program;
 
 const BASE_INPUT: RecordAttemptInput = {
   learnerId: "L1",
   programSlug: "kaelyn-adaptive",
+  unitKey: "unit-1",
   activityId: "act-1",
-  kind: "quiz",
-  generated: false,
-  score: { correct: 1, total: 1, stars: 3, skillEvidence: [] },
+  response: { attempts: 1, setHour: 6, setMinute: 0 },
 };
 
 describe("getTutorSession", () => {
@@ -156,43 +200,66 @@ beforeEach(() => {
 });
 afterEach(() => vi.resetAllMocks());
 
-describe("recordAttemptAction membership witness (star-mint exploit boundary)", () => {
-  it("rejects a forged authored activityId (invalid) and never calls recordAttempt", async () => {
+describe("recordAttemptAction canonical authored scoring", () => {
+  it("rejects an activity that is not inside the claimed route unit", async () => {
     vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
-    vi.mocked(findUnitIdOfActivity).mockReturnValue(null);
 
-    const result = await recordAttemptAction(BASE_INPUT);
+    const result = await recordAttemptAction({ ...BASE_INPUT, unitKey: "unit-2" });
 
     expect(result).toEqual({ ok: false, reason: "invalid" });
     expect(recordAttempt).not.toHaveBeenCalled();
   });
 
-  it("records a legit authored activityId with creditEligible: true", async () => {
+  it("rejects malformed response facts before persistence", async () => {
     vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
-    vi.mocked(findUnitIdOfActivity).mockReturnValue("unit-1");
 
-    const result = await recordAttemptAction(BASE_INPUT);
+    const result = await recordAttemptAction({ ...BASE_INPUT, response: { attempts: 0 } });
 
-    expect(result).toEqual({ ok: true });
-    expect(recordAttempt).toHaveBeenCalledOnce();
-    expect(recordAttempt).toHaveBeenCalledWith(
-      "acc-1",
-      expect.objectContaining({ unitId: "unit-1", creditEligible: true }),
-    );
+    expect(result).toEqual({ ok: false, reason: "invalid" });
+    expect(recordAttempt).not.toHaveBeenCalled();
   });
 
-  it("records forgivingly (creditEligible: false, still recorded) when the program is unresolvable", async () => {
+  it("fails closed when the pinned program cannot be resolved", async () => {
     vi.mocked(resolveLearnerProgram).mockResolvedValue(undefined);
 
     const result = await recordAttemptAction(BASE_INPUT);
 
-    expect(result).toEqual({ ok: true });
-    // findUnitIdOfActivity is never reached — there's no tree to check membership against.
-    expect(findUnitIdOfActivity).not.toHaveBeenCalled();
-    expect(recordAttempt).toHaveBeenCalledOnce();
+    expect(result).toEqual({ ok: false, reason: "unavailable" });
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("ignores a forged browser score and persists the canonical plugin score", async () => {
+    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+    const forged = {
+      ...BASE_INPUT,
+      score: {
+        correct: 999,
+        total: 1,
+        stars: 3,
+        skillEvidence: [{ skill: "admin.superpowers", outcome: "solid" }],
+      },
+    } as unknown as RecordAttemptInput;
+
+    const result = await recordAttemptAction(forged);
+
+    const score = {
+      correct: 1,
+      total: 1,
+      stars: 3,
+      skillEvidence: [{ skill: "math.time", outcome: "solid" }],
+    } as const;
+    expect(result).toEqual({ ok: true, score });
     expect(recordAttempt).toHaveBeenCalledWith(
       "acc-1",
-      expect.objectContaining({ unitId: null, creditEligible: false }),
+      expect.objectContaining({
+        activityId: "act-1",
+        kind: "math-clock",
+        generated: false,
+        unitId: "unit-1",
+        creditEligible: true,
+        response: BASE_INPUT.response,
+        score,
+      }),
     );
   });
 });
@@ -200,44 +267,67 @@ describe("recordAttemptAction membership witness (star-mint exploit boundary)", 
 // ── Adventure 2.0 B3: the generated-shelf star witness ───────────────────────
 
 describe("recordAttemptAction generated-shelf witness (earn-once boundary)", () => {
-  it("does NOT set shelfEligible for a generated id owned by another learner (records, earns nothing)", async () => {
-    // A forged shelf id: the account/learner-scoped read misses, so shelfEligible
-    // stays false. The attempt still records (generated practice is forgiving),
-    // but recordAttempt is told not to grant the one-time earn.
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
-    vi.mocked(findUnitIdOfActivity).mockReturnValue(null);
+  const generatedInput = {
+    learnerId: "L1",
+    programSlug: "kaelyn-adaptive",
+    generatedActivityId: "gen-1",
+    response: { attempts: 1, setHour: 6, setMinute: 0 },
+  } as RecordAttemptInput;
+
+  it("rejects a generated id not owned by the selected learner", async () => {
     vi.mocked(getGeneratedActivity).mockResolvedValue(null);
 
-    const result = await recordAttemptAction({ ...BASE_INPUT, generated: true, activityId: "gen-foreign" });
+    const result = await recordAttemptAction(generatedInput);
 
-    expect(result).toEqual({ ok: true });
-    expect(getGeneratedActivity).toHaveBeenCalledWith("acc-1", "L1", "gen-foreign");
-    expect(recordAttempt).toHaveBeenCalledWith(
-      "acc-1",
-      expect.objectContaining({ generated: true, shelfEligible: false, creditEligible: false }),
-    );
+    expect(result).toEqual({ ok: false, reason: "invalid" });
+    expect(getGeneratedActivity).toHaveBeenCalledWith("acc-1", "L1", "gen-1");
+    expect(recordAttempt).not.toHaveBeenCalled();
   });
 
-  it("sets shelfEligible + the shelf's unit for a generated id owned by this learner", async () => {
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
-    vi.mocked(findUnitIdOfActivity).mockReturnValue(null);
+  it("derives kind, score, unit, tags, and provenance from the owned shelf row", async () => {
     vi.mocked(getGeneratedActivity).mockResolvedValue({
       id: "gen-1",
       lessonId: "u1-l1",
       unitKey: "u1",
       programSlug: "kaelyn-adaptive",
-      kind: "phonics-wordbuild",
-      title: "Fresh: X",
-      config: {},
-      skillTags: [],
+      kind: "math-clock",
+      title: "Fresh: clocks",
+      config: {
+        mode: "set",
+        instruction: "Make six o'clock.",
+        targetHour: 6,
+        targetMinute: 0,
+      },
+      skillTags: ["math.time"],
+      gen: { model: "ds4-fast", route: "shelf", at: "2026-07-01T00:00:00.000Z" },
     });
 
-    const result = await recordAttemptAction({ ...BASE_INPUT, generated: true, activityId: "gen-1" });
+    const result = await recordAttemptAction(generatedInput);
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({
+      ok: true,
+      score: {
+        correct: 1,
+        total: 1,
+        stars: 3,
+        skillEvidence: [{ skill: "math.time", outcome: "solid" }],
+      },
+    });
     expect(recordAttempt).toHaveBeenCalledWith(
       "acc-1",
-      expect.objectContaining({ generated: true, shelfEligible: true, unitId: "u1" }),
+      expect.objectContaining({
+        activityId: "gen-1",
+        kind: "math-clock",
+        generated: true,
+        shelfEligible: true,
+        creditEligible: false,
+        unitId: "u1",
+        provenance: {
+          model: "ds4-fast",
+          route: "shelf",
+          at: new Date("2026-07-01T00:00:00.000Z"),
+        },
+      }),
     );
   });
 });

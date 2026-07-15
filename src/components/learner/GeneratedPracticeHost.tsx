@@ -5,13 +5,14 @@ import { useCallback, useState } from "react";
 import type { ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { MapTrifoldIcon } from "@phosphor-icons/react/dist/ssr";
-import type { Activity, ActivityScore, World } from "@/content";
+import type { Activity, World } from "@/content";
 import { getProgram, getUnit } from "@/content";
 import "@/activities"; // side-effect: registers every available activity-type plugin
 import { getActivityType } from "@/activities";
 import type { PlayableShelfItem } from "@/lib/tutor/store";
 import { Mascot } from "@/components/art/Mascot";
 import { Button } from "@/components/ui/Button";
+import { KidLoadingShell } from "@/components/boundaries/KidLoadingShell";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner } from "./learners";
 import { useLearnerState } from "./useLearnerState";
@@ -75,10 +76,11 @@ export function GeneratedPracticeHost({
   // Activity-shaped object is synthesized from the row (record reads only
   // id/kind; config is unused there) — cast because the runtime kind can't be
   // correlated to the union member at compile time.
-  const handleComplete = useCallback(
-    (response: unknown, score: ActivityScore) => {
+  const persistCompletion = useCallback(
+    async (response: unknown) => {
       if (!row) return;
       stopSpeaking();
+      setPhase({ kind: "saving", response });
       const activity = {
         id: row.id,
         title: row.title,
@@ -87,14 +89,21 @@ export function GeneratedPracticeHost({
         kind: row.kind,
         config: row.config,
       } as Activity;
-      record(activity, response, score, {
-        generated: true,
-        gen: row.gen,
-        shelfItemId: row.id,
-      });
-      setPhase({ kind: "reward", stars: score.stars });
+      const result = await record(activity, response, { generatedActivityId: row.id });
+      setPhase(
+        result.ok
+          ? { kind: "reward", stars: result.score.stars }
+          : { kind: "save-failed", response },
+      );
     },
     [row, record],
+  );
+
+  const handleComplete = useCallback(
+    (response: unknown) => {
+      void persistCompletion(response);
+    },
+    [persistCompletion],
   );
 
   const handleExit = useCallback(() => {
@@ -124,6 +133,23 @@ export function GeneratedPracticeHost({
           <AnimatePresence mode="wait">
           {phase.kind === "reward" ? (
             <ShelfReward key="reward" stars={phase.stars} backHref={backHref} />
+          ) : phase.kind === "saving" ? (
+            <KidLoadingShell
+              key="saving"
+              ariaLabel="Saving your work"
+              message="Saving your work..."
+              mood="think"
+            >
+              <div aria-hidden className="h-24" />
+            </KidLoadingShell>
+          ) : phase.kind === "save-failed" ? (
+            <ShelfSaveFailed
+              key="save-failed"
+              onRetry={() => {
+                void persistCompletion(phase.response);
+              }}
+              onExit={handleExit}
+            />
           ) : (
             <PlayerFrame key="play">
               <activityType.Player
@@ -140,7 +166,34 @@ export function GeneratedPracticeHost({
   );
 }
 
-type Phase = { kind: "playing" } | { kind: "reward"; stars: 0 | 1 | 2 | 3 };
+type Phase =
+  | { kind: "playing" }
+  | { kind: "saving"; response: unknown }
+  | { kind: "save-failed"; response: unknown }
+  | { kind: "reward"; stars: 0 | 1 | 2 | 3 };
+
+function ShelfSaveFailed({ onRetry, onExit }: { onRetry: () => void; onExit: () => void }) {
+  return (
+    <div className="mx-auto flex max-w-md flex-col items-center pt-10 text-center">
+      <Mascot mood="think" size={120} />
+      <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight">
+        Your work is still here
+      </h1>
+      <p className="mt-3 text-lg text-ink-soft" role="status">
+        Let&rsquo;s try saving it one more time.
+      </p>
+      <div className="mt-9 flex w-full flex-col gap-3">
+        <Button type="button" onClick={onRetry} variant="primary" size="kid">
+          Try again
+        </Button>
+        <Button type="button" onClick={onExit} variant="soft" size="kid">
+          <MapTrifoldIcon weight="duotone" className="size-6" />
+          Back to the map
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /* ── Player frame (soft cross-fade + rise per DESIGN.md page transition) ──── */
 

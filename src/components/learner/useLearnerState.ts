@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { Activity, ActivityScore, Program } from "@/content";
-import { getProgram, getUnit } from "@/content";
-import { applyEvidence, type SkillState } from "@/lib/tutor";
-import { findUnitIdOfActivity } from "@/lib/quests/logic";
+import type { Activity, Program } from "@/content";
+import { getProgram } from "@/content";
+import type { SkillState } from "@/lib/tutor";
+import { parseAndScoreActivity } from "@/activities/server-verification";
 import type { LearnerSurfaceConfig } from "@/lib/content/config";
 // Type-only import (erased at build): the store is server-only, but its
 // client-safe ShelfItem shape crosses the server→client boundary via
@@ -15,6 +15,7 @@ import {
   getLearnerStateAction,
   getTutorSession,
   recordAttemptAction,
+  type RecordResult,
   type TutorLearner,
   type TutorSession,
 } from "@/app/(learner)/actions";
@@ -81,27 +82,15 @@ export interface UseLearnerState {
    */
   setupProfile: () => Promise<boolean>;
   /**
-   * Record one completed activity: DB in account mode, localStorage in guest.
-   * Pass `{ generated: true }` for AI practice items — they fold skill evidence
-   * but are not tracked as authored star progress / completion. For a generated
-   * item, pass `gen` (the provenance echoed by /api/practice) so the attempt
-   * records which model/route/when produced it (P6 / §8). Ignored in guest mode.
-   *
-   * A generated SHELF item (Adventure 2.0 B3) passes `{ generated: true, gen,
-   * shelfItemId }`: `shelfItemId` is the generated id, and its presence ALSO
-   * drives the optimistic completed/best-stars update keyed by that id (a shelf
-   * item is a durable, one-time earner — unlike in-session "More" practice).
+   * Record one completed activity. Account mode sends identifiers + response
+   * facts and waits for the server's canonical score; guest mode parses/scores
+   * through the same pure definition before touching localStorage.
    */
   record: (
     activity: Activity,
     response: unknown,
-    score: ActivityScore,
-    opts?: {
-      generated?: boolean;
-      gen?: { model: string; route: string; at: string };
-      shelfItemId?: string;
-    },
-  ) => void;
+    source: { unitKey: string } | { generatedActivityId: string },
+  ) => Promise<RecordResult>;
   /**
    * The parent-set per-child, per-program enrollment config. Empty object in
    * guest mode or when no config has been set. Clients read this to apply
@@ -152,18 +141,6 @@ const EMPTY_COMPLETED: ReadonlySet<string> = new Set();
 /** Stable empty shelf so guest/loading returns keep a referentially-stable []. */
 const EMPTY_SHELF: ShelfItem[] = Object.freeze([]) as unknown as ShelfItem[];
 const EMPTY_DUE_REVIEWS: DueReview[] = Object.freeze([]) as unknown as DueReview[];
-
-function clampStars(value: number): 0 | 1 | 2 | 3 {
-  if (!Number.isFinite(value)) return 0;
-  const r = Math.round(value);
-  if (r <= 0) return 0;
-  if (r >= 3) return 3;
-  return r as 1 | 2;
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 /** The remembered account-learner id from storage (pure; snapshot-cache safe). */
 function readRememberedAccountLearner(raw: string | null): string | null {
@@ -339,74 +316,47 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
 
   // ── Unified record ────────────────────────────────────────────────────────
   const record = useCallback<UseLearnerState["record"]>(
-    (activity, response, score, opts) => {
-      const generated = opts?.generated ?? false;
+    async (activity, response, source) => {
       const destination = recordingDestination(mode, selectedLearnerId);
       if (destination === "account" && selectedLearnerId) {
-        const day = today();
-        // Optimistic merge so the reward + map update immediately… EXCEPT the
-        // skill_state merge for a checkpoint-unit activity: the server
-        // deliberately does NOT write skill_state for a checkpoint attempt (it
-        // folds into checkpoint_result instead, gated behind a parent applying
-        // the placement), so merging it here would flash a fabricated
-        // solid/emerging skill until the reconcile fetch below corrects it back
-        // down — a visible violation of "nothing changes until a parent applies."
-        // Resolved from the loaded program tree with the SAME resolver the
-        // server action uses (findUnitIdOfActivity + getUnit); when the tree
-        // hasn't resolved yet, fall back to merging — the reconcile still
-        // corrects it either way.
-        const unitId = accountProgram ? findUnitIdOfActivity(accountProgram, activity.id) : null;
-        const unit = accountProgram && unitId ? getUnit(accountProgram, unitId) : undefined;
-        const isCheckpointActivity = unit?.checkpoint != null;
-        if (!isCheckpointActivity) {
-          setAccountSkill((prev) => applyEvidence(prev, score.skillEvidence, day));
+        const result = await recordAttemptAction(
+          "generatedActivityId" in source
+            ? {
+                learnerId: selectedLearnerId,
+                programSlug,
+                generatedActivityId: source.generatedActivityId,
+                response,
+              }
+            : {
+                learnerId: selectedLearnerId,
+                programSlug,
+                unitKey: source.unitKey,
+                activityId: activity.id,
+                response,
+              },
+        );
+        if (result.ok && mountedRef.current) {
+          await loadAccountState(selectedLearnerId, programSlug);
         }
-        // Authored completion OR a generated SHELF item (B3, signalled by
-        // opts.shelfItemId) optimistically flips completed + best-stars, keyed by
-        // activity.id (which IS the generated id for a shelf item). In-session
-        // "More" practice (generated, no shelfItemId) folds evidence only — it is
-        // not a durable, trackable completion. The C1 checkpoint-skip guard above
-        // is untouched: a shelf item is never in a checkpoint unit.
-        if (!generated || opts?.shelfItemId) {
-          setAccountCompleted((prev) =>
-            prev.has(activity.id) ? prev : new Set(prev).add(activity.id),
-          );
-          setAccountStars((prev) => {
-            const best = prev[activity.id] ?? 0;
-            const next = clampStars(score.stars);
-            return next > best ? { ...prev, [activity.id]: next } : prev;
-          });
-        }
-        // …then persist and refetch to reconcile the server's derived outcome.
-        void (async () => {
-          await recordAttemptAction({
-            learnerId: selectedLearnerId,
-            programSlug,
-            activityId: activity.id,
-            kind: activity.kind,
-            generated,
-            response,
-            score: {
-              correct: score.correct,
-              total: score.total,
-              stars: score.stars,
-              skillEvidence: score.skillEvidence,
-            },
-            // Relay generation provenance (P6 / §8). Only present for generated
-            // items; the action ignores it for authored ones.
-            ...(generated && opts?.gen ? { gen: opts.gen } : undefined),
-          });
-          if (mountedRef.current) await loadAccountState(selectedLearnerId, programSlug);
-        })();
-        return;
+        return result;
       }
-      if (destination === "blocked") return;
-      // Guest mode: localStorage only. Generated practice records evidence but
-      // not star progress (it isn't an authored, trackable activity).
-      guestRecord(score.skillEvidence);
-      if (!generated) guestComplete(activity.id, score.stars);
+      if (destination === "blocked" || "generatedActivityId" in source) {
+        return { ok: false, reason: "unavailable" };
+      }
+
+      const canonical = parseAndScoreActivity(
+        activity.kind,
+        activity.config,
+        response,
+        activity.skillTags,
+      );
+      if (!canonical.ok) return { ok: false, reason: "invalid" };
+
+      guestRecord(canonical.score.skillEvidence);
+      guestComplete(activity.id, canonical.score.stars);
+      return { ok: true, score: canonical.score };
     },
-    [mode, selectedLearnerId, programSlug, accountProgram, loadAccountState, guestRecord, guestComplete],
+    [mode, selectedLearnerId, programSlug, loadAccountState, guestRecord, guestComplete],
   );
 
   // ── Project the active view based on mode ─────────────────────────────────

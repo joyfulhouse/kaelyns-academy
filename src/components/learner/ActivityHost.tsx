@@ -8,12 +8,9 @@ import {
   ArrowRightIcon,
   HammerIcon,
   MapTrifoldIcon,
-  SparkleIcon,
 } from "@phosphor-icons/react/dist/ssr";
-import type { Activity, ActivityScore, Unit, World } from "@/content";
-import { getSkill } from "@/content";
+import type { Activity, Unit, World } from "@/content";
 import { ensureLessonPractice } from "@/app/(learner)/actions";
-import { isGenerableKind } from "@/lib/ai/generable";
 import "@/activities"; // side-effect: registers every available activity-type plugin
 import { getActivityType } from "@/activities";
 import { cn } from "@/lib/cn";
@@ -38,13 +35,6 @@ import {
   safeParsePlayerConfig,
 } from "./activityResolution";
 
-/** How many AI-generated items may be played back to back, so the loop stays
- *  bounded no matter how much a child taps "more". */
-const MAX_GENERATED = 3;
-
-/** Request timeout for generation: a child should never wait long. */
-const PRACTICE_TIMEOUT_MS = 12_000;
-
 /**
  * The next activity within the SAME (resolved) unit — kept inside the world so a
  * child advances through one theme before the map decides the next. Returns null
@@ -59,35 +49,12 @@ function nextActivityHref(programSlug: string, unit: Unit, activityKey: string):
   return `/learn/${programSlug}/${unit.id}/${ids[idx + 1]}`;
 }
 
-/** Provenance echoed by /api/practice for a generated item (P6 / §8). Relayed
- *  onto the recorded attempt so the parent's "what the AI made" trail + export
- *  show which model/route/when produced it. Carried on the active practice phase. */
-interface GenProvenance {
-  model: string;
-  route: string;
-  at: string;
-}
-
-/** Pull a well-formed `gen` provenance object off the /api/practice response, or
- *  null when absent/malformed. The server validates the attempt write, so this is
- *  just a defensive shape-check on the client relay (never throws on bad data). */
-function parseGen(data: unknown): GenProvenance | null {
-  if (!data || typeof data !== "object") return null;
-  const gen = (data as { gen?: unknown }).gen;
-  if (!gen || typeof gen !== "object") return null;
-  const { model, route, at } = gen as Record<string, unknown>;
-  if (typeof model !== "string" || typeof route !== "string" || typeof at !== "string") {
-    return null;
-  }
-  return { model, route, at };
-}
-
 type Phase =
   | { kind: "play" }
+  | { kind: "saving" }
+  | { kind: "save-failed"; response: unknown }
   | { kind: "reward"; stars: 0 | 1 | 2 | 3 }
-  | { kind: "generating" }
-  | { kind: "practice"; config: unknown; gen: GenProvenance | null }
-  | { kind: "practice-failed" };
+;
 
 /**
  * The activity host. Imports `@/activities` for side-effect registration, then
@@ -95,11 +62,9 @@ type Phase =
  * unregistered kind degrades gracefully to a friendly "coming soon" placeholder
  * (so the learner surface builds and runs before the plugins land).
  *
- * On completion it records progress AND skill evidence (the single source of
- * mastery truth), then shows a forgiving reward screen. From the reward screen
- * the child can ask for "more, made just for me": the host calls the bounded,
- * schema-validated /api/practice endpoint and renders the generated config
- * through the same Player. Generation is capped and fails gently.
+ * On completion it waits for the server-authoritative record result, then shows
+ * one forgiving reward screen. A failed write keeps the bounded response in
+ * memory and offers a calm retry; the browser never supplies the score.
  */
 export function ActivityHost({
   programSlug,
@@ -127,7 +92,6 @@ export function ActivityHost({
   const { record, signedIn, config, selectedLearnerId, program, mode, available, ready } =
     learnerState;
   const [phase, setPhase] = useState<Phase>({ kind: "play" });
-  const [generatedCount, setGeneratedCount] = useState(0);
 
   // Fail closed until the surface mode + selected account learner's pinned tree
   // are ready. Account mode never falls back to the published SSR activity, and
@@ -163,14 +127,18 @@ export function ActivityHost({
       ? safeParsePlayerConfig(activityType.schema, effectiveActivity.config)
       : null;
 
-  // The authored activity records both star progress and skill evidence. Guarded
-  // on the resolved activity so the callbacks stay declared unconditionally
-  // (rules-of-hooks) while the "moved" state below short-circuits the render.
-  const handleComplete = (response: unknown, score: ActivityScore) => {
+  // Keep the response in memory across a retry, but trust only the canonical
+  // score returned after the server re-resolves this exact unit/activity.
+  const persistCompletion = async (response: unknown) => {
     if (!effectiveActivity) return;
     stopSpeaking();
-    record(effectiveActivity, response, score);
-    setPhase({ kind: "reward", stars: score.stars });
+    setPhase({ kind: "saving" });
+    const result = await record(effectiveActivity, response, { unitKey });
+    if (!result.ok) {
+      setPhase({ kind: "save-failed", response });
+      return;
+    }
+    setPhase({ kind: "reward", stars: result.score.stars });
     // Eager shelf warm-up (B3 §4): once an authored activity is done, nudge the
     // server to fill this lesson's "fresh practice" shelf. Fire-and-forget and
     // idempotent — the server no-ops unless this completion finished the lesson,
@@ -188,97 +156,13 @@ export function ActivityHost({
     }
   };
 
-  // A generated practice item records skill evidence too (it exercises the same
-  // skills), but not star progress: it isn't an authored, trackable activity. The
-  // `gen` provenance (from /api/practice) is relayed so the attempt records which
-  // model/route/when made it (P6 / §8); null when generation returned none.
-  const handlePracticeComplete = (
-    response: unknown,
-    score: ActivityScore,
-    gen: GenProvenance | null,
-  ) => {
-    if (!effectiveActivity) return;
-    stopSpeaking();
-    record(effectiveActivity, response, score, {
-      generated: true,
-      ...(gen ? { gen } : undefined),
-    });
-    setPhase({ kind: "reward", stars: score.stars });
+  const handleComplete = (response: unknown) => {
+    void persistCompletion(response);
   };
 
   const handleExit = () => {
     stopSpeaking();
     router.push(backHref);
-  };
-
-  // Ask the bounded generator for one more item at this activity's level. Two
-  // flows, matching /api/practice: a SIGNED-IN account sends only IDENTIFIERS and
-  // the server §8-gates + derives every generation input from the authored
-  // activity (the model can't be steered off-curriculum from here); a GUEST
-  // (public "explore") has no enrollment, so it sends the bounded params
-  // directly. Output stays schema-validated server-side either way.
-  const handleMore = async () => {
-    if (!effectiveActivity) return;
-    stopSpeaking();
-    setPhase({ kind: "generating" });
-
-    let body: Record<string, unknown>;
-    if (signedIn) {
-      // §8 path: identifiers only — `activityId` binds generation to a real
-      // activity in the learner's resolved program (the stable authored key).
-      body = {
-        learnerId: selectedLearnerId,
-        programSlug,
-        activityId: effectiveActivity.id,
-        n: 1,
-      };
-    } else {
-      // Explore path: the guest surface supplies the (bounded) generation params.
-      const primarySkill = effectiveActivity.skillTags[0];
-      const focus =
-        (primarySkill ? getSkill(primarySkill)?.label : undefined) ?? effectiveActivity.title;
-      body = {
-        kind: effectiveActivity.kind,
-        band: config.band ?? effectiveActivity.band,
-        focus,
-        n: 1,
-        skillHints: effectiveActivity.skillTags.slice(0, 8),
-      };
-    }
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), PRACTICE_TIMEOUT_MS);
-    try {
-      const res = await fetch("/api/practice", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        setPhase({ kind: "practice-failed" });
-        return;
-      }
-      const data: unknown = await res.json();
-      const items =
-        data && typeof data === "object" && Array.isArray((data as { items?: unknown }).items)
-          ? (data as { items: unknown[] }).items
-          : [];
-      const first = items[0];
-      if (first === undefined) {
-        setPhase({ kind: "practice-failed" });
-        return;
-      }
-      setGeneratedCount((n) => n + 1);
-      // Carry the server's provenance (model/route/at) onto the practice phase so
-      // the recorded attempt can log what made it (P6 / §8). null if absent/malformed.
-      setPhase({ kind: "practice", config: first, gen: parseGen(data) });
-    } catch {
-      // Timeout/abort/network: never a scary error, just "another time".
-      setPhase({ kind: "practice-failed" });
-    } finally {
-      clearTimeout(timer);
-    }
   };
 
   if (mode === "error") {
@@ -306,23 +190,6 @@ export function ActivityHost({
   const unit = resolution.unit;
   const learnerIdentity = selectedLearnerId ?? learner.id;
 
-  // Auto-offer more when this activity's primary skill is still emerging, and
-  // only while we're under the generation cap and the kind is renderable.
-  // AI practice spends on the LiteLLM gateway via /api/practice, which now
-  // requires an account — so only offer "more, made just for me" to a signed-in
-  // household. Guests play authored content only (no false, always-failing tap).
-  // Additionally, if the parent has set aiPractice === false for this child's
-  // program, hide the button (defense-in-depth: the server also returns 403).
-  const aiPracticeEnabled = config.aiPractice !== false;
-  // Only offer "more" for a kind the generator will actually produce — an
-  // authored-only kind (isGenerableKind === false) would 502 every time, so the
-  // button must never render for it (matches /api/practice's own refusal).
-  const canGenerate =
-    Boolean(activityType) &&
-    generatedCount < MAX_GENERATED &&
-    signedIn &&
-    aiPracticeEnabled &&
-    isGenerableKind(activity.kind);
   return (
     <div data-world={effectiveWorld}>
       <AppShellKid backHref={backHref} readAloud={activity.title}>
@@ -334,58 +201,17 @@ export function ActivityHost({
               stars={phase.stars}
               backHref={backHref}
               nextHref={nextHref}
-              canGenerate={canGenerate}
-              onMore={handleMore}
             />
-          ) : phase.kind === "generating" ? (
-            <GeneratingScreen key="generating" />
-          ) : phase.kind === "practice-failed" ? (
-            <PracticeFailed
-              key="practice-failed"
-              backHref={backHref}
-              nextHref={nextHref}
+          ) : phase.kind === "saving" ? (
+            <SavingScreen key="saving" />
+          ) : phase.kind === "save-failed" ? (
+            <SaveFailed
+              key="save-failed"
+              onRetry={() => {
+                void persistCompletion(phase.response);
+              }}
+              onExit={handleExit}
             />
-          ) : phase.kind === "practice" && activityType ? (
-            (() => {
-              const parsedPractice = safeParsePlayerConfig(activityType.schema, phase.config);
-              if (parsedPractice.status === "malformed") {
-                return (
-                  <PracticeFailed
-                    key="practice-malformed"
-                    backHref={backHref}
-                    nextHref={nextHref}
-                  />
-                );
-              }
-              const practiceKey = playerIdentityKey({
-                learnerId: learnerIdentity,
-                programSlug,
-                unitKey: unit.id,
-                activityKey: activity.id,
-                kind: activity.kind,
-                variant: "generated-practice",
-                sequence: generatedCount,
-                content: activity,
-                config: parsedPractice.config,
-              });
-              return (
-                <PlayerFrame key={practiceKey}>
-                  <activityType.Player
-                    config={parsedPractice.config}
-                    learnerContext={
-                      signedIn && selectedLearnerId
-                        ? { learnerId: selectedLearnerId, programSlug, oralReading: config.oralReading === true }
-                        : undefined
-                    }
-                    // Relay this generated item's provenance to the recorder (P6 / §8).
-                    onComplete={(response, score) =>
-                      handlePracticeComplete(response, score, phase.gen)
-                    }
-                    onExit={handleExit}
-                  />
-                </PlayerFrame>
-              );
-            })()
           ) : activityType ? (
             <PlayerFrame
               key={playerIdentityKey({
@@ -456,15 +282,10 @@ function RewardScreen({
   stars,
   backHref,
   nextHref,
-  canGenerate,
-  onMore,
 }: {
   stars: 0 | 1 | 2 | 3;
   backHref: string;
   nextHref: string | null;
-  /** True while more AI practice may be offered (under the cap, kind renderable). */
-  canGenerate: boolean;
-  onMore: () => void;
 }) {
   const reduce = useReducedMotion();
   const earned = Math.max(0, Math.min(3, stars));
@@ -532,22 +353,12 @@ function RewardScreen({
           <MapTrifoldIcon weight="duotone" className="size-6" />
           Map
         </Button>
-        {canGenerate && (
-          <Button type="button" onClick={onMore} variant="ghost" size="md">
-            <SparkleIcon weight="fill" className="size-5" />
-            More, made just for me
-          </Button>
-        )}
       </div>
     </motion.div>
   );
 }
 
-/* ── Generating (AI practice in flight) ─────────────────────────────────────
-   A calm "making something for you" beat. No spinner that reads as loading
-   chrome; the floating mascot + gentle pulse keeps it playful. */
-
-function GeneratingScreen() {
+function SavingScreen() {
   const reduce = useReducedMotion();
   return (
     <motion.div
@@ -558,33 +369,23 @@ function GeneratingScreen() {
       className="mx-auto flex max-w-md flex-col items-center pt-12 text-center"
     >
       <p className="sr-only" role="status" aria-live="polite">
-        Making something just for you.
+        Saving your work.
       </p>
-      <motion.div
-        animate={reduce ? undefined : { scale: [1, 1.06, 1] }}
-        transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
-        className="grid size-24 place-items-center rounded-2xl border-[3px] border-ink bg-honey shadow-pop"
-      >
-        <SparkleIcon weight="fill" className="size-12 text-ink" />
-      </motion.div>
-      <Mascot mood="think" size={108} className={reduce ? "mt-6" : "mt-6 motion-safe:animate-float"} />
+      <Mascot mood="think" size={120} className={reduce ? undefined : "motion-safe:animate-float"} />
       <h1 className="mt-4 font-display text-3xl font-semibold tracking-tight">
-        Making something just for you...
+        Saving your work...
       </h1>
-      <p className="mt-3 text-lg text-ink-soft">One moment!</p>
+      <p className="mt-3 text-lg text-ink-soft">Almost there!</p>
     </motion.div>
   );
 }
 
-/* ── Practice unavailable (graceful fallback) ───────────────────────────────
-   Never a scary error: a warm "another time" with the normal next/back. */
-
-function PracticeFailed({
-  backHref,
-  nextHref,
+function SaveFailed({
+  onRetry,
+  onExit,
 }: {
-  backHref: string;
-  nextHref: string | null;
+  onRetry: () => void;
+  onExit: () => void;
 }) {
   const reduce = useReducedMotion();
   return (
@@ -596,22 +397,19 @@ function PracticeFailed({
       className="mx-auto flex max-w-md flex-col items-center pt-10 text-center"
     >
       <p className="sr-only" role="status" aria-live="polite">
-        Let us do that another time.
+        Your work is still here. Try saving again.
       </p>
-      <Mascot mood="happy" size={120} />
+      <Mascot mood="think" size={120} />
       <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight">
-        Let&rsquo;s do that another time!
+        Your work is still here
       </h1>
-      <p className="mt-3 text-lg text-ink-soft">You did great. Keep going when you&rsquo;re ready.</p>
+      <p className="mt-3 text-lg text-ink-soft">Let&rsquo;s try saving it one more time.</p>
 
       <div className="mt-9 flex w-full flex-col items-stretch gap-3">
-        {nextHref && (
-          <Button href={nextHref} variant="primary" size="kid">
-            Next
-            <ArrowRightIcon weight="bold" className="size-6" />
-          </Button>
-        )}
-        <Button href={backHref} variant="soft" size="kid">
+        <Button type="button" onClick={onRetry} variant="primary" size="kid">
+          Try again
+        </Button>
+        <Button type="button" onClick={onExit} variant="soft" size="kid">
           <MapTrifoldIcon weight="duotone" className="size-6" />
           Back to the map
         </Button>

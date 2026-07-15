@@ -1048,6 +1048,8 @@ export interface GeneratedActivityRow {
   title: string;
   config: unknown;
   skillTags: string[];
+  /** Server-stored generation provenance; never accepted from the browser. */
+  gen: { model: string; route: string; at: string } | null;
 }
 
 /**
@@ -1229,6 +1231,10 @@ export async function getGeneratedActivity(
         title: r.title,
         config: r.config,
         skillTags: r.skillTags,
+        gen:
+          r.genModel && r.genRoute && r.genAt
+            ? { model: r.genModel, route: r.genRoute, at: r.genAt.toISOString() }
+            : null,
       };
     },
     null,
