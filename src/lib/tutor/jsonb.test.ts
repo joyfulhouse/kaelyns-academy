@@ -15,7 +15,7 @@ vi.mock("@sentry/nextjs", () => ({
 
 import * as Sentry from "@sentry/nextjs";
 import { enrollmentConfigSchema, learnerSettingsSchema } from "@/lib/content/config";
-import { parseJsonbFailClosed } from "./jsonb";
+import { parseJsonbFailClosed, parseJsonbFailClosedWithValidity } from "./jsonb";
 
 beforeEach(() => vi.mocked(Sentry.captureException).mockClear());
 
@@ -74,5 +74,21 @@ describe("parseJsonbFailClosed", () => {
     );
     expect(got).toEqual({ aiPractice: false, readAloud: true, oralReading: false });
     expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+});
+
+describe("parseJsonbFailClosedWithValidity", () => {
+  it("distinguishes a valid empty config from the fail-closed fallback", () => {
+    expect(parseJsonbFailClosedWithValidity(enrollmentConfigSchema, {}, "x")).toEqual({
+      data: {},
+      valid: true,
+    });
+    expect(
+      parseJsonbFailClosedWithValidity(
+        enrollmentConfigSchema,
+        { activeUnitKeys: "unit-1" },
+        "x",
+      ),
+    ).toEqual({ data: { aiPractice: false }, valid: false });
   });
 });

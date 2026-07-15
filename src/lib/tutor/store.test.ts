@@ -29,7 +29,8 @@ const skillStateUpdates: Record<string, unknown>[] = [];
 // full next state through insert(...).onConflictDoUpdate(...), so this captures
 // both first schedules and later review folds.
 const reviewScheduleInserts: Record<string, unknown>[] = [];
-// Atomic oral-reading witness claims update exactly one row with the completion id.
+// Privacy-safe oral-reading witnesses are inserted and then deleted on claim.
+const oralVerificationInserts: Record<string, unknown>[] = [];
 const oralVerificationUpdates: Record<string, unknown>[] = [];
 // Mutable canned rows the fake `tx` returns for each select target.
 const learnerRows = { value: [{ id: "L1" }] as Record<string, unknown>[] };
@@ -60,6 +61,9 @@ const oralCompletionRows = { value: [] as Record<string, unknown>[] };
 const completedTodayRows = { value: [] as Record<string, unknown>[] };
 const generatedActivityRows = { value: [] as Record<string, unknown>[] };
 const oralVerificationRows = { value: [] as Record<string, unknown>[] };
+const oralVerificationInsertResultRows = {
+  value: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }] as Record<string, unknown>[],
+};
 // The day's learner_quest rows (Adventure 2.0 fold); applyAttemptToQuests only
 // SELECTs status="active" rows (mirroring the real query's WHERE clause) — the
 // fake filters here so "offered leaves untouched" is actually observable.
@@ -148,6 +152,9 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
       if (chain.op === "insert" && chain.table === "review_schedule" && v) {
         reviewScheduleInserts.push(v);
       }
+      if (chain.op === "insert" && chain.table === "oral_reading_verification" && v) {
+        oralVerificationInserts.push(v);
+      }
       return chain;
     },
     onConflictDoNothing() {
@@ -178,14 +185,31 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
       const rows =
         chain.op === "insert" && chain.table === "attempt"
           ? attemptInsertResultRows.value
+          : chain.op === "insert" && chain.table === "oral_reading_verification"
+            ? oralVerificationInsertResultRows.value
           : chain.op === "select" && chain.table === "learner"
-          ? learnerRows.value
+          ? applyQueryShape(
+              learnerRows.value.map((row) => ({ accountId: "acct-1", ...row })),
+              chain.predicate,
+              chain.ordering,
+              chain.limitValue,
+            )
           : chain.op === "select" && chain.table === "skill_state"
             ? skillRows.value
             : chain.op === "select" && chain.table === "review_schedule"
               ? reviewScheduleRows.value.filter((row) => matches(row, chain.predicate))
             : chain.op === "select" && chain.table === "enrollment"
-              ? enrollmentRows.value
+              ? applyQueryShape(
+                  enrollmentRows.value.map((row) => ({
+                    learnerId: "L1",
+                    programSlug: "kaelyn-adaptive",
+                    programVersionId: null,
+                    ...row,
+                  })),
+                  chain.predicate,
+                  chain.ordering,
+                  chain.limitValue,
+                )
             : chain.op === "select" && chain.table === "attempt"
                 ? projection && "score" in projection
                   ? attemptReplayRows.value
@@ -264,7 +288,12 @@ const db = { ...connection(), transaction };
 
 vi.mock("@/lib/db", () => ({ getDb: () => db }));
 vi.mock("@/lib/db/schema", () => ({
-  learner: { _name: "learner", id: { name: "id" }, accountId: { name: "accountId" } },
+  learner: {
+    _name: "learner",
+    id: { name: "id" },
+    accountId: { name: "accountId" },
+    settings: { name: "settings" },
+  },
   attempt: {
     _name: "attempt",
     id: { name: "id" },
@@ -285,6 +314,7 @@ vi.mock("@/lib/db/schema", () => ({
     programSlug: { name: "programSlug" },
     status: { name: "status" },
     config: { name: "config" },
+    programVersionId: { name: "programVersionId" },
   },
   skillState: {
     _name: "skill_state",
@@ -515,9 +545,10 @@ describe("oral-reading verification witness store", () => {
     attemptInserts.length = 0;
     ledgerInserts.length = 0;
     lockedSkills.length = 0;
+    oralVerificationInserts.length = 0;
     oralVerificationUpdates.length = 0;
     transaction.mockClear();
-    learnerRows.value = [{ id: "L1" }];
+    learnerRows.value = [{ id: "L1", settings: { oralReading: true } }];
     enrollmentRows.value = [
       { id: "E1", status: "active", programSlug: "kaelyn-adaptive", config: {} },
     ];
@@ -533,7 +564,7 @@ describe("oral-reading verification witness store", () => {
     canonicalize.mockImplementation((_facts: unknown) => ({ response, score }));
   });
 
-  it("locks, records, and binds the witness in one transaction", async () => {
+  it("locks, records, and deletes the claimed witness in one transaction", async () => {
     await expect(recordOralReadingAttempt("acct-1", oralInput())).resolves.toEqual(score);
 
     expect(transaction).toHaveBeenCalledTimes(1);
@@ -553,7 +584,7 @@ describe("oral-reading verification witness store", () => {
       response,
       score,
     });
-    expect(oralVerificationUpdates).toEqual([{ consumedCompletionId: completionId }]);
+    expect(oralVerificationUpdates).toEqual([]);
     const lockIndex = ops.findIndex(
       (operation) =>
         operation.op === "select.for" && operation.table === "oral_reading_verification",
@@ -561,10 +592,12 @@ describe("oral-reading verification witness store", () => {
     const attemptIndex = ops.findIndex(
       (operation) => operation.op === "insert" && operation.table === "attempt",
     );
-    const claimIndex = ops.findIndex(
-      (operation) =>
-        operation.op === "update" && operation.table === "oral_reading_verification",
-    );
+    const claimIndex = ops
+      .map(
+        (operation) =>
+          operation.op === "delete" && operation.table === "oral_reading_verification",
+      )
+      .lastIndexOf(true);
     expect(lockIndex).toBeLessThan(attemptIndex);
     expect(attemptIndex).toBeLessThan(claimIndex);
   });
@@ -583,9 +616,28 @@ describe("oral-reading verification witness store", () => {
   });
 
   it("rejects a learner not owned by the account before reading the witness", async () => {
-    learnerRows.value = [];
+    learnerRows.value = [
+      { id: "L1", accountId: "acct-1", settings: { oralReading: true } },
+    ];
     await expect(recordOralReadingAttempt("other-account", oralInput())).resolves.toBeNull();
     expect(ops.some((operation) => operation.table === "oral_reading_verification")).toBe(false);
+    expect(attemptInserts).toEqual([]);
+  });
+
+  it("rejects a witness when only a different program enrollment exists", async () => {
+    enrollmentRows.value = [
+      {
+        id: "E2",
+        learnerId: "L1",
+        programSlug: "world-languages",
+        status: "active",
+        config: {},
+      },
+    ];
+
+    await expect(recordOralReadingAttempt("acct-1", oralInput())).rejects.toBeInstanceOf(
+      EnrollmentNotActiveError,
+    );
     expect(attemptInserts).toEqual([]);
   });
 
@@ -608,16 +660,9 @@ describe("oral-reading verification witness store", () => {
     expect(attemptInserts).toEqual([]);
   });
 
-  it("allows an expired committed witness to replay only its original completion score", async () => {
+  it("replays the original completion after its consumed witness has been deleted", async () => {
     const originalScore = { ...score, stars: 2 as const };
-    oralVerificationRows.value = [
-      {
-        ...witness,
-        expiresAt: new Date("2000-01-01T00:00:00.000Z"),
-        consumedCompletionId: completionId,
-      },
-    ];
-    attemptInsertResultRows.value = [];
+    oralVerificationRows.value = [];
     attemptReplayRows.value = [
       { activityId: "oral-1", kind: "oral-reading", generated: false, score: originalScore },
     ];
@@ -631,17 +676,23 @@ describe("oral-reading verification witness store", () => {
     expect(lockedSkills).toEqual([]);
   });
 
-  it("rejects a second witness trying to reuse an existing completion", async () => {
-    oralVerificationRows.value = [
-      { ...witness },
-      {
-        ...witness,
-        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        consumedCompletionId: completionId,
-      },
+  it("rejects a replay whose stored activity identity does not match", async () => {
+    oralVerificationRows.value = [];
+    attemptReplayRows.value = [
+      { activityId: "oral-2", kind: "oral-reading", generated: false, score },
     ];
     await expect(recordOralReadingAttempt("acct-1", oralInput())).resolves.toBeNull();
     expect(attemptInserts).toEqual([]);
+  });
+
+  it("rejects a first witness claim when microphone consent was revoked", async () => {
+    learnerRows.value = [{ id: "L1", settings: { oralReading: false } }];
+
+    await expect(recordOralReadingAttempt("acct-1", oralInput())).resolves.toBeNull();
+
+    expect(canonicalize).not.toHaveBeenCalled();
+    expect(attemptInserts).toEqual([]);
+    expect(oralVerificationRows.value).toHaveLength(1);
   });
 
   it("records no-witness completion as server-canonical participation only", async () => {
@@ -655,7 +706,78 @@ describe("oral-reading verification witness store", () => {
     await expect(
       recordOralReadingAttempt("acct-1", { ...oralInput(), verificationId: undefined }),
     ).resolves.toMatchObject({ total: 0, skillEvidence: [] });
-    expect(ops.some((operation) => operation.table === "oral_reading_verification")).toBe(false);
+    expect(
+      ops.some(
+        (operation) =>
+          operation.op === "select" && operation.table === "oral_reading_verification",
+      ),
+    ).toBe(false);
+  });
+
+  it("rechecks microphone consent and active-unit curation in the witness transaction", async () => {
+    learnerRows.value = [{ id: "L1", settings: { oralReading: true } }];
+    enrollmentRows.value = [
+      {
+        id: "E1",
+        status: "active",
+        programSlug: "kaelyn-adaptive",
+        config: { activeUnitKeys: ["unit-1"] },
+      },
+    ];
+
+    await expect(
+      createOralReadingVerification("acct-1", {
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+        unitKey: "unit-1",
+        activityId: "oral-1",
+        mode: "word",
+        result: "matched",
+        perWord: null,
+        correctCount: 1,
+        totalWords: 1,
+        wcpm: null,
+      }),
+    ).resolves.toBe(verificationId);
+
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(oralVerificationInserts).toHaveLength(1);
+    expect(oralVerificationInserts[0]).toMatchObject({
+      learnerId: "L1",
+      unitKey: "unit-1",
+      activityId: "oral-1",
+    });
+  });
+
+  it("refuses a witness when consent is off, the unit is curated out, or config is malformed", async () => {
+    const input = {
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      unitKey: "unit-1",
+      activityId: "oral-1",
+      mode: "word" as const,
+      result: "matched" as const,
+      perWord: null,
+      correctCount: 1,
+      totalWords: 1 as const,
+      wcpm: null,
+    };
+
+    learnerRows.value = [{ id: "L1", settings: { oralReading: false } }];
+    await expect(createOralReadingVerification("acct-1", input)).resolves.toBeNull();
+
+    learnerRows.value = [{ id: "L1", settings: { oralReading: true } }];
+    enrollmentRows.value = [
+      { id: "E1", status: "active", config: { activeUnitKeys: ["unit-2"] } },
+    ];
+    await expect(createOralReadingVerification("acct-1", input)).resolves.toBeNull();
+
+    enrollmentRows.value = [
+      { id: "E1", status: "active", config: { activeUnitKeys: "unit-1" } },
+    ];
+    await expect(createOralReadingVerification("acct-1", input)).resolves.toBeNull();
+
+    expect(oralVerificationInserts).toEqual([]);
   });
 
   it("rejects inconsistent word facts before any database read", async () => {

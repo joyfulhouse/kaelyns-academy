@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { GrownUpLock, settingsToFormState } from "./SettingsForm";
+
+const settingsFormSource = readFileSync(new URL("./SettingsForm.tsx", import.meta.url), "utf8");
 
 vi.mock("@/app/(parent)/pin-actions", () => ({
   setParentPinAction: vi.fn(),
@@ -70,6 +73,14 @@ describe("settingsToFormState", () => {
     expect(secondChild.aiFeatures).toBe(false);
     expect(secondChild.dailyGoal).toBe("10");
     expect(secondChild.readAloudDefault).toBe(true);
+  });
+});
+
+describe("microphone setting disclosure", () => {
+  it("covers both oral checks and talk-to-write without implying recordings are stored", () => {
+    expect(settingsFormSource).toContain('label="Microphone activities"');
+    expect(settingsFormSource).toContain("oral reading checks and talk-to-write");
+    expect(settingsFormSource).toContain("Audio and recognized words are never saved by the app");
   });
 });
 

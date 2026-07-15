@@ -54,7 +54,7 @@ export interface LearnerExport {
     activityId: string;
     kind: string;
     score: { stars: number; correct: number; total: number };
-    /** The child's own response payload (answers, journal text, drawing data). */
+    /** Complete bounded response for the activity kind; journal artifacts are never stored. */
     response: unknown;
     day: string;
     createdAt: string;
@@ -216,8 +216,8 @@ export function shapeLearnerExport(input: ShapeInput): LearnerExport {
         correct: a.score.correct,
         total: a.score.total,
       },
-      // The child's own work (journal text, drawings, answers). Exported in full
-      // for COPPA "export … all its data" — it is the child's created content.
+      // Export the complete bounded response that exists. Journal text, transcripts,
+      // strokes, and images never enter attempt storage, so cannot appear here.
       response: a.response ?? null,
       day: a.day,
       createdAt:

@@ -71,7 +71,7 @@ export function score(config: OralReadingConfig, response: OralReadingResponse):
   return {
     correct: matched ? 1 : 0,
     total: 1,
-    stars: matched ? starsFromAccuracy(rate) : 1,
+    stars: config.presentation === "listen-repeat" ? 1 : matched ? starsFromAccuracy(rate) : 1,
     skillEvidence: evenSkillEvidence(skillsAffected(config), outcomeFromAccuracy(rate)),
   };
 }
@@ -100,7 +100,7 @@ function scoreSentence(
   return {
     correct,
     total,
-    stars: starsFromAccuracy(performanceRate),
+    stars: config.presentation === "listen-repeat" ? 1 : starsFromAccuracy(performanceRate),
     skillEvidence: evenSkillEvidence(
       skillsAffected(config),
       outcomeFromAccuracy(performanceRate),

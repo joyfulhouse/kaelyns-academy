@@ -28,6 +28,7 @@ import { SHELF_BATCH, SHELF_LESSON_CAP } from "./shelf";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
 import {
   enrollmentConfigSchema,
+  isEnrollmentUnitActive,
   learnerSettingsSchema,
   type EnrollmentConfig,
   type LearnerSettings,
@@ -38,7 +39,7 @@ import { computePlacement, outcomeToRate, type PlacementVerdict } from "@/lib/pl
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
 import { shapeLearnerExport, type LearnerExport } from "./export";
 import { shapeAccountExport, type AccountExport } from "./account-export";
-import { parseJsonbFailClosed } from "./jsonb";
+import { parseJsonbFailClosed, parseJsonbFailClosedWithValidity } from "./jsonb";
 import { getLearner, toLearnerRow, withOwnedLearner, type LearnerRow } from "./scope";
 import { applyAttemptToQuests } from "@/lib/quests/store";
 import { unitSkills } from "./recommend";
@@ -133,21 +134,50 @@ export type NewOralReadingVerification = z.infer<
 export async function createOralReadingVerification(
   accountId: string,
   input: NewOralReadingVerification,
-): Promise<string> {
+): Promise<string | null> {
   const parsed = newOralReadingVerificationSchema.parse(input);
-  const owned = await getLearner(accountId, parsed.learnerId);
-  if (!owned) throw new Error("learner not found for account");
+  return getDb().transaction(async (tx) => {
+    // Lock the learner settings row so the parent microphone opt-in is checked
+    // at the same authorization point as the witness insert, after STT returns.
+    const owned = await tx
+      .select({ id: learner.id, settings: learner.settings })
+      .from(learner)
+      .where(and(eq(learner.id, parsed.learnerId), eq(learner.accountId, accountId)))
+      .limit(1)
+      .for("update");
+    const settings = learnerSettingsSchema.safeParse(owned[0]?.settings ?? {});
+    if (!owned[0] || !settings.success || settings.data.oralReading !== true) return null;
 
-  const rows = await getDb()
-    .insert(oralReadingVerification)
-    .values({
-      ...parsed,
-      expiresAt: new Date(Date.now() + ORAL_READING_VERIFICATION_TTL_MS),
-    })
-    .returning({ id: oralReadingVerification.id });
-  const row = rows[0];
-  if (!row) throw new Error("oral-reading verification was not persisted");
-  return row.id;
+    const activeEnrollment = await lockActiveEnrollment(
+      tx,
+      parsed.learnerId,
+      parsed.programSlug,
+      parsed.unitKey,
+    );
+    if (!activeEnrollment) return null;
+
+    // Operational witness facts are disposable. Clear stale rows whenever this
+    // low-volume path is used; a claimed row is deleted immediately below.
+    await tx
+      .delete(oralReadingVerification)
+      .where(
+        and(
+          eq(oralReadingVerification.learnerId, parsed.learnerId),
+          lte(oralReadingVerification.expiresAt, new Date()),
+        ),
+      );
+
+    const rows = await tx
+      .insert(oralReadingVerification)
+      .values({
+        ...parsed,
+        expiresAt: new Date(Date.now() + ORAL_READING_VERIFICATION_TTL_MS),
+      })
+      .returning({ id: oralReadingVerification.id });
+    const row = rows[0];
+    if (!row) throw new Error("oral-reading verification was not persisted");
+    return row.id;
+  });
 }
 
 /** Pure: fold one attempt's evidence for a skill into its prior history and
@@ -348,6 +378,45 @@ function enrollmentKey(learnerId: string, programSlug: string) {
   return and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, programSlug));
 }
 
+/** Lock and validate the server-authoritative enrollment + unit-curation gate.
+ * Malformed JSON fails closed; omitted/empty activeUnitKeys means all units. */
+async function lockActiveEnrollment(
+  tx: Db,
+  learnerId: string,
+  programSlug: string,
+  unitKey: string | null | undefined,
+): Promise<{
+  id: string;
+  config: EnrollmentConfig;
+  programVersionId: string | null;
+} | null> {
+  const rows = await tx
+    .select({
+      id: enrollment.id,
+      status: enrollment.status,
+      config: enrollment.config,
+      programVersionId: enrollment.programVersionId,
+    })
+    .from(enrollment)
+    .where(enrollmentKey(learnerId, programSlug))
+    .limit(1)
+    .for("update");
+  const row = rows[0];
+  const parsed = enrollmentConfigSchema.safeParse(row?.config);
+  if (
+    row?.status !== "active" ||
+    !parsed.success ||
+    !isEnrollmentUnitActive(parsed.data, unitKey ?? undefined)
+  ) {
+    return null;
+  }
+  return {
+    id: row.id,
+    config: parsed.data,
+    programVersionId: row.programVersionId,
+  };
+}
+
 export interface RecordAttemptInput {
   learnerId: string;
   /** The program the activity belongs to — the active-enrollment gate keys on it. */
@@ -437,29 +506,16 @@ async function recordAttemptInTransaction(
     // program. Read inside the same tx (shares the snapshot with the tenancy
     // check above). A removed/paused/missing enrollment → no write at all; the
     // client render-block (A3) is the UX, this is the non-bypassable enforcement.
-    const enrolled = await tx
-      .select({ id: enrollment.id, status: enrollment.status, config: enrollment.config })
-      .from(enrollment)
-      .where(enrollmentKey(input.learnerId, input.programSlug))
-      .limit(1)
-      // Lock the enrollment row for the tx's lifetime so a concurrent pause/remove
-      // can't commit between this active-check and the attempt insert below (the
-      // skill_state folds already lock FOR UPDATE; this closes the same race here).
-      .for("update");
-    const parsedEnrollmentConfig = enrollmentConfigSchema.safeParse(enrolled[0]?.config);
-    const activeUnitKeys = parsedEnrollmentConfig.success
-      ? parsedEnrollmentConfig.data.activeUnitKeys
-      : undefined;
-    if (
-      enrolled[0]?.status !== "active" ||
-      !parsedEnrollmentConfig.success ||
-      (activeUnitKeys !== undefined &&
-        activeUnitKeys.length > 0 &&
-        (!input.unitId || !activeUnitKeys.includes(input.unitId)))
-    ) {
+    const activeEnrollment = await lockActiveEnrollment(
+      tx,
+      input.learnerId,
+      input.programSlug,
+      input.unitId,
+    );
+    if (!activeEnrollment) {
       throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
     }
-    const enrollmentId = enrolled[0].id;
+    const enrollmentId = activeEnrollment.id;
 
     // Provenance is written ONLY for a generated attempt (and only when supplied),
     // so an authored row can never carry gen_* metadata even if a caller passes it.
@@ -666,8 +722,8 @@ export interface RecordOralReadingAttemptInput {
  * Claim one oral-reading witness and write its canonical attempt in the same
  * transaction. A learner-row lock serializes this low-volume path per learner,
  * making completion reuse deterministic before either unique constraint is
- * reached. A committed witness may replay only its original completion id,
- * including after expiry; an unconsumed expired witness is never accepted.
+ * reached. The attempt row is the durable idempotency record; a consumed
+ * witness is deleted in the same transaction and never retained for replay.
  */
 export async function recordOralReadingAttempt(
   accountId: string,
@@ -675,12 +731,61 @@ export async function recordOralReadingAttempt(
 ): Promise<ActivityScore | null> {
   return getDb().transaction(async (tx) => {
     const owned = await tx
-      .select({ id: learner.id })
+      .select({ id: learner.id, settings: learner.settings })
       .from(learner)
       .where(and(eq(learner.id, input.learnerId), eq(learner.accountId, accountId)))
       .limit(1)
       .for("update");
     if (!owned[0]) return null;
+
+    // A retry replays the canonical attempt, not the disposable witness. Keep
+    // the same active-enrollment and active-unit gate as a first submission.
+    const replayed = await tx
+      .select({
+        activityId: attempt.activityId,
+        kind: attempt.kind,
+        generated: attempt.generated,
+        score: attempt.score,
+      })
+      .from(attempt)
+      .where(
+        and(
+          eq(attempt.learnerId, input.learnerId),
+          eq(attempt.completionId, input.completionId),
+        ),
+      )
+      .limit(1);
+    const original = replayed[0];
+    if (original) {
+      const activeEnrollment = await lockActiveEnrollment(
+        tx,
+        input.learnerId,
+        input.programSlug,
+        input.unitKey,
+      );
+      if (!activeEnrollment) {
+        throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
+      }
+      return original.activityId === input.activityId &&
+        original.kind === "oral-reading" &&
+        original.generated === false
+        ? original.score
+        : null;
+    }
+
+    if (input.verificationId) {
+      const settings = learnerSettingsSchema.safeParse(owned[0].settings ?? {});
+      if (!settings.success || settings.data.oralReading !== true) return null;
+    }
+
+    await tx
+      .delete(oralReadingVerification)
+      .where(
+        and(
+          eq(oralReadingVerification.learnerId, input.learnerId),
+          lte(oralReadingVerification.expiresAt, new Date()),
+        ),
+      );
 
     let witnessRow: typeof oralReadingVerification.$inferSelect | null = null;
     let witnessFacts: OralReadingWitnessFacts | null = null;
@@ -702,81 +807,10 @@ export async function recordOralReadingAttempt(
         return null;
       }
 
-      if (
-        witnessRow.consumedCompletionId &&
-        witnessRow.consumedCompletionId !== input.completionId
-      ) {
-        return null;
-      }
-      const committedReplay = witnessRow.consumedCompletionId === input.completionId;
-      if (committedReplay) {
-        // The witness and attempt committed together, so a retry can return the
-        // original score without re-scoring current content or re-folding any
-        // ledger/mastery state. Preserve the ordinary active-enrollment gate.
-        const enrolled = await tx
-          .select({ status: enrollment.status })
-          .from(enrollment)
-          .where(enrollmentKey(input.learnerId, input.programSlug))
-          .limit(1)
-          .for("update");
-        if (enrolled[0]?.status !== "active") {
-          throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
-        }
-        const replayed = await tx
-          .select({
-            activityId: attempt.activityId,
-            kind: attempt.kind,
-            generated: attempt.generated,
-            score: attempt.score,
-          })
-          .from(attempt)
-          .where(
-            and(
-              eq(attempt.learnerId, input.learnerId),
-              eq(attempt.completionId, input.completionId),
-            ),
-          )
-          .limit(1);
-        const original = replayed[0];
-        return original &&
-          original.activityId === input.activityId &&
-          original.kind === "oral-reading" &&
-          original.generated === false
-          ? original.score
-          : null;
-      }
-      if (!committedReplay && witnessRow.expiresAt.getTime() <= Date.now()) return null;
-
-      if (!committedReplay) {
-        // One completion may bind to only one witness. The learner lock closes
-        // the concurrent two-witness race before either unique index is reached.
-        const consumed = await tx
-          .select({ id: oralReadingVerification.id })
-          .from(oralReadingVerification)
-          .where(
-            and(
-              eq(oralReadingVerification.learnerId, input.learnerId),
-              eq(oralReadingVerification.consumedCompletionId, input.completionId),
-            ),
-          )
-          .limit(1)
-          .for("update");
-        if (consumed.some(({ id }) => id !== witnessRow?.id)) return null;
-
-        // A pre-witness or participation-only attempt may already own the same
-        // completion id. It cannot be retroactively upgraded with a new witness.
-        const existingAttempt = await tx
-          .select({ completionId: attempt.completionId })
-          .from(attempt)
-          .where(
-            and(
-              eq(attempt.learnerId, input.learnerId),
-              eq(attempt.completionId, input.completionId),
-            ),
-          )
-          .limit(1);
-        if (existingAttempt[0]) return null;
-      }
+      // Legacy consumed rows should always have a matching attempt, handled by
+      // the replay branch above. If that durable row is missing, fail closed.
+      if (witnessRow.consumedCompletionId) return null;
+      if (witnessRow.expiresAt.getTime() <= Date.now()) return null;
 
       const mode = witnessRow.mode;
       const result = witnessRow.result;
@@ -814,10 +848,9 @@ export async function recordOralReadingAttempt(
       checkpointPhase: input.checkpointPhase ?? null,
     });
 
-    if (witnessRow && !witnessRow.consumedCompletionId) {
+    if (witnessRow) {
       await tx
-        .update(oralReadingVerification)
-        .set({ consumedCompletionId: input.completionId })
+        .delete(oralReadingVerification)
         .where(eq(oralReadingVerification.id, witnessRow.id));
     }
     return score;
@@ -1526,11 +1559,28 @@ export async function withLessonGenerationLock(
 
     // Tenancy boundary, re-checked inside the tx (same pattern as recordAttempt).
     const owned = await tx
-      .select({ id: learner.id })
+      .select({ id: learner.id, settings: learner.settings })
       .from(learner)
       .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
-      .limit(1);
+      .limit(1)
+      .for("update");
     if (!owned[0]) throw new Error("learner not found for account");
+
+    const settings = learnerSettingsSchema.safeParse(owned[0].settings ?? {});
+    const activeEnrollment = await lockActiveEnrollment(
+      tx,
+      learnerId,
+      scope.programSlug,
+      scope.unitKey,
+    );
+    if (
+      !settings.success ||
+      settings.data.aiPractice === false ||
+      !activeEnrollment ||
+      activeEnrollment.config.aiPractice === false
+    ) {
+      return [];
+    }
 
     // Re-read this lesson's shelf INSIDE the lock so the idempotency + cap
     // decisions (and the room passed to generate) race against the SAME snapshot
@@ -1905,8 +1955,16 @@ export async function getEnrollmentForGate(
   accountId: string,
   learnerId: string,
   slug: string,
-): Promise<{ status: EnrollmentStatus; config: EnrollmentConfig } | null> {
-  return withOwnedLearner<{ status: EnrollmentStatus; config: EnrollmentConfig } | null>(
+): Promise<{
+  status: EnrollmentStatus;
+  config: EnrollmentConfig;
+  configValid: boolean;
+} | null> {
+  return withOwnedLearner<{
+    status: EnrollmentStatus;
+    config: EnrollmentConfig;
+    configValid: boolean;
+  } | null>(
     accountId,
     learnerId,
     async () => {
@@ -1916,13 +1974,15 @@ export async function getEnrollmentForGate(
         .where(enrollmentKey(learnerId, slug))
         .limit(1);
       if (!rows[0]) return null;
+      const parsed = parseJsonbFailClosedWithValidity(
+        enrollmentConfigSchema,
+        rows[0].config,
+        `enrollment config (gate learner=${learnerId} slug=${slug})`,
+      );
       return {
         status: rows[0].status as EnrollmentStatus,
-        config: parseJsonbFailClosed(
-          enrollmentConfigSchema,
-          rows[0].config,
-          `enrollment config (gate learner=${learnerId} slug=${slug})`,
-        ),
+        config: parsed.data,
+        configValid: parsed.valid,
       };
     },
     null,
@@ -2120,8 +2180,8 @@ async function gatherLearnerExport(
       activityId: a.activityId,
       kind: a.kind,
       score: a.score as { stars: number; correct: number; total: number; skillEvidence: unknown[] },
-      // The child's own response (journal text, drawings, answers) — exported in
-      // full for COPPA "export … all its data" (shaped in export.ts).
+      // Export the complete bounded response that was persisted for this kind.
+      // Journal responses are privacy-safe summaries, never text or drawing data.
       response: a.response,
       day: a.day,
       createdAt: a.createdAt,

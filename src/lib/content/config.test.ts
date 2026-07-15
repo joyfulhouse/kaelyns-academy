@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { shouldAutoRead } from "./config";
-import { enrollmentConfigSchema, learnerSettingsSchema } from "./config";
+import {
+  enrollmentConfigSchema,
+  isEnrollmentUnitActive,
+  learnerSettingsSchema,
+  shouldAutoRead,
+} from "./config";
 
 describe("enrollmentConfigSchema", () => {
   it("accepts a full config", () => {
@@ -25,5 +29,19 @@ describe("automatic read-aloud surface gate", () => {
     expect(shouldAutoRead("account", true, false)).toBe(false);
     expect(shouldAutoRead("account", true, true)).toBe(true);
     expect(shouldAutoRead("guest", true, undefined)).toBe(true);
+  });
+});
+
+describe("active-unit curation", () => {
+  it("treats omitted and empty activeUnitKeys as all units active", () => {
+    expect(isEnrollmentUnitActive({}, "reading")).toBe(true);
+    expect(isEnrollmentUnitActive({ activeUnitKeys: [] }, "reading")).toBe(true);
+  });
+
+  it("requires an exact unit when the parent curated a non-empty list", () => {
+    const config = { activeUnitKeys: ["reading", "math"] };
+    expect(isEnrollmentUnitActive(config, "reading")).toBe(true);
+    expect(isEnrollmentUnitActive(config, "science")).toBe(false);
+    expect(isEnrollmentUnitActive(config, undefined)).toBe(false);
   });
 });

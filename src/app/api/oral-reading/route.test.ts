@@ -150,6 +150,7 @@ beforeEach(() => {
   vi.mocked(getEnrollmentForGate).mockResolvedValue({
     status: "active",
     config: { band: "ready" },
+    configValid: true,
   });
   vi.mocked(getLearnerSettings).mockResolvedValue({ oralReading: true });
   vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
@@ -221,6 +222,7 @@ describe("POST /api/oral-reading", () => {
     vi.mocked(getEnrollmentForGate).mockResolvedValueOnce({
       status: "paused",
       config: { band: "ready" },
+      configValid: true,
     });
     expect((await POST(post())).status).toBe(403);
     expect(transcribeOralReading).not.toHaveBeenCalled();
@@ -229,6 +231,33 @@ describe("POST /api/oral-reading", () => {
     vi.mocked(getLearnerSettings).mockResolvedValueOnce({ oralReading: false });
     expect((await POST(post())).status).toBe(403);
     expect(transcribeOralReading).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when enrollment config is malformed or the route unit is curated out", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValueOnce({
+      status: "active",
+      config: { aiPractice: false },
+      configValid: false,
+    });
+    expect((await POST(post())).status).toBe(403);
+    expect(transcribeOralReading).not.toHaveBeenCalled();
+
+    vi.mocked(getEnrollmentForGate).mockResolvedValueOnce({
+      status: "active",
+      config: { activeUnitKeys: ["unit-2"] },
+      configValid: true,
+    });
+    expect((await POST(post())).status).toBe(403);
+    expect(transcribeOralReading).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when consent or curation is revoked before witness insertion", async () => {
+    vi.mocked(createOralReadingVerification).mockResolvedValueOnce(null);
+
+    const response = await POST(post());
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ result: "unavailable" });
   });
 
   it("derives the canonical word target and persists only a bounded witness", async () => {

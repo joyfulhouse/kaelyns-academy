@@ -68,6 +68,8 @@ export interface Dictation {
   start: (onText: (text: string) => void) => void;
   /** Stop listening now. */
   stop: () => void;
+  /** Cancel listening without accepting a final result (for live consent revocation). */
+  abort: () => void;
 }
 
 export function useDictation(lang = "en-US"): Dictation {
@@ -88,6 +90,20 @@ export function useDictation(lang = "en-US"): Dictation {
       recognitionRef.current?.stop();
     } catch {
       // The browser may have ended the one-shot session between tap and stop.
+    }
+    setListening(false);
+  }, []);
+
+  const abort = useCallback(() => {
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    if (recognition) {
+      recognition.onresult = null;
+      try {
+        recognition.abort();
+      } catch {
+        // The one-shot session may already have ended.
+      }
     }
     setListening(false);
   }, []);
@@ -128,5 +144,5 @@ export function useDictation(lang = "en-US"): Dictation {
     [lang],
   );
 
-  return { supported, listening, message, start, stop };
+  return { supported, listening, message, start, stop, abort };
 }

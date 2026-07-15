@@ -39,6 +39,7 @@ const INK = "oklch(0.26 0.02 60)";
 export function JournalPromptPlayer({
   config,
   onComplete,
+  learnerContext,
 }: ActivityPlayerProps<JournalPromptConfig, JournalPromptResponse>) {
   const parsed = useActivity(schema, config);
   const speech = useSpeech();
@@ -204,6 +205,7 @@ export function JournalPromptPlayer({
         onCommitText={commitTextState}
         onClearText={clearIdea}
         speech={speech}
+        micAllowed={learnerContext?.oralReading === true}
         canFinish={canFinish}
         onFinish={finish}
       />
@@ -292,6 +294,7 @@ function ComposeView({
   onCommitText,
   onClearText,
   speech,
+  micAllowed,
   canFinish,
   onFinish,
 }: {
@@ -302,18 +305,29 @@ function ComposeView({
   onCommitText: (next: JournalTextState, mode: WritingMode | "dictate") => void;
   onClearText: () => void;
   speech: ReturnType<typeof useSpeech>;
+  micAllowed: boolean;
   canFinish: boolean;
   onFinish: () => void;
 }) {
   const text = textState.text;
   const reduced = useReducedMotion();
   const dictation = useDictation();
+  const abortDictation = dictation.abort;
+  const micAllowedRef = useRef(micAllowed);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const allowedWritingModes = config.allowModes.filter(isWritingMode);
   const [writingMode, setWritingMode] = useState<WritingMode>(() => initialWritingMode(config));
-  const allowsDictation = config.allowModes.includes("dictate");
-  const calmFallback = allowsDictation && (!dictation.supported || dictation.message !== null);
+  const dictationConfigured = config.allowModes.includes("dictate");
+  const allowsDictation = micAllowed && config.allowModes.includes("dictate");
+  const calmFallback =
+    dictationConfigured &&
+    (!micAllowed || !dictation.supported || dictation.message !== null);
   const canUseTextSurface = allowedWritingModes.length > 0 || calmFallback;
+
+  useEffect(() => {
+    micAllowedRef.current = micAllowed;
+    if (!micAllowed) abortDictation();
+  }, [abortDictation, micAllowed]);
 
   function restoreSelection(selectionStart: number, selectionEnd: number) {
     window.requestAnimationFrame(() => {
@@ -362,6 +376,7 @@ function ComposeView({
       return;
     }
     dictation.start((rawPhrase) => {
+      if (!micAllowedRef.current) return;
       const phrase = recognizedPhrase(rawPhrase);
       if (!phrase) return;
       const textarea = textareaRef.current;
@@ -531,6 +546,12 @@ function ComposeView({
                 : "The microphone is not available here. You can type or ask a grown-up to write.")}
           </p>
         </section>
+      )}
+
+      {dictationConfigured && !micAllowed && (
+        <p className="text-center text-sm text-ink-soft" role="status">
+          Talk to write is off. You can type or ask a grown-up to write.
+        </p>
       )}
 
       <div className="grid justify-items-center gap-2">

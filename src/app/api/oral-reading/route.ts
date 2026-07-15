@@ -15,6 +15,7 @@ import {
 import { resolveAccountLearnerProgram } from "@/lib/content/repository";
 import { getUnit } from "@/content";
 import { oralReadingConfig, type OralReadingConfig } from "@/content/activity-configs";
+import { isEnrollmentUnitActive } from "@/lib/content/config";
 
 export const dynamic = "force-dynamic";
 
@@ -199,7 +200,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       getLearnerSettings(account.accountId, learnerId),
       resolveAccountLearnerProgram(account.accountId, learnerId, programSlug),
     ]);
-    if (!enrollment || enrollment.status !== "active" || settings?.oralReading !== true) {
+    if (
+      !enrollment ||
+      enrollment.status !== "active" ||
+      !enrollment.configValid ||
+      !isEnrollmentUnitActive(enrollment.config, unitKey) ||
+      settings?.oralReading !== true
+    ) {
       return result("unavailable", 403);
     }
     canonicalConfig = exactOralActivity(program, unitKey, activityId);
@@ -236,6 +243,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         totalWords: alignment.totalWords,
         wcpm: alignment.wcpm ?? null,
       });
+      if (!verificationId) return result("unavailable", 403);
       return sentenceResult(alignment, verificationId);
     }
 
@@ -255,6 +263,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       totalWords: 1,
       wcpm: null,
     });
+    if (!verificationId) return result("unavailable", 403);
     return NextResponse.json({ result: matched, verificationId });
   } catch (error) {
     captureNonCritical("oral-reading transcription failed", error);

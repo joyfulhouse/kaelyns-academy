@@ -110,7 +110,7 @@ export async function getDailyQuestsAction(
   try {
     return await withAccount(async ({ accountId }) => {
       const gate = await getEnrollmentForGate(accountId, learnerId, programSlug);
-      if (gate?.status !== "active") return [];
+      if (gate?.status !== "active" || !gate.configValid) return [];
       const day = today();
 
       const existing = await getDailyQuests(accountId, learnerId, programSlug, day);

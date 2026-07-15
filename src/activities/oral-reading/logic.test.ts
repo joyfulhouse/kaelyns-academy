@@ -200,7 +200,7 @@ describe("oral-reading plugin metadata", () => {
     expect(validateGenerated(sentenceCfg)).toBeNull();
   });
 
-  it("allows an authored target without skill evidence", () => {
+  it("gives modeled word practice a fixed participation reward without skill evidence", () => {
     const config: OralReadingConfig = {
       presentation: "listen-repeat",
       instruction: "Listen, then read the word.",
@@ -208,8 +208,34 @@ describe("oral-reading plugin metadata", () => {
     };
 
     expect(skillsAffected(config)).toEqual([]);
-    expect(score(config, { attempts: 1, results: ["matched"], status: "verified" }))
-      .toMatchObject({ stars: 3, skillEvidence: [] });
+    expect(score(config, { attempts: 1, results: ["matched"], status: "verified" })).toEqual({
+      correct: 1,
+      total: 1,
+      stars: 1,
+      skillEvidence: [],
+    });
+  });
+
+  it("gives modeled sentence practice the same fixed participation reward", () => {
+    const modeled: OralReadingConfig = {
+      ...sentenceCfg,
+      presentation: "listen-repeat",
+    };
+
+    expect(
+      score(modeled, {
+        attempts: 1,
+        results: ["matched"],
+        status: "verified",
+        correctCount: 5,
+        totalWords: 5,
+      }),
+    ).toEqual({
+      correct: 5,
+      total: 5,
+      stars: 1,
+      skillEvidence: [],
+    });
   });
 
   it("never treats modeled repetition or transcript matching as phrasing evidence", () => {

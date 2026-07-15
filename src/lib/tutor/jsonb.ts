@@ -28,10 +28,21 @@ export function parseJsonbFailClosed<T extends AiGated>(
   raw: unknown,
   context: string,
 ): T {
+  return parseJsonbFailClosedWithValidity(schema, raw, context).data;
+}
+
+/** The gate variant preserves whether stored JSON parsed successfully so
+ * non-AI authorization decisions (such as active-unit curation) cannot mistake
+ * the AI-safe fallback object for a valid "all units" enrollment config. */
+export function parseJsonbFailClosedWithValidity<T extends AiGated>(
+  schema: ZodType<T>,
+  raw: unknown,
+  context: string,
+): { data: T; valid: boolean } {
   const parsed = schema.safeParse(raw ?? {});
-  if (parsed.success) return parsed.data;
+  if (parsed.success) return { data: parsed.data, valid: true };
   captureNonCritical(`malformed ${context}`, parsed.error);
   // The constraint guarantees `aiPractice?: boolean` is a valid field on T, so
   // the fail-closed value is a legitimate (if minimal) T for every accepted schema.
-  return { aiPractice: false } as T;
+  return { data: { aiPractice: false } as T, valid: false };
 }

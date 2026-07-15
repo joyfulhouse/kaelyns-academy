@@ -86,7 +86,11 @@ describe("getEnrollmentForGate", () => {
   it("returns the parsed status + config for an active enrollment", async () => {
     enrollmentRows.value = [{ status: "active", config: { aiPractice: true, band: "ready" } }];
     const got = await getEnrollmentForGate("acc-1", "L1", "prog");
-    expect(got).toEqual({ status: "active", config: { aiPractice: true, band: "ready" } });
+    expect(got).toEqual({
+      status: "active",
+      config: { aiPractice: true, band: "ready" },
+      configValid: true,
+    });
   });
 
   it("preserves a removed status (soft-remove is not resurrected)", async () => {
@@ -101,7 +105,11 @@ describe("getEnrollmentForGate", () => {
     // { aiPractice: false } (blocks AI for the corrupt row), and is reported.
     enrollmentRows.value = [{ status: "active", config: { aiPractice: "false" } }];
     const got = await getEnrollmentForGate("acc-1", "L1", "prog");
-    expect(got).toEqual({ status: "active", config: { aiPractice: false } });
+    expect(got).toEqual({
+      status: "active",
+      config: { aiPractice: false },
+      configValid: false,
+    });
     expect(got?.config.aiPractice).toBe(false);
     expect(captureException).toHaveBeenCalledOnce();
   });

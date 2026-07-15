@@ -54,4 +54,18 @@ describe("journal-prompt Player participation contract", () => {
     expect(finish).not.toContain("transcript");
     expect(finish).not.toContain("strokes");
   });
+
+  it("shows talk-to-write only for an opted-in account learner and keeps a text fallback", () => {
+    expect(source).toContain("learnerContext");
+    expect(source).toContain("micAllowed={learnerContext?.oralReading === true}");
+    expect(source).toContain("const allowsDictation = micAllowed && config.allowModes.includes(\"dictate\")");
+    expect(source).toContain("Talk to write is off. You can type or ask a grown-up to write.");
+  });
+
+  it("aborts active dictation and rejects late results when consent is revoked", () => {
+    const toggleDictation = functionBody("toggleDictation", "currentTextState");
+    expect(source).toContain("micAllowedRef.current = micAllowed");
+    expect(source).toContain("if (!micAllowed) abortDictation()");
+    expect(toggleDictation).toContain("if (!micAllowedRef.current) return");
+  });
 });

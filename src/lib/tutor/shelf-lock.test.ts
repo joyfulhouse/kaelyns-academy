@@ -13,7 +13,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // and that `generate` (the spend) is invoked strictly after the in-lock recount.
 const ops: string[] = [];
 // Canned rows per select/insert target, mutable per test.
-const ownedRows = { value: [{ id: "L1" }] as Record<string, unknown>[] };
+const ownedRows = {
+  value: [{ id: "L1", accountId: "acc-1", settings: {} }] as Record<string, unknown>[],
+};
+const enrollmentRows = {
+  value: [
+    {
+      id: "E1",
+      learnerId: "L1",
+      programSlug: "p",
+      status: "active",
+      config: {},
+      programVersionId: "V1",
+    },
+  ] as Record<string, unknown>[],
+};
 const existingRows = { value: [] as Record<string, unknown>[] };
 const insertedRows = { value: [] as Record<string, unknown>[] };
 const lockKeys: string[] = [];
@@ -41,6 +55,9 @@ function builder(op: string, table = "unknown") {
     orderBy() {
       return chain;
     },
+    for() {
+      return chain;
+    },
     values() {
       return chain;
     },
@@ -53,6 +70,8 @@ function builder(op: string, table = "unknown") {
       const rows =
         table === "learner"
           ? ownedRows.value
+          : table === "enrollment"
+            ? enrollmentRows.value
           : table === "generated_activity"
             ? existingRows.value
             : [];
@@ -83,7 +102,16 @@ const db = { transaction };
 
 vi.mock("@/lib/db", () => ({ getDb: () => db }));
 vi.mock("@/lib/db/schema", () => ({
-  learner: { _name: "learner", id: {}, accountId: {} },
+  learner: { _name: "learner", id: {}, accountId: {}, settings: {} },
+  enrollment: {
+    _name: "enrollment",
+    id: {},
+    learnerId: {},
+    programSlug: {},
+    status: {},
+    config: {},
+    programVersionId: {},
+  },
   generatedActivity: {
     _name: "generated_activity",
     id: {},
@@ -132,7 +160,17 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
   beforeEach(() => {
     ops.length = 0;
     transaction.mockClear();
-    ownedRows.value = [{ id: "L1" }];
+    ownedRows.value = [{ id: "L1", accountId: "acc-1", settings: {} }];
+    enrollmentRows.value = [
+      {
+        id: "E1",
+        learnerId: "L1",
+        programSlug: "p",
+        status: "active",
+        config: {},
+        programVersionId: "V1",
+      },
+    ];
     existingRows.value = [];
     insertedRows.value = [];
     lockKeys.length = 0;
@@ -171,6 +209,7 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
     expect(ops).toEqual([
       "lock",
       "select:learner",
+      "select:enrollment",
       "select:generated_activity",
       `generate(${Math.min(SHELF_BATCH, SHELF_LESSON_CAP)})`,
       "insert:generated_activity",
@@ -205,7 +244,12 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
     );
 
     expect(generate).not.toHaveBeenCalled();
-    expect(ops).toEqual(["lock", "select:learner", "select:generated_activity"]);
+    expect(ops).toEqual([
+      "lock",
+      "select:learner",
+      "select:enrollment",
+      "select:generated_activity",
+    ]);
     expect(items).toHaveLength(1);
     expect(items[0]!.id).toBe("g1");
   });
@@ -226,5 +270,38 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
     expect(generate).not.toHaveBeenCalled();
     // The lock is still taken first (serialization holds even for a doomed call).
     expect(ops).toEqual(["lock", "select:learner"]);
+  });
+
+  it.each([
+    ["learner AI disabled", { settings: { aiPractice: false }, config: {} }],
+    ["enrollment AI disabled", { settings: {}, config: { aiPractice: false } }],
+    ["unit curated out", { settings: {}, config: { activeUnitKeys: ["u2"] } }],
+    ["malformed enrollment config", { settings: {}, config: { aiPractice: "false" } }],
+  ])("rechecks %s under the lock before model spend", async (_label, gate) => {
+    ownedRows.value = [{ id: "L1", accountId: "acc-1", settings: gate.settings }];
+    enrollmentRows.value = [
+      {
+        id: "E1",
+        learnerId: "L1",
+        programSlug: "p",
+        status: "active",
+        config: gate.config,
+        programVersionId: "V1",
+      },
+    ];
+    const generate = vi.fn();
+
+    await expect(
+      withLessonGenerationLock(
+        "acc-1",
+        "L1",
+        { programSlug: "p", unitKey: "u1", lessonId: "u1-l1" },
+        false,
+        generate,
+      ),
+    ).resolves.toEqual([]);
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(ops).toEqual(["lock", "select:learner", "select:enrollment"]);
   });
 });

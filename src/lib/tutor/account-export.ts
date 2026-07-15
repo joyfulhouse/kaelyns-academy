@@ -26,8 +26,8 @@ export const EXPORT_CONTENTS = [
   "account",
   "learners",
   "enrollments",
-  // "attempts" includes each attempt's full `response` payload — the child's own
-  // answers, journal text, and drawing data (COPPA "export … all its data").
+  // "attempts" includes each complete bounded response payload. Journal attempts
+  // contain participation counts/mode flags, never text, transcripts, or drawings.
   "skillState",
   "reviewSchedules",
   "attempts",

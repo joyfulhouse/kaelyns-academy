@@ -27,7 +27,11 @@ import {
   type ShelfItem,
   type PlayableShelfItem,
 } from "@/lib/tutor/store";
-import type { EnrollmentConfig, LearnerSurfaceConfig } from "@/lib/content/config";
+import {
+  isEnrollmentUnitActive,
+  type EnrollmentConfig,
+  type LearnerSurfaceConfig,
+} from "@/lib/content/config";
 import {
   activityIdsForProgram,
   findActivity,
@@ -476,7 +480,7 @@ export async function getLearnerStateAction(
       // so legitimate play is unaffected. getEnrollmentForGate already enforces
       // tenancy (owned-by-account) and never resurrects a soft-removed row.
       const gate = await getEnrollmentForGate(accountId, learnerId, programSlug);
-      if (gate?.status !== "active") return EMPTY_STATE;
+      if (gate?.status !== "active" || !gate.configValid) return EMPTY_STATE;
 
       // Resolve the learner's PINNED program version (C#5). State scoping AND the
       // rendered tree both derive from this same resolved tree, so they always
@@ -643,6 +647,7 @@ export async function ensureLessonPractice(
         settings?.aiPractice === false ||
         !gate ||
         gate.status !== "active" ||
+        !gate.configValid ||
         gate.config.aiPractice === false;
       if (aiOff) return { ok: false, items: [] };
 
@@ -651,6 +656,9 @@ export async function ensureLessonPractice(
       const located = locateLesson(program, { lessonId, activityId });
       if (!located) return { ok: false, items: [] };
       const { unit, lesson } = located;
+      if (!isEnrollmentUnitActive(gate.config, unit.id)) {
+        return { ok: false, items: [] };
+      }
 
       // 2a. Placement-integrity guard (final review Critical): a baseline/mid/final
       //    check-in unit must NEVER grow a shelf. Its authored attempts insert

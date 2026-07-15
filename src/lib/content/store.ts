@@ -5,7 +5,7 @@
  * layer (repository.ts) is the public API for reads; the admin actions layer
  * calls the write mutations directly.
  */
-import { eq, max, and, desc } from "drizzle-orm";
+import { eq, max, and, desc, inArray } from "drizzle-orm";
 import { validatePlayableActivityConfig } from "@/activities/definitions";
 import type { Activity, Band, Program, SkillTag, Unit, Lesson, World } from "@/content/types";
 import { firstConfigIssueMessage } from "@/content/validate";
@@ -422,6 +422,25 @@ export class ActivityConfigValidationError extends Error {
   }
 }
 
+/** One config trust boundary shared by draft save and publish. */
+function canonicalActivityConfig(
+  activityKey: string,
+  kind: string,
+  config: unknown,
+): unknown {
+  const result = validatePlayableActivityConfig(kind, config);
+  if (!result.ok) {
+    const message =
+      result.reason === "unknown-kind"
+        ? `Unknown activity kind: "${kind}"`
+        : result.reason === "unplayable"
+          ? result.message
+          : firstConfigIssueMessage(result.error, { fallback: "invalid config" });
+    throw new ActivityConfigValidationError(activityKey, message);
+  }
+  return result.data;
+}
+
 /**
  * Thrown when a submitted tree has duplicate sibling keys (a unitKey repeated in
  * a version, a lessonKey in a unit, or an activityKey in a lesson). Maps to
@@ -716,19 +735,14 @@ export async function saveVersionTree(
     ...unit,
     lessons: unit.lessons.map((lesson) => ({
       ...lesson,
-      activities: lesson.activities.map((activity) => {
-        const result = validatePlayableActivityConfig(activity.kind, activity.config);
-        if (!result.ok) {
-          const msg =
-            result.reason === "unknown-kind"
-              ? `Unknown activity kind: "${activity.kind}"`
-              : result.reason === "unplayable"
-                ? result.message
-                : firstConfigIssueMessage(result.error, { fallback: "invalid config" });
-          throw new ActivityConfigValidationError(activity.activityKey, msg);
-        }
-        return { ...activity, config: result.data };
-      }),
+      activities: lesson.activities.map((activity) => ({
+        ...activity,
+        config: canonicalActivityConfig(
+          activity.activityKey,
+          activity.kind,
+          activity.config,
+        ),
+      })),
     })),
   }));
 
@@ -771,6 +785,9 @@ export async function saveVersionTree(
  * Publish a draft version (transactional, race-hardened — Fix-F B1):
  * - Lock the program row FOR UPDATE so concurrent publishes of the same program
  *   serialize instead of interleaving.
+ * - Lock the target version and validate/canonicalize every stored activity
+ *   before any status changes, so old, cloned, or out-of-band drafts cannot
+ *   bypass the current schema and playability contract.
  * - Archive the currently-published version FIRST, then publish the target via a
  *   CONDITIONAL update (only if still `draft`); 0 affected rows → VersionNotDraftError
  *   (rolls back). Archive-old-before-publish-new keeps the ≤1-published-per-program
@@ -807,6 +824,63 @@ export async function publishVersion(versionId: string): Promise<void> {
       .from(schema.program)
       .where(eq(schema.program.id, versionRow.programId))
       .for("update");
+
+    // Serialize against saveVersionTree, then validate the actual stored tree.
+    // A draft can be old, cloned, or modified outside the current editor, so a
+    // successful save in some earlier request is not a publish-time guarantee.
+    const lockedTarget = await tx
+      .select({ status: schema.programVersion.status })
+      .from(schema.programVersion)
+      .where(eq(schema.programVersion.id, versionId))
+      .for("update");
+    if (lockedTarget[0]?.status !== "draft") {
+      throw new VersionNotDraftError(versionId, lockedTarget[0]?.status ?? "missing");
+    }
+
+    const versionUnits = await tx
+      .select({ id: schema.unit.id })
+      .from(schema.unit)
+      .where(eq(schema.unit.programVersionId, versionId));
+    const unitIds = versionUnits.map(({ id }) => id);
+    const versionLessons =
+      unitIds.length === 0
+        ? []
+        : await tx
+            .select({ id: schema.lesson.id })
+            .from(schema.lesson)
+            .where(inArray(schema.lesson.unitId, unitIds));
+    const lessonIds = versionLessons.map(({ id }) => id);
+    const versionActivities =
+      lessonIds.length === 0
+        ? []
+        : await tx
+            .select({
+              id: schema.activity.id,
+              activityKey: schema.activity.activityKey,
+              kind: schema.activity.kind,
+              config: schema.activity.config,
+            })
+            .from(schema.activity)
+            .where(inArray(schema.activity.lessonId, lessonIds));
+
+    const activityKeys = new Set<string>();
+    for (const activityRow of versionActivities) {
+      if (activityKeys.has(activityRow.activityKey)) {
+        throw new DuplicateKeyError(
+          `Duplicate activity key: "${activityRow.activityKey}"`,
+        );
+      }
+      activityKeys.add(activityRow.activityKey);
+      const config = canonicalActivityConfig(
+        activityRow.activityKey,
+        activityRow.kind,
+        activityRow.config,
+      );
+      await tx
+        .update(schema.activity)
+        .set({ config })
+        .where(eq(schema.activity.id, activityRow.id));
+    }
 
     // Archive the currently-published version of this program FIRST, then
     // publish the target — this order keeps the B3 partial unique index
@@ -975,12 +1049,18 @@ export async function cloneVersionToDraft(
 export async function archiveProgram(programId: string): Promise<void> {
   const db = getDb();
 
-  const programRow = await db.query.program.findFirst({
-    where: (p) => eq(p.id, programId),
-  });
-  if (!programRow) throw new Error(`Program not found: ${programId}`);
-
   await db.transaction(async (tx) => {
+    // Keep the same program→version lock order as publishVersion. Resolve the
+    // current pointer only after acquiring the program lock so a concurrent
+    // publish cannot archive one version and then install another behind us.
+    const lockedProgram = await tx
+      .select({ id: schema.program.id, publishedVersionId: schema.program.publishedVersionId })
+      .from(schema.program)
+      .where(eq(schema.program.id, programId))
+      .for("update");
+    const programRow = lockedProgram[0];
+    if (!programRow) throw new Error(`Program not found: ${programId}`);
+
     // Archive the published version (if any) so it also stops appearing in any
     // version-level published queries.
     if (programRow.publishedVersionId) {

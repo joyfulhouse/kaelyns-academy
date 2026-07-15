@@ -278,6 +278,7 @@ describe("getLearnerStateAction learner defaults", () => {
     vi.mocked(getEnrollmentForGate).mockResolvedValue({
       status: "active",
       config: { band: "ready", aiPractice: true },
+      configValid: true,
     });
     vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
     vi.mocked(getSkillState).mockResolvedValue({});
@@ -778,7 +779,11 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     });
     vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(makeProgram(["a1", "a2"]));
     vi.mocked(getLearnerSettings).mockResolvedValue({});
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: {},
+      configValid: true,
+    });
     vi.mocked(getCompletedActivityIds).mockResolvedValue([
       { activityId: "a1", stars: 3 },
       { activityId: "a2", stars: 2 },
@@ -824,7 +829,11 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
   });
 
   it("uses the parent's band preference to route the model (stretch → ds4)", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: { band: "stretch" } });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { band: "stretch" },
+      configValid: true,
+    });
 
     await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
 
@@ -843,7 +852,11 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     // A World-Languages kind routes on MODEL_FOR_LANGUAGE (ds4-fast) regardless
     // of band, so the shelf provenance must record ds4-fast even at stretch band —
     // NOT the band model (ds4). Guards against re-introducing a flat band stamp.
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: { band: "stretch" } });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { band: "stretch" },
+      configValid: true,
+    });
     vi.mocked(pickGenerationTargets).mockReturnValue([
       {
         kind: "lang-symbol-intro",
@@ -880,7 +893,11 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
   });
 
   it("fails closed when the enrollment's aiPractice flag is off", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: { aiPractice: false } });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { aiPractice: false },
+      configValid: true,
+    });
 
     const result = await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
 
@@ -888,8 +905,47 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     expect(generatePracticeItems).not.toHaveBeenCalled();
   });
 
+  it("fails closed when the active enrollment config is malformed", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { aiPractice: false },
+      configValid: false,
+    });
+
+    const result = await ensureLessonPractice({
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      lessonId: LESSON_ID,
+    });
+
+    expect(result).toEqual({ ok: false, items: [] });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("does not generate practice for a unit curated out by the parent", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { activeUnitKeys: ["another-unit"] },
+      configValid: true,
+    });
+
+    const result = await ensureLessonPractice({
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      lessonId: LESSON_ID,
+    });
+
+    expect(result).toEqual({ ok: false, items: [] });
+    expect(listGeneratedShelf).not.toHaveBeenCalled();
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
   it("fails closed when the enrollment is not active", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "paused", config: {} });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "paused",
+      config: {},
+      configValid: true,
+    });
 
     const result = await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
 

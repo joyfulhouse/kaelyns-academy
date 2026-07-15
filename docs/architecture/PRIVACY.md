@@ -23,7 +23,7 @@ learning account:
 |---|---|---|
 | Parent (account) | email, password **hash** (Better Auth), timestamps, role | no name required, no phone, no address, no payment |
 | Child (learner) | display name, **birth month only** (never a full DOB), avatar, per-learner settings | no full birth date, no photos, no contact info, no free-text profile |
-| Learning data | enrollments, attempts (score + response), derived skill_state | — |
+| Learning data | enrollments, attempts (score + bounded per-kind response), derived skill_state | journal responses retain only counts/mode flags — **never text, transcript, strokes, or image data** |
 | AI provenance | per generated attempt: model route, path tag, generated-at (**metadata only**) | **never the raw prompt** (a prompt can embed the child's display name → PII) |
 | Oral-reading verification | a five-minute opaque witness with activity identity and derived tri-state/per-word/count/WCPM facts | **never audio, transcript, target text, or passage text** |
 | Audio | shared, **content-addressed** narration clips keyed by `sha256(text|voice|speed)` | clips reference **no** learner/account (no PII); see §5 |
@@ -71,7 +71,7 @@ The **manifest** is the self-describing data inventory (`schemaVersion`,
 | `enrollments` | `enrollment` | program slug, status, config |
 | `skillState` | `skill_state` | derived outcomes + per-day evidence |
 | `reviewSchedules` | `review_schedule` | spaced-repetition skill ids, ladder position, and review dates |
-| `attempts` | `attempt` | score (stars/correct/total), **the child's full `response`** (answers, journal text, drawing data), day, createdAt |
+| `attempts` | `attempt` | score (stars/correct/total), the full bounded response stored for that activity kind, day, createdAt. Journal responses contain only `markCount`, `textLength`, `usedDictation`, `mode`, and `didDraw` — never journal text, transcript, strokes, or image data. |
 | `aiProvenance` | `attempt` (generated rows) | model, route, generatedAt — metadata only |
 
 **Deliberately not exported** (`manifest.notExported`), and why:

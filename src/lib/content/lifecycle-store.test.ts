@@ -15,6 +15,7 @@ vi.mock("@sentry/nextjs", () => ({
 vi.mock("drizzle-orm", () => ({
   and: (...a: unknown[]) => a,
   eq: (...a: unknown[]) => a,
+  inArray: (...a: unknown[]) => a,
   ne: (...a: unknown[]) => a,
   max: (a: unknown) => a,
   desc: (a: unknown) => a,
@@ -67,19 +68,35 @@ vi.mock("@/lib/db", () => ({
     transaction,
   }),
   schema: {
-    program: { id: {}, status: {}, publishedVersionId: {}, updatedAt: {} },
-    programVersion: { id: {}, programId: {}, status: {}, version: {}, publishedAt: {} },
-    unit: {},
-    lesson: {},
-    activity: {},
+    program: { _name: "program", id: {}, status: {}, publishedVersionId: {}, updatedAt: {} },
+    programVersion: {
+      _name: "program_version",
+      id: {},
+      programId: {},
+      status: {},
+      version: {},
+      publishedAt: {},
+    },
+    unit: { _name: "unit", id: {}, programVersionId: {} },
+    lesson: { _name: "lesson", id: {}, unitId: {} },
+    activity: {
+      _name: "activity",
+      id: {},
+      lessonId: {},
+      activityKey: {},
+      kind: {},
+      config: {},
+    },
   },
 }));
 
 const {
+  archiveProgram,
   publishVersion,
   saveVersionTree,
   cloneVersionToDraft,
   ActivityConfigValidationError,
+  DuplicateKeyError,
   VersionNotDraftError,
 } = await import("./store");
 
@@ -99,6 +116,11 @@ const txOps: string[] = [];
 // Exact values handed to tx.insert(...).values(...), used to prove save persists
 // schema-parsed configs rather than the raw admin JSON objects.
 const txInsertedValues: unknown[] = [];
+const txUpdateValues: { table: string; value: Record<string, unknown> }[] = [];
+
+function tableName(value: unknown): string {
+  return (value as { _name?: string } | null)?._name ?? "unknown";
+}
 
 /** A chainable fake `tx` covering update/set/where/returning, insert/values,
  *  delete, and select(...).from(...).where(...).for("update") — so both the
@@ -106,15 +128,23 @@ const txInsertedValues: unknown[] = [];
  *  to: its `.returning()` payload if called; else the FOR UPDATE select rows if
  *  `.for()` was called; else []. */
 function fakeTx() {
-  function chainFor(kind: "update" | "insert" | "delete" | "select") {
+  function chainFor(
+    kind: "update" | "insert" | "delete" | "select",
+    initialTable = "unknown",
+  ) {
     let usedFor = false;
     let usedReturning = false;
     let setStatus: string | undefined;
+    let table = initialTable;
     const chain: Record<string, unknown> = {};
-    chain.from = () => chain;
+    chain.from = (value: unknown) => {
+      table = tableName(value);
+      return chain;
+    };
     chain.where = () => chain;
     chain.set = (v?: { status?: unknown }) => {
       if (v && typeof v.status === "string") setStatus = v.status;
+      if (v) txUpdateValues.push({ table, value: v as Record<string, unknown> });
       return chain;
     };
     chain.values = (values: unknown) => {
@@ -124,6 +154,7 @@ function fakeTx() {
     chain.delete = () => chain;
     chain.for = () => {
       usedFor = true;
+      txOps.push(`lock:${table}`);
       return chain;
     };
     chain.returning = () => {
@@ -139,16 +170,22 @@ function fakeTx() {
         ? txPublishReturns.value
         : usedFor
           ? txSelectForRows.value
-          : [];
+          : table === "unit"
+            ? findManyRows.units
+            : table === "lesson"
+              ? findManyRows.lessons
+              : table === "activity"
+                ? findManyRows.activities
+                : [];
       return Promise.resolve(rows).then(resolve);
     };
     return chain;
   }
   return {
     select: () => chainFor("select"),
-    update: () => chainFor("update"),
-    insert: () => chainFor("insert"),
-    delete: () => chainFor("delete"),
+    update: (table: unknown) => chainFor("update", tableName(table)),
+    insert: (table: unknown) => chainFor("insert", tableName(table)),
+    delete: (table: unknown) => chainFor("delete", tableName(table)),
   };
 }
 
@@ -164,6 +201,7 @@ beforeEach(() => {
   txPublishReturns.value = [{ id: "v1" }];
   txOps.length = 0;
   txInsertedValues.length = 0;
+  txUpdateValues.length = 0;
   transaction.mockReset();
   transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) => fn(fakeTx()));
 });
@@ -194,6 +232,93 @@ describe("publishVersion (draft-status guard)", () => {
     expect(transaction).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects a stale draft whose stored activity is schema-valid but unplayable", async () => {
+    versionFindFirst.value = { id: "v1", programId: "p1", status: "draft" };
+    findManyRows.units = [{ id: "u1", programVersionId: "v1" }];
+    findManyRows.lessons = [{ id: "l1", unitId: "u1" }];
+    findManyRows.activities = [
+      {
+        id: "a1",
+        lessonId: "l1",
+        activityKey: "clock",
+        kind: "math-clock",
+        config: {
+          mode: "read",
+          instruction: "Read the clock.",
+          hour: 3,
+          minute: 0,
+          choices: ["4:00", "5:00"],
+          answerIndex: 0,
+        },
+      },
+    ];
+
+    await expect(publishVersion("v1")).rejects.toBeInstanceOf(
+      ActivityConfigValidationError,
+    );
+    expect(txOps).not.toContain("update:archived");
+    expect(txOps).not.toContain("update:published");
+  });
+
+  it("canonicalizes stored draft configs before archiving the current version", async () => {
+    versionFindFirst.value = { id: "v1", programId: "p1", status: "draft" };
+    findManyRows.units = [{ id: "u1", programVersionId: "v1" }];
+    findManyRows.lessons = [{ id: "l1", unitId: "u1" }];
+    findManyRows.activities = [
+      {
+        id: "a1",
+        lessonId: "l1",
+        activityKey: "journal",
+        kind: "journal-prompt",
+        config: { prompt: "Draw one true thing." },
+      },
+    ];
+
+    await publishVersion("v1");
+
+    expect(
+      txUpdateValues.find(
+        ({ table, value }) => table === "activity" && Object.hasOwn(value, "config"),
+      )?.value,
+    ).toEqual({
+      config: {
+        prompt: "Draw one true thing.",
+        drawing: true,
+        mode: "draw",
+        frames: [],
+        wordBank: [],
+        allowModes: ["type"],
+      },
+    });
+    expect(txOps.indexOf("update:archived")).toBeGreaterThanOrEqual(0);
+  });
+
+  it("rejects program-wide duplicate stored activity keys before status changes", async () => {
+    versionFindFirst.value = { id: "v1", programId: "p1", status: "draft" };
+    findManyRows.units = [{ id: "u1", programVersionId: "v1" }];
+    findManyRows.lessons = [{ id: "l1", unitId: "u1" }];
+    findManyRows.activities = [
+      {
+        id: "a1",
+        lessonId: "l1",
+        activityKey: "same-key",
+        kind: "math-clock",
+        config: { mode: "set", instruction: "Set it.", targetHour: 3, targetMinute: 0 },
+      },
+      {
+        id: "a2",
+        lessonId: "l1",
+        activityKey: "same-key",
+        kind: "math-clock",
+        config: { mode: "set", instruction: "Set it.", targetHour: 4, targetMinute: 30 },
+      },
+    ];
+
+    await expect(publishVersion("v1")).rejects.toBeInstanceOf(DuplicateKeyError);
+    expect(txOps).not.toContain("update:archived");
+    expect(txOps).not.toContain("update:published");
+  });
+
   // ── Fix-F B1: race-hardened publish (lock + archive-before-publish + cond.) ──
 
   it("archives the prior published version BEFORE publishing the target (B3 index safe)", async () => {
@@ -215,6 +340,34 @@ describe("publishVersion (draft-status guard)", () => {
     txPublishReturns.value = []; // 0 rows affected
     await expect(publishVersion("v1")).rejects.toBeInstanceOf(VersionNotDraftError);
     expect(transaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("archiveProgram lock order", () => {
+  it("locks the program before deriving its published pointer or updating a version", async () => {
+    txSelectForRows.value = [{ id: "p1", publishedVersionId: "v1" }];
+
+    await archiveProgram("p1");
+
+    const programLock = txOps.indexOf("lock:program");
+    const firstArchive = txOps.indexOf("update:archived");
+    expect(programLock).toBeGreaterThanOrEqual(0);
+    expect(firstArchive).toBeGreaterThan(programLock);
+    expect(txUpdateValues).toEqual(
+      expect.arrayContaining([
+        { table: "program_version", value: { status: "archived" } },
+        {
+          table: "program",
+          value: expect.objectContaining({ status: "archived", publishedVersionId: null }),
+        },
+      ]),
+    );
+  });
+
+  it("fails inside the locked transaction when the program does not exist", async () => {
+    txSelectForRows.value = [];
+    await expect(archiveProgram("missing")).rejects.toThrow("Program not found: missing");
+    expect(txUpdateValues).toEqual([]);
   });
 });
 

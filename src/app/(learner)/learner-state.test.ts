@@ -70,7 +70,11 @@ beforeEach(() => {
   vi.mocked(listGeneratedShelf).mockResolvedValue([]);
   vi.mocked(getGeneratedCompletions).mockResolvedValue([]);
   // Default: an active enrollment → playable.
-  vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
+  vi.mocked(getEnrollmentForGate).mockResolvedValue({
+    status: "active",
+    config: {},
+    configValid: true,
+  });
 });
 afterEach(() => vi.resetAllMocks());
 
@@ -86,21 +90,47 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
   });
 
   it("returns available:false (no program) when the enrollment is removed", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "removed", config: {} });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "removed",
+      config: {},
+      configValid: true,
+    });
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();
   });
 
   it("returns available:false (no program) when the enrollment is paused", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "paused", config: {} });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "paused",
+      config: {},
+      configValid: true,
+    });
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();
   });
 
+  it("fails closed when an active enrollment has malformed stored config", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { aiPractice: false },
+      configValid: false,
+    });
+
+    const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
+
+    expect(res.available).toBe(false);
+    expect(res.program).toBeNull();
+    expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
+  });
+
   it("returns available:true + the pinned program for an ACTIVE enrollment", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: {},
+      configValid: true,
+    });
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(true);
     expect(res.program).toBe(PROGRAM);
@@ -140,7 +170,11 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
   });
 
   it("returns available:false when active but the program no longer resolves", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: {},
+      configValid: true,
+    });
     vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(undefined);
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(false);
