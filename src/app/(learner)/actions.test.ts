@@ -305,7 +305,7 @@ describe("recordAttemptAction canonical authored scoring", () => {
     });
 
     expect(result).toEqual({ ok: false, reason: "invalid" });
-    expect(resolveLearnerProgram).not.toHaveBeenCalled();
+    expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
     expect(recordAttempt).not.toHaveBeenCalled();
   });
 
@@ -373,7 +373,7 @@ describe("recordAttemptAction canonical authored scoring", () => {
   });
 
   it("returns the original stored score when the store replays a completion", async () => {
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
     const originalScore = {
       correct: 0,
       total: 1,
@@ -389,7 +389,7 @@ describe("recordAttemptAction canonical authored scoring", () => {
   });
 
   it("maps a completion identity conflict to an invalid result", async () => {
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
     vi.mocked(recordAttempt).mockRejectedValue(new CompletionReplayMismatchError());
 
     await expect(recordAttemptAction(BASE_INPUT)).resolves.toEqual({
