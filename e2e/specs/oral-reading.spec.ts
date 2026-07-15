@@ -31,7 +31,9 @@ test("a guest completes through the grown-up fallback and one host reward", asyn
     timeout: 25_000,
   });
   await expect(page.getByText("the", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Hear the again" })).toBeVisible();
+  await expect(page.getByText("Step 1: Listen to the model")).toBeVisible();
+  await page.getByRole("button", { name: "Listen to the word the" }).click();
+  await expect(page.getByText("The listen step started. Now it is your turn.")).toBeVisible();
 
   // Guests land straight on the world map and deep-links remain guest mode.
   // The microphone is never offered; the deterministic grown-up path completes.
@@ -44,7 +46,47 @@ test("a guest completes through the grown-up fallback and one host reward", asyn
   await expectSingleHostReward(page);
 });
 
-test("an opted-in signed-in learner gets a matched result and one host reward", async ({
+test("a guest cold read exposes no model audio before participation fallback", async ({
+  page,
+  context,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "public", "guest-only assertion");
+
+  await context.clearPermissions();
+  await page.goto(DECODABLE_ACTIVITY);
+  await expect(page.getByLabel("Reading passage")).toContainText(/The\s*fat\s*cat\s*sat\./, {
+    timeout: 25_000,
+  });
+  await expect(page.getByRole("button", { name: "Listen to the sentence" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Read this aloud" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Read it aloud" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Keep going" }).click();
+  await expectSingleHostReward(page);
+});
+
+test("modeled practice without TTS finishes as grown-up participation only", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "public", "guest-only assertion");
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: undefined,
+    });
+    Reflect.deleteProperty(window, "SpeechSynthesisUtterance");
+  });
+
+  await page.goto(ACTIVITY);
+  await expect(page.getByText("The model audio is not available.")).toBeVisible({
+    timeout: 25_000,
+  });
+  await expect(page.getByRole("button", { name: "Listen to the word the" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Read it aloud" })).toHaveCount(0);
+  await page.getByRole("button", { name: "A grown-up read it with me" }).click();
+  await expectSingleHostReward(page);
+});
+
+test("an opted-in signed-in learner settles a check and gets one host reward", async ({
   page,
   context,
 }, testInfo) => {
@@ -100,7 +142,10 @@ test("an opted-in signed-in learner gets a matched result and one host reward", 
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ result: "matched" }),
+      body: JSON.stringify({
+        result: "unclear",
+        verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }),
     });
   });
 
@@ -128,17 +173,21 @@ test("an opted-in signed-in learner gets a matched result and one host reward", 
     await selectAccountLearner(page, learnerName);
     await context.clearPermissions();
     await page.goto(ACTIVITY);
+    await page.getByRole("button", { name: "Listen to the word the" }).click();
     await page.getByRole("button", { name: "Read it aloud" }).click();
     await expect(page.getByText("Read it to a grown-up.")).toBeVisible();
 
     await context.grantPermissions(["microphone"]);
     await page.evaluate(() => localStorage.setItem("e2e-oral-mic", "allow"));
     await page.goto(ACTIVITY);
+    await page.getByRole("button", { name: "Listen to the word the" }).click();
     const mic = page.getByRole("button", { name: "Read it aloud" });
     await expect(mic).toBeVisible({ timeout: 25_000 });
     await mic.click();
     await expect(page.getByRole("button", { name: "Stop listening" })).toBeVisible();
     await page.getByRole("button", { name: "Stop listening" }).click();
+    await expect(page.getByText("I couldn't quite hear that")).toBeVisible();
+    await page.getByRole("button", { name: "A grown-up listened - I read it" }).click();
     await expectSingleHostReward(page);
   } finally {
     await context.clearPermissions();
@@ -207,9 +256,13 @@ test("sentence reading keeps mic denial safe and finishes through one host rewar
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        result: "matched",
-        words: Array.from({ length: 5 }, () => ({ state: "correct" })),
+        result: "unclear",
+        words: [
+          { state: "unclear" },
+          ...Array.from({ length: 4 }, () => ({ state: "correct" })),
+        ],
         wcpm: 42,
+        verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       }),
     });
   });
@@ -239,16 +292,20 @@ test("sentence reading keeps mic denial safe and finishes through one host rewar
     await expect(page.getByLabel("Reading passage")).toBeVisible({
       timeout: 25_000,
     });
+    await page.getByRole("button", { name: "Listen to the sentence" }).click();
     await page.getByRole("button", { name: "Read it aloud" }).click();
     await expect(page.getByText("Read it to a grown-up.")).toBeVisible();
 
     await context.grantPermissions(["microphone"]);
     await page.evaluate(() => localStorage.setItem("e2e-oral-mic", "allow"));
     await page.goto(SENTENCE_ACTIVITY);
+    await page.getByRole("button", { name: "Listen to the sentence" }).click();
     const mic = page.getByRole("button", { name: "Read it aloud" });
     await expect(mic).toBeVisible({ timeout: 25_000 });
     await mic.click();
     await page.getByRole("button", { name: "Stop listening" }).click();
+    await expect(page.getByText("Let's try the honey words once more")).toBeVisible();
+    await page.getByRole("button", { name: "A grown-up listened - I read it" }).click();
     await expectSingleHostReward(page);
   } finally {
     await context.clearPermissions();
@@ -309,13 +366,9 @@ test("a decodable reader finishes through one linked host reward", async ({
   });
   await page.route("**/api/oral-reading", async (route) => {
     await route.fulfill({
-      status: 200,
+      status: 503,
       contentType: "application/json",
-      body: JSON.stringify({
-        result: "matched",
-        words: Array.from({ length: 4 }, () => ({ state: "correct" })),
-        wcpm: 42,
-      }),
+      body: JSON.stringify({ error: "unavailable" }),
     });
   });
 
@@ -346,8 +399,12 @@ test("a decodable reader finishes through one linked host reward", async ({
     await expect(passage).toContainText(/The\s*fat\s*cat\s*sat\./, {
       timeout: 25_000,
     });
+    await expect(page.getByRole("button", { name: "Listen to the sentence" })).toHaveCount(0);
     await page.getByRole("button", { name: "Read it aloud" }).click();
     await page.getByRole("button", { name: "Stop listening" }).click();
+    await expect(page.getByText("Read it to a grown-up.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Listen to the sentence" })).toHaveCount(0);
+    await page.getByRole("button", { name: "A grown-up listened - I read it" }).click();
     await expectSingleHostReward(page);
   } finally {
     await context.clearPermissions();

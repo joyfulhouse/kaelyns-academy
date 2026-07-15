@@ -1165,7 +1165,11 @@ export async function getFluencyHistory(
           // witness. Re-parse the complete stored response defensively so
           // malformed/legacy partial JSON cannot enter the household chart.
           const parsed = oralReadingResponseSchema.safeParse(response);
-          if (!parsed.success || parsed.data.fallbackUsed || parsed.data.wcpm === undefined) {
+          if (
+            !parsed.success ||
+            parsed.data.status !== "verified" ||
+            parsed.data.wcpm === undefined
+          ) {
             return [];
           }
           return [{ day, wcpm: parsed.data.wcpm }];

@@ -138,11 +138,12 @@ const PROGRAM = {
               kind: "oral-reading",
               title: "Read there",
               band: "ready",
-              skillTags: ["word.sight"],
+              skillTags: ["phonics.decode.short-a-cvc"],
               config: {
+                presentation: "cold",
                 instruction: "Read the word.",
                 target: "there",
-                skillTag: "word.sight",
+                skillTag: "phonics.decode.short-a-cvc",
               },
             },
           ],
@@ -448,7 +449,7 @@ describe("recordAttemptAction oral-reading witness boundary", () => {
     response: {
       attempts: 2,
       results: ["unclear", "matched"],
-      fallbackUsed: false,
+      status: "verified",
       correctCount: 999,
       wcpm: 300,
     },
@@ -471,12 +472,12 @@ describe("recordAttemptAction oral-reading witness boundary", () => {
         wcpm: null,
       });
       expect(canonical).toEqual({
-        response: { attempts: 1, results: ["matched"], fallbackUsed: false },
+        response: { attempts: 1, results: ["matched"], status: "verified" },
         score: {
           correct: 1,
           total: 1,
           stars: 3,
-          skillEvidence: [{ skill: "word.sight", outcome: "solid" }],
+          skillEvidence: [{ skill: "phonics.decode.short-a-cvc", outcome: "solid" }],
         },
       });
       return canonical?.score ?? null;
@@ -493,7 +494,7 @@ describe("recordAttemptAction oral-reading witness boundary", () => {
         correct: 1,
         total: 1,
         stars: 3,
-        skillEvidence: [{ skill: "word.sight", outcome: "solid" }],
+        skillEvidence: [{ skill: "phonics.decode.short-a-cvc", outcome: "solid" }],
       },
     });
     expect(recordOralReadingAttempt).toHaveBeenCalledWith(
@@ -512,7 +513,7 @@ describe("recordAttemptAction oral-reading witness boundary", () => {
     vi.mocked(recordOralReadingAttempt).mockImplementation(async (_accountId, input) => {
       const canonical = input.canonicalize(null);
       expect(canonical).toEqual({
-        response: { attempts: 0, results: [], fallbackUsed: true },
+        response: { attempts: 0, results: [], status: "participated-unverified" },
         score: { correct: 0, total: 0, stars: 1, skillEvidence: [] },
       });
       return canonical?.score ?? null;

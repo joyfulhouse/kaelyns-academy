@@ -39,7 +39,9 @@ export function canonicalOralReadingResponse(
   config: OralReadingConfig,
   witness: OralReadingWitnessFacts | null,
 ): OralReadingResponse | null {
-  if (!witness) return { attempts: 0, results: [], fallbackUsed: true };
+  if (!witness) {
+    return { attempts: 0, results: [], status: "participated-unverified" };
+  }
 
   const configMode = config.mode === "sentence" ? "sentence" : "word";
   if (witness.mode !== configMode) return null;
@@ -54,7 +56,7 @@ export function canonicalOralReadingResponse(
     ) {
       return null;
     }
-    return { attempts: 1, results: [witness.result], fallbackUsed: false };
+    return { attempts: 1, results: [witness.result], status: "verified" };
   }
 
   const expectedWords = sentenceWordCount(config.passage);
@@ -74,7 +76,7 @@ export function canonicalOralReadingResponse(
   return {
     attempts: 1,
     results: [witness.result],
-    fallbackUsed: false,
+    status: "verified",
     perWord: witness.perWord,
     correctCount: witness.correctCount,
     totalWords: witness.totalWords,

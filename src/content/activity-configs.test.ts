@@ -179,31 +179,43 @@ describe("math-measure config", () => {
 });
 
 describe("oral-reading config", () => {
-  it("defaults an unchanged v1 config to word mode", () => {
+  it("keeps word/sentence mode orthogonal to cold/listen-repeat presentation", () => {
     const authored = {
+      presentation: "listen-repeat" as const,
       instruction: "Listen, then read this word aloud.",
       target: "the",
-      skillTag: "reading.fluency.phrasing",
     };
 
     expect(oralReadingConfig.parse(authored)).toEqual({ mode: "word", ...authored });
+    for (const presentation of ["cold", "listen-repeat"] as const) {
+      const sentence = {
+        mode: "sentence" as const,
+        presentation,
+        instruction: "Read the sentence.",
+        passage: "We can see the cat.",
+      };
+      expect(oralReadingConfig.parse(sentence)).toEqual(sentence);
+    }
   });
 
-  it("accepts a bounded sentence passage without an authored scoring pace", () => {
-    const authored = {
-      mode: "sentence" as const,
-      instruction: "Listen, then read the sentence.",
-      passage: "We can see the cat.",
-      skillTag: "reading.fluency.phrasing",
-    };
-
-    expect(oralReadingConfig.parse(authored)).toEqual(authored);
+  it("requires authors to choose a presentation instead of silently modeling a cold read", () => {
+    expect(
+      oralReadingConfig.safeParse({ instruction: "Read.", target: "cat" }).success,
+    ).toBe(false);
+    expect(
+      oralReadingConfig.safeParse({
+        mode: "sentence",
+        instruction: "Read.",
+        passage: "The cat sat.",
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects sentence passages above the character or word caps", () => {
     expect(
       oralReadingConfig.safeParse({
         mode: "sentence",
+        presentation: "cold",
         instruction: "Read.",
         passage: "a".repeat(201),
       }).success,
@@ -211,6 +223,7 @@ describe("oral-reading config", () => {
     expect(
       oralReadingConfig.safeParse({
         mode: "sentence",
+        presentation: "cold",
         instruction: "Read.",
         passage: Array.from({ length: 41 }, () => "cat").join(" "),
       }).success,

@@ -78,7 +78,7 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
       return { prompt: "" };
     case "reading-comprehension":
       return {
-        instruction: "Read, then answer.",
+        instruction: "Read the passage, then answer.",
         passage: "A cat sat.",
         questions: [
           { prompt: "Question?", choices: ["A", "B"], answerIndex: 0 },
@@ -145,6 +145,7 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
       };
     case "oral-reading":
       return {
+        presentation: "listen-repeat",
         instruction: "Listen, then read this word aloud.",
         target: "the",
       };

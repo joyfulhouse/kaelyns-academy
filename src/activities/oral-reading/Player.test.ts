@@ -4,12 +4,37 @@ import {
   canRecordAnother,
   canSubmitRecording,
   createOralReadingRequestForm,
+  canExposeModelAudio,
+  canStartOralAttempt,
   parseWordRouteResult,
+  needsAdultModelFallback,
   phaseAfterUnmatched,
   sentenceRecordingMs,
+  shouldCompleteAfterObservation,
 } from "./recording";
 
 describe("oral-reading recording lifecycle", () => {
+  it("gates modeled attempts and keeps cold assessments unmodeled", () => {
+    expect(canStartOralAttempt("listen-repeat", false)).toBe(false);
+    expect(canStartOralAttempt("listen-repeat", true)).toBe(true);
+    expect(canStartOralAttempt("cold", false)).toBe(true);
+
+    expect(canExposeModelAudio("cold")).toBe(false);
+    expect(canExposeModelAudio("listen-repeat")).toBe(true);
+    expect(needsAdultModelFallback("listen-repeat", false)).toBe(true);
+    expect(needsAdultModelFallback("listen-repeat", true)).toBe(false);
+    expect(needsAdultModelFallback("cold", false)).toBe(false);
+  });
+
+  it("settles a cold assessment on its first observation", () => {
+    expect(shouldCompleteAfterObservation("cold", "matched")).toBe(true);
+    expect(shouldCompleteAfterObservation("cold", "unclear")).toBe(true);
+    expect(shouldCompleteAfterObservation("cold", "no-speech")).toBe(true);
+    expect(shouldCompleteAfterObservation("listen-repeat", "matched")).toBe(true);
+    expect(shouldCompleteAfterObservation("listen-repeat", "unclear")).toBe(false);
+    expect(shouldCompleteAfterObservation("listen-repeat", "no-speech")).toBe(false);
+  });
+
   it("uploads audio with exact authored identity and no client target or passage", () => {
     const form = createOralReadingRequestForm(new Blob(["audio"]), {
       learnerId: "L1",

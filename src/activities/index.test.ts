@@ -58,7 +58,7 @@ const VALID_RESPONSES = {
     ],
   },
   "seq-order": { attempts: 1, order: [0, 1, 2] },
-  "oral-reading": { attempts: 1, results: ["matched"], fallbackUsed: false },
+  "oral-reading": { attempts: 1, results: ["matched"], status: "verified" },
 } satisfies Record<ActivityKind, unknown>;
 
 const OVER_BOUNDED_RESPONSES = {
@@ -136,7 +136,7 @@ const OVER_BOUNDED_RESPONSES = {
   "oral-reading": {
     attempts: 3,
     results: ["unclear", "unclear", "matched"],
-    fallbackUsed: false,
+    status: "verified",
   },
 } satisfies Record<ActivityKind, unknown>;
 

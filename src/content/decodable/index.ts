@@ -128,14 +128,15 @@ export function decodableReaderActivities(pattern?: PhonicsPattern): Activity[] 
       (passage, index): Activity => ({
         id: `decodable-${group.pattern}-${String(index + 1).padStart(2, "0")}`,
         kind: "oral-reading",
-        title: `Read it: ${passage}`,
+        title: `Sound-it-out sentence ${index + 1}`,
         blurb: "Sound out each word, then read the whole sentence smoothly.",
         estMinutes: 3,
         band: "ready",
         skillTags: [skillTag],
         config: {
           mode: "sentence",
-          instruction: "Listen, then read this sentence aloud.",
+          presentation: "cold",
+          instruction: "Read this sentence aloud without hearing it first.",
           passage,
           skillTag,
         },

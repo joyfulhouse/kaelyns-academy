@@ -10,7 +10,7 @@ import {
   type OralReadingResponse,
 } from "./logic";
 
-/** Authored listen-first oral reading with privacy-safe speech verification. */
+/** Authored cold or modeled oral reading with privacy-safe speech verification. */
 export const oralReading: ActivityType<OralReadingConfig, OralReadingResponse> = {
   kind: "oral-reading",
   label: "Read aloud",

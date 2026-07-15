@@ -13,11 +13,11 @@ import type {
 import type { ActivityPlayerProps } from "@/content/types";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
-import { PlayerControls, SpeakerButton } from "../_shared/ActivityChrome";
+import { PlayerControls } from "../_shared/ActivityChrome";
 import { useActivity } from "../_shared/useActivity";
-import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { schema, type OralReadingResponse } from "./logic";
+import { ModeledAudioFallback, OralModelStep } from "./ModelStep";
 import { SentenceReader } from "./SentenceReader";
 import {
   MAX_RECORDING_MS,
@@ -25,10 +25,13 @@ import {
   VERIFY_TIMEOUT_MS,
   browserHasMicrophone,
   canRecordAnother,
+  canStartOralAttempt,
   canSubmitRecording,
   createOralReadingRequestForm,
   parseWordRouteResult,
   phaseAfterUnmatched,
+  needsAdultModelFallback,
+  shouldCompleteAfterObservation,
   subscribeStatic,
   supportedMimeType,
   type OralReadingPhase,
@@ -71,6 +74,7 @@ function WordReadingPlayer({
   const micAllowed = learnerContext?.oralReading === true;
   const [phase, setPhase] = useState<OralReadingPhase>("ready");
   const [results, setResults] = useState<VerificationResult[]>([]);
+  const [listenStepStarted, setListenStepStarted] = useState(false);
   // Counts every UPLOADED recording, including ones whose verification came
   // back "unavailable" — the attempt cap bounds recordings and STT calls, so
   // gateway failures must not grant extra tries around it.
@@ -80,10 +84,6 @@ function WordReadingPlayer({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeRef = useRef(true);
-
-  // Model the known word before asking the child to read it. The visible target
-  // and manual speaker remain available even when automatic read-aloud is off.
-  useSpeakOnce(speech.speak, parsed.target);
 
   useEffect(() => {
     activeRef.current = true;
@@ -98,14 +98,24 @@ function WordReadingPlayer({
   }, []);
 
   const fallbackMode = !micAllowed || !micSupported || phase === "fallback";
+  const readyForAttempt = canStartOralAttempt(parsed.presentation, listenStepStarted);
+  const adultModelFallback = needsAdultModelFallback(
+    parsed.presentation,
+    speech.supported,
+  );
 
-  function response(fallbackUsed: boolean): OralReadingResponse {
-    return { attempts: results.length, results, fallbackUsed };
+  function response(status: OralReadingResponse["status"]): OralReadingResponse {
+    return { attempts: results.length, results, status };
   }
 
   function completeFallback(): void {
-    const completed = response(true);
+    const completed = response("participated-unverified");
     onComplete(completed);
+  }
+
+  function playModel(): void {
+    speech.speak(parsed.target);
+    setListenStepStarted(true);
   }
 
   async function verify(blob: Blob, recordingFailed = false): Promise<void> {
@@ -152,11 +162,11 @@ function WordReadingPlayer({
 
     const nextResults = [...results, routeResult.result];
     setResults(nextResults);
-    if (routeResult.result === "matched") {
+    if (shouldCompleteAfterObservation(parsed.presentation, routeResult.result)) {
       onComplete({
         attempts: nextResults.length,
         results: nextResults,
-        fallbackUsed: false,
+        status: "verified",
         verificationId: routeResult.verificationId,
       });
     } else {
@@ -170,6 +180,7 @@ function WordReadingPlayer({
     if (
       !micAllowed ||
       !micSupported ||
+      !readyForAttempt ||
       !canRecordAnother(submitted) ||
       (phase !== "ready" && phase !== "unclear" && phase !== "fallback")
     ) {
@@ -255,22 +266,22 @@ function WordReadingPlayer({
         </div>
       </div>
 
-      <PlayerControls>
-        <SpeakerButton
-          speech={speech}
-          text={parsed.target}
-          label={`Hear ${parsed.target} again`}
-          size="lg"
-          shape="round"
-        />
-      </PlayerControls>
+      <OralModelStep
+        presentation={parsed.presentation}
+        speechSupported={speech.supported}
+        listenStepStarted={listenStepStarted}
+        label={`Listen to the word ${parsed.target}`}
+        onPlay={playModel}
+      />
 
-      {fallbackMode ? (
+      {adultModelFallback ? (
+        <ModeledAudioFallback onComplete={completeFallback} />
+      ) : fallbackMode ? (
         <div className="grid gap-4 rounded-3xl border-[3px] border-ink bg-honey/30 p-6">
           <p className="font-display text-2xl text-ink">Read it to a grown-up.</p>
           <p className="text-ink-soft">The microphone is optional. You can still finish this one.</p>
           <PlayerControls>
-            {micAllowed && micSupported && canRecordAnother(submitted) && (
+            {micAllowed && micSupported && readyForAttempt && canRecordAnother(submitted) && (
               <Button size="kid" variant="honey" onClick={() => void startListening()}>
                 <MicrophoneIcon size={34} weight="fill" aria-hidden="true" />
                 Try again
@@ -290,13 +301,6 @@ function WordReadingPlayer({
           <p className="font-display text-2xl text-ink">I couldn&apos;t quite hear that</p>
           <p className="text-ink-soft">Listen again, try once more, or ask a grown-up to listen.</p>
           <PlayerControls>
-            <SpeakerButton
-              speech={speech}
-              text={parsed.target}
-              label={`Hear ${parsed.target} again`}
-              size="sm"
-              shape="round"
-            />
             <Button size="kid" variant="honey" onClick={() => void startListening()}>
               <MicrophoneIcon size={34} weight="fill" aria-hidden="true" />
               Try again
@@ -315,7 +319,7 @@ function WordReadingPlayer({
           <button
             type="button"
             onClick={phase === "listening" ? stopListening : () => void startListening()}
-            disabled={phase === "requesting" || phase === "checking"}
+            disabled={!readyForAttempt || phase === "requesting" || phase === "checking"}
             aria-label={phase === "listening" ? "Stop listening" : "Read it aloud"}
             className={cn(
               "grid size-40 place-items-center rounded-full border-[4px] border-ink shadow-pop transition duration-200 ease-out",
@@ -340,7 +344,11 @@ function WordReadingPlayer({
                 ? "Listening back…"
                 : phase === "requesting"
                   ? "Getting the microphone…"
-                  : "Tap the microphone, then read"}
+                  : !readyForAttempt
+                    ? "Listen to the model first"
+                    : parsed.presentation === "cold"
+                      ? "Cold read: tap the microphone, then read"
+                      : "Step 2: tap the microphone, then read"}
           </p>
         </div>
       )}

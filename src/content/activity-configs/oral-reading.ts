@@ -1,8 +1,10 @@
 import { z } from "zod";
 
-// Authored-only, listen-first oral reading. The word branch intentionally keeps
-// the original v1 fields and defaults its discriminator so the five existing
-// word-oral-* configs remain unchanged at authoring and seed boundaries.
+export const oralReadingPresentation = z.enum(["cold", "listen-repeat"]);
+export type OralReadingPresentation = z.infer<typeof oralReadingPresentation>;
+
+// What is read (word/sentence) stays separate from whether the target is
+// modeled first. Authors must make that assessment-versus-practice choice.
 const oralReadingWordConfig = z.object({
   // `optional().transform(...)` lets Zod's discriminator recognize both an
   // absent v1 mode and the explicit literal, then resolves the parsed config
@@ -12,6 +14,7 @@ const oralReadingWordConfig = z.object({
     .literal("word")
     .optional()
     .transform((mode) => mode ?? "word"),
+  presentation: oralReadingPresentation,
   instruction: z.string().trim().min(1).max(200),
   target: z
     .string()
@@ -27,6 +30,7 @@ export type OralReadingWordConfig = z.input<typeof oralReadingWordConfig>;
 
 export const oralReadingSentenceConfig = z.object({
   mode: z.literal("sentence"),
+  presentation: oralReadingPresentation,
   instruction: z.string().trim().min(1).max(200),
   // A sentence must be read within the kaelyn-stt service's 15s decoded-speech
   // cap. At the ~30 WCPM grade-1 target that is ~7 words, so keep passages

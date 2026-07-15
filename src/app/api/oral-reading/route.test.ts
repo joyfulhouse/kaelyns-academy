@@ -59,6 +59,7 @@ const PROGRAM = {
               band: "ready",
               skillTags: ["word.sight"],
               config: {
+                presentation: "cold",
                 instruction: "Read the word.",
                 target: "there",
                 skillTag: "word.sight",
@@ -72,6 +73,7 @@ const PROGRAM = {
               skillTags: ["reading.accuracy"],
               config: {
                 mode: "sentence",
+                presentation: "cold",
                 instruction: "Read the sentence.",
                 passage: "We can see the cat.",
                 skillTag: "reading.accuracy",

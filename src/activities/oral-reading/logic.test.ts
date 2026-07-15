@@ -9,16 +9,18 @@ import {
 } from "./logic";
 
 const cfg: OralReadingConfig = {
-  instruction: "Listen, then read the word.",
-  target: "there",
-  skillTag: "word.syllables.types",
+  presentation: "cold",
+  instruction: "Read the word without hearing it first.",
+  target: "cat",
+  skillTag: "phonics.decode.short-a-cvc",
 };
 
 const sentenceCfg: OralReadingConfig = {
   mode: "sentence",
-  instruction: "Listen, then read the sentence.",
+  presentation: "cold",
+  instruction: "Read the sentence without hearing it first.",
   passage: "We can see the cat.",
-  skillTag: "reading.fluency.phrasing",
+  skillTag: "phonics.decode.short-a-cvc",
 };
 
 describe("oral-reading score", () => {
@@ -26,29 +28,47 @@ describe("oral-reading score", () => {
     const response: OralReadingResponse = {
       attempts: 1,
       results: ["matched"],
-      fallbackUsed: false,
+      status: "verified",
     };
 
     expect(score(cfg, response)).toEqual({
       correct: 1,
       total: 1,
       stars: 3,
-      skillEvidence: [{ skill: "word.syllables.types", outcome: "solid" }],
+      skillEvidence: [{ skill: "phonics.decode.short-a-cvc", outcome: "solid" }],
     });
   });
 
-  it("scores only the current canonical verified result, not browser attempt history", () => {
+  it("never upgrades a cold first observation with a modeled retry", () => {
     const response: OralReadingResponse = {
       attempts: 2,
       results: ["unclear", "matched"],
-      fallbackUsed: false,
+      status: "verified",
     };
 
     expect(score(cfg, response)).toEqual({
-      correct: 1,
+      correct: 0,
       total: 1,
-      stars: 3,
-      skillEvidence: [{ skill: "word.syllables.types", outcome: "solid" }],
+      stars: 1,
+      skillEvidence: [{ skill: "phonics.decode.short-a-cvc", outcome: "not_yet" }],
+    });
+  });
+
+  it("cannot turn a cold unclear sentence into solid evidence with later metadata", () => {
+    expect(
+      score(sentenceCfg, {
+        attempts: 2,
+        results: ["unclear", "matched"],
+        status: "verified",
+        perWord: Array.from({ length: 5 }, () => ({ state: "correct" as const })),
+        correctCount: 5,
+        totalWords: 5,
+      }),
+    ).toEqual({
+      correct: 0,
+      total: 5,
+      stars: 1,
+      skillEvidence: [{ skill: "phonics.decode.short-a-cvc", outcome: "not_yet" }],
     });
   });
 
@@ -56,7 +76,7 @@ describe("oral-reading score", () => {
     const response: OralReadingResponse = {
       attempts: 2,
       results: ["unclear", "no-speech"],
-      fallbackUsed: true,
+      status: "participated-unverified",
     };
 
     expect(score(cfg, response)).toEqual({
@@ -71,7 +91,7 @@ describe("oral-reading score", () => {
     const response: OralReadingResponse = {
       attempts: 0,
       results: [],
-      fallbackUsed: true,
+      status: "participated-unverified",
     };
 
     expect(score(cfg, response).stars).toBe(1);
@@ -81,10 +101,10 @@ describe("oral-reading score", () => {
     const response: OralReadingResponse = {
       attempts: 1,
       results: ["matched"],
-      fallbackUsed: false,
+      status: "verified",
     };
 
-    expect(Object.keys(response).sort()).toEqual(["attempts", "fallbackUsed", "results"]);
+    expect(Object.keys(response).sort()).toEqual(["attempts", "results", "status"]);
     expect(
       responseSchema.safeParse({ ...response, transcript: "never persist this" }).success,
     ).toBe(false);
@@ -95,7 +115,7 @@ describe("oral-reading score", () => {
       responseSchema.safeParse({
         attempts: 1,
         results: ["matched"],
-        fallbackUsed: false,
+        status: "verified",
         verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       }).success,
     ).toBe(true);
@@ -103,7 +123,7 @@ describe("oral-reading score", () => {
       responseSchema.safeParse({
         attempts: 1,
         results: ["matched"],
-        fallbackUsed: false,
+        status: "verified",
         verificationId: "not-opaque",
       }).success,
     ).toBe(false);
@@ -113,7 +133,7 @@ describe("oral-reading score", () => {
     const response: OralReadingResponse = {
       attempts: 1,
       results: ["matched"],
-      fallbackUsed: false,
+      status: "verified",
       wcpm: 42,
       perWord: Array.from({ length: 5 }, () => ({ state: "correct" as const })),
       correctCount: 5,
@@ -124,7 +144,7 @@ describe("oral-reading score", () => {
       correct: 5,
       total: 5,
       stars: 3,
-      skillEvidence: [{ skill: "reading.fluency.phrasing", outcome: "solid" }],
+      skillEvidence: [{ skill: "phonics.decode.short-a-cvc", outcome: "solid" }],
     });
     expect(Object.keys(response)).not.toContain("transcript");
   });
@@ -134,7 +154,7 @@ describe("oral-reading score", () => {
       score(sentenceCfg, {
         attempts: 1,
         results: [correctCount === 5 ? "matched" : "unclear"],
-        fallbackUsed: false,
+        status: "verified",
         wcpm,
         correctCount,
         totalWords: 5,
@@ -146,7 +166,7 @@ describe("oral-reading score", () => {
       correct: 5,
       total: 5,
       stars: 3,
-      skillEvidence: [{ skill: "reading.fluency.phrasing", outcome: "solid" }],
+      skillEvidence: [{ skill: "phonics.decode.short-a-cvc", outcome: "solid" }],
     });
 
     expect(scoreAt(4, undefined)).toEqual(scoreAt(4, 1));
@@ -155,20 +175,24 @@ describe("oral-reading score", () => {
       correct: 4,
       total: 5,
       stars: 2,
-      skillEvidence: [{ skill: "reading.fluency.phrasing", outcome: "emerging" }],
+      skillEvidence: [{ skill: "phonics.decode.short-a-cvc", outcome: "emerging" }],
     });
   });
 
   it("awards participation only when a sentence finishes through fallback", () => {
     expect(
-      score(sentenceCfg, { attempts: 0, results: [], fallbackUsed: true }),
+      score(sentenceCfg, {
+        attempts: 0,
+        results: [],
+        status: "participated-unverified",
+      }),
     ).toEqual({ correct: 0, total: 0, stars: 1, skillEvidence: [] });
   });
 });
 
 describe("oral-reading plugin metadata", () => {
   it("affects exactly the authored skill tag", () => {
-    expect(skillsAffected(cfg)).toEqual(["word.syllables.types"]);
+    expect(skillsAffected(cfg)).toEqual(["phonics.decode.short-a-cvc"]);
   });
 
   it("accepts the structurally valid authored config", () => {
@@ -178,12 +202,45 @@ describe("oral-reading plugin metadata", () => {
 
   it("allows an authored target without skill evidence", () => {
     const config: OralReadingConfig = {
+      presentation: "listen-repeat",
       instruction: "Listen, then read the word.",
       target: "the",
     };
 
     expect(skillsAffected(config)).toEqual([]);
-    expect(score(config, { attempts: 1, results: ["matched"], fallbackUsed: false }))
+    expect(score(config, { attempts: 1, results: ["matched"], status: "verified" }))
       .toMatchObject({ stars: 3, skillEvidence: [] });
+  });
+
+  it("never treats modeled repetition or transcript matching as phrasing evidence", () => {
+    const modeled: OralReadingConfig = {
+      ...sentenceCfg,
+      presentation: "listen-repeat",
+    };
+    const phrasing: OralReadingConfig = {
+      ...sentenceCfg,
+      skillTag: "reading.fluency.phrasing",
+    };
+
+    expect(skillsAffected(modeled)).toEqual([]);
+    expect(skillsAffected(phrasing)).toEqual([]);
+    expect(
+      score(modeled, {
+        attempts: 1,
+        results: ["matched"],
+        status: "verified",
+        correctCount: 5,
+        totalWords: 5,
+      }).skillEvidence,
+    ).toEqual([]);
+  });
+
+  it("normalizes legacy stored fallback responses to the explicit status", () => {
+    expect(
+      responseSchema.parse({ attempts: 0, results: [], fallbackUsed: true }),
+    ).toEqual({ attempts: 0, results: [], status: "participated-unverified" });
+    expect(
+      responseSchema.parse({ attempts: 1, results: ["matched"], fallbackUsed: false }),
+    ).toEqual({ attempts: 1, results: ["matched"], status: "verified" });
   });
 });

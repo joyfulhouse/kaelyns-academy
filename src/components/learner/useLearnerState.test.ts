@@ -89,11 +89,11 @@ describe("oral-reading completion extractor", () => {
       extractOralReadingVerification("oral-reading", {
         attempts: 1,
         results: ["matched"],
-        fallbackUsed: false,
+        status: "verified",
         verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       }),
     ).toEqual({
-      response: { attempts: 1, results: ["matched"], fallbackUsed: false },
+      response: { attempts: 1, results: ["matched"], status: "verified" },
       verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     });
 
@@ -172,7 +172,7 @@ describe("useLearnerState record completion", () => {
       {
         attempts: 1,
         results: ["matched"],
-        fallbackUsed: false,
+        status: "verified",
         verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       },
       { unitKey: "unit-1" },
@@ -185,7 +185,7 @@ describe("useLearnerState record completion", () => {
       completionId: "22222222-2222-4222-8222-222222222222",
       unitKey: "unit-1",
       activityId: "oral-1",
-      response: { attempts: 1, results: ["matched"], fallbackUsed: false },
+      response: { attempts: 1, results: ["matched"], status: "verified" },
       verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     });
   });

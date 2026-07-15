@@ -13,16 +13,18 @@ import {
 } from "./server-attempt-verifiers";
 
 const wordConfig: OralReadingConfig = {
+  presentation: "cold",
   instruction: "Read the word.",
-  target: "there",
-  skillTag: "word.sight",
+  target: "cat",
+  skillTag: "phonics.decode.short-a-cvc",
 };
 
 const sentenceConfig: OralReadingConfig = {
   mode: "sentence",
+  presentation: "cold",
   instruction: "Read the sentence.",
   passage: "We can see the cat.",
-  skillTag: "reading.accuracy",
+  skillTag: "phonics.decode.short-a-cvc",
 };
 
 describe("oral-reading canonical verification response", () => {
@@ -30,7 +32,7 @@ describe("oral-reading canonical verification response", () => {
     expect(canonicalOralReadingResponse(wordConfig, null)).toEqual({
       attempts: 0,
       results: [],
-      fallbackUsed: true,
+      status: "participated-unverified",
     });
   });
 
@@ -44,7 +46,7 @@ describe("oral-reading canonical verification response", () => {
         totalWords: 1,
         wcpm: null,
       }),
-    ).toEqual({ attempts: 1, results: ["matched"], fallbackUsed: false });
+    ).toEqual({ attempts: 1, results: ["matched"], status: "verified" });
   });
 
   it("rejects a mode or authored sentence-length mismatch", () => {
@@ -91,12 +93,12 @@ describe("server attempt verifier registry", () => {
         wcpm: null,
       });
       expect(canonical).toMatchObject({
-        response: { attempts: 1, results: ["matched"], fallbackUsed: false },
+        response: { attempts: 1, results: ["matched"], status: "verified" },
         score: {
           correct: 1,
           total: 1,
           stars: 3,
-          skillEvidence: [{ skill: "word.sight", outcome: "solid" }],
+          skillEvidence: [{ skill: "phonics.decode.short-a-cvc", outcome: "solid" }],
         },
       });
       return canonical?.score ?? null;
@@ -112,7 +114,7 @@ describe("server attempt verifier registry", () => {
       activityId: "oral-1",
       verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       rawConfig: wordConfig,
-      allowedSkillTags: ["word.sight"],
+      allowedSkillTags: ["phonics.decode.short-a-cvc"],
       day: "2026-07-15",
       checkpointPhase: null,
     });

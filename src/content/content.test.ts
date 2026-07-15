@@ -236,7 +236,7 @@ describe("authored program content", () => {
     expect(checked).toBeGreaterThanOrEqual(3);
   });
 
-  it("Decodable Readers contains ready-band sentence fluency activities", () => {
+  it("Decodable Readers contains ready-band cold sentence-decoding activities", () => {
     const unit = kaelynAdaptive.units.find((u) => u.id === "decodable-readers");
     expect(unit).toBeDefined();
     expect(unit!.world).toBe("ocean");
@@ -255,6 +255,7 @@ describe("authored program content", () => {
       expect(activity.config.mode).toBe("sentence");
       if (activity.config.mode !== "sentence") continue;
 
+      expect(activity.config.presentation).toBe("cold");
       expect(activity.config.skillTag).toBe(activity.skillTags[0]);
       expect(activity.config.passage.split(/\s+/).length).toBeLessThanOrEqual(7);
     }
@@ -269,74 +270,20 @@ describe("authored program content", () => {
     expect(distinct.size).toBe(unit!.lessons.length);
   });
 
-  it("authors sentence fluency beside the unchanged v1 word-reading block", () => {
+  it("keeps modeled Word Study oral practice mastery-neutral", () => {
     const unit = kaelynAdaptive.units.find((u) => u.id === "word-study")!;
     const activities = unit.lessons.flatMap((lesson) => lesson.activities);
     const oralReadingActivities = activities.filter(
       (activity) => activity.kind === "oral-reading",
     );
-    const sentences = oralReadingActivities.filter(
-      (activity) => activity.config.mode === "sentence",
-    );
-
-    expect(sentences.map(({ id }) => id)).toEqual([
-      "word-sentence-see-cat",
-      "word-sentence-run-play",
-    ]);
-    for (const activity of sentences) {
+    expect(oralReadingActivities).toHaveLength(7);
+    for (const activity of oralReadingActivities) {
       expect(activity.band).toBe("ready");
-      expect(activity.skillTags).toEqual(["reading.fluency.phrasing"]);
-      expect(activity.config.skillTag).toBe("reading.fluency.phrasing");
+      expect(activity.skillTags).toEqual([]);
+      expect(activity.config.presentation).toBe("listen-repeat");
+      expect(activity.config.skillTag).toBeUndefined();
+      expect(getActivityType("oral-reading")!.skillsAffected(activity.config)).toEqual([]);
     }
-
-    const originalWordConfigs = activities
-      .filter(
-        (activity) =>
-          activity.kind === "oral-reading" && activity.id.startsWith("word-oral-"),
-      )
-      .map(({ id, config }) => ({ id, config }));
-    expect(originalWordConfigs).toEqual([
-      {
-        id: "word-oral-the",
-        config: {
-          instruction: "Listen, then read this word aloud.",
-          target: "the",
-          skillTag: "reading.fluency.phrasing",
-        },
-      },
-      {
-        id: "word-oral-and",
-        config: {
-          instruction: "Listen, then read this word aloud.",
-          target: "and",
-          skillTag: "reading.fluency.phrasing",
-        },
-      },
-      {
-        id: "word-oral-to",
-        config: {
-          instruction: "Listen, then read this word aloud.",
-          target: "to",
-          skillTag: "reading.fluency.phrasing",
-        },
-      },
-      {
-        id: "word-oral-see",
-        config: {
-          instruction: "Listen, then read this word aloud.",
-          target: "see",
-          skillTag: "reading.fluency.phrasing",
-        },
-      },
-      {
-        id: "word-oral-we-can",
-        config: {
-          instruction: "Listen, then read these words aloud.",
-          target: "we can",
-          skillTag: "reading.fluency.phrasing",
-        },
-      },
-    ]);
   });
 });
 

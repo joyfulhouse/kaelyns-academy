@@ -79,7 +79,7 @@ describe("sentence oral-reading feedback", () => {
   });
 });
 
-describe("sentence listen-first karaoke timeline", () => {
+describe("sentence modeled-read karaoke timeline", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 

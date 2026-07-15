@@ -225,6 +225,10 @@ export function ActivityHost({
   }
   const activity = resolution.activity;
   const unit = resolution.unit;
+  const shellReadAloud =
+    activity.kind === "oral-reading" && activity.config.presentation === "cold"
+      ? undefined
+      : activity.title;
   const showReward = phase.kind === "reward" && phase.requestKey === completionKey;
   const showSaving = phase.kind === "saving" && phase.requestKey === completionKey;
   const showSaveFailed =
@@ -232,7 +236,7 @@ export function ActivityHost({
 
   return (
     <div data-world={effectiveWorld}>
-      <AppShellKid backHref={backHref} readAloud={activity.title}>
+      <AppShellKid backHref={backHref} readAloud={shellReadAloud}>
         <ReadAloudDefaultProvider enabled={shouldAutoRead(mode, ready, config.readAloud)}>
           <AnimatePresence mode="wait">
           {showReward && phase.kind === "reward" ? (

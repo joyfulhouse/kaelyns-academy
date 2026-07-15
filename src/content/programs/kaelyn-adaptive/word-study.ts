@@ -16,7 +16,7 @@ export const wordStudyUnit: Unit = {
     {
       id: "word-sight-review",
       order: 0,
-      title: "Sight-word fluency warm-up",
+      title: "Sight-word listening warm-up",
       activities: [
         {
           id: "word-sight-find",
@@ -57,11 +57,12 @@ export const wordStudyUnit: Unit = {
           blurb: "Listen first, then read a word you know.",
           estMinutes: 2,
           band: "ready",
-          skillTags: ["reading.fluency.phrasing"],
+          // Listen-and-repeat is modeled practice, not a cold fluency observation.
+          skillTags: [],
           config: {
+            presentation: "listen-repeat",
             instruction: "Listen, then read this word aloud.",
             target: "the",
-            skillTag: "reading.fluency.phrasing",
           },
         },
         {
@@ -71,11 +72,11 @@ export const wordStudyUnit: Unit = {
           blurb: "Listen first, then read a word you know.",
           estMinutes: 2,
           band: "ready",
-          skillTags: ["reading.fluency.phrasing"],
+          skillTags: [],
           config: {
+            presentation: "listen-repeat",
             instruction: "Listen, then read this word aloud.",
             target: "and",
-            skillTag: "reading.fluency.phrasing",
           },
         },
         {
@@ -85,11 +86,11 @@ export const wordStudyUnit: Unit = {
           blurb: "Listen first, then read a word you know.",
           estMinutes: 2,
           band: "ready",
-          skillTags: ["reading.fluency.phrasing"],
+          skillTags: [],
           config: {
+            presentation: "listen-repeat",
             instruction: "Listen, then read this word aloud.",
             target: "to",
-            skillTag: "reading.fluency.phrasing",
           },
         },
         {
@@ -99,11 +100,11 @@ export const wordStudyUnit: Unit = {
           blurb: "Listen first, then read a word you know.",
           estMinutes: 2,
           band: "ready",
-          skillTags: ["reading.fluency.phrasing"],
+          skillTags: [],
           config: {
+            presentation: "listen-repeat",
             instruction: "Listen, then read this word aloud.",
             target: "see",
-            skillTag: "reading.fluency.phrasing",
           },
         },
         {
@@ -113,11 +114,11 @@ export const wordStudyUnit: Unit = {
           blurb: "Put two known words together smoothly.",
           estMinutes: 2,
           band: "ready",
-          skillTags: ["reading.fluency.phrasing"],
+          skillTags: [],
           config: {
+            presentation: "listen-repeat",
             instruction: "Listen, then read these words aloud.",
             target: "we can",
-            skillTag: "reading.fluency.phrasing",
           },
         },
         {
@@ -127,12 +128,12 @@ export const wordStudyUnit: Unit = {
           blurb: "Read known words together at a smooth talking pace.",
           estMinutes: 3,
           band: "ready",
-          skillTags: ["reading.fluency.phrasing"],
+          skillTags: [],
           config: {
             mode: "sentence",
+            presentation: "listen-repeat",
             instruction: "Listen, then read this sentence aloud.",
             passage: "We can see the cat.",
-            skillTag: "reading.fluency.phrasing",
           },
         },
         {
@@ -142,12 +143,12 @@ export const wordStudyUnit: Unit = {
           blurb: "Let each word flow into the next.",
           estMinutes: 3,
           band: "ready",
-          skillTags: ["reading.fluency.phrasing"],
+          skillTags: [],
           config: {
             mode: "sentence",
+            presentation: "listen-repeat",
             instruction: "Listen, then read this sentence aloud.",
             passage: "I like to run and play.",
-            skillTag: "reading.fluency.phrasing",
           },
         },
       ],

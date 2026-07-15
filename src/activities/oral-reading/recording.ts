@@ -1,3 +1,4 @@
+import type { OralReadingPresentation } from "@/content/activity-configs";
 import type { OralReadingResponse } from "./logic";
 
 export const MAX_RECORDING_MS = 8_000;
@@ -45,6 +46,34 @@ export const MIC_CLASSES: Record<"ready" | "busy" | "listening", string> = {
   busy: "bg-honey/55 text-ink",
   listening: "bg-accent-deep text-on-accent",
 };
+
+/** A modeled practice attempt starts only after its explicit listen step. */
+export function canStartOralAttempt(
+  presentation: OralReadingPresentation,
+  listenStepStarted: boolean,
+): boolean {
+  return presentation === "cold" || listenStepStarted;
+}
+
+/** Assessment targets remain unmodeled; listen-repeat is the separate practice path. */
+export function canExposeModelAudio(presentation: OralReadingPresentation): boolean {
+  return presentation === "listen-repeat";
+}
+
+/** Cold evidence is bound to its first observation; only modeled practice retries. */
+export function shouldCompleteAfterObservation(
+  presentation: OralReadingPresentation,
+  result: VerificationResult,
+): boolean {
+  return presentation === "cold" || result === "matched";
+}
+
+export function needsAdultModelFallback(
+  presentation: OralReadingPresentation,
+  speechSupported: boolean,
+): boolean {
+  return presentation === "listen-repeat" && !speechSupported;
+}
 
 export function subscribeStatic(): () => void {
   return () => {};
