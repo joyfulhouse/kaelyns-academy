@@ -1,24 +1,18 @@
 import { test, expect } from "@playwright/test";
+import { expectSingleHostReward } from "../helpers";
 
 /**
- * Adventure 2.0 B3 adaptive-generation affordance smoke — GUEST half (public
- * project, signed-out). LLM-FREE by construction: the gate env has no LiteLLM,
- * so no test may trigger live generation. These assertions only inspect
- * affordances (which button renders, which calm state renders); nothing here
- * clicks "More" or depends on a generation succeeding.
+ * Adventure 2.0 B3 adaptive-generation smoke — GUEST half (public project,
+ * signed-out). LLM-FREE by construction: the gate env has no LiteLLM, so no test
+ * may trigger live generation.
  *
  * Coverage:
- *  - a guest finishing an authored, GENERABLE-kind activity (reading-comprehension,
- *    `reading-baseline-a1`) reaches the reward screen but is NOT offered the
- *    account-only "More, made just for me" affordance (signed-out gating: the
- *    AI-practice path requires an account — see ActivityHost's `canGenerate`).
+ *  - an authored reading activity submits directly to ActivityHost and reaches
+ *    exactly one host-owned reward; the removed in-session "More, made just for
+ *    me" flow never renders.
  *  - the generated-shelf play route degrades to the calm "moved" state (never a
  *    500/scary 404) for an unknown id — for a guest there is no session, so the
  *    row is always null and GeneratedPracticeHost renders `ShelfItemMoved`.
- *
- * The signed-in counterpart (the SAME reward flow SHOWING the More button) lives
- * in adaptive-generation-signed-in.spec.ts under the `parent` project, because a
- * single spec file maps to one Playwright project.
  *
  * Same posture as baseline-placement.spec.ts: AUTHORED content only, guest mode,
  * no DB writes (guest progress is localStorage-only), deep-linking to a known
@@ -27,11 +21,11 @@ import { test, expect } from "@playwright/test";
 
 const ADAPTIVE = "/learn/kaelyn-adaptive";
 // `reading-baseline-a1` — "Ben's Lucky Find": a single literal question, and a
-// reading-comprehension kind (isGenerableKind === true), so it is exactly the
-// authored generable activity whose reward screen the More gate keys off.
+// reading-comprehension kind, so it exercises a Player that used to show its own
+// completion overlay before handing control back to the host.
 const READING_ACTIVITY = `${ADAPTIVE}/reading-baseline/reading-baseline-a1`;
 
-test("a guest finishes a generable activity but the reward screen offers no AI 'More'", async ({
+test("a guest finishes an authored activity through one host-owned reward", async ({
   page,
 }) => {
   await page.goto(READING_ACTIVITY);
@@ -46,19 +40,14 @@ test("a guest finishes a generable activity but the reward screen offers no AI '
   await expect(correctChoice).toBeVisible();
   await correctChoice.click();
 
-  // The activity's own earned-reward overlay lands first ("Keep going"); tapping
-  // it fires onComplete, which advances the host to its reward screen.
-  const keepGoing = page.getByRole("button", { name: "Keep going" });
-  await expect(keepGoing).toBeVisible({ timeout: 20_000 });
-  await keepGoing.click();
-
-  // We're on the host reward screen once its stable quiet "Map" action
-  // renders (the reward headline varies with star count, so it's not a reliable
-  // anchor). Then assert the account-only affordance is absent for a guest.
+  // Player completion goes straight through the host's save boundary. Only the
+  // host reward remains, and its continuation actions are links rather than a
+  // second Player-owned reward button.
+  await expectSingleHostReward(page);
   await expect(page.getByRole("link", { name: "Map" })).toBeVisible({
     timeout: 20_000,
   });
-  await expect(page.getByRole("button", { name: "More, made just for me" })).toHaveCount(0);
+  await expect(page.getByText("More, made just for me", { exact: true })).toHaveCount(0);
 });
 
 test("an unknown generated shelf id renders the calm moved state, not an error", async ({

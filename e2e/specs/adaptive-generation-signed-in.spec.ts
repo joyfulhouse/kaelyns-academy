@@ -1,18 +1,22 @@
 import { test, expect } from "@playwright/test";
-import { uniqueTag, E2E_LEARNER_PREFIX, addChild, selectAccountLearner } from "../helpers";
+import {
+  uniqueTag,
+  E2E_LEARNER_PREFIX,
+  addChild,
+  expectSingleHostReward,
+  selectAccountLearner,
+} from "../helpers";
 
 /**
- * Adventure 2.0 B3 adaptive-generation affordance smoke — SIGNED-IN half
- * (`parent` project, authenticated via the seeded parent's storageState). The
- * guest counterpart lives in adaptive-generation.spec.ts (one file → one
- * Playwright project); this file holds only the account-mode assertion.
+ * Adventure 2.0 B3 completion smoke — SIGNED-IN half (`parent` project,
+ * authenticated via the seeded parent's storageState). The guest counterpart
+ * lives in adaptive-generation.spec.ts (one file → one Playwright project).
  *
- * The one thing to prove here: on the reward screen of an authored, GENERABLE
- * activity, a signed-in household IS offered the "More, made just for me"
- * affordance — the exact inverse of the guest case. `signedIn` is the
- * differentiator now that ALL kinds are generable (ActivityHost's `canGenerate`).
- * LLM-FREE: the gate env has no LiteLLM, so we assert the button is PRESENT and
- * never click it — no test may trigger live generation.
+ * The account path persists the bounded response before showing exactly one
+ * ActivityHost-owned reward. Fresh generated practice is warmed in the
+ * background and belongs on the durable lesson shelf; the removed in-session
+ * "More, made just for me" action must not return. LLM-FREE: the gate env has no
+ * LiteLLM, and this test never depends on generation succeeding.
  *
  * Fixture choice — a per-run THROWAWAY learner, not the persistent one:
  * completing `reading-baseline-a1` records a real attempt AND mints
@@ -30,7 +34,9 @@ import { uniqueTag, E2E_LEARNER_PREFIX, addChild, selectAccountLearner } from ".
 const ADAPTIVE = "/learn/kaelyn-adaptive";
 const READING_ACTIVITY = `${ADAPTIVE}/reading-baseline/reading-baseline-a1`;
 
-test("a signed-in learner is offered AI 'More' practice on the reward screen", async ({ page }) => {
+test("a signed-in learner reaches one host reward without ephemeral AI practice", async ({
+  page,
+}) => {
   const name = `${E2E_LEARNER_PREFIX} ${uniqueTag()}`;
 
   // Create the throwaway learner (auto-enrolled in kaelyn-adaptive by
@@ -52,17 +58,13 @@ test("a signed-in learner is offered AI 'More' practice on the reward screen", a
     await expect(correctChoice).toBeVisible();
     await correctChoice.click();
 
-    const keepGoing = page.getByRole("button", { name: "Keep going" });
-    await expect(keepGoing).toBeVisible({ timeout: 20_000 });
-    await keepGoing.click();
-
-    // On the host reward screen (anchored by its stable quiet "Map"
-    // button), the account-only affordance IS offered. Do NOT click it — the
-    // gate env has no LiteLLM, so a click would fire a real generation.
+    // The Player submits directly to the host. The host waits for the account
+    // write, then replaces the Player with its single reward screen.
+    await expectSingleHostReward(page);
     await expect(page.getByRole("link", { name: "Map" })).toBeVisible({
       timeout: 20_000,
     });
-    await expect(page.getByRole("button", { name: "More, made just for me" })).toBeVisible();
+    await expect(page.getByText("More, made just for me", { exact: true })).toHaveCount(0);
   } finally {
     // Tear the throwaway learner down so no star balance accumulates across runs.
     await page.goto("/parent/learners");

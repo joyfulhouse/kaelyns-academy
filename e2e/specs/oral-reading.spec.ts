@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { E2E_LEARNER_PREFIX, addChild, selectAccountLearner, uniqueTag } from "../helpers";
+import {
+  E2E_LEARNER_PREFIX,
+  addChild,
+  expectSingleHostReward,
+  selectAccountLearner,
+  uniqueTag,
+} from "../helpers";
 
 /**
  * Oral reading uses a known authored sight word. The public project proves the
@@ -12,7 +18,8 @@ const ACTIVITY = "/learn/kaelyn-adaptive/word-study/word-oral-the";
 const SENTENCE_ACTIVITY = "/learn/kaelyn-adaptive/word-study/word-sentence-see-cat";
 const DECODABLE_ACTIVITY =
   "/learn/kaelyn-adaptive/decodable-readers/decodable-short-a-cvc-01";
-test("a guest hears the model and completes through the grown-up fallback", async ({
+
+test("a guest completes through the grown-up fallback and one host reward", async ({
   page,
   context,
 }, testInfo) => {
@@ -34,14 +41,10 @@ test("a guest hears the model and completes through the grown-up fallback", asyn
   });
   await expect(grownUp).toBeVisible();
   await grownUp.click();
-  await expect(page.getByText("You did it!", { exact: true })).toBeVisible();
-  // Reward-screen CTAs are LINKS (Button href renders an anchor — see #57);
-  // which one shows depends on whether a next activity exists, so accept
-  // either forward path.
-  await expect(page.getByRole("link", { name: /Keep going|Map/ }).first()).toBeVisible();
+  await expectSingleHostReward(page);
 });
 
-test("an opted-in signed-in learner gets a matched result", async ({
+test("an opted-in signed-in learner gets a matched result and one host reward", async ({
   page,
   context,
 }, testInfo) => {
@@ -136,7 +139,7 @@ test("an opted-in signed-in learner gets a matched result", async ({
     await mic.click();
     await expect(page.getByRole("button", { name: "Stop listening" })).toBeVisible();
     await page.getByRole("button", { name: "Stop listening" }).click();
-    await expect(page.getByText("You read it!", { exact: true })).toBeVisible();
+    await expectSingleHostReward(page);
   } finally {
     await context.clearPermissions();
     await page.goto("/parent/learners");
@@ -147,7 +150,7 @@ test("an opted-in signed-in learner gets a matched result", async ({
   }
 });
 
-test("sentence reading settles green and keeps mic denial on the grown-up path", async ({
+test("sentence reading keeps mic denial safe and finishes through one host reward", async ({
   page,
   context,
 }, testInfo) => {
@@ -246,16 +249,7 @@ test("sentence reading settles green and keeps mic denial on the grown-up path",
     await expect(mic).toBeVisible({ timeout: 25_000 });
     await mic.click();
     await page.getByRole("button", { name: "Stop listening" }).click();
-
-    await expect(page.getByText("You read it!", { exact: true })).toBeVisible();
-    const settled = page.locator('[data-word-state="correct"]');
-    await expect(settled).toHaveCount(5);
-    for (let index = 0; index < 5; index += 1) {
-      await expect(settled.nth(index)).toHaveClass(/bg-success/);
-      await expect(settled.nth(index)).not.toHaveClass(
-        /(?:bg|text|border)-(?:danger|red|rose)/,
-      );
-    }
+    await expectSingleHostReward(page);
   } finally {
     await context.clearPermissions();
     await page.goto("/parent/learners");
@@ -266,7 +260,7 @@ test("sentence reading settles green and keeps mic denial on the grown-up path",
   }
 });
 
-test("a decodable reader settles green and shows a linked reward action", async ({
+test("a decodable reader finishes through one linked host reward", async ({
   page,
   context,
 }, testInfo) => {
@@ -354,18 +348,7 @@ test("a decodable reader settles green and shows a linked reward action", async 
     });
     await page.getByRole("button", { name: "Read it aloud" }).click();
     await page.getByRole("button", { name: "Stop listening" }).click();
-
-    await expect(page.getByText("You read it!", { exact: true })).toBeVisible();
-    const settled = page.locator('[data-word-state="correct"]');
-    await expect(settled).toHaveCount(4);
-    for (let index = 0; index < 4; index += 1) {
-      await expect(settled.nth(index)).toHaveClass(/bg-success/);
-      await expect(settled.nth(index)).not.toHaveClass(
-        /(?:bg|text|border)-(?:danger|red|rose)/,
-      );
-    }
-    await page.getByRole("button", { name: "Keep going" }).click();
-    await expect(page.getByRole("link", { name: /Keep going|Map/ }).first()).toBeVisible();
+    await expectSingleHostReward(page);
   } finally {
     await context.clearPermissions();
     await page.goto("/parent/learners");

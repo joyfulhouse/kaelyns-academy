@@ -53,6 +53,20 @@ export const E2E_THROWAWAY_EMAIL_PREFIX = "e2e-throwaway+";
 export const E2E_PERSISTENT_LEARNER_NAME = "E2E Learner";
 
 /**
+ * Player completion must resolve to one host-owned reward. ActivityHost renders
+ * link CTAs; a same-named button would reveal a stale Player reward phase.
+ */
+export async function expectSingleHostReward(page: Page): Promise<void> {
+  await expect(
+    page.getByRole("heading", {
+      name: /Wow! Three stars!|You did it!|Great trying!/,
+    }),
+  ).toHaveCount(1, { timeout: 20_000 });
+  await expect(page.getByRole("button", { name: "Keep going" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Keep going|Map/ }).first()).toBeVisible();
+}
+
+/**
  * Find-or-create the persistent motivation-suite learner on `/parent/learners`.
  * Idempotent: a second (or Nth) call across reruns finds the existing row and
  * does nothing. Creating a learner here auto-enrolls them in the adaptive

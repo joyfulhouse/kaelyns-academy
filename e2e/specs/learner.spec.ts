@@ -2,8 +2,8 @@ import { test, expect } from "@playwright/test";
 
 /**
  * Learner (kid) surface — guest mode, no account, no DB writes (guest progress
- * is localStorage-only). We exercise AUTHORED content only and never trigger the
- * paid AI-practice path ("More, made just for me").
+ * is localStorage-only). We exercise AUTHORED content only; generated practice
+ * lives on the durable learner shelf and this smoke never depends on it.
  *
  * The kid surfaces resolve client-side, so assertions auto-wait with generous
  * timeouts. The world picker → learner picker step is localStorage-dependent, so
