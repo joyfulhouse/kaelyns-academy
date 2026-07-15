@@ -44,7 +44,10 @@ test.describe.serial("shared-device handoff and grown-up PIN", () => {
 
       await lockedPage.getByLabel("Enter your grown-up PIN", { exact: true }).fill("1111");
       await lockedPage.getByRole("button", { name: "Unlock", exact: true }).click();
-      await expect(lockedPage.getByRole("alert")).toContainText("didn’t match");
+      // Scope to the challenge's own error text — a bare getByRole("alert")
+      // also matches Next's __next-route-announcer__ live region (strict-mode
+      // violation).
+      await expect(lockedPage.getByText("didn’t match")).toBeVisible();
 
       await lockedPage.getByLabel("Enter your grown-up PIN", { exact: true }).fill(PIN);
       await lockedPage.getByRole("button", { name: "Unlock", exact: true }).click();
