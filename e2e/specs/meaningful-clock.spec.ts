@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { expectSingleHostReward } from "./meaningful-helpers";
 
 const ACTIVITY =
   "/learn/kaelyn-adaptive/life-skills-math/lsm-time-set-2";
@@ -49,5 +50,5 @@ test("set mode manipulates one coupled analog time with pointer, keyboard, and t
   await expect(page.getByText("Current time: 11:30")).toBeVisible();
   await page.getByRole("button", { name: "Check it" }).click();
 
-  await expect(page.getByRole("button", { name: "Keep going" })).toHaveCount(1);
+  await expectSingleHostReward(page);
 });

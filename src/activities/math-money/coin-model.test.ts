@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   COIN_FACTS,
   addCoin,
+  hasCoinCapacity,
   minimumCoinsForTotal,
   removeCoin,
   sumCoins,
@@ -45,6 +46,17 @@ describe("coin tray operations", () => {
   it("sums the selected token facts rather than a client total", () => {
     expect(sumCoins([first, second, { id: "coin-3", type: "penny" }])).toBe(11);
     expect(sumCoins([])).toBe(0);
+  });
+
+  it("allows an over-target tray to stay editable until the safety cap", () => {
+    const expensiveTray = Array.from({ length: 19 }, (_, index) => ({
+      id: `coin-${index}`,
+      type: "quarter" as const,
+    }));
+
+    expect(sumCoins(expensiveTray)).toBe(475);
+    expect(hasCoinCapacity(expensiveTray)).toBe(true);
+    expect(hasCoinCapacity([...expensiveTray, { id: "coin-20", type: "quarter" }])).toBe(false);
   });
 });
 

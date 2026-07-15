@@ -15,8 +15,8 @@ import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
 import {
   COIN_FACTS,
-  MAX_COIN_TOKENS,
   addCoin as addCoinToken,
+  hasCoinCapacity,
   removeCoin as removeCoinToken,
   sumCoins,
   type Coin,
@@ -66,13 +66,12 @@ export function MathMoneyPlayer({
     shake.trigger({ speak: () => speech.speak("Try another coin.") });
   }
 
-  function canAddCoin(coin: Coin): boolean {
-    if (parsed.mode !== "count" || tray.length >= MAX_COIN_TOKENS) return false;
-    return sumCoins(tray) + COIN_FACTS[coin].cents <= parsed.targetCents;
+  function canAddAnotherCoin(): boolean {
+    return parsed.mode === "count" && hasCoinCapacity(tray);
   }
 
   function addCoin(coin: Coin) {
-    if (parsed.mode !== "count" || shake.wrong || !canAddCoin(coin)) return;
+    if (parsed.mode !== "count" || shake.wrong || !canAddAnotherCoin()) return;
     const token: CoinToken = { id: `coin-${nextToken.current}`, type: coin };
     nextToken.current += 1;
     const nextTray = addCoinToken(tray, token);
@@ -157,7 +156,7 @@ export function MathMoneyPlayer({
                 coin={coin}
                 action="Add"
                 onClick={() => addCoin(coin)}
-                disabled={shake.wrong || !canAddCoin(coin)}
+                disabled={shake.wrong || !canAddAnotherCoin()}
               />
             ))}
           </div>

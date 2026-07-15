@@ -33,6 +33,10 @@ export function sumCoins(tokens: CoinToken[]): number {
   return tokens.reduce((total, token) => total + COIN_FACTS[token.type].cents, 0);
 }
 
+export function hasCoinCapacity(tokens: CoinToken[]): boolean {
+  return tokens.length < MAX_COIN_TOKENS;
+}
+
 /** Fewest palette tokens needed to make an exact target, or null when impossible. */
 export function minimumCoinsForTotal(palette: Coin[], targetCents: number): number | null {
   const minimum = Array<number>(targetCents + 1).fill(Number.POSITIVE_INFINITY);

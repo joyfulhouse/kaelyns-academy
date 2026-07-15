@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { expectSingleHostReward } from "./meaningful-helpers";
 
 const ACTIVITY =
   "/learn/kaelyn-adaptive/life-skills-math/lsm-money-count-2";
@@ -29,7 +30,18 @@ test("coin tray keeps editable token instances across a wrong check", async ({ p
 
   await addNickel.click();
   await expect(page.getByText("Tray total: 35 cents")).toBeVisible();
+
+  await addNickel.click();
+  await expect(page.getByText("Tray total: 40 cents")).toBeVisible();
+  await page.getByRole("button", { name: "Check it" }).click();
+  await expect(
+    page.getByText("That is a little too much. Keep your coins and try again."),
+  ).toBeVisible();
+  await expect(trayNickels).toHaveCount(3);
+
+  await trayNickels.last().click();
+  await expect(page.getByText("Tray total: 35 cents")).toBeVisible();
   await page.getByRole("button", { name: "Check it" }).click();
 
-  await expect(page.getByRole("button", { name: "Keep going" })).toHaveCount(1);
+  await expectSingleHostReward(page);
 });
