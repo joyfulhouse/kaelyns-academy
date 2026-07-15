@@ -62,7 +62,7 @@ export async function verifyParentPinAction(pin: string) {
     const requestHeaders = await headers();
     const cookieStore = await cookies();
 
-    return await withAccount(async ({ accountId }) => {
+    const result = await withAccount(async ({ accountId }) => {
       const ip = clientIp(requestHeaders) ?? "unknown";
       const rate = checkRateLimit(`parent-pin:${accountId}:${ip}`, PIN_RATE_LIMIT);
       if (!rate.ok) {
@@ -96,6 +96,12 @@ export async function verifyParentPinAction(pin: string) {
       setUnlockCookie(cookieStore, accountId, now);
       return { ok: true as const };
     });
+
+    // Re-render the layout server-side so the just-set unlock cookie is read and
+    // the gate yields to the dashboard — a client router.refresh() alone doesn't
+    // re-evaluate the layout gate. Mirrors setParentPinAction.
+    if (result.ok) revalidatePath("/parent", "layout");
+    return result;
   } catch (error) {
     return mapPinActionError(error, "parent PIN verify failed", "We could not check the PIN right now. Try again.");
   }
