@@ -68,15 +68,18 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
     case "phonics-wordbuild":
       return { focus: "", instruction: "", tiles: ["a", "b"], words: [{ word: "ab" }] };
     case "sightword-game":
-      return { instruction: "", words: ["the", "and"] };
+      return {
+        instruction: "Find the target word.",
+        rounds: [{ target: "the", choices: ["the", "and"] }],
+      };
     case "math-tenframe":
       return { instruction: "", mode: "represent", target: 5 };
     case "journal-prompt":
       return { prompt: "" };
     case "reading-comprehension":
       return {
-        instruction: "",
-        passage: "",
+        instruction: "Read, then answer.",
+        passage: "A cat sat.",
         questions: [
           { prompt: "Question?", choices: ["A", "B"], answerIndex: 0 },
         ],
