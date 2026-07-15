@@ -6,6 +6,7 @@ import {
   schema,
   score,
   skillsAffected,
+  validateGenerated,
   type LangListenMatchResponse,
 } from "./logic";
 
@@ -18,5 +19,6 @@ export const langListenMatch: ActivityType<LangListenMatchConfig, LangListenMatc
   Player: LangListenMatchPlayer,
   score,
   skillsAffected,
+  validateGenerated,
 };
 export type { LangListenMatchResponse };

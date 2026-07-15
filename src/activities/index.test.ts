@@ -35,7 +35,9 @@ const VALID_RESPONSES = {
   "math-array": { mode: "build", builtRows: 2, attempts: 1 },
   "math-fraction-bar": { mode: "partition", partitionCount: 4, attempts: 1 },
   "lang-symbol-intro": { verifyAnswers: [0] },
-  "lang-listen-match": { answers: [0] },
+  "lang-listen-match": {
+    items: [{ choiceIndex: 0, attempts: 1, usedHelp: false }],
+  },
   "math-clock": { attempts: 1, selectedIndex: 0 },
   "math-money": { attempts: 1, tappedCoin: "penny" },
   "math-measure": { attempts: 1, selectedIndex: 0 },
@@ -94,7 +96,13 @@ const OVER_BOUNDED_RESPONSES = {
   },
   "math-fraction-bar": { mode: "partition", partitionCount: 4, attempts: 21 },
   "lang-symbol-intro": { verifyAnswers: Array.from({ length: 7 }, () => 0) },
-  "lang-listen-match": { answers: Array.from({ length: 13 }, () => 0) },
+  "lang-listen-match": {
+    items: Array.from({ length: 13 }, () => ({
+      choiceIndex: 0,
+      attempts: 1,
+      usedHelp: false,
+    })),
+  },
   "math-clock": { attempts: 101, selectedIndex: 0 },
   "math-money": {
     attempts: 1,

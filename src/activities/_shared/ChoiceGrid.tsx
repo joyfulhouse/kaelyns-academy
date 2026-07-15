@@ -16,14 +16,21 @@ export function ChoiceGrid({
   picked,
   onChoose,
   labels,
+  revealAnswer,
+  disabled = false,
 }: {
   choices: string[];
   answerIndex: number;
   picked: number | null;
   onChoose: (choiceIndex: number) => void;
   labels?: (string | undefined)[];
+  /** Defaults to the legacy reveal-on-pick behavior. Retryable rounds pass false. */
+  revealAnswer?: boolean;
+  /** Locks the grid while required media is unavailable or a round is complete. */
+  disabled?: boolean;
 }) {
-  const reveal = picked !== null;
+  const reveal = revealAnswer ?? picked !== null;
+  const locked = disabled || reveal;
   return (
     <div className="mx-auto grid max-w-2xl grid-cols-2 gap-4 sm:grid-cols-4">
       {choices.map((choice, i) => {
@@ -35,11 +42,13 @@ export function ChoiceGrid({
             key={`${choice}-${i}`}
             type="button"
             onClick={() => onChoose(i)}
-            disabled={reveal}
+            disabled={locked}
+            aria-pressed={isPicked}
             aria-label={label ? `${choice}, ${label}` : choice}
             className={cn(
               "relative grid min-h-28 place-items-center gap-1 rounded-2xl border-[3px] border-ink px-4 py-5 text-ink shadow-pop transition duration-200 ease-out",
               !reveal && "bg-paper-raised hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
+              !reveal && isPicked && "bg-honey/25 ring-4 ring-honey/60",
               reveal && isAnswer && "bg-success/30",
               reveal && !isAnswer && "bg-paper-raised opacity-60",
               reveal && isPicked && !isAnswer && "opacity-100",
