@@ -17,7 +17,7 @@ import { PlayerControls, SpeakerButton } from "../_shared/ActivityChrome";
 import { useActivity } from "../_shared/useActivity";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
-import { schema, score, type OralReadingResponse } from "./logic";
+import { schema, type OralReadingResponse } from "./logic";
 import { SentenceReader } from "./SentenceReader";
 import {
   MAX_RECORDING_MS,
@@ -73,7 +73,6 @@ function WordReadingPlayer({
   // back "unavailable" — the attempt cap bounds recordings and STT calls, so
   // gateway failures must not grant extra tries around it.
   const [submitted, setSubmitted] = useState(0);
-  const [done, setDone] = useState<OralReadingResponse | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -96,20 +95,6 @@ function WordReadingPlayer({
     };
   }, []);
 
-  if (done) {
-    const activityScore = score(parsed, done);
-    return (
-      <div className="mx-auto grid max-w-xl gap-5 rounded-3xl border-[3px] border-ink bg-success/25 p-8 text-center shadow-pop">
-        <CheckCircleIcon className="mx-auto size-20 text-ink" weight="fill" aria-hidden="true" />
-        <p className="font-display text-3xl text-ink">You read it!</p>
-        <p className="text-lg text-ink-soft">That sounded great.</p>
-        <Button size="kid" variant="soft" onClick={() => onComplete(done, activityScore)}>
-          Keep going
-        </Button>
-      </div>
-    );
-  }
-
   const fallbackMode = !micAllowed || !micSupported || phase === "fallback";
 
   function response(fallbackUsed: boolean): OralReadingResponse {
@@ -118,7 +103,7 @@ function WordReadingPlayer({
 
   function completeFallback(): void {
     const completed = response(true);
-    onComplete(completed, score(parsed, completed));
+    onComplete(completed);
   }
 
   async function verify(blob: Blob, recordingFailed = false): Promise<void> {
@@ -165,7 +150,7 @@ function WordReadingPlayer({
     const nextResults = [...results, routeResult];
     setResults(nextResults);
     if (routeResult === "matched") {
-      setDone({ attempts: nextResults.length, results: nextResults, fallbackUsed: false });
+      onComplete({ attempts: nextResults.length, results: nextResults, fallbackUsed: false });
     } else {
       // `submitted` is read pre-increment here because this closure captured
       // it before setSubmitted queued the +1 for this upload.

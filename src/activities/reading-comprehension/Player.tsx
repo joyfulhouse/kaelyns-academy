@@ -8,15 +8,14 @@ import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useActivity } from "../_shared/useActivity";
 import { useManagedTimeout } from "../_shared/useManagedTimeout";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
-import { schema, score, type ReadingComprehensionResponse } from "./logic";
+import { schema, type ReadingComprehensionResponse } from "./logic";
 
-/** Stages: read the passage → answer each question → optional retell → reward. */
+/** Stages: read the passage → answer each question → optional retell. */
 type Stage = "passage" | "questions" | "retell";
 
 export function ReadingComprehensionPlayer({
@@ -33,23 +32,11 @@ export function ReadingComprehensionPlayer({
   const [picked, setPicked] = useState<number | null>(null);
   const [missedThisQuestion, setMissedThisQuestion] = useState(false);
   const [firstTry, setFirstTry] = useState<boolean[]>([]);
-  const [done, setDone] = useState<ReadingComprehensionResponse | null>(null);
 
   // Read the instruction aloud once when the activity opens.
   useSpeakOnce(speech.speak, parsed.instruction);
 
   const current = parsed.questions[questionIndex];
-
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message="You read it and thought it through."
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
 
   function recordAndAdvance(record: boolean[]) {
     const isLast = questionIndex === parsed.questions.length - 1;
@@ -59,7 +46,7 @@ export function ReadingComprehensionPlayer({
         setStage("retell");
         speech.speak(parsed.retellPrompt);
       } else {
-        setDone({ firstTry: record, retold: false });
+        onComplete({ firstTry: record, retold: false });
       }
     } else {
       setFirstTry(record);
@@ -157,7 +144,7 @@ export function ReadingComprehensionPlayer({
         <RetellPanel
           prompt={parsed.retellPrompt}
           speech={speech}
-          onSkip={() => setDone({ firstTry, retold: false })}
+          onSkip={() => onComplete({ firstTry, retold: false })}
         />
       )}
     </div>

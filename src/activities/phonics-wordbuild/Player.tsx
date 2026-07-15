@@ -10,14 +10,13 @@ import { tilePhonemeText, wordPhonemeText } from "@/lib/audio/phonemes";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { PlayerControls, Prompt, SpeakerButton } from "../_shared/ActivityChrome";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { shuffle } from "../_shared/shuffle";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
-import { schema, score, type PhonicsWordbuildResponse } from "./logic";
+import { schema, type PhonicsWordbuildResponse } from "./logic";
 
 export function PhonicsWordbuildPlayer({
   config,
@@ -32,7 +31,6 @@ export function PhonicsWordbuildPlayer({
   const [built, setBuilt] = useState<string[]>([]);
   const [tries, setTries] = useState(1);
   const [builds, setBuilds] = useState<PhonicsWordbuildResponse["builds"]>([]);
-  const [done, setDone] = useState<PhonicsWordbuildResponse | null>(null);
 
   const current = parsed.words[wordIndex];
   const targetSegments = useMemo(
@@ -46,17 +44,6 @@ export function PhonicsWordbuildPlayer({
 
   // Read the instruction aloud once when the activity opens.
   useSpeakOnce(speech.speak, parsed.instruction);
-
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message="You built every word."
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
 
   if (!current) return null;
 
@@ -92,7 +79,7 @@ export function PhonicsWordbuildPlayer({
       setBuilds(nextBuilds);
       const isLast = wordIndex === parsed.words.length - 1;
       if (isLast) {
-        setDone({ builds: nextBuilds });
+        onComplete({ builds: nextBuilds });
       } else {
         setWordIndex((i) => i + 1);
         setBuilt([]);

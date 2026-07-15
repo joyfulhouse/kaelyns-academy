@@ -22,7 +22,7 @@ import { PlayerControls, SpeakerButton } from "../_shared/ActivityChrome";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech, type SpeechController } from "../_shared/useSpeech";
-import { score, type OralReadingResponse } from "./logic";
+import type { OralReadingResponse } from "./logic";
 import {
   MIC_CLASSES,
   VERIFY_TIMEOUT_MS,
@@ -277,7 +277,6 @@ export function SentenceReader({
   const [results, setResults] = useState<VerificationResult[]>([]);
   const [submitted, setSubmitted] = useState(0);
   const [feedback, setFeedback] = useState<SentenceRouteResult | null>(null);
-  const [done, setDone] = useState<OralReadingResponse | null>(null);
   const [activeWord, setActiveWord] = useState<number | null>(null);
   const [revealedWordCount, setRevealedWordCount] = useState(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -355,7 +354,7 @@ export function SentenceReader({
 
   function completeFallback(): void {
     const completed = response(results, true, feedback);
-    onComplete(completed, score(config, completed));
+    onComplete(completed);
   }
 
   async function verify(blob: Blob, recordingFailed = false): Promise<void> {
@@ -415,7 +414,7 @@ export function SentenceReader({
         settleCancelRef.current = null;
         if (!activeRef.current) return;
         if (routeResult.result === "matched") {
-          setDone(completed);
+          onComplete(completed);
         } else {
           setPhase(phaseAfterUnmatched(submitted + 1));
         }
@@ -501,25 +500,6 @@ export function SentenceReader({
   function stopListening(): void {
     const recorder = recorderRef.current;
     if (recorder?.state === "recording") recorder.stop();
-  }
-
-  if (done) {
-    const activityScore = score(config, done);
-    return (
-      <div className="mx-auto grid max-w-3xl gap-5 rounded-3xl border-[3px] border-ink bg-success/25 p-6 text-center shadow-pop sm:p-8">
-        <KaraokePassage
-          passage={config.passage}
-          settled={done.perWord}
-          revealedWordCount={done.perWord?.length}
-          speech={speech}
-        />
-        <p className="font-display text-3xl text-ink">You read it!</p>
-        <p className="text-lg text-ink-soft">Every word helped the sentence flow.</p>
-        <Button size="kid" variant="soft" onClick={() => onComplete(done, activityScore)}>
-          Keep going
-        </Button>
-      </div>
-    );
   }
 
   const fallbackMode = !micAllowed || !micSupported || phase === "fallback";

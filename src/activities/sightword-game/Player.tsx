@@ -7,13 +7,12 @@ import type { SightwordGameConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { shuffle } from "../_shared/shuffle";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
-import { schema, score, type SightwordGameResponse } from "./logic";
+import { schema, type SightwordGameResponse } from "./logic";
 
 interface Card {
   word: string;
@@ -37,21 +36,9 @@ export function SightwordGamePlayer({
   const [found, setFound] = useState<string[]>([]);
   const [nudge, setNudge] = useState<string | null>(null);
   const [decoyTaps, setDecoyTaps] = useState(0);
-  const [done, setDone] = useState<SightwordGameResponse | null>(null);
 
   // Read the instruction aloud once when the activity opens.
   useSpeakOnce(speech.speak, parsed.instruction);
-
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message="You found every word you can read."
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
 
   function tap(card: Card) {
     speech.speak(card.word);
@@ -61,7 +48,7 @@ export function SightwordGamePlayer({
       setFound(next);
       setNudge(null);
       if (next.length === parsed.words.length) {
-        setDone({ found: next, decoyTaps });
+        onComplete({ found: next, decoyTaps });
       }
     } else {
       // Forgiving: a decoy is a gentle "not that one", never a failure.
