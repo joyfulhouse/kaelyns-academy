@@ -109,7 +109,11 @@ export default defineConfig({
     {
       name: "parent-pin",
       testMatch: /specs\/parent-pin\.spec\.ts/,
-      dependencies: ["setup"],
+      // Runs AFTER the parent project (not merely after setup): it sets an
+      // account-level PIN on the shared seeded parent, which would gate any
+      // parent-project test running concurrently on the same account. Serializing
+      // after parent removes that cross-project contamination.
+      dependencies: ["parent"],
       use: { ...devices["Desktop Chrome"], storageState: "e2e/.auth/parent.json" },
     },
     {
