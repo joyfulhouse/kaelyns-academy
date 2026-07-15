@@ -240,6 +240,14 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
       : mode === "guest"
         ? guestLearnerId
         : null;
+  const activeAccountKey =
+    mode === "account" && selectedLearnerId
+      ? `${selectedLearnerId}:${programSlug}`
+      : null;
+  const activeAccountKeyRef = useRef(activeAccountKey);
+  useEffect(() => {
+    activeAccountKeyRef.current = activeAccountKey;
+  }, [activeAccountKey]);
 
   // Load (and reload) the selected account learner's DB state for this program.
   // The first statement is an await, so every setState below runs post-await
@@ -319,6 +327,7 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
     async (activity, response, source) => {
       const destination = recordingDestination(mode, selectedLearnerId);
       if (destination === "account" && selectedLearnerId) {
+        const recordKey = `${selectedLearnerId}:${programSlug}`;
         const result = await recordAttemptAction(
           "generatedActivityId" in source
             ? {
@@ -335,7 +344,11 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
                 response,
               },
         );
-        if (result.ok && mountedRef.current) {
+        if (
+          result.ok &&
+          mountedRef.current &&
+          activeAccountKeyRef.current === recordKey
+        ) {
           await loadAccountState(selectedLearnerId, programSlug);
         }
         return result;

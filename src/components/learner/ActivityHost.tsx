@@ -51,10 +51,9 @@ function nextActivityHref(programSlug: string, unit: Unit, activityKey: string):
 
 type Phase =
   | { kind: "play" }
-  | { kind: "saving" }
-  | { kind: "save-failed"; response: unknown }
-  | { kind: "reward"; stars: 0 | 1 | 2 | 3 }
-;
+  | { kind: "saving"; requestKey: string }
+  | { kind: "save-failed"; requestKey: string; response: unknown }
+  | { kind: "reward"; requestKey: string; stars: 0 | 1 | 2 | 3 };
 
 /**
  * The activity host. Imports `@/activities` for side-effect registration, then
@@ -126,19 +125,37 @@ export function ActivityHost({
     activityType && effectiveActivity
       ? safeParsePlayerConfig(activityType.schema, effectiveActivity.config)
       : null;
+  const learnerIdentity = selectedLearnerId ?? learner.id;
+  const completionKey =
+    effectiveActivity && effectiveUnit
+      ? playerIdentityKey({
+          learnerId: learnerIdentity,
+          programSlug,
+          unitKey: effectiveUnit.id,
+          activityKey: effectiveActivity.id,
+          kind: effectiveActivity.kind,
+          variant: "authored",
+          sequence: 0,
+          content: effectiveActivity,
+          config:
+            authoredConfig?.status === "ready"
+              ? authoredConfig.config
+              : effectiveActivity.config,
+        })
+      : null;
 
   // Keep the response in memory across a retry, but trust only the canonical
   // score returned after the server re-resolves this exact unit/activity.
   const persistCompletion = async (response: unknown) => {
-    if (!effectiveActivity) return;
+    if (!effectiveActivity || !completionKey) return;
     stopSpeaking();
-    setPhase({ kind: "saving" });
+    setPhase({ kind: "saving", requestKey: completionKey });
     const result = await record(effectiveActivity, response, { unitKey });
     if (!result.ok) {
-      setPhase({ kind: "save-failed", response });
+      setPhase({ kind: "save-failed", requestKey: completionKey, response });
       return;
     }
-    setPhase({ kind: "reward", stars: result.score.stars });
+    setPhase({ kind: "reward", requestKey: completionKey, stars: result.score.stars });
     // Eager shelf warm-up (B3 §4): once an authored activity is done, nudge the
     // server to fill this lesson's "fresh practice" shelf. Fire-and-forget and
     // idempotent — the server no-ops unless this completion finished the lesson,
@@ -188,23 +205,26 @@ export function ActivityHost({
   }
   const activity = resolution.activity;
   const unit = resolution.unit;
-  const learnerIdentity = selectedLearnerId ?? learner.id;
+  const showReward = phase.kind === "reward" && phase.requestKey === completionKey;
+  const showSaving = phase.kind === "saving" && phase.requestKey === completionKey;
+  const showSaveFailed =
+    phase.kind === "save-failed" && phase.requestKey === completionKey;
 
   return (
     <div data-world={effectiveWorld}>
       <AppShellKid backHref={backHref} readAloud={activity.title}>
         <ReadAloudDefaultProvider enabled={shouldAutoRead(mode, ready, config.readAloud)}>
           <AnimatePresence mode="wait">
-          {phase.kind === "reward" ? (
+          {showReward && phase.kind === "reward" ? (
             <RewardScreen
               key="reward"
               stars={phase.stars}
               backHref={backHref}
               nextHref={nextHref}
             />
-          ) : phase.kind === "saving" ? (
+          ) : showSaving && phase.kind === "saving" ? (
             <SavingScreen key="saving" />
-          ) : phase.kind === "save-failed" ? (
+          ) : showSaveFailed && phase.kind === "save-failed" ? (
             <SaveFailed
               key="save-failed"
               onRetry={() => {
@@ -214,17 +234,7 @@ export function ActivityHost({
             />
           ) : activityType ? (
             <PlayerFrame
-              key={playerIdentityKey({
-                learnerId: learnerIdentity,
-                programSlug,
-                unitKey: unit.id,
-                activityKey: activity.id,
-                kind: activity.kind,
-                variant: "authored",
-                sequence: 0,
-                content: activity,
-                config: authoredConfig?.status === "ready" ? authoredConfig.config : activity.config,
-              })}
+              key={completionKey ?? `${learnerIdentity}:${unit.id}:${activity.id}`}
             >
               <activityType.Player
                 config={authoredConfig?.status === "ready" ? authoredConfig.config : activity.config}
