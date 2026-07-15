@@ -10,6 +10,7 @@ import { langListenMatchConfig } from "./activity-configs/lang-listen-match";
 import { langSymbolIntroConfig } from "./activity-configs/lang-symbol-intro";
 import { mathArrayConfig } from "./activity-configs/math-array";
 import { mathClockConfig } from "./activity-configs/math-clock";
+import { mathFractionBarConfig } from "./activity-configs/math-fraction-bar";
 import { mathMeasureConfig } from "./activity-configs/math-measure";
 import { mathMoneyConfig } from "./activity-configs/math-money";
 import { mathTenframeConfig } from "./activity-configs/math-tenframe";
@@ -25,6 +26,7 @@ export * from "./activity-configs/lang-listen-match";
 export * from "./activity-configs/lang-symbol-intro";
 export * from "./activity-configs/math-array";
 export * from "./activity-configs/math-clock";
+export * from "./activity-configs/math-fraction-bar";
 export * from "./activity-configs/math-measure";
 export * from "./activity-configs/math-money";
 export * from "./activity-configs/math-tenframe";
@@ -45,6 +47,7 @@ export const ACTIVITY_CONFIG_SCHEMAS = {
   "lang-symbol-intro": langSymbolIntroConfig,
   "lang-listen-match": langListenMatchConfig,
   "math-clock": mathClockConfig,
+  "math-fraction-bar": mathFractionBarConfig,
   "math-money": mathMoneyConfig,
   "math-measure": mathMeasureConfig,
   "sort-categories": sortCategoriesConfig,

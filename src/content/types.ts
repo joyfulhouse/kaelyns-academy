@@ -7,6 +7,7 @@ import type {
   LangSymbolIntroConfig,
   MathArrayConfig,
   MathClockConfig,
+  MathFractionBarConfig,
   MathMeasureConfig,
   MathMoneyConfig,
   MathTenframeConfig,
@@ -70,6 +71,7 @@ export type Activity =
   | ActivityOf<"journal-prompt", JournalPromptConfig>
   | ActivityOf<"reading-comprehension", ReadingComprehensionConfig>
   | ActivityOf<"math-array", MathArrayConfig>
+  | ActivityOf<"math-fraction-bar", MathFractionBarConfig>
   | ActivityOf<"lang-symbol-intro", LangSymbolIntroConfig>
   | ActivityOf<"lang-listen-match", LangListenMatchConfig>
   | ActivityOf<"math-clock", MathClockConfig>

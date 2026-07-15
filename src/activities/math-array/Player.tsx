@@ -130,6 +130,11 @@ function BuildMode({ config, onComplete, reduced, speech }: ModeProps<BuildConfi
     speech.speak(`${next} ${next === 1 ? "row" : "rows"}.`);
   }
 
+  function finish() {
+    const response: MathArrayResponse = { mode: "build", builtRows, attempts: 1 };
+    onComplete(response);
+  }
+
   return (
     <>
       <motion.div className="w-full overflow-x-auto pb-1" initial={false}>
@@ -163,7 +168,7 @@ function BuildMode({ config, onComplete, reduced, speech }: ModeProps<BuildConfi
         <Button
           variant="primary"
           size="kid"
-          onClick={() => onComplete({ mode: "build", builtRows, attempts: 1 })}
+          onClick={finish}
           disabled={builtRows !== config.rows}
         >
           I built it

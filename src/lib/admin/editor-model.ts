@@ -83,6 +83,8 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
       };
     case "math-array":
       return { instruction: "", mode: "build", rows: 2, cols: 3 };
+    case "math-fraction-bar":
+      return { instruction: "", mode: "partition", numerator: 1, denominator: 2 };
     case "lang-symbol-intro":
       return {
         locale: "zh-TW",

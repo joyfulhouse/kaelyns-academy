@@ -7,6 +7,7 @@ const PLAYER_PATHS = [
   "./math-measure/Player.tsx",
   "./math-array/Player.tsx",
   "./math-tenframe/Player.tsx",
+  "./math-fraction-bar/Player.tsx",
 ] as const;
 
 describe("math Player completion contract", () => {

@@ -85,6 +85,7 @@ const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
   "journal-prompt": "Draw & write",
   "reading-comprehension": "Read & answer",
   "math-array": "Array builder",
+  "math-fraction-bar": "Fraction bar",
   "lang-symbol-intro": "Meet the symbols",
   "lang-listen-match": "Listen & find",
   "math-clock": "Tell the time",

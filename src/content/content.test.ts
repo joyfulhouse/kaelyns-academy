@@ -80,6 +80,39 @@ describe("authored program content", () => {
     }
   });
 
+  it("keeps fraction work on the equal-parts model and behind stretch or placement gates", () => {
+    const area = everyActivity().find(({ activity }) => activity.id === "math-r8-a1")?.activity;
+    expect(area?.kind).toBe("math-array");
+    expect(area?.skillTags).not.toContain("math.fractions.unit");
+
+    const partition = everyActivity().find(
+      ({ activity }) => activity.id === "math-r8-a2",
+    )?.activity;
+    expect(partition?.kind).toBe("math-fraction-bar");
+    expect(partition?.band).toBe("stretch");
+    if (partition?.kind === "math-fraction-bar") {
+      expect(partition.config).toMatchObject({
+        mode: "partition",
+        numerator: 1,
+        denominator: 4,
+      });
+    }
+
+    const identify = everyActivity().find(
+      ({ activity }) => activity.id === "math-baseline-a5",
+    );
+    expect(identify?.unit.checkpoint).toBe("baseline");
+    expect(identify?.activity.kind).toBe("math-fraction-bar");
+    expect(identify?.activity.band).toBe("stretch");
+    if (identify?.activity.kind === "math-fraction-bar") {
+      expect(identify.activity.config).toMatchObject({
+        mode: "identify",
+        numerator: 2,
+        denominator: 4,
+      });
+    }
+  });
+
   it("every activity skill tag resolves to a known skill", () => {
     for (const { activity } of everyActivity()) {
       for (const tag of activity.skillTags) {

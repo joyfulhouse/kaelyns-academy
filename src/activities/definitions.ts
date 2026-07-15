@@ -7,6 +7,7 @@ import * as mathTenframe from "./math-tenframe/logic";
 import * as journalPrompt from "./journal-prompt/logic";
 import * as readingComprehension from "./reading-comprehension/logic";
 import * as mathArray from "./math-array/logic";
+import * as mathFractionBar from "./math-fraction-bar/logic";
 import * as langSymbolIntro from "./lang-symbol-intro/logic";
 import * as langListenMatch from "./lang-listen-match/logic";
 import * as mathClock from "./math-clock/logic";
@@ -55,6 +56,7 @@ const SERVER_ACTIVITY_TYPES = {
     readingComprehension,
   ),
   "math-array": defineServerActivity("math-array", mathArray),
+  "math-fraction-bar": defineServerActivity("math-fraction-bar", mathFractionBar),
   "lang-symbol-intro": defineServerActivity("lang-symbol-intro", langSymbolIntro),
   "lang-listen-match": defineServerActivity("lang-listen-match", langListenMatch),
   "math-clock": defineServerActivity("math-clock", mathClock),

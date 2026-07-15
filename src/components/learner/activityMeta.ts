@@ -11,6 +11,7 @@ import {
   PuzzlePieceIcon,
   RulerIcon,
   SpeakerHighIcon,
+  SquareHalfIcon,
   StackIcon,
   TranslateIcon,
 } from "@phosphor-icons/react/dist/ssr";
@@ -28,6 +29,7 @@ export const ACTIVITY_META: Record<ActivityKind, { icon: Icon; label: string }> 
   "journal-prompt": { icon: NotePencilIcon, label: "Draw & tell" },
   "reading-comprehension": { icon: BookOpenTextIcon, label: "Read & think" },
   "math-array": { icon: DotsNineIcon, label: "Make an array" },
+  "math-fraction-bar": { icon: SquareHalfIcon, label: "Make equal parts" },
   "lang-symbol-intro": { icon: TranslateIcon, label: "Meet the symbols" },
   "lang-listen-match": { icon: SpeakerHighIcon, label: "Listen & find" },
   "math-clock": { icon: ClockIcon, label: "Tell the time" },

@@ -12,6 +12,7 @@ import { langListenMatchConfig as langListenMatchModuleConfig } from "./activity
 import { langSymbolIntroConfig as langSymbolIntroModuleConfig } from "./activity-configs/lang-symbol-intro";
 import { mathArrayConfig as mathArrayModuleConfig } from "./activity-configs/math-array";
 import { mathClockConfig as mathClockModuleConfig } from "./activity-configs/math-clock";
+import { mathFractionBarConfig as mathFractionBarModuleConfig } from "./activity-configs/math-fraction-bar";
 import { mathMeasureConfig as mathMeasureModuleConfig } from "./activity-configs/math-measure";
 import { mathMoneyConfig as mathMoneyModuleConfig } from "./activity-configs/math-money";
 import { mathTenframeConfig as mathTenframeModuleConfig } from "./activity-configs/math-tenframe";
@@ -32,6 +33,7 @@ const PER_KIND_SCHEMAS = {
   "lang-symbol-intro": langSymbolIntroModuleConfig,
   "lang-listen-match": langListenMatchModuleConfig,
   "math-clock": mathClockModuleConfig,
+  "math-fraction-bar": mathFractionBarModuleConfig,
   "math-money": mathMoneyModuleConfig,
   "math-measure": mathMeasureModuleConfig,
   "sort-categories": sortCategoriesModuleConfig,
