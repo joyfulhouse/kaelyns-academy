@@ -38,10 +38,9 @@ const reviewScheduleRows = { value: [] as Record<string, unknown>[] };
 // The in-tx active-enrollment gate read (Fix-F A4): default ACTIVE so the
 // happy-path tests persist; the gate tests override to removed/paused/none.
 const enrollmentRows = {
-  value: [{ id: "E1", status: "active", programSlug: "kaelyn-adaptive" }] as Record<
-    string,
-    unknown
-  >[],
+  value: [
+    { id: "E1", status: "active", programSlug: "kaelyn-adaptive", config: {} },
+  ] as Record<string, unknown>[],
 };
 // The in-tx checkpoint_result upsert read (C1): default a single pending row so
 // a checkpointPhase attempt's fold has a row to update; unused by non-checkpoint
@@ -285,6 +284,7 @@ vi.mock("@/lib/db/schema", () => ({
     learnerId: { name: "learnerId" },
     programSlug: { name: "programSlug" },
     status: { name: "status" },
+    config: { name: "config" },
   },
   skillState: {
     _name: "skill_state",
@@ -518,7 +518,9 @@ describe("oral-reading verification witness store", () => {
     oralVerificationUpdates.length = 0;
     transaction.mockClear();
     learnerRows.value = [{ id: "L1" }];
-    enrollmentRows.value = [{ id: "E1", status: "active", programSlug: "kaelyn-adaptive" }];
+    enrollmentRows.value = [
+      { id: "E1", status: "active", programSlug: "kaelyn-adaptive", config: {} },
+    ];
     skillRows.value = [{ id: "S1", evidence: [] }];
     attemptRows.value = [{ id: "new" }];
     attemptInsertResultRows.value = [{ id: "new" }];
@@ -688,7 +690,9 @@ describe("recordAttempt (atomic persistence)", () => {
     transaction.mockClear();
     learnerRows.value = [{ id: "L1" }];
     skillRows.value = [];
-    enrollmentRows.value = [{ id: "E1", status: "active", programSlug: "kaelyn-adaptive" }];
+    enrollmentRows.value = [
+      { id: "E1", status: "active", programSlug: "kaelyn-adaptive", config: {} },
+    ];
     attemptRows.value = [{ id: "new" }];
     attemptInsertResultRows.value = [{ id: "new" }];
     attemptReplayRows.value = [];
@@ -884,7 +888,7 @@ describe("recordAttempt (atomic persistence)", () => {
   // ── Fix-F A4: server-authoritative curation gate (active enrollment required) ──
 
   it("persists when an ACTIVE enrollment exists for the program", async () => {
-    enrollmentRows.value = [{ status: "active" }];
+    enrollmentRows.value = [{ id: "E1", status: "active", config: {} }];
     skillRows.value = [{ id: "S1", evidence: [] }];
     await recordAttempt("acct-1", input);
     // The active-enrollment read happens inside the tx, AFTER the tenancy check
@@ -895,6 +899,64 @@ describe("recordAttempt (atomic persistence)", () => {
     expect(learnerIdx).toBeLessThan(enrollIdx);
     expect(enrollIdx).toBeGreaterThanOrEqual(0);
     expect(enrollIdx).toBeLessThan(attemptIdx);
+  });
+
+  it.each([
+    ["authored", { generated: false, creditEligible: true, shelfEligible: false }],
+    ["generated shelf", { generated: true, creditEligible: false, shelfEligible: true }],
+  ])(
+    "rejects a %s attempt when activeUnitKeys excludes its unit before any write",
+    async (_label, attemptIdentity) => {
+      enrollmentRows.value = [
+        {
+          id: "E1",
+          status: "active",
+          config: { activeUnitKeys: ["unit-2"] },
+        },
+      ];
+
+      await expect(
+        recordAttempt("acct-1", {
+          ...input,
+          ...attemptIdentity,
+          unitId: "unit-1",
+        }),
+      ).rejects.toBeInstanceOf(EnrollmentNotActiveError);
+
+      expect(ops).toContainEqual({ op: "select.for", table: "enrollment" });
+      expect(ops.some((operation) => operation.table === "attempt")).toBe(false);
+      expect(ledgerInserts).toEqual([]);
+    },
+  );
+
+  it("rejects a missing attempt unit when activeUnitKeys is nonempty", async () => {
+    enrollmentRows.value = [
+      {
+        id: "E1",
+        status: "active",
+        config: { activeUnitKeys: ["unit-1"] },
+      },
+    ];
+
+    await expect(
+      recordAttempt("acct-1", { ...input, unitId: undefined }),
+    ).rejects.toBeInstanceOf(EnrollmentNotActiveError);
+    expect(ops.some((operation) => operation.table === "attempt")).toBe(false);
+  });
+
+  it("fails closed on malformed locked enrollment config before any write", async () => {
+    enrollmentRows.value = [
+      {
+        id: "E1",
+        status: "active",
+        config: { activeUnitKeys: "unit-1" },
+      },
+    ];
+
+    await expect(
+      recordAttempt("acct-1", { ...input, unitId: "unit-1" }),
+    ).rejects.toBeInstanceOf(EnrollmentNotActiveError);
+    expect(ops.some((operation) => operation.table === "attempt")).toBe(false);
   });
 
   it("throws EnrollmentNotActiveError and writes nothing when no enrollment exists", async () => {
@@ -1535,7 +1597,9 @@ describe("applyPlacement (parent-gated baseline seed)", () => {
     learnerRows.value = [{ id: "L1" }];
     skillRows.value = [];
     reviewScheduleRows.value = [];
-    enrollmentRows.value = [{ id: "E1", status: "active", programSlug: "kaelyn-adaptive" }];
+    enrollmentRows.value = [
+      { id: "E1", status: "active", programSlug: "kaelyn-adaptive", config: {} },
+    ];
     checkpointResultRows.value = [
       {
         id: "CR1",

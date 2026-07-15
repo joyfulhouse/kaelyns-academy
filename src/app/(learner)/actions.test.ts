@@ -64,6 +64,7 @@ vi.mock("@/lib/tutor/shelf", () => ({
 
 import {
   CompletionReplayMismatchError,
+  EnrollmentNotActiveError,
   recordAttempt,
   recordOralReadingAttempt,
   listLearners,
@@ -409,6 +410,18 @@ describe("recordAttemptAction canonical authored scoring", () => {
     await expect(recordAttemptAction(BASE_INPUT)).resolves.toEqual({
       ok: false,
       reason: "invalid",
+    });
+  });
+
+  it("maps the store's locked enrollment curation rejection to inactive", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(recordAttempt).mockRejectedValue(
+      new EnrollmentNotActiveError("L1", "kaelyn-adaptive"),
+    );
+
+    await expect(recordAttemptAction(BASE_INPUT)).resolves.toEqual({
+      ok: false,
+      reason: "inactive",
     });
   });
 });

@@ -438,7 +438,7 @@ async function recordAttemptInTransaction(
     // check above). A removed/paused/missing enrollment → no write at all; the
     // client render-block (A3) is the UX, this is the non-bypassable enforcement.
     const enrolled = await tx
-      .select({ id: enrollment.id, status: enrollment.status })
+      .select({ id: enrollment.id, status: enrollment.status, config: enrollment.config })
       .from(enrollment)
       .where(enrollmentKey(input.learnerId, input.programSlug))
       .limit(1)
@@ -446,7 +446,17 @@ async function recordAttemptInTransaction(
       // can't commit between this active-check and the attempt insert below (the
       // skill_state folds already lock FOR UPDATE; this closes the same race here).
       .for("update");
-    if (enrolled[0]?.status !== "active") {
+    const parsedEnrollmentConfig = enrollmentConfigSchema.safeParse(enrolled[0]?.config);
+    const activeUnitKeys = parsedEnrollmentConfig.success
+      ? parsedEnrollmentConfig.data.activeUnitKeys
+      : undefined;
+    if (
+      enrolled[0]?.status !== "active" ||
+      !parsedEnrollmentConfig.success ||
+      (activeUnitKeys !== undefined &&
+        activeUnitKeys.length > 0 &&
+        (!input.unitId || !activeUnitKeys.includes(input.unitId)))
+    ) {
       throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
     }
     const enrollmentId = enrolled[0].id;
