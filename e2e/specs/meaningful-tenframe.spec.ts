@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { expectSingleHostReward } from "../helpers";
 
 const MAKE_TEN = "/learn/kaelyn-adaptive/math/math-r7-a1";
 
@@ -20,8 +21,10 @@ test("make-ten fills, trades, continues, and undoes with pointer and keyboard", 
   await trade.focus();
   await page.keyboard.press("Space");
 
-  await expect(page.getByRole("img", { name: "One ten token" })).toBeVisible();
-  await expect(page.getByRole("img", { name: "First frame traded for one ten token" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "One ten token", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: "First frame traded for one ten token", exact: true }),
+  ).toBeVisible();
 
   const eleventhCell = page.getByRole("button", { name: "Cell 11, empty, tap to add" });
   await eleventhCell.focus();
@@ -32,4 +35,12 @@ test("make-ten fills, trades, continues, and undoes with pointer and keyboard", 
   await undo.focus();
   await page.keyboard.press("Enter");
   await expect(page.getByText("One ten and 0 ones. 3 of 8 added.")).toBeVisible();
+
+  for (const cell of [11, 12, 13, 14, 15]) {
+    await page.getByRole("button", { name: `Cell ${cell}, empty, tap to add` }).click();
+  }
+  await expect(page.getByText("One ten and 5 ones. 8 of 8 added.")).toBeVisible();
+  await page.getByRole("button", { name: "Check it" }).click();
+
+  await expectSingleHostReward(page);
 });

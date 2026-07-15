@@ -31,7 +31,7 @@ test("measurement places and removes individual equal units along the baseline",
   await addUnit.press("Enter");
   await addUnit.press("Enter");
   await addUnit.press("Enter");
-  await expect(page.getByText("5 cubes placed")).toBeVisible();
+  await expect(page.getByText("5 cubes placed", { exact: true })).toBeVisible();
 
   const target = page.getByTestId("measurement-target");
   const units = page.getByTestId("measurement-units");

@@ -17,13 +17,12 @@ test("partition mode reveals halves, thirds, and fourths with pointer and keyboa
   await expect(twoPartBar).toBeVisible();
 
   const thirds = page.getByRole("button", { name: "Split into 3 equal parts" });
-  await thirds.focus();
-  await page.keyboard.press("Enter");
+  await expect(thirds).toBeEnabled();
+  await thirds.press("Enter");
   await expect(page.getByRole("group", { name: "Bar split into 3 equal parts" })).toBeVisible();
 
   const fourths = page.getByRole("button", { name: "Split into 4 equal parts" });
-  await fourths.focus();
-  await page.keyboard.press("Space");
+  await fourths.press("Space");
   await expect(page.getByRole("group", { name: "Bar split into 4 equal parts" })).toBeVisible();
   await expect(page.getByText("4 equal parts shown.")).toBeVisible();
   await page.getByRole("button", { name: "Check it" }).click();
