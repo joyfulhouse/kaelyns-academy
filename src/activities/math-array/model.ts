@@ -3,6 +3,20 @@ export interface DealState {
   groups: number[][];
 }
 
+export interface FactFamilyFact {
+  left: number;
+  operator: "×" | "÷";
+  right: number;
+  result: number;
+}
+
+export type FactFamily = readonly [
+  FactFamilyFact,
+  FactFamilyFact,
+  FactFamilyFact,
+  FactFamilyFact,
+];
+
 export function addCompleteRow(builtRows: number, targetRows: number): number {
   return Math.min(builtRows + 1, targetRows);
 }
@@ -58,6 +72,17 @@ export function isEqualDealComplete(state: DealState): boolean {
   if (state.pool.length > 0 || state.groups.length === 0) return false;
   const share = state.groups[0]?.length ?? 0;
   return share > 0 && state.groups.every((group) => group.length === share);
+}
+
+/** Derive the four related facts from the one authored sharing model. */
+export function factFamilyFor(total: number, groups: number): FactFamily {
+  const share = total / groups;
+  return [
+    { left: groups, operator: "×", right: share, result: total },
+    { left: share, operator: "×", right: groups, result: total },
+    { left: total, operator: "÷", right: groups, result: share },
+    { left: total, operator: "÷", right: share, result: groups },
+  ];
 }
 
 export function createAreaCells(rows: number, cols: number): boolean[] {

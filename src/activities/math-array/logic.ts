@@ -7,6 +7,7 @@ import {
   outcomeFromAccuracy,
   starsFromAccuracy,
 } from "../_shared/scoring";
+import { factFamilyFor } from "./model";
 
 /** Server-safe schema + scoring for math-array. No "use client". */
 export const schema = mathArrayConfig;
@@ -36,7 +37,7 @@ export const responseSchema = z.discriminatedUnion("mode", [
       mode: z.literal("divide"),
       poolRemaining: z.number().int().min(0).max(144),
       groupCounts: z.array(z.number().int().min(0).max(12)).max(12),
-      entered,
+      factResults: z.tuple([entered, entered, entered, entered]),
       attempts,
     })
     .strict(),
@@ -92,10 +93,11 @@ export function isCorrect(
     case "divide": {
       if (config.mode !== "divide" || response.poolRemaining !== 0) return false;
       const share = expectedFor(config);
+      const factFamily = factFamilyFor(config.total, config.groups);
       return (
-        response.entered === share &&
         response.groupCounts.length === config.groups &&
-        response.groupCounts.every((count) => count === share)
+        response.groupCounts.every((count) => count === share) &&
+        response.factResults.every((result, index) => result === factFamily[index]?.result)
       );
     }
     case "area": {
@@ -123,18 +125,18 @@ export function score(config: MathArrayConfig, response: MathArrayResponse): Act
 }
 
 /**
- * Arrays map to the canonical Program 02 math rubric: building an array is the
- * equal-groups/arrays rung; multiply exercises facts; area adds the geometry
- * (area-via-array) lens; divide is the sharing/fact-family rung.
+ * Evidence follows only what the interaction directly observes. Row reveal
+ * and skip count establish multiplication meaning, tiling establishes area,
+ * and divide reaches fact-family evidence only after all four facts are built.
  */
 export function skillsAffected(config: MathArrayConfig): SkillTag[] {
   switch (config.mode) {
     case "area":
-      return ["math.geometry.area-arrays", "math.mult.facts"];
+      return ["math.geometry.area-arrays"];
     case "divide":
       return ["math.div.fact-families"];
     case "multiply":
-      return ["math.mult.facts"];
+      return ["math.mult.meaning"];
     case "build":
       return ["math.equal-groups.arrays"];
   }

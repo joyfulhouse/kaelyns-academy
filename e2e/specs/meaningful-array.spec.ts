@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { expectSingleHostReward } from "../helpers";
 
 const MATH = "/learn/kaelyn-adaptive/math-baseline";
 
@@ -40,6 +41,54 @@ test("divide mode deals one visible item at a time around labeled groups", async
   await next.focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("group", { name: "Group 2, 1 item" })).toBeVisible();
+});
+
+test("divide mode completes and retries the four related facts with pointer and keyboard", async ({
+  page,
+}) => {
+  await page.goto(`${MATH}/math-baseline-a3`);
+
+  for (let remaining = 12; remaining > 0; remaining -= 1) {
+    await page.getByRole("button", { name: `Deal one item, ${remaining} left` }).click();
+  }
+
+  await page.getByRole("button", { name: "Choose 3" }).click();
+  await page.getByRole("button", { name: "Check share" }).click();
+
+  await expect(page.getByRole("heading", { name: "Build the fact family" })).toBeVisible();
+  await expect(page.getByText("4 × 3 = ?", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(page.getByRole("button", { name: "Deal one item, 12 left" })).toBeVisible();
+
+  for (let remaining = 12; remaining > 0; remaining -= 1) {
+    await page.getByRole("button", { name: `Deal one item, ${remaining} left` }).click();
+  }
+  await page.getByRole("button", { name: "Choose 3" }).click();
+  await page.getByRole("button", { name: "Check share" }).click();
+
+  await page.getByRole("button", { name: "Choose 11" }).click();
+  await page.getByRole("button", { name: "Check fact" }).click();
+  await expect(page.getByText("Fact 1 of 4", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Choose 12" }).click();
+  await page.getByRole("button", { name: "Check fact" }).click();
+  await expect(page.getByText("3 × 4 = ?", { exact: true })).toBeVisible();
+
+  const commutedProduct = page.getByRole("button", { name: "Choose 12" });
+  await commutedProduct.focus();
+  await page.keyboard.press("Space");
+  await page.getByRole("button", { name: "Check fact" }).click();
+
+  await expect(page.getByText("12 ÷ 4 = ?", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Choose 3" }).click();
+  await page.getByRole("button", { name: "Check fact" }).click();
+
+  await expect(page.getByText("12 ÷ 3 = ?", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Choose 4" }).click();
+  await page.getByRole("button", { name: "Check fact" }).click();
+
+  await expectSingleHostReward(page);
 });
 
 test("area mode fills and removes individual labeled unit squares", async ({ page }) => {

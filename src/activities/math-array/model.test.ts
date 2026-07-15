@@ -52,6 +52,15 @@ describe("math-array divide model", () => {
     const complete = model.dealNextItem(model.createDealState(1, 1));
     expect(model.dealNextItem(complete)).toEqual(complete);
   });
+
+  it("derives all four multiplication and division facts from one sharing model", () => {
+    expect(model.factFamilyFor(12, 3)).toEqual([
+      { left: 3, operator: "×", right: 4, result: 12 },
+      { left: 4, operator: "×", right: 3, result: 12 },
+      { left: 12, operator: "÷", right: 3, result: 4 },
+      { left: 12, operator: "÷", right: 4, result: 3 },
+    ]);
+  });
 });
 
 describe("math-array area model", () => {

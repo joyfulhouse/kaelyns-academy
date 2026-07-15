@@ -22,6 +22,7 @@ import {
   createAreaCells,
   createDealState,
   dealNextItem,
+  factFamilyFor,
   filledAreaIndices,
   isAreaComplete,
   isEqualDealComplete,
@@ -301,9 +302,13 @@ function DivideMode({ config, onComplete, reduced, speech }: ModeProps<DivideCon
   const shake = useWrongShake();
   const [deal, setDeal] = useState<DealState>(() => createDealState(config.total, config.groups));
   const [selected, setSelected] = useState<number | null>(null);
-  const [attempts, setAttempts] = useState(0);
+  const [attempts, setAttempts] = useState(1);
+  const [stage, setStage] = useState<"share" | "facts">("share");
+  const [factResults, setFactResults] = useState<number[]>([]);
   const expected = expectedFor(config);
   const complete = isEqualDealComplete(deal);
+  const factFamily = factFamilyFor(config.total, config.groups);
+  const activeFact = factFamily[factResults.length];
 
   function dealOne() {
     if (shake.wrong || deal.pool.length === 0) return;
@@ -316,29 +321,67 @@ function DivideMode({ config, onComplete, reduced, speech }: ModeProps<DivideCon
   function reset() {
     setDeal(createDealState(config.total, config.groups));
     setSelected(null);
+    setStage("share");
+    setFactResults([]);
   }
 
   function check() {
-    if (!complete || selected === null) return;
-    const attemptCount = Math.min(attempts + 1, 20);
-    setAttempts(attemptCount);
-    if (selected === expected) {
+    if (!complete || selected === null || shake.wrong) return;
+
+    if (stage === "share") {
+      if (selected === expected) {
+        setStage("facts");
+        setSelected(null);
+        speech.speak("That is the equal share. Now build its four related facts.");
+        return;
+      }
+      setAttempts((current) => Math.min(current + 1, 20));
+      shake.trigger({ speak: () => speech.speak("Keep the shares. Count one group again.") });
+      return;
+    }
+
+    if (!activeFact) return;
+    if (selected !== activeFact.result) {
+      setAttempts((current) => Math.min(current + 1, 20));
+      shake.trigger({
+        speak: () => speech.speak("Keep the fact. Use the same three numbers and try again."),
+      });
+      return;
+    }
+
+    const completedResults = [...factResults, selected];
+    if (completedResults.length === factFamily.length) {
+      const [first, second, third, fourth] = completedResults;
+      if (
+        first === undefined ||
+        second === undefined ||
+        third === undefined ||
+        fourth === undefined
+      ) {
+        return;
+      }
       onComplete({
         mode: "divide",
         poolRemaining: deal.pool.length,
         groupCounts: deal.groups.map((group) => group.length),
-        entered: selected,
-        attempts: attemptCount,
+        factResults: [first, second, third, fourth],
+        attempts,
       });
       return;
     }
-    shake.trigger({ speak: () => speech.speak("Keep the shares. Count one group again.") });
+
+    setFactResults(completedResults);
+    setSelected(null);
+    const nextFact = factFamily[completedResults.length];
+    if (nextFact) {
+      speech.speak(`${nextFact.left} ${nextFact.operator} ${nextFact.right}`);
+    }
   }
 
   return (
     <>
       <p className="text-center font-display text-2xl text-ink" aria-hidden="true">
-        {config.total} ÷ {config.groups} = ?
+        {config.total} ÷ {config.groups} = {stage === "facts" ? expected : "?"}
       </p>
 
       <motion.div className="grid gap-6" {...shake.shakeProps(reduced)}>
@@ -392,13 +435,61 @@ function DivideMode({ config, onComplete, reduced, speech }: ModeProps<DivideCon
             : "The shares are even—count one group"}
         </ProgressHint>
 
-        {complete && (
+        {complete && stage === "share" && (
           <ResultChoices
             expected={expected}
             selected={selected}
             disabled={shake.wrong}
             onSelect={setSelected}
           />
+        )}
+
+        {stage === "facts" && activeFact && (
+          <section
+            aria-labelledby="fact-family-heading"
+            className="grid w-full max-w-2xl justify-items-center gap-4 rounded-3xl border-[3px] border-ink bg-paper-raised p-5 shadow-pop sm:p-7"
+          >
+            <div className="grid justify-items-center gap-1 text-center">
+              <h2 id="fact-family-heading" className="font-display text-3xl text-ink">
+                Build the fact family
+              </h2>
+              <p className="font-semibold text-ink-soft">
+                Use {config.groups}, {expected}, and {config.total} in all four related facts.
+              </p>
+            </div>
+
+            {factResults.length > 0 && (
+              <ol aria-label="Completed facts" className="flex flex-wrap justify-center gap-2">
+                {factResults.map((result, index) => {
+                  const fact = factFamily[index];
+                  if (!fact) return null;
+                  return (
+                    <li
+                      key={`${fact.operator}-${index}`}
+                      className="rounded-full border-2 border-ink bg-success px-4 py-2 font-display text-lg text-ink"
+                    >
+                      {fact.left} {fact.operator} {fact.right} = {result}
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+
+            <div aria-live="polite" className="grid justify-items-center gap-3">
+              <ProgressHint>{`Fact ${factResults.length + 1} of ${factFamily.length}`}</ProgressHint>
+              <p className="rounded-2xl border-[3px] border-ink bg-honey px-6 py-4 font-display text-4xl text-ink shadow-pop">
+                {activeFact.left} {activeFact.operator} {activeFact.right} = ?
+              </p>
+            </div>
+
+            <ResultChoices
+              expected={activeFact.result}
+              selected={selected}
+              disabled={shake.wrong}
+              label={`Choose the result for ${activeFact.left} ${activeFact.operator} ${activeFact.right}`}
+              onSelect={setSelected}
+            />
+          </section>
         )}
       </motion.div>
 
@@ -407,7 +498,9 @@ function DivideMode({ config, onComplete, reduced, speech }: ModeProps<DivideCon
           variant="soft"
           size="md"
           onClick={reset}
-          disabled={deal.pool.length === config.total || shake.wrong}
+          disabled={
+            (deal.pool.length === config.total && stage === "share") || shake.wrong
+          }
         >
           <ArrowCounterClockwiseIcon weight="bold" aria-hidden="true" />
           Clear
@@ -417,9 +510,14 @@ function DivideMode({ config, onComplete, reduced, speech }: ModeProps<DivideCon
           variant="primary"
           size="kid"
           onClick={check}
-          disabled={!complete || selected === null || shake.wrong}
+          disabled={
+            !complete ||
+            selected === null ||
+            shake.wrong ||
+            (stage === "facts" && !activeFact)
+          }
         >
-          Check it
+          {stage === "share" ? "Check share" : "Check fact"}
         </Button>
       </PlayerControls>
     </>
@@ -608,15 +706,17 @@ function ResultChoices({
   expected,
   selected,
   disabled,
+  label = "Choose the result",
   onSelect,
 }: {
   expected: number;
   selected: number | null;
   disabled: boolean;
+  label?: string;
   onSelect: (value: number) => void;
 }) {
   return (
-    <div role="group" aria-label="Choose the result" className="flex flex-wrap justify-center gap-3">
+    <div role="group" aria-label={label} className="flex flex-wrap justify-center gap-3">
       {resultChoices(expected).map((choice) => (
         <button
           key={choice}

@@ -77,6 +77,34 @@ describe("parseAndScoreActivity", () => {
     ).toEqual({ ok: false, reason: "invalid-response" });
   });
 
+  it("recomputes a complete division fact family before accepting completion", () => {
+    const config = {
+      instruction: "Share 12 into 3 equal groups, then build its fact family.",
+      mode: "divide" as const,
+      total: 12,
+      groups: 3,
+    };
+    const response = {
+      mode: "divide" as const,
+      poolRemaining: 0,
+      groupCounts: [4, 4, 4],
+      factResults: [12, 12, 4, 4],
+      attempts: 1,
+    };
+
+    expect(
+      parseAndScoreActivity("math-array", config, response, ["math.div.fact-families"]),
+    ).toEqual({ ok: false, reason: "invalid-response" });
+    expect(
+      parseAndScoreActivity(
+        "math-array",
+        config,
+        { ...response, factResults: [12, 12, 4, 3] },
+        ["math.div.fact-families"],
+      ),
+    ).toMatchObject({ ok: true, score: { correct: 1, total: 1 } });
+  });
+
   it("rejects a partially correct final response from a multi-item success-only activity", () => {
     expect(
       parseAndScoreActivity(

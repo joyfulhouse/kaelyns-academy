@@ -20,6 +20,7 @@ const divideInput = {
 };
 const divide: MathArrayConfig = divideInput;
 const build: MathArrayConfig = { instruction: "Build it.", mode: "build", rows: 2, cols: 3 };
+const correctFactResults = [12, 12, 4, 3] satisfies [number, number, number, number];
 
 describe("math-array config", () => {
   it("rejects a contradictory authored answer instead of overriding the model", () => {
@@ -106,6 +107,35 @@ describe("math-array score", () => {
         attempts: 1,
       }).success,
     ).toBe(false);
+    expect(
+      responseSchema.safeParse({
+        mode: "divide",
+        poolRemaining: 0,
+        groupCounts: [4, 4, 4],
+        entered: 4,
+        attempts: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      responseSchema.safeParse({
+        mode: "divide",
+        poolRemaining: 0,
+        groupCounts: [4, 4, 4],
+        entered: 4,
+        factResults: correctFactResults,
+        attempts: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      responseSchema.safeParse({
+        mode: "divide",
+        poolRemaining: 0,
+        groupCounts: [4, 4, 4],
+        entered: 4,
+        factResults: [12, 12, 4, 3, 99],
+        attempts: 1,
+      }).success,
+    ).toBe(false);
   });
 
   it("requires the named model operation as well as the derived result", () => {
@@ -122,7 +152,7 @@ describe("math-array score", () => {
         mode: "divide",
         poolRemaining: 1,
         groupCounts: [4, 4, 3],
-        entered: 4,
+        factResults: correctFactResults,
         attempts: 1,
       }),
     ).toBe(false);
@@ -146,7 +176,7 @@ describe("math-array score", () => {
     expect(result.stars).toBe(3);
     expect(result.correct).toBe(1);
     expect(result.total).toBe(1);
-    expect(result.skillEvidence).toEqual([{ skill: "math.mult.facts", outcome: "solid" }]);
+    expect(result.skillEvidence).toEqual([{ skill: "math.mult.meaning", outcome: "solid" }]);
   });
 
   it("2 stars + emerging on the second attempt", () => {
@@ -154,7 +184,7 @@ describe("math-array score", () => {
       mode: "divide",
       poolRemaining: 0,
       groupCounts: [4, 4, 4],
-      entered: 4,
+      factResults: correctFactResults,
       attempts: 2,
     });
     expect(result.stars).toBe(2);
@@ -191,13 +221,34 @@ describe("math-array score", () => {
       }),
     ).toBe(true);
   });
+
+  it("requires the complete derived fact family before accepting equal sharing", () => {
+    expect(
+      isCorrect(divide, {
+        mode: "divide",
+        poolRemaining: 0,
+        groupCounts: [4, 4, 4],
+        factResults: correctFactResults,
+        attempts: 1,
+      }),
+    ).toBe(true);
+    expect(
+      isCorrect(divide, {
+        mode: "divide",
+        poolRemaining: 0,
+        groupCounts: [4, 4, 4],
+        factResults: [12, 12, 4, 4],
+        attempts: 1,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("math-array skillsAffected", () => {
   it("maps each mode to its skill tags", () => {
-    expect(skillsAffected(multiply)).toEqual(["math.mult.facts"]);
+    expect(skillsAffected(multiply)).toEqual(["math.mult.meaning"]);
     expect(skillsAffected(build)).toEqual(["math.equal-groups.arrays"]);
-    expect(skillsAffected(area)).toEqual(["math.geometry.area-arrays", "math.mult.facts"]);
+    expect(skillsAffected(area)).toEqual(["math.geometry.area-arrays"]);
     expect(skillsAffected(divide)).toEqual(["math.div.fact-families"]);
   });
 });
