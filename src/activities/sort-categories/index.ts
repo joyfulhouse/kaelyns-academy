@@ -10,7 +10,7 @@ import {
   type SortCategoriesResponse,
 } from "./logic";
 
-/** sort-categories activity-type plugin: tap items into labeled bins. */
+/** Free-placement classification with an explicit completed-board check. */
 export const sortCategories: ActivityType<SortCategoriesConfig, SortCategoriesResponse> = {
   kind: "sort-categories",
   label: "Sort",

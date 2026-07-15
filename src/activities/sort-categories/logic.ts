@@ -7,6 +7,7 @@ import {
   outcomeFromAccuracy,
   starsFromAccuracy,
 } from "../_shared/scoring";
+import { assignmentsComplete } from "./model";
 
 /** Server-safe schema + scoring for sort-categories. No "use client". */
 export const schema = sortCategoriesConfig;
@@ -14,15 +15,33 @@ export const schema = sortCategoriesConfig;
 /** The child's final placement (one binId per item, by item index) + attempts. */
 export const responseSchema = z
   .object({
-    attempts: z.number().int().min(1).max(100),
-    placements: z.array(z.string().min(1).max(24)).min(3).max(8),
+    attempts: z.number().int().min(1).max(20),
+    assignments: z
+      .array(
+        z
+          .object({
+            itemIndex: z.number().int().min(0).max(7),
+            binId: z.string().min(1).max(24),
+          })
+          .strict(),
+      )
+      .min(3)
+      .max(8)
+      .refine(
+        (assignments) =>
+          new Set(assignments.map((assignment) => assignment.itemIndex)).size ===
+          assignments.length,
+        "item assignments must be unique",
+      ),
   })
   .strict();
 export type SortCategoriesResponse = z.infer<typeof responseSchema>;
 
 export function isCorrect(config: SortCategoriesConfig, response: SortCategoriesResponse): boolean {
-  if (response.placements.length !== config.items.length) return false;
-  return config.items.every((item, i) => response.placements[i] === item.binId);
+  if (!assignmentsComplete(config, response.assignments)) return false;
+  return response.assignments.every(
+    (assignment) => config.items[assignment.itemIndex]?.binId === assignment.binId,
+  );
 }
 
 export function score(config: SortCategoriesConfig, response: SortCategoriesResponse): ActivityScore {
