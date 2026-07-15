@@ -1,6 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { mathArrayConfig, type MathArrayConfig } from "@/content/activity-configs";
-import { expectedFor, score, skillsAffected, totalFor, validateGenerated } from "./logic";
+import {
+  expectedFor,
+  isCorrect,
+  responseSchema,
+  score,
+  skillsAffected,
+  totalFor,
+  validateGenerated,
+} from "./logic";
 
 const multiply: MathArrayConfig = { instruction: "3 times 4.", mode: "multiply", rows: 3, cols: 4 };
 const area: MathArrayConfig = { instruction: "Cover it.", mode: "area", rows: 2, cols: 5 };
@@ -80,8 +88,53 @@ describe("math-array totalFor / expectedFor", () => {
 });
 
 describe("math-array score", () => {
+  it("rejects the old number-only response and over-bounded model evidence", () => {
+    expect(responseSchema.safeParse({ entered: 12, attempts: 1 }).success).toBe(false);
+    expect(
+      responseSchema.safeParse({
+        mode: "area",
+        filledCells: Array.from({ length: 145 }, (_, index) => index),
+        entered: 145,
+        attempts: 1,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires the named model operation as well as the derived result", () => {
+    expect(
+      isCorrect(multiply, {
+        mode: "multiply",
+        revealedRows: 2,
+        entered: 12,
+        attempts: 1,
+      }),
+    ).toBe(false);
+    expect(
+      isCorrect(divide, {
+        mode: "divide",
+        poolRemaining: 1,
+        groupCounts: [4, 4, 3],
+        entered: 4,
+        attempts: 1,
+      }),
+    ).toBe(false);
+    expect(
+      isCorrect(area, {
+        mode: "area",
+        filledCells: [0, 1, 2, 3, 4, 5, 6, 7, 8],
+        entered: 10,
+        attempts: 1,
+      }),
+    ).toBe(false);
+  });
+
   it("3 stars + solid on the first correct attempt", () => {
-    const result = score(multiply, { entered: 12, attempts: 1 });
+    const result = score(multiply, {
+      mode: "multiply",
+      revealedRows: 3,
+      entered: 12,
+      attempts: 1,
+    });
     expect(result.stars).toBe(3);
     expect(result.correct).toBe(1);
     expect(result.total).toBe(1);
@@ -89,7 +142,13 @@ describe("math-array score", () => {
   });
 
   it("2 stars + emerging on the second attempt", () => {
-    const result = score(divide, { entered: 4, attempts: 2 });
+    const result = score(divide, {
+      mode: "divide",
+      poolRemaining: 0,
+      groupCounts: [4, 4, 4],
+      entered: 4,
+      attempts: 2,
+    });
     expect(result.stars).toBe(2);
     expect(result.skillEvidence).toEqual([
       { skill: "math.div.fact-families", outcome: "emerging" },
@@ -97,16 +156,32 @@ describe("math-array score", () => {
   });
 
   it("1 star + not_yet when never reached (still forgiving)", () => {
-    const result = score(multiply, { entered: 11, attempts: 3 });
+    const result = score(multiply, {
+      mode: "multiply",
+      revealedRows: 3,
+      entered: 11,
+      attempts: 3,
+    });
     expect(result.stars).toBe(1);
     expect(result.correct).toBe(0);
     expect(result.skillEvidence[0].outcome).toBe("not_yet");
   });
 
   it("build always reaches (no wrong answer): 3 stars", () => {
-    const result = score(build, { entered: totalFor(build), attempts: 1 });
+    const result = score(build, { mode: "build", builtRows: 2, attempts: 1 });
     expect(result.stars).toBe(3);
     expect(result.correct).toBe(1);
+  });
+
+  it("accepts complete unit-square coverage in area mode", () => {
+    expect(
+      isCorrect(area, {
+        mode: "area",
+        filledCells: Array.from({ length: 10 }, (_, index) => index),
+        entered: 10,
+        attempts: 1,
+      }),
+    ).toBe(true);
   });
 });
 

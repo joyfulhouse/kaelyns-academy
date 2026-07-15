@@ -45,15 +45,14 @@ test("a reading-comprehension baseline activity renders and advances after a cor
   await expect(page.getByText("Nice reading.")).toBeVisible();
 });
 
-test("a math-array baseline activity renders and registers a build tap", async ({ page }) => {
+test("a math-array baseline activity renders and registers a complete row", async ({ page }) => {
   await page.goto(MATH_ACTIVITY);
-  // "Build the rows" (build mode, 3 rows of 4) — tap the first tile and
-  // confirm the build progress registers.
-  // exact: true — "Empty tile 1" is a substring of "Empty tile 10/11/12", so a
-  // non-exact name matches 4 tiles (strict-mode violation) in the 3×4 grid.
-  const firstTile = page.getByRole("button", { name: "Empty tile 1", exact: true });
-  await expect(firstTile).toBeVisible({ timeout: 25_000 });
-  await firstTile.click();
+  // "Build the rows" (build mode, 3 rows of 4) starts empty. The child adds a
+  // complete row, so the visible construction matches the named array model.
+  const addRow = page.getByRole("button", { name: "Add a row" });
+  await expect(addRow).toBeVisible({ timeout: 25_000 });
+  await addRow.click();
 
-  await expect(page.getByText("1 of 12 tiles")).toBeVisible();
+  await expect(page.getByText("1 of 3 rows")).toBeVisible();
+  await expect(page.getByText("4 tiles in row-major order")).toBeVisible();
 });

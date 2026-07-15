@@ -1,24 +1,54 @@
 import { mathArrayConfig, type MathArrayConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
 import { z } from "zod";
-import { evenSkillEvidence, outcomeFromAccuracy, starsFromAccuracy } from "../_shared/scoring";
+import {
+  evenSkillEvidence,
+  firstTryRateFromAttempts,
+  outcomeFromAccuracy,
+  starsFromAccuracy,
+} from "../_shared/scoring";
 
 /** Server-safe schema + scoring for math-array. No "use client". */
 export const schema = mathArrayConfig;
 
-/**
- * What the child did. "build" mode has no number to enter (just constructs the
- * array), so `entered` is the final tile count; the other modes record the
- * number they typed/tapped and how many tries it took.
- */
-export const responseSchema = z
-  .object({
-    /** The product / quotient the child entered (or filled-tile count in build). */
-    entered: z.number().int().min(0).max(1_000),
-    /** Check attempts before it was right (>=1). build mode is always 1. */
-    attempts: z.number().int().min(1).max(100),
-  })
-  .strict();
+const attempts = z.number().int().min(1).max(100);
+const entered = z.number().int().min(0).max(144);
+
+/** Bounded evidence of the model the child actually constructed. */
+export const responseSchema = z.discriminatedUnion("mode", [
+  z
+    .object({
+      mode: z.literal("build"),
+      builtRows: z.number().int().min(0).max(12),
+      attempts,
+    })
+    .strict(),
+  z
+    .object({
+      mode: z.literal("multiply"),
+      revealedRows: z.number().int().min(0).max(12),
+      entered,
+      attempts,
+    })
+    .strict(),
+  z
+    .object({
+      mode: z.literal("divide"),
+      poolRemaining: z.number().int().min(0).max(144),
+      groupCounts: z.array(z.number().int().min(0).max(12)).max(12),
+      entered,
+      attempts,
+    })
+    .strict(),
+  z
+    .object({
+      mode: z.literal("area"),
+      filledCells: z.array(z.number().int().min(0).max(143)).max(144),
+      entered,
+      attempts,
+    })
+    .strict(),
+]);
 export type MathArrayResponse = z.infer<typeof responseSchema>;
 
 /** The total quantity in the full array (the dividend in "divide"). */
@@ -44,18 +74,45 @@ export function validateGenerated(config: unknown): string | null {
   return parsed.success ? null : (parsed.error.issues[0]?.message ?? "Invalid array model.");
 }
 
+export function isCorrect(
+  config: MathArrayConfig,
+  response: MathArrayResponse,
+): boolean {
+  if (config.mode !== response.mode) return false;
+
+  switch (response.mode) {
+    case "build":
+      return config.mode === "build" && response.builtRows === config.rows;
+    case "multiply":
+      return (
+        config.mode === "multiply" &&
+        response.revealedRows === config.rows &&
+        response.entered === expectedFor(config)
+      );
+    case "divide": {
+      if (config.mode !== "divide" || response.poolRemaining !== 0) return false;
+      const share = expectedFor(config);
+      return (
+        response.entered === share &&
+        response.groupCounts.length === config.groups &&
+        response.groupCounts.every((count) => count === share)
+      );
+    }
+    case "area": {
+      if (config.mode !== "area" || response.entered !== expectedFor(config)) return false;
+      const expectedCells = totalFor(config);
+      const filled = new Set(response.filledCells);
+      return (
+        filled.size === expectedCells &&
+        [...filled].every((index) => index >= 0 && index < expectedCells)
+      );
+    }
+  }
+}
+
 export function score(config: MathArrayConfig, response: MathArrayResponse): ActivityScore {
-  const expected = expectedFor(config);
-  const reached = response.entered === expected;
-  // One activity, one answer: 1 attempt → solid, 2 → emerging, 3+ → still
-  // finished but not_yet. build always reaches on the first (no wrong answer).
-  const firstTryRate = !reached
-    ? 0
-    : response.attempts <= 1
-      ? 1
-      : response.attempts === 2
-        ? 0.5
-        : 0.2;
+  const reached = isCorrect(config, response);
+  const firstTryRate = firstTryRateFromAttempts(reached, response.attempts);
 
   return {
     correct: reached ? 1 : 0,
