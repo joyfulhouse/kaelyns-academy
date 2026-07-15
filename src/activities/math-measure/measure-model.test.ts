@@ -4,8 +4,11 @@ import {
   balanceAngle,
   balanceTiltDirection,
   deriveComparisonIndex,
+  MEASUREMENT_UNIT_PX,
+  measurementExtent,
   placedUnitCount,
   removePlacedUnit,
+  rotatePoint,
   scaledExtent,
 } from "./measure-model";
 
@@ -37,9 +40,26 @@ describe("balance geometry", () => {
     expect(balanceTiltDirection(2, 2)).toBe("level");
     expect(balanceAngle(2, 2)).toBe(0);
   });
+
+  it("locates tilted beam attachments without rotating the hanging pans", () => {
+    const left = rotatePoint({ x: 135, y: 88 }, { x: 280, y: 88 }, 8);
+    const right = rotatePoint({ x: 425, y: 88 }, { x: 280, y: 88 }, 8);
+
+    expect(left.y).toBeLessThan(88);
+    expect(right.y).toBeGreaterThan(88);
+    expect(left.x).toBeCloseTo(136.41, 2);
+    expect(right.x).toBeCloseTo(423.59, 2);
+  });
 });
 
 describe("placed units", () => {
+  it("uses one shared span for the target and every placed unit", () => {
+    for (let count = 1; count <= 12; count += 1) {
+      expect(measurementExtent(count)).toBe(count * MEASUREMENT_UNIT_PX);
+    }
+    expect(measurementExtent(5) - measurementExtent(4)).toBe(MEASUREMENT_UNIT_PX);
+  });
+
   it("adds and removes individual stable unit IDs up to capacity", () => {
     const one = addPlacedUnit([], "unit-1", 2);
     const two = addPlacedUnit(one, "unit-2", 2);

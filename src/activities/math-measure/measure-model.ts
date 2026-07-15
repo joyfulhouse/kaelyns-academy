@@ -7,6 +7,18 @@ export {
 
 export type BalanceTilt = "left" | "level" | "right";
 
+export interface Point {
+  x: number;
+  y: number;
+}
+
+/** One authored measurement unit always occupies this span in the shared SVG workspace. */
+export const MEASUREMENT_UNIT_PX = 48;
+
+export function measurementExtent(unitCount: number): number {
+  return Math.max(0, Math.floor(unitCount)) * MEASUREMENT_UNIT_PX;
+}
+
 /** Scale a relative authored amount from the shared zero baseline. */
 export function scaledExtent(size: number, largestSize: number, maximumExtent: number): number {
   if (largestSize <= 0 || maximumExtent <= 0) return 0;
@@ -26,6 +38,17 @@ export function balanceAngle(leftWeight: number, rightWeight: number): -8 | 0 | 
   if (direction === "left") return -8;
   if (direction === "right") return 8;
   return 0;
+}
+
+/** Locate a beam attachment after tilt so its hanging pan can remain upright. */
+export function rotatePoint(point: Point, pivot: Point, degrees: number): Point {
+  const radians = (degrees * Math.PI) / 180;
+  const offsetX = point.x - pivot.x;
+  const offsetY = point.y - pivot.y;
+  return {
+    x: pivot.x + offsetX * Math.cos(radians) - offsetY * Math.sin(radians),
+    y: pivot.y + offsetX * Math.sin(radians) + offsetY * Math.cos(radians),
+  };
 }
 
 export function addPlacedUnit(unitIds: string[], unitId: string, capacity: number): string[] {

@@ -185,7 +185,7 @@ export const lifeSkillsMathUnit: Unit = {
           id: "lsm-measure-cmp-2",
           kind: "math-measure",
           title: "Which is heaviest?",
-          blurb: "Compare three objects by weight.",
+          blurb: "Compare two objects by weight.",
           estMinutes: 6,
           band: "ready",
           skillTags: ["math.measure"],
@@ -196,10 +196,9 @@ export const lifeSkillsMathUnit: Unit = {
             question: "most",
             items: [
               { label: "feather", emoji: "🪶", size: 1 },
-              { label: "apple", emoji: "🍎", size: 2 },
               { label: "watermelon", emoji: "🍉", size: 4 },
             ],
-            answerIndex: 2,
+            answerIndex: 1,
           },
         },
         {
@@ -213,10 +212,9 @@ export const lifeSkillsMathUnit: Unit = {
           config: {
             mode: "units",
             instruction: "How many cubes long is the shoe?",
+            objectLabel: "shoe",
             unit: "cube",
             length: 5,
-            choices: [4, 5, 6],
-            answerIndex: 1,
           },
         },
         {
@@ -230,10 +228,9 @@ export const lifeSkillsMathUnit: Unit = {
           config: {
             mode: "units",
             instruction: "How many paperclips long is the crayon box?",
+            objectLabel: "crayon box",
             unit: "paperclip",
             length: 8,
-            choices: [6, 8, 10],
-            answerIndex: 1,
           },
         },
       ],

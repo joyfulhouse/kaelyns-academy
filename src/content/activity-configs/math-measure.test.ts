@@ -51,4 +51,21 @@ describe("math-measure cross-field invariants", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("requires exactly two items for a two-pan weight comparison", () => {
+    expect(
+      mathMeasureConfig.safeParse({
+        mode: "compare",
+        instruction: "Which is heaviest?",
+        attribute: "weight",
+        question: "most",
+        items: [
+          { label: "feather", emoji: "🪶", size: 1 },
+          { label: "apple", emoji: "🍎", size: 2 },
+          { label: "watermelon", emoji: "🍉", size: 4 },
+        ],
+        answerIndex: 2,
+      }).success,
+    ).toBe(false);
+  });
 });

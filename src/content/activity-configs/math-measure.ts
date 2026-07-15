@@ -22,6 +22,13 @@ const compareConfig = z
     answerIndex: z.number().int().min(0),
   })
   .superRefine((config, context) => {
+    if (config.attribute === "weight" && config.items.length !== 2) {
+      context.addIssue({
+        code: "custom",
+        message: "two-pan weight comparisons require exactly two items",
+        path: ["items"],
+      });
+    }
     if (config.answerIndex >= config.items.length) {
       context.addIssue({
         code: "custom",
