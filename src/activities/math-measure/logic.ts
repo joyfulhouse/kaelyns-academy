@@ -8,6 +8,7 @@ import {
   starsFromAccuracy,
 } from "../_shared/scoring";
 import {
+  allComparisonItemsAligned,
   analyzeUnitPlacements,
   deriveComparisonIndex,
   MAX_MEASUREMENT_UNITS,
@@ -22,6 +23,13 @@ export const responseSchema = z.union([
     .object({
       attempts: measureAttempts,
       selectedIndex: z.number().int().min(0).max(3),
+      alignedItemIndices: z
+        .array(z.number().int().min(0).max(3))
+        .max(4)
+        .refine(
+          (indices) => new Set(indices).size === indices.length,
+          "aligned item indices must be unique",
+        ),
     })
     .strict(),
   z
@@ -50,7 +58,12 @@ export type MathMeasureResponse = z.infer<typeof responseSchema>;
 export function isCorrect(config: MathMeasureConfig, response: MathMeasureResponse): boolean {
   if (config.mode === "compare") {
     const derived = deriveComparisonIndex(config.attribute, config.question, config.items);
-    return "selectedIndex" in response && derived !== null && response.selectedIndex === derived;
+    if (!("selectedIndex" in response) || derived === null || response.selectedIndex !== derived) {
+      return false;
+    }
+    return config.attribute === "weight"
+      ? response.alignedItemIndices.length === 0
+      : allComparisonItemsAligned(response.alignedItemIndices, config.items.length);
   }
   return (
     "placements" in response &&

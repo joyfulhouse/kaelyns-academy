@@ -117,6 +117,41 @@ describe("sight-word round config", () => {
     ).toBe(true);
   });
 
+  it("rejects a specific global target when that instruction would remain across later rounds", () => {
+    expect(
+      sightwordGameConfig.safeParse({
+        instruction: "Find the word the.",
+        rounds: [
+          { target: "the", choices: ["the", "they"] },
+          { target: "and", choices: ["and", "an"] },
+        ],
+      }).success,
+    ).toBe(false);
+
+    expect(
+      sightwordGameConfig.safeParse({
+        instruction: "Find the word the.",
+        rounds: [{ target: "the", choices: ["the", "they"] }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("recognizes a quoted instruction target even when guidance follows it", () => {
+    expect(
+      sightwordGameConfig.safeParse({
+        instruction: 'Find the word "before" on the card.',
+        rounds: [{ target: "because", choices: ["because", "became"] }],
+      }).success,
+    ).toBe(false);
+
+    expect(
+      sightwordGameConfig.safeParse({
+        instruction: 'Find the word "because" on the card.',
+        rounds: [{ target: "because", choices: ["because", "became"] }],
+      }).success,
+    ).toBe(true);
+  });
+
   it("keeps a generic target-word instruction valid", () => {
     expect(
       sightwordGameConfig.safeParse({

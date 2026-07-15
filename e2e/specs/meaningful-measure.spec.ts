@@ -27,7 +27,7 @@ test("measurement snaps units and lets the learner correct alignment, gaps, and 
   await expect(misplaced).toBeEnabled();
   await misplaced.focus();
   await misplaced.press("Home");
-  await expect(page.getByText("Measurement count: 1 cube")).toBeVisible();
+  await expect(page.getByText("Measurement count: 1 cube", { exact: true })).toBeVisible();
 
   await dragPointer(page, supply, page.locator('[data-snap-slot="2"]'));
   await expect(page.getByRole("button", { name: "Select cube at position 3" })).toBeVisible();
@@ -120,7 +120,7 @@ test("weight comparison uses a labeled balance tilted toward the heavier object"
   await expectSingleHostReward(page);
 });
 
-test("length comparison exposes every named extent and remains keyboard completable", async ({
+test("length comparison requires learner-controlled alignment and remains keyboard completable", async ({
   page,
 }) => {
   await page.goto(LENGTH_ACTIVITY);
@@ -130,6 +130,15 @@ test("length comparison exposes every named extent and remains keyboard completa
   await expect(comparison).toHaveAccessibleDescription(
     /pencil extends 3 relative units; crayon extends 2 relative units; marker extends 4 relative units/i,
   );
+
+  await expect(page.getByRole("button", { name: "Choose marker" })).toHaveCount(0);
+  for (const label of ["pencil", "crayon"]) {
+    const align = page.getByRole("button", { name: `Line up ${label}` });
+    await align.focus();
+    await align.press("Enter");
+    await expect(page.getByRole("button", { name: `${label} lined up` })).toBeDisabled();
+  }
+  await page.getByRole("button", { name: "Line up marker" }).press("Enter");
 
   const marker = page.getByRole("button", { name: "Choose marker" });
   await marker.focus();

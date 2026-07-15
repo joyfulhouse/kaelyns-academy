@@ -13,6 +13,8 @@ import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
 import {
+  alignComparisonItem,
+  allComparisonItemsAligned,
   analyzeUnitPlacements,
   balanceAngle,
   balanceTiltDirection,
@@ -68,6 +70,11 @@ function measurementFeedback(issue: UnitPlacementIssue): string {
   return issue === "none" ? "The measurement is ready." : message[issue];
 }
 
+function unitCountLabel(count: number, unit: UnitsConfig["unit"]): string {
+  const meta = UNIT_META[unit];
+  return `${count} ${count === 1 ? meta.singular : meta.plural}`;
+}
+
 export function MathMeasurePlayer({
   config,
   onComplete,
@@ -78,6 +85,7 @@ export function MathMeasurePlayer({
   const shake = useWrongShake();
 
   const [attempts, setAttempts] = useState(0);
+  const [alignedComparisonItems, setAlignedComparisonItems] = useState<number[]>([]);
   const [placements, setPlacements] = useState<UnitPlacement[]>([]);
   const [selectedUnit, setSelectedUnit] = useState<"new" | string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -86,12 +94,21 @@ export function MathMeasurePlayer({
 
   useSpeakOnce(speech.speak, parsed.instruction);
 
+  const comparisonReady =
+    parsed.mode !== "compare" ||
+    parsed.attribute === "weight" ||
+    allComparisonItemsAligned(alignedComparisonItems, parsed.items.length);
+
   function tapChoice(index: number) {
-    if (parsed.mode !== "compare" || shake.wrong) return;
+    if (parsed.mode !== "compare" || shake.wrong || !comparisonReady) return;
     const attemptCount = Math.min(attempts + 1, 20);
     const answer = deriveComparisonIndex(parsed.attribute, parsed.question, parsed.items);
     if (answer !== null && index === answer) {
-      const response: MathMeasureResponse = { attempts: attemptCount, selectedIndex: index };
+      const response: MathMeasureResponse = {
+        attempts: attemptCount,
+        selectedIndex: index,
+        alignedItemIndices: parsed.attribute === "weight" ? [] : [...alignedComparisonItems],
+      };
       onComplete(response);
       return;
     }
@@ -102,6 +119,16 @@ export function MathMeasurePlayer({
     setAttempts(attemptCount);
     setFeedback(message);
     shake.trigger({ speak: () => speech.speak(message) });
+  }
+
+  function alignComparisonChoice(index: number) {
+    if (parsed.mode !== "compare" || parsed.attribute === "weight" || shake.wrong) return;
+    const next = alignComparisonItem(alignedComparisonItems, index, parsed.items.length);
+    if (next === alignedComparisonItems) return;
+    setAlignedComparisonItems(next);
+    setFeedback(null);
+    const label = parsed.items[index]?.label;
+    if (label) speech.speak(`${label} lined up at the start line.`);
   }
 
   function selectNewUnit() {
@@ -121,7 +148,7 @@ export function MathMeasurePlayer({
     setSelectedUnit((selected) => (selected === unitId ? null : selected));
     setFeedback(null);
     const analysis = analyzeUnitPlacements(nextPlacements, parsed.length);
-    setAnnouncement(`${analysis.validCount} ${UNIT_META[parsed.unit].plural} aligned from the start.`);
+    setAnnouncement(`${unitCountLabel(analysis.validCount, parsed.unit)} aligned from the start.`);
   }
 
   function clearUnits() {
@@ -181,6 +208,9 @@ export function MathMeasurePlayer({
       {parsed.mode === "compare" ? (
         <CompareBoard
           config={parsed}
+          alignedItems={alignedComparisonItems}
+          ready={comparisonReady}
+          onAlign={alignComparisonChoice}
           onChoose={tapChoice}
           disabled={shake.wrong}
           reduced={reduced}
@@ -203,12 +233,19 @@ export function MathMeasurePlayer({
       )}
 
       {parsed.mode === "compare" ? (
-        feedback ? <ProgressHint className="font-semibold text-ink">{feedback}</ProgressHint> : null
+        feedback ? (
+          <ProgressHint className="font-semibold text-ink">{feedback}</ProgressHint>
+        ) : parsed.attribute !== "weight" && !comparisonReady ? (
+          <ProgressHint>
+            {alignedComparisonItems.length} of {parsed.items.length} objects lined up. Line up every
+            object at the start before choosing.
+          </ProgressHint>
+        ) : null
       ) : (
         <ProgressHint>
           <span className="block font-display text-lg text-ink">
-            Measurement count: {analyzeUnitPlacements(placements, parsed.length).validCount}{" "}
-            {UNIT_META[parsed.unit].plural}
+            Measurement count:{" "}
+            {unitCountLabel(analyzeUnitPlacements(placements, parsed.length).validCount, parsed.unit)}
           </span>
           <span className="block">
             {placements.length} placed. Snap equal units edge to edge from the start line.
@@ -258,12 +295,18 @@ export function MathMeasurePlayer({
 
 function CompareBoard({
   config,
+  alignedItems,
+  ready,
+  onAlign,
   onChoose,
   disabled,
   reduced,
   shake,
 }: {
   config: CompareConfig;
+  alignedItems: number[];
+  ready: boolean;
+  onAlign: (index: number) => void;
   onChoose: (index: number) => void;
   disabled: boolean;
   reduced: boolean;
@@ -279,36 +322,57 @@ function CompareBoard({
         {config.attribute === "weight" ? (
           <WeightBalance config={config} />
         ) : (
-          <ProportionalComparison config={config} />
+          <ProportionalComparison config={config} alignedItems={alignedItems} />
         )}
 
         <div
           role="group"
-          aria-label={`Choose the ${word} item`}
+          aria-label={ready ? `Choose the ${word} item` : "Line up every item at the shared start"}
           className="mx-auto grid w-full max-w-2xl grid-cols-2 gap-4 sm:grid-cols-4"
         >
-          {config.items.map((item, index) => (
-            <button
-              key={`${item.label}-${index}`}
-              type="button"
-              onClick={() => onChoose(index)}
-              disabled={disabled}
-              aria-label={`Choose ${item.label}`}
-              className="grid min-h-24 place-items-center gap-2 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-4 shadow-pop transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:pointer-events-none disabled:opacity-50"
-            >
-              <span className="text-4xl leading-none" role="img" aria-hidden="true">
-                {item.emoji}
-              </span>
-              <span className="font-display text-lg text-ink">{item.label}</span>
-            </button>
-          ))}
+          {config.items.map((item, index) => {
+            const aligned = alignedItems.includes(index);
+            const aligning = config.attribute !== "weight" && !ready;
+            const actionLabel = aligning
+              ? aligned
+                ? `${item.label} lined up`
+                : `Line up ${item.label}`
+              : `Choose ${item.label}`;
+            return (
+              <button
+                key={`${item.label}-${index}`}
+                type="button"
+                onClick={() => (aligning ? onAlign(index) : onChoose(index))}
+                disabled={disabled || (aligning && aligned)}
+                aria-label={actionLabel}
+                aria-pressed={config.attribute === "weight" ? undefined : aligned}
+                className="grid min-h-24 place-items-center gap-2 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-4 shadow-pop transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:pointer-events-none disabled:opacity-60"
+              >
+                <span className="text-4xl leading-none" role="img" aria-hidden="true">
+                  {item.emoji}
+                </span>
+                <span className="font-display text-lg text-ink">{item.label}</span>
+                {aligning ? (
+                  <span className="text-sm font-semibold text-ink-soft">
+                    {aligned ? "Lined up" : "Line up"}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
         </div>
       </motion.div>
     </>
   );
 }
 
-function ProportionalComparison({ config }: { config: CompareConfig }) {
+function ProportionalComparison({
+  config,
+  alignedItems,
+}: {
+  config: CompareConfig;
+  alignedItems: readonly number[];
+}) {
   const largest = Math.max(...config.items.map((item) => item.size));
   const description = comparisonDescription(config.attribute, config.items);
   const descriptionId = "measurement-comparison-description";
@@ -330,11 +394,18 @@ function ProportionalComparison({ config }: { config: CompareConfig }) {
         {config.items.map((item, index) => {
           const x = ((index + 1) * 560) / (config.items.length + 1);
           const height = scaledExtent(item.size, largest, 135);
+          const aligned = alignedItems.includes(index);
+          const itemBaselineY = aligned ? baselineY : baselineY - 24 - (index % 2) * 10;
           return (
-            <g key={`${item.label}-${index}`} aria-hidden="true">
+            <g
+              key={`${item.label}-${index}`}
+              aria-hidden="true"
+              data-testid={`comparison-item-${index}`}
+              data-aligned={aligned ? "true" : "false"}
+            >
               <rect
                 x={x - 30}
-                y={baselineY - height}
+                y={itemBaselineY - height}
                 width="60"
                 height={height}
                 rx="14"
@@ -371,13 +442,20 @@ function ProportionalComparison({ config }: { config: CompareConfig }) {
       {config.items.map((item, index) => {
         const y = 16 + index * rowHeight;
         const width = scaledExtent(item.size, largest, 400);
+        const aligned = alignedItems.includes(index);
+        const originX = aligned ? 120 : 150 + (index % 2) * 24;
         return (
-          <g key={`${item.label}-${index}`} aria-hidden="true">
-            <text x="108" y={y + 16} textAnchor="end" fill="var(--color-ink)" fontSize="15" fontWeight="700">
+          <g
+            key={`${item.label}-${index}`}
+            aria-hidden="true"
+            data-testid={`comparison-item-${index}`}
+            data-aligned={aligned ? "true" : "false"}
+          >
+            <text x={originX - 12} y={y + 16} textAnchor="end" fill="var(--color-ink)" fontSize="15" fontWeight="700">
               {item.label}
             </text>
             <rect
-              x="120"
+              x={originX}
               y={y}
               width={width}
               height="24"

@@ -255,7 +255,12 @@ function successfulResponse(activity: Activity): unknown {
         : { tokens: coinTokens(config), attempts: 1 };
     case "math-measure":
       return config.mode === "compare"
-        ? { selectedIndex: config.answerIndex, attempts: 1 }
+        ? {
+            selectedIndex: config.answerIndex,
+            alignedItemIndices:
+              config.attribute === "weight" ? [] : range(config.items.length),
+            attempts: 1,
+          }
         : {
             placements: range(config.length).map((slot) => ({ id: `unit-${slot}`, slot })),
             attempts: 1,

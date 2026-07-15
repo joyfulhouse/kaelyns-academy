@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  alignComparisonItem,
+  allComparisonItemsAligned,
   analyzeUnitPlacements,
   balanceAngle,
   balanceTiltDirection,
@@ -14,6 +16,19 @@ import {
 } from "./measure-model";
 
 describe("proportional comparison geometry", () => {
+  it("requires every length or height item to be deliberately aligned once", () => {
+    const one = alignComparisonItem([], 1, 3);
+    const two = alignComparisonItem(one, 0, 3);
+    const complete = alignComparisonItem(two, 2, 3);
+
+    expect(one).toEqual([1]);
+    expect(alignComparisonItem(one, 1, 3)).toBe(one);
+    expect(alignComparisonItem(one, -1, 3)).toBe(one);
+    expect(alignComparisonItem(one, 3, 3)).toBe(one);
+    expect(allComparisonItemsAligned(two, 3)).toBe(false);
+    expect(allComparisonItemsAligned(complete, 3)).toBe(true);
+  });
+
   it("scales length and height from the same zero baseline", () => {
     expect(scaledExtent(2, 4, 160)).toBe(80);
     expect(scaledExtent(4, 4, 160)).toBe(160);

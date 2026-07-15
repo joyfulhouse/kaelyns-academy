@@ -22,10 +22,20 @@ const unitsCfg = {
 
 describe("isCorrect", () => {
   it("compare derives the answer from the requested size extreme", () => {
-    expect(isCorrect(compareCfg, { attempts: 1, selectedIndex: 0 })).toBe(true);
-    expect(isCorrect(compareCfg, { attempts: 1, selectedIndex: 1 })).toBe(false);
     expect(
-      isCorrect({ ...compareCfg, answerIndex: 1 }, { attempts: 1, selectedIndex: 0 }),
+      isCorrect(compareCfg, { attempts: 1, selectedIndex: 0, alignedItemIndices: [0, 1] }),
+    ).toBe(true);
+    expect(
+      isCorrect(compareCfg, { attempts: 1, selectedIndex: 0, alignedItemIndices: [0] }),
+    ).toBe(false);
+    expect(
+      isCorrect(compareCfg, { attempts: 1, selectedIndex: 1, alignedItemIndices: [0, 1] }),
+    ).toBe(false);
+    expect(
+      isCorrect(
+        { ...compareCfg, answerIndex: 1 },
+        { attempts: 1, selectedIndex: 0, alignedItemIndices: [0, 1] },
+      ),
     ).toBe(true);
   });
 
@@ -53,7 +63,21 @@ describe("isCorrect", () => {
 
 describe("responseSchema", () => {
   it("bounds compare choices and placed unit IDs", () => {
-    expect(responseSchema.safeParse({ attempts: 1, selectedIndex: 3 }).success).toBe(true);
+    expect(responseSchema.safeParse({ attempts: 1, selectedIndex: 3 }).success).toBe(false);
+    expect(
+      responseSchema.safeParse({
+        attempts: 1,
+        selectedIndex: 3,
+        alignedItemIndices: [0, 1, 2, 3],
+      }).success,
+    ).toBe(true);
+    expect(
+      responseSchema.safeParse({
+        attempts: 1,
+        selectedIndex: 3,
+        alignedItemIndices: [0, 0],
+      }).success,
+    ).toBe(false);
     expect(responseSchema.safeParse({ attempts: 1, selectedIndex: 4 }).success).toBe(false);
     expect(
       responseSchema.safeParse({
@@ -90,7 +114,9 @@ describe("responseSchema", () => {
 
 describe("score", () => {
   it("first-try → 3 stars solid on math.measure", () => {
-    expect(score(compareCfg, { attempts: 1, selectedIndex: 0 })).toEqual({
+    expect(
+      score(compareCfg, { attempts: 1, selectedIndex: 0, alignedItemIndices: [0, 1] }),
+    ).toEqual({
       correct: 1,
       total: 1,
       stars: 3,
@@ -114,7 +140,11 @@ describe("score", () => {
     expect(s.skillEvidence[0].outcome).toBe("not_yet");
   });
   it("wrong final selection → 1 star not_yet (never a failure)", () => {
-    const s = score(compareCfg, { attempts: 4, selectedIndex: 1 });
+    const s = score(compareCfg, {
+      attempts: 4,
+      selectedIndex: 1,
+      alignedItemIndices: [0, 1],
+    });
     expect(s.correct).toBe(0);
     expect(s.stars).toBe(1);
     expect(s.skillEvidence[0].outcome).toBe("not_yet");

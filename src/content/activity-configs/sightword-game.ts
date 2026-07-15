@@ -8,8 +8,10 @@ function normalized(value: string): string {
 }
 
 const WORD_CHARACTER = /[\p{L}\p{N}]/u;
-const EXPLICIT_TARGET =
+const TERMINAL_EXPLICIT_TARGET =
   /\b(?:find|choose|pick|tap|show|read)\s+(?:the\s+)?word\s+["“]?([^"”.,!?;:]+?)["”]?(?=\s*(?:[.!?]|$))/giu;
+const QUOTED_EXPLICIT_TARGET =
+  /\b(?:find|choose|pick|tap|show|read)\s+(?:the\s+)?word\s+["“]([^"”]+)["”]/giu;
 
 function containsWholeTarget(text: string, target: string): boolean {
   const source = normalized(text);
@@ -27,7 +29,11 @@ function containsWholeTarget(text: string, target: string): boolean {
 }
 
 function explicitlyNamedTargets(instruction: string): string[] {
-  return [...instruction.matchAll(EXPLICIT_TARGET)].map((match) => normalized(match[1] ?? ""));
+  const matches = [
+    ...instruction.matchAll(TERMINAL_EXPLICIT_TARGET),
+    ...instruction.matchAll(QUOTED_EXPLICIT_TARGET),
+  ].map((match) => normalized(match[1] ?? ""));
+  return [...new Set(matches.filter(Boolean))];
 }
 
 export const sightwordRoundSchema = z
@@ -62,8 +68,12 @@ export function validateSightwordRoundSet(
   const targetSet = new Set(targets);
   if (targetSet.size !== targets.length) return "round targets must be unique";
 
-  for (const namedTarget of explicitlyNamedTargets(instruction)) {
-    if (!targetSet.has(namedTarget)) {
+  const instructionTargets = explicitlyNamedTargets(instruction);
+  if (instructionTargets.length > 0 && rounds.length !== 1) {
+    return "a specific global instruction can only describe one round";
+  }
+  for (const namedTarget of instructionTargets) {
+    if (namedTarget !== targets[0]) {
       return `instruction names ${namedTarget}, which is not a round target`;
     }
   }

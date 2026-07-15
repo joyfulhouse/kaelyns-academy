@@ -44,6 +44,31 @@ export type UnitPlacementIssue =
   | "past-target"
   | "short";
 
+/** Record an intentional align action once; invalid and repeated actions are no-ops. */
+export function alignComparisonItem(
+  alignedIndices: number[],
+  index: number,
+  itemCount: number,
+): number[] {
+  if (
+    !Number.isInteger(index) ||
+    index < 0 ||
+    index >= itemCount ||
+    alignedIndices.includes(index)
+  ) {
+    return alignedIndices;
+  }
+  return [...alignedIndices, index];
+}
+
+export function allComparisonItemsAligned(
+  alignedIndices: readonly number[],
+  itemCount: number,
+): boolean {
+  if (!Number.isInteger(itemCount) || itemCount <= 0) return false;
+  return new Set(alignedIndices.filter((index) => index >= 0 && index < itemCount)).size === itemCount;
+}
+
 export function measurementExtent(unitCount: number): number {
   return Math.max(0, Math.floor(unitCount)) * MEASUREMENT_UNIT_PX;
 }

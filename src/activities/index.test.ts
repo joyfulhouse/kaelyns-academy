@@ -48,7 +48,7 @@ const VALID_RESPONSES = {
   },
   "math-clock": { attempts: 1, selectedIndex: 0 },
   "math-money": { attempts: 1, tappedCoin: "penny" },
-  "math-measure": { attempts: 1, selectedIndex: 0 },
+  "math-measure": { attempts: 1, selectedIndex: 0, alignedItemIndices: [] },
   "sort-categories": {
     attempts: 1,
     assignments: [
@@ -126,7 +126,7 @@ const OVER_BOUNDED_RESPONSES = {
     attempts: 1,
     tappedCoins: Array.from({ length: 101 }, () => "penny"),
   },
-  "math-measure": { attempts: 1, selectedIndex: 4 },
+  "math-measure": { attempts: 1, selectedIndex: 4, alignedItemIndices: [] },
   "sort-categories": {
     attempts: 1,
     assignments: Array.from({ length: 9 }, (_, itemIndex) => ({
