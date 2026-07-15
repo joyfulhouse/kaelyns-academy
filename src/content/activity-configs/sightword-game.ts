@@ -4,7 +4,30 @@ const boundedWord = z.string().trim().min(1).max(32);
 const boundedInstruction = z.string().trim().min(1).max(240);
 
 function normalized(value: string): string {
-  return value.toLocaleLowerCase();
+  return value.normalize("NFKC").trim().toLocaleLowerCase();
+}
+
+const WORD_CHARACTER = /[\p{L}\p{N}]/u;
+const EXPLICIT_TARGET =
+  /\b(?:find|choose|pick|tap|show|read)\s+(?:the\s+)?word\s+["“]?([^"”.,!?;:]+?)["”]?(?=\s*(?:[.!?]|$))/giu;
+
+function containsWholeTarget(text: string, target: string): boolean {
+  const source = normalized(text);
+  const sought = normalized(target);
+  let start = source.indexOf(sought);
+  while (start !== -1) {
+    const before = start === 0 ? undefined : source[start - 1];
+    const after = source[start + sought.length];
+    if ((!before || !WORD_CHARACTER.test(before)) && (!after || !WORD_CHARACTER.test(after))) {
+      return true;
+    }
+    start = source.indexOf(sought, start + sought.length);
+  }
+  return false;
+}
+
+function explicitlyNamedTargets(instruction: string): string[] {
+  return [...instruction.matchAll(EXPLICIT_TARGET)].map((match) => normalized(match[1] ?? ""));
 }
 
 export const sightwordRoundSchema = z
@@ -31,12 +54,31 @@ export const sightwordRoundSchema = z
   });
 export type SightwordRound = z.infer<typeof sightwordRoundSchema>;
 
-export function validateSightwordRoundSet(rounds: readonly SightwordRound[]): string | null {
+export function validateSightwordRoundSet(
+  instruction: string,
+  rounds: readonly SightwordRound[],
+): string | null {
   const targets = rounds.map((round) => normalized(round.target));
   const targetSet = new Set(targets);
   if (targetSet.size !== targets.length) return "round targets must be unique";
+
+  for (const namedTarget of explicitlyNamedTargets(instruction)) {
+    if (!targetSet.has(namedTarget)) {
+      return `instruction names ${namedTarget}, which is not a round target`;
+    }
+  }
+
   for (const round of rounds) {
     const ownTarget = normalized(round.target);
+    if (round.spokenPrompt) {
+      const namedTargets = explicitlyNamedTargets(round.spokenPrompt);
+      if (namedTargets.some((namedTarget) => namedTarget !== ownTarget)) {
+        return `spoken prompt for ${round.target} names a different target`;
+      }
+      if (!containsWholeTarget(round.spokenPrompt, round.target)) {
+        return `spoken prompt must say target ${round.target}`;
+      }
+    }
     for (const choice of round.choices) {
       const candidate = normalized(choice);
       if (candidate !== ownTarget && targetSet.has(candidate)) {
@@ -55,7 +97,7 @@ const roundConfig = z
   })
   .strict()
   .superRefine((config, context) => {
-    const reason = validateSightwordRoundSet(config.rounds);
+    const reason = validateSightwordRoundSet(config.instruction, config.rounds);
     if (reason) context.addIssue({ code: "custom", path: ["rounds"], message: reason });
   });
 

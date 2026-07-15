@@ -73,6 +73,74 @@ describe("sight-word round config", () => {
     ).toBe(false);
   });
 
+  it("binds a spoken prompt to its round target by whole word without case sensitivity", () => {
+    expect(
+      sightwordGameConfig.safeParse({
+        ...config,
+        rounds: [
+          {
+            target: "The",
+            choices: ["they", "THE", "then"],
+            spokenPrompt: "Find the word THE.",
+          },
+        ],
+      }).success,
+    ).toBe(true);
+
+    expect(
+      sightwordGameConfig.safeParse({
+        ...config,
+        rounds: [
+          {
+            target: "he",
+            choices: ["he", "she", "we"],
+            spokenPrompt: "Find the word she.",
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects an explicitly named instruction target missing from the rounds", () => {
+    expect(
+      sightwordGameConfig.safeParse({
+        instruction: "Find the word before.",
+        rounds: [{ target: "because", choices: ["because", "became"] }],
+      }).success,
+    ).toBe(false);
+
+    expect(
+      sightwordGameConfig.safeParse({
+        instruction: "Listen for one word, then find its steady word card.",
+        rounds: [{ target: "because", choices: ["because", "became"] }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("keeps a generic target-word instruction valid", () => {
+    expect(
+      sightwordGameConfig.safeParse({
+        instruction: "Find the target word.",
+        rounds: [{ target: "the", choices: ["the", "they"] }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a custom spoken prompt that never says its target", () => {
+    expect(
+      sightwordGameConfig.safeParse({
+        ...config,
+        rounds: [
+          {
+            target: "the",
+            choices: ["the", "they"],
+            spokenPrompt: "Which card can you read?",
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects the retired words/decoys compatibility shape", () => {
     expect(
       sightwordGameConfig.safeParse({

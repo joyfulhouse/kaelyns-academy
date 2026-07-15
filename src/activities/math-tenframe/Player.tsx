@@ -12,6 +12,7 @@ import type { ActivityPlayerProps } from "@/content/types";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { PlayerControls, Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
+import { RetryFeedback } from "../_shared/RetryFeedback";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
@@ -49,6 +50,7 @@ export function MathTenframePlayer({
   const [state, setState] = useState<TenframeState>(() => createTenframeState(parsed));
   const [history, setHistory] = useState<TenframeState[]>([]);
   const [attempts, setAttempts] = useState(0);
+  const [correction, setCorrection] = useState<string | null>(null);
 
   useSpeakOnce(speech.speak, parsed.instruction);
 
@@ -64,6 +66,7 @@ export function MathTenframePlayer({
     if (next === state) return;
     setHistory((current) => [...current, state].slice(-20));
     setState(next);
+    setCorrection(null);
   }
 
   function toggleCell(index: number) {
@@ -79,6 +82,7 @@ export function MathTenframePlayer({
     const undone = undoTenframeState(history, state);
     setHistory(undone.history);
     setState(undone.state);
+    setCorrection(null);
     speech.speak(`Back to ${representedTotal(undone.state)}.`);
   }
 
@@ -105,14 +109,12 @@ export function MathTenframePlayer({
       return;
     }
 
-    shake.trigger({
-      speak: () =>
-        speech.speak(
-          total > goal
-            ? "Keep your counters. There are a few too many."
-            : "Keep your counters. Try a few more.",
-        ),
-    });
+    const message =
+      total > goal
+        ? "Keep your counters. There are a few too many."
+        : "Keep your counters. Try a few more.";
+    setCorrection(message);
+    shake.trigger({ speak: () => speech.speak(message) });
   }
 
   return (
@@ -156,6 +158,8 @@ export function MathTenframePlayer({
 
         <ProgressHint>{progressText(parsed, state, total, goal)}</ProgressHint>
       </motion.div>
+
+      <RetryFeedback message={correction} />
 
       <PlayerControls>
         <Button variant="soft" size="md" onClick={undo} disabled={history.length === 0 || shake.wrong}>

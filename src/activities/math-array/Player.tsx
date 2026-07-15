@@ -12,6 +12,7 @@ import type { ActivityPlayerProps } from "@/content/types";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { PlayerControls, Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
+import { RetryFeedback } from "../_shared/RetryFeedback";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
@@ -184,6 +185,7 @@ function MultiplyMode({ config, onComplete, reduced, speech }: ModeProps<Multipl
   const [revealedRows, setRevealedRows] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const [attempts, setAttempts] = useState(0);
+  const [correction, setCorrection] = useState<string | null>(null);
   const sequence = skipCountSequence(revealedRows, config.cols);
   const expected = expectedFor(config);
   const ready = revealedRows === config.rows;
@@ -192,12 +194,19 @@ function MultiplyMode({ config, onComplete, reduced, speech }: ModeProps<Multipl
     if (shake.wrong || index !== revealedRows) return;
     const next = revealNextRow(revealedRows, config.rows);
     setRevealedRows(next);
+    setCorrection(null);
     speech.speak(String(next * config.cols));
   }
 
   function reset() {
     setRevealedRows(0);
     setSelected(null);
+    setCorrection(null);
+  }
+
+  function select(value: number) {
+    setSelected(value);
+    setCorrection(null);
   }
 
   function check() {
@@ -213,7 +222,9 @@ function MultiplyMode({ config, onComplete, reduced, speech }: ModeProps<Multipl
       });
       return;
     }
-    shake.trigger({ speak: () => speech.speak("Keep your rows. Follow the skip count once more.") });
+    const message = "Keep your rows. Follow the skip count once more.";
+    setCorrection(message);
+    shake.trigger({ speak: () => speech.speak(message) });
   }
 
   return (
@@ -280,10 +291,12 @@ function MultiplyMode({ config, onComplete, reduced, speech }: ModeProps<Multipl
             expected={expected}
             selected={selected}
             disabled={shake.wrong}
-            onSelect={setSelected}
+            onSelect={select}
           />
         )}
       </motion.div>
+
+      <RetryFeedback message={correction} />
 
       <PlayerControls>
         <Button variant="soft" size="md" onClick={reset} disabled={revealedRows === 0 || shake.wrong}>
@@ -311,6 +324,7 @@ function DivideMode({ config, onComplete, reduced, speech }: ModeProps<DivideCon
   const [attempts, setAttempts] = useState(1);
   const [stage, setStage] = useState<"share" | "facts">("share");
   const [factResults, setFactResults] = useState<number[]>([]);
+  const [correction, setCorrection] = useState<string | null>(null);
   const expected = expectedFor(config);
   const complete = isEqualDealComplete(deal);
   const factFamily = factFamilyFor(config.total, config.groups);
@@ -329,6 +343,12 @@ function DivideMode({ config, onComplete, reduced, speech }: ModeProps<DivideCon
     setSelected(null);
     setStage("share");
     setFactResults([]);
+    setCorrection(null);
+  }
+
+  function select(value: number) {
+    setSelected(value);
+    setCorrection(null);
   }
 
   function check() {
@@ -338,23 +358,27 @@ function DivideMode({ config, onComplete, reduced, speech }: ModeProps<DivideCon
       if (selected === expected) {
         setStage("facts");
         setSelected(null);
+        setCorrection(null);
         speech.speak("That is the equal share. Now build its four related facts.");
         return;
       }
       setAttempts((current) => Math.min(current + 1, 20));
-      shake.trigger({ speak: () => speech.speak("Keep the shares. Count one group again.") });
+      const message = "Keep the shares. Count one group again.";
+      setCorrection(message);
+      shake.trigger({ speak: () => speech.speak(message) });
       return;
     }
 
     if (!activeFact) return;
     if (selected !== activeFact.result) {
       setAttempts((current) => Math.min(current + 1, 20));
-      shake.trigger({
-        speak: () => speech.speak("Keep the fact. Use the same three numbers and try again."),
-      });
+      const message = "Keep the fact. Use the same three numbers and try again.";
+      setCorrection(message);
+      shake.trigger({ speak: () => speech.speak(message) });
       return;
     }
 
+    setCorrection(null);
     const completedResults = [...factResults, selected];
     if (completedResults.length === factFamily.length) {
       const [first, second, third, fourth] = completedResults;
@@ -446,7 +470,7 @@ function DivideMode({ config, onComplete, reduced, speech }: ModeProps<DivideCon
             expected={expected}
             selected={selected}
             disabled={shake.wrong}
-            onSelect={setSelected}
+            onSelect={select}
           />
         )}
 
@@ -493,11 +517,13 @@ function DivideMode({ config, onComplete, reduced, speech }: ModeProps<DivideCon
               selected={selected}
               disabled={shake.wrong}
               label={`Choose the result for ${activeFact.left} ${activeFact.operator} ${activeFact.right}`}
-              onSelect={setSelected}
+              onSelect={select}
             />
           </section>
         )}
       </motion.div>
+
+      <RetryFeedback message={correction} />
 
       <PlayerControls>
         <Button
@@ -535,6 +561,7 @@ function AreaMode({ config, onComplete, reduced, speech }: ModeProps<AreaConfig>
   const [cells, setCells] = useState(() => createAreaCells(config.rows, config.cols));
   const [selected, setSelected] = useState<number | null>(null);
   const [attempts, setAttempts] = useState(0);
+  const [correction, setCorrection] = useState<string | null>(null);
   const filled = filledAreaIndices(cells);
   const expected = expectedFor(config);
   const complete = isAreaComplete(cells);
@@ -542,11 +569,18 @@ function AreaMode({ config, onComplete, reduced, speech }: ModeProps<AreaConfig>
   function toggle(index: number) {
     if (shake.wrong) return;
     setCells((current) => toggleAreaCell(current, index));
+    setCorrection(null);
   }
 
   function reset() {
     setCells(createAreaCells(config.rows, config.cols));
     setSelected(null);
+    setCorrection(null);
+  }
+
+  function select(value: number) {
+    setSelected(value);
+    setCorrection(null);
   }
 
   function check() {
@@ -562,7 +596,9 @@ function AreaMode({ config, onComplete, reduced, speech }: ModeProps<AreaConfig>
       });
       return;
     }
-    shake.trigger({ speak: () => speech.speak("Keep the tiles. Count the unit squares again.") });
+    const message = "Keep the tiles. Count the unit squares again.";
+    setCorrection(message);
+    shake.trigger({ speak: () => speech.speak(message) });
   }
 
   return (
@@ -582,10 +618,12 @@ function AreaMode({ config, onComplete, reduced, speech }: ModeProps<AreaConfig>
             expected={expected}
             selected={selected}
             disabled={shake.wrong}
-            onSelect={setSelected}
+            onSelect={select}
           />
         )}
       </motion.div>
+
+      <RetryFeedback message={correction} />
 
       <PlayerControls>
         <Button variant="soft" size="md" onClick={reset} disabled={filled.length === 0 || shake.wrong}>

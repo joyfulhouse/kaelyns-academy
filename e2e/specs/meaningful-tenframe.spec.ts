@@ -3,6 +3,33 @@ import { expectSingleHostReward } from "../helpers";
 
 const MAKE_TEN = "/learn/kaelyn-adaptive/math/math-r7-a1";
 
+test("a wrong check keeps the counters and leaves accessible coaching visible", async ({
+  page,
+}) => {
+  await page.goto(MAKE_TEN);
+
+  for (const cell of [8, 9, 10]) {
+    await page.getByRole("button", { name: `Cell ${cell}, empty, tap to add` }).click();
+  }
+  await page.getByRole("button", { name: "Trade for a ten" }).click();
+  const check = page.getByRole("button", { name: "Check it" });
+  await check.click();
+  await expect(check).toBeDisabled();
+
+  const coaching = page.getByText("Keep your counters. Try a few more.", { exact: true });
+  await expect(coaching).toHaveAttribute("role", "status");
+  await expect(coaching).toHaveAttribute("aria-live", "polite");
+  await expect(check).toBeEnabled();
+  await expect(coaching).toBeVisible();
+  await expect(page.getByRole("img", { name: "One ten token", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: "First frame traded for one ten token", exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Cell 11, empty, tap to add" }).click();
+  await expect(page.getByText("One ten and 1 ones. 4 of 8 added.")).toBeVisible();
+});
+
 test("make-ten fills, trades, continues, and undoes with pointer and keyboard", async ({ page }) => {
   await page.goto(MAKE_TEN);
 

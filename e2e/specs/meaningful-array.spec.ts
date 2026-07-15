@@ -29,6 +29,37 @@ test("multiply mode reveals rows and announces the skip-count trail", async ({ p
   await expect(page.getByText("Skip count: 2, 4")).toBeVisible();
 });
 
+test("a wrong multiply check keeps the array and leaves accessible coaching visible", async ({
+  page,
+}) => {
+  await page.goto(`${MATH}/math-baseline-a2`);
+
+  for (let row = 1; row <= 4; row += 1) {
+    await page.getByRole("button", { name: `Reveal row ${row}` }).click();
+  }
+  await page.getByRole("button", { name: "Choose 7" }).click();
+  const check = page.getByRole("button", { name: "Check it" });
+  await check.click();
+  await expect(check).toBeDisabled();
+
+  const coaching = page.getByText("Keep your rows. Follow the skip count once more.", {
+    exact: true,
+  });
+  await expect(coaching).toHaveAttribute("role", "status");
+  await expect(coaching).toHaveAttribute("aria-live", "polite");
+  await expect(check).toBeEnabled();
+  await expect(coaching).toBeVisible();
+  await expect(page.getByRole("button", { name: "Row 4 revealed, total 8" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Choose 7" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  await page.getByRole("button", { name: "Choose 8" }).click();
+  await check.click();
+  await expectSingleHostReward(page);
+});
+
 test("five-column multiply rows stay reachable without widening a narrow page", async ({
   page,
 }) => {
