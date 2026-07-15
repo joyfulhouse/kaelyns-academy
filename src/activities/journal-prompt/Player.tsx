@@ -14,13 +14,17 @@ import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { schema, type JournalPromptResponse } from "./logic";
 import {
+  applyManualJournalText,
   contributedTextLength,
+  createJournalTextState,
   firstBlankRange,
   insertJournalText,
+  type JournalTextState,
   MAX_JOURNAL_MARKS,
   MAX_JOURNAL_TEXT_LENGTH,
   qualifiesForJournalCompletion,
   recognizedPhrase,
+  usedDictation,
 } from "./state";
 import { useDictation } from "./useDictation";
 
@@ -42,11 +46,13 @@ export function JournalPromptPlayer({
   const drawingRef = useRef(false);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
 
-  // The authored starter is rendered separately, so this state contains only
-  // child-contributed text and can never qualify merely by mounting.
-  const [text, setText] = useState("");
+  // Per-character provenance stays in memory so frames remain scaffolds while
+  // manual, word-bank, and dictated additions count as learner contribution.
+  const [textState, setTextState] = useState<JournalTextState>(() =>
+    createJournalTextState(),
+  );
+  const textStateRef = useRef(textState);
   const [markCount, setMarkCount] = useState(0);
-  const [usedDictation, setUsedDictation] = useState(false);
   const [responseMode, setResponseMode] = useState<ResponseMode>(() =>
     parsed.mode === "draw" ? "draw" : initialWritingMode(parsed),
   );
@@ -54,11 +60,13 @@ export function JournalPromptPlayer({
   useSpeakOnce(speech.speak, parsed.prompt);
 
   const showCanvas = parsed.mode !== "compose" && parsed.drawing;
-  const textLength = contributedTextLength(text);
+  const text = textState.text;
+  const textLength = contributedTextLength(textState);
+  const dictatedTextRemains = usedDictation(textState);
   const canFinish = qualifiesForJournalCompletion({
     markCount,
     textLength,
-    usedDictation,
+    usedDictation: dictatedTextRemains,
   });
 
   const setupCanvas = useCallback(() => {
@@ -143,21 +151,24 @@ export function JournalPromptPlayer({
     setResponseMode(textLength > 0 ? "type" : initialResponseMode(parsed));
   }
 
-  function changeText(next: string, mode: WritingMode | "dictate", dictated = false) {
-    const bounded = next.slice(0, MAX_JOURNAL_TEXT_LENGTH);
-    setText(bounded);
-    if (bounded.trim().length === 0) {
-      setUsedDictation(false);
+  function commitTextState(next: JournalTextState, mode: WritingMode | "dictate") {
+    textStateRef.current = next;
+    setTextState(next);
+    if (contributedTextLength(next) === 0) {
       setResponseMode(markCount > 0 ? "draw" : initialResponseMode(parsed));
       return;
     }
-    if (dictated) setUsedDictation(true);
     setResponseMode(mode);
   }
 
+  function changeText(next: string, mode: WritingMode | "dictate") {
+    commitTextState(applyManualJournalText(textStateRef.current, next), mode);
+  }
+
   function clearIdea() {
-    setText("");
-    setUsedDictation(false);
+    const empty = createJournalTextState();
+    textStateRef.current = empty;
+    setTextState(empty);
     setResponseMode(markCount > 0 ? "draw" : initialResponseMode(parsed));
   }
 
@@ -167,7 +178,7 @@ export function JournalPromptPlayer({
     const response: JournalPromptResponse = {
       markCount,
       textLength,
-      usedDictation,
+      usedDictation: dictatedTextRemains,
       mode,
       didDraw: markCount > 0,
     };
@@ -176,9 +187,10 @@ export function JournalPromptPlayer({
     clearCanvasPixels(canvasRef.current);
     drawingRef.current = false;
     lastPointRef.current = null;
-    setText("");
+    const empty = createJournalTextState();
+    textStateRef.current = empty;
+    setTextState(empty);
     setMarkCount(0);
-    setUsedDictation(false);
     onComplete(response);
   }
 
@@ -186,8 +198,10 @@ export function JournalPromptPlayer({
     return (
       <ComposeView
         config={parsed}
-        text={text}
+        textState={textState}
+        getTextState={() => textStateRef.current}
         onChangeText={changeText}
+        onCommitText={commitTextState}
         onClearText={clearIdea}
         speech={speech}
         canFinish={canFinish}
@@ -272,21 +286,26 @@ export function JournalPromptPlayer({
 
 function ComposeView({
   config,
-  text,
+  textState,
+  getTextState,
   onChangeText,
+  onCommitText,
   onClearText,
   speech,
   canFinish,
   onFinish,
 }: {
   config: ParsedJournalConfig;
-  text: string;
-  onChangeText: (next: string, mode: WritingMode | "dictate", dictated?: boolean) => void;
+  textState: JournalTextState;
+  getTextState: () => JournalTextState;
+  onChangeText: (next: string, mode: WritingMode | "dictate") => void;
+  onCommitText: (next: JournalTextState, mode: WritingMode | "dictate") => void;
   onClearText: () => void;
   speech: ReturnType<typeof useSpeech>;
   canFinish: boolean;
   onFinish: () => void;
 }) {
+  const text = textState.text;
   const reduced = useReducedMotion();
   const dictation = useDictation();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -309,8 +328,15 @@ function ComposeView({
     const textarea = textareaRef.current;
     const start = textarea?.selectionStart ?? text.length;
     const end = textarea?.selectionEnd ?? start;
-    const result = insertJournalText(text, chunk, start, end, preferBlank);
-    onChangeText(result.text, writingMode);
+    const result = insertJournalText(
+      currentTextState(),
+      chunk,
+      start,
+      end,
+      "word-bank",
+      preferBlank,
+    );
+    onCommitText(result.state, writingMode);
     restoreSelection(result.selectionStart, result.selectionEnd);
   }
 
@@ -318,9 +344,15 @@ function ComposeView({
     const textarea = textareaRef.current;
     const start = textarea?.selectionStart ?? text.length;
     const end = textarea?.selectionEnd ?? start;
-    const result = insertJournalText(text, frame, start, end);
-    onChangeText(result.text, writingMode);
-    const blank = firstBlankRange(result.text);
+    const result = insertJournalText(
+      currentTextState(),
+      frame,
+      start,
+      end,
+      "scaffold",
+    );
+    onCommitText(result.state, writingMode);
+    const blank = firstBlankRange(result.state.text);
     restoreSelection(blank?.start ?? result.selectionStart, blank?.end ?? result.selectionEnd);
   }
 
@@ -338,11 +370,20 @@ function ComposeView({
       const latestText = textarea?.value ?? text;
       const start = textarea?.selectionStart ?? latestText.length;
       const end = textarea?.selectionEnd ?? start;
-      const result = insertJournalText(latestText, phrase, start, end);
-      if (result.text === latestText) return;
-      onChangeText(result.text, "dictate", true);
+      const current = currentTextState();
+      const result = insertJournalText(current, phrase, start, end, "dictation");
+      if (result.state.text === latestText) return;
+      onCommitText(result.state, "dictate");
       restoreSelection(result.selectionStart, result.selectionEnd);
     });
+  }
+
+  function currentTextState(): JournalTextState {
+    const current = getTextState();
+    const liveText = textareaRef.current?.value;
+    return liveText !== undefined && liveText !== current.text
+      ? applyManualJournalText(current, liveText)
+      : current;
   }
 
   function clearText() {
@@ -449,7 +490,7 @@ function ComposeView({
             variant="soft"
             size="md"
             onClick={clearText}
-            disabled={contributedTextLength(text) === 0}
+            disabled={text.length === 0}
           >
             Clear idea
           </Button>

@@ -7,28 +7,83 @@ interface ParticipationState {
   usedDictation: boolean;
 }
 
-export interface TextInsertion {
+export type JournalTextSource = "scaffold" | "manual" | "word-bank" | "dictation";
+
+/** Ephemeral per-character provenance. Only the bounded summary leaves the Player. */
+export interface JournalTextState {
   text: string;
+  sources: readonly JournalTextSource[];
+}
+
+export interface TextInsertion {
+  state: JournalTextState;
   selectionStart: number;
   selectionEnd: number;
 }
 
-/**
- * Count only what follows an authored starter. The Player renders its starter
- * separately, but this keeps the evidence rule correct for legacy callers too.
- */
-export function contributedTextLength(text: string, sentenceStarter = ""): number {
-  const contribution = text.trim();
-  const starter = sentenceStarter.trim();
-  if (!starter) return Math.min(contribution.length, MAX_JOURNAL_TEXT_LENGTH);
-  if (contribution === starter) return 0;
-  if (contribution.startsWith(starter)) {
-    return Math.min(
-      contribution.slice(starter.length).trim().length,
-      MAX_JOURNAL_TEXT_LENGTH,
-    );
+export function createJournalTextState(
+  text = "",
+  source: JournalTextSource = "manual",
+): JournalTextState {
+  const bounded = text.slice(0, MAX_JOURNAL_TEXT_LENGTH);
+  return { text: bounded, sources: Array<JournalTextSource>(bounded.length).fill(source) };
+}
+
+/** Count learner-originated characters without treating authored scaffolds as work. */
+export function contributedTextLength(state: JournalTextState): number {
+  const normalized = normalizeJournalTextState(state);
+  let contribution = "";
+  for (let index = 0; index < normalized.text.length; index += 1) {
+    if (normalized.sources[index] !== "scaffold") contribution += normalized.text[index];
   }
-  return Math.min(contribution.length, MAX_JOURNAL_TEXT_LENGTH);
+  return contribution.trim().length;
+}
+
+export function usedDictation(state: JournalTextState): boolean {
+  return normalizeJournalTextState(state).sources.includes("dictation");
+}
+
+/**
+ * Reconcile a controlled-field edit by preserving provenance for the unchanged
+ * prefix/suffix and marking only newly entered characters as manual input.
+ */
+export function applyManualJournalText(
+  state: JournalTextState,
+  nextText: string,
+): JournalTextState {
+  const current = normalizeJournalTextState(state);
+  const next = nextText.slice(0, MAX_JOURNAL_TEXT_LENGTH);
+  if (next === current.text) return current;
+
+  let prefixLength = 0;
+  while (
+    prefixLength < current.text.length &&
+    prefixLength < next.length &&
+    current.text[prefixLength] === next[prefixLength]
+  ) {
+    prefixLength += 1;
+  }
+
+  let currentSuffixStart = current.text.length;
+  let nextSuffixStart = next.length;
+  while (
+    currentSuffixStart > prefixLength &&
+    nextSuffixStart > prefixLength &&
+    current.text[currentSuffixStart - 1] === next[nextSuffixStart - 1]
+  ) {
+    currentSuffixStart -= 1;
+    nextSuffixStart -= 1;
+  }
+
+  const insertedLength = nextSuffixStart - prefixLength;
+  return {
+    text: next,
+    sources: [
+      ...current.sources.slice(0, prefixLength),
+      ...Array<JournalTextSource>(insertedLength).fill("manual"),
+      ...current.sources.slice(currentSuffixStart),
+    ],
+  };
 }
 
 export function qualifiesForJournalCompletion(state: ParticipationState): boolean {
@@ -52,17 +107,19 @@ export function firstBlankRange(text: string): { start: number; end: number } | 
  * always fit the capped text.
  */
 export function insertJournalText(
-  existing: string,
+  state: JournalTextState,
   chunk: string,
   selectionStart: number,
   selectionEnd: number,
+  source: JournalTextSource,
   preferBlank = false,
 ): TextInsertion {
   const normalizedChunk = chunk.trim();
-  const boundedExisting = existing.slice(0, MAX_JOURNAL_TEXT_LENGTH);
+  const current = normalizeJournalTextState(state);
+  const boundedExisting = current.text;
   if (!normalizedChunk) {
     const caret = clampSelection(selectionStart, boundedExisting.length);
-    return { text: boundedExisting, selectionStart: caret, selectionEnd: caret };
+    return { state: current, selectionStart: caret, selectionEnd: caret };
   }
 
   let start = clampSelection(selectionStart, boundedExisting.length);
@@ -93,8 +150,22 @@ export function insertJournalText(
       : "";
   const inserted = `${prefix}${normalizedChunk}${suffix}`;
   const text = `${left}${inserted}${right}`.slice(0, MAX_JOURNAL_TEXT_LENGTH);
+  const sources = [
+    ...current.sources.slice(0, start),
+    ...Array<JournalTextSource>(inserted.length).fill(source),
+    ...current.sources.slice(end),
+  ].slice(0, MAX_JOURNAL_TEXT_LENGTH);
   const caret = Math.min(left.length + prefix.length + normalizedChunk.length, text.length);
-  return { text, selectionStart: caret, selectionEnd: caret };
+  return { state: { text, sources }, selectionStart: caret, selectionEnd: caret };
+}
+
+function normalizeJournalTextState(state: JournalTextState): JournalTextState {
+  const text = state.text.slice(0, MAX_JOURNAL_TEXT_LENGTH);
+  const sources = Array.from(
+    { length: text.length },
+    (_, index): JournalTextSource => state.sources[index] ?? "manual",
+  );
+  return { text, sources };
 }
 
 function clampSelection(value: number, textLength: number): number {

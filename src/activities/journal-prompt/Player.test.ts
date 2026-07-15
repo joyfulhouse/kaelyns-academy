@@ -21,23 +21,33 @@ describe("journal-prompt Player participation contract", () => {
     expect(moveDraw).not.toContain("setMarkCount(");
   });
 
-  it("starts child text empty, clears both contribution paths, and gates Done", () => {
+  it("starts provenance empty, clears both contribution paths, and gates Done", () => {
     const clearDrawing = functionBody("clearDrawing", "changeText");
     const clearIdea = functionBody("clearIdea", "finish");
 
-    expect(source).toContain('const [text, setText] = useState("")');
+    expect(source).toContain("createJournalTextState()");
+    expect(source).toContain("const textLength = contributedTextLength(textState)");
     expect(source).toContain("{parsed.sentenceStarter}");
     expect(clearDrawing).toContain("setMarkCount(0)");
-    expect(clearIdea).toContain('setText("")');
-    expect(clearIdea).toContain("setUsedDictation(false)");
+    expect(clearIdea).toContain("setTextState(empty)");
     expect(source).toContain("disabled={!canFinish}");
+  });
+
+  it("labels frames as scaffold and learner insertions by their actual source", () => {
+    const insertChunk = functionBody("insertChunk", "insertFrame");
+    const insertFrame = functionBody("insertFrame", "toggleDictation");
+    const toggleDictation = functionBody("toggleDictation", "currentTextState");
+
+    expect(insertFrame).toContain('"scaffold"');
+    expect(insertChunk).toContain('"word-bank"');
+    expect(toggleDictation).toContain('"dictation"');
   });
 
   it("submits only the bounded summary fields", () => {
     const finish = functionBody("finish", "ComposeView");
     expect(finish).toContain("markCount,");
     expect(finish).toContain("textLength,");
-    expect(finish).toContain("usedDictation,");
+    expect(finish).toContain("usedDictation: dictatedTextRemains,");
     expect(finish).toContain("mode,");
     expect(finish).toContain("didDraw: markCount > 0");
     expect(finish).not.toContain("drawingDataUrl");
