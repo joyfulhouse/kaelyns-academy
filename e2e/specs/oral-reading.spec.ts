@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { E2E_LEARNER_PREFIX, selectAccountLearner, uniqueTag } from "../helpers";
+import { E2E_LEARNER_PREFIX, addChild, selectAccountLearner, uniqueTag } from "../helpers";
 
 /**
  * Oral reading uses a known authored sight word. The public project proves the
@@ -101,10 +101,7 @@ test("an opted-in signed-in learner gets a matched result", async ({
     });
   });
 
-  await page.goto("/parent/learners");
-  await page.getByLabel("Child's name", { exact: true }).fill(learnerName);
-  await page.getByRole("button", { name: "Add a child" }).click();
-  await expect(page.getByRole("status")).toContainText(/enrolled/i);
+  await addChild(page, learnerName);
 
   try {
     await page.getByRole("link", { name: learnerName }).first().click();
@@ -214,10 +211,7 @@ test("sentence reading settles green and keeps mic denial on the grown-up path",
     });
   });
 
-  await page.goto("/parent/learners");
-  await page.getByLabel("Child's name", { exact: true }).fill(learnerName);
-  await page.getByRole("button", { name: "Add a child" }).click();
-  await expect(page.getByRole("status")).toContainText(/enrolled/i);
+  await addChild(page, learnerName);
 
   try {
     await page.getByRole("link", { name: learnerName }).first().click();
@@ -331,10 +325,7 @@ test("a decodable reader settles green and shows a linked reward action", async 
     });
   });
 
-  await page.goto("/parent/learners");
-  await page.getByLabel("Child's name", { exact: true }).fill(learnerName);
-  await page.getByRole("button", { name: "Add a child" }).click();
-  await expect(page.getByRole("status")).toContainText(/enrolled/i);
+  await addChild(page, learnerName);
 
   try {
     await page.getByRole("link", { name: learnerName }).first().click();
