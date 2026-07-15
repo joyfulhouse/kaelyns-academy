@@ -10,8 +10,12 @@ import { ACTIVITY_CONFIG_SCHEMAS, type ActivityKind } from "@/content/activity-c
 const KINDS = Object.keys(ACTIVITY_CONFIG_SCHEMAS) as ActivityKind[];
 
 const VALID_RESPONSES = {
-  "phonics-wordbuild": { builds: [{ word: "cat", tries: 1 }] },
-  "sightword-game": { found: ["the"], decoyTaps: 0 },
+  "phonics-wordbuild": {
+    builds: [{ wordIndex: 0, tileIndices: [0], attempts: 1 }],
+  },
+  "sightword-game": {
+    rounds: [{ roundIndex: 0, choiceIndex: 0, attempts: 1 }],
+  },
   "math-tenframe": {
     mode: "represent",
     occupiedCells: [0, 1, 2],
@@ -47,11 +51,18 @@ const VALID_RESPONSES = {
 
 const OVER_BOUNDED_RESPONSES = {
   "phonics-wordbuild": {
-    builds: Array.from({ length: 13 }, (_, index) => ({ word: `word-${index}`, tries: 1 })),
+    builds: Array.from({ length: 13 }, (_, index) => ({
+      wordIndex: index % 12,
+      tileIndices: [0],
+      attempts: 1,
+    })),
   },
   "sightword-game": {
-    found: Array.from({ length: 65 }, (_, index) => `word-${index}`),
-    decoyTaps: 0,
+    rounds: Array.from({ length: 9 }, (_, roundIndex) => ({
+      roundIndex,
+      choiceIndex: 0,
+      attempts: 1,
+    })),
   },
   "math-tenframe": {
     mode: "represent",
