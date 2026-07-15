@@ -5,6 +5,7 @@ import { BackLink } from "@/components/ui/BackLink";
 import { getLearnerInterestsForParent, getLearnerSettingsForParent } from "@/app/(parent)/data";
 import { SettingsForm } from "@/app/(parent)/parent/settings/SettingsForm";
 import { InterestsCard } from "@/components/parent/InterestsCard";
+import { parentUnlockChallenge } from "@/app/(parent)/parent-unlock-challenge";
 
 // Deliberately a static, non-identifying title (matches the learner-detail page).
 // The child's display name is child PII (spec §8) and is shown only inside the
@@ -25,6 +26,9 @@ export default async function LearnerSettingsPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const unlockChallenge = await parentUnlockChallenge();
+  if (unlockChallenge) return unlockChallenge;
+
   const { id } = await params;
   const [data, interests] = await Promise.all([
     getLearnerSettingsForParent(id),

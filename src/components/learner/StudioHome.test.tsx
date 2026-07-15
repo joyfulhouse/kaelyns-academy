@@ -3,7 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Program } from "@/content";
 
-const testState = vi.hoisted(() => ({ dueReviews: [] as unknown[] }));
+const testState = vi.hoisted(() => ({
+  dueReviews: [] as unknown[],
+  selectedLearnerId: "L1" as string | null,
+}));
 
 vi.mock("./useLearnerState", () => ({
   useLearnerState: () => ({
@@ -14,7 +17,7 @@ vi.mock("./useLearnerState", () => ({
     mode: "account",
     signedIn: true,
     learners: [{ id: "L1", displayName: "Explorer", avatar: "🦊" }],
-    selectedLearnerId: "L1",
+    selectedLearnerId: testState.selectedLearnerId,
     selectLearner: vi.fn(),
     retrySession: vi.fn(),
     setupProfile: vi.fn(),
@@ -50,7 +53,7 @@ vi.mock("./AppShellKid", () => ({
   AppShellKid: ({ children }: { children: ReactNode }) => <main>{children}</main>,
 }));
 
-import { StudioHome } from "./StudioHome";
+import { completeInterstitialHandoff, StudioHome } from "./StudioHome";
 
 const HERO_ACTIVITY = {
   id: "hero-activity",
@@ -95,11 +98,12 @@ const PROGRAM = {
   units: [UNIT],
 } as unknown as Program;
 
-describe("StudioHome Warm up row", () => {
-  beforeEach(() => {
-    testState.dueReviews = [];
-  });
+beforeEach(() => {
+  testState.dueReviews = [];
+  testState.selectedLearnerId = "L1";
+});
 
+describe("StudioHome Warm up row", () => {
   it("renders due authored reviews as a small secondary row without replacing the hero", () => {
     testState.dueReviews = [
       {
@@ -138,5 +142,118 @@ describe("StudioHome Warm up row", () => {
 
     expect(html).toContain("Continue today&#x27;s adventure");
     expect(html).not.toContain("Warm up");
+  });
+});
+
+describe("StudioHome handoff beat", () => {
+  it("locks the parent area before revealing the learner map", async () => {
+    const events: string[] = [];
+    const showRetry = vi.fn();
+
+    await completeInterstitialHandoff({
+      lockParentArea: async () => {
+        events.push("lock");
+        return { ok: true };
+      },
+      captureFailure: vi.fn(),
+      proceed: () => events.push("proceed"),
+      showRetry,
+    });
+
+    expect(events).toEqual(["lock", "proceed"]);
+    expect(showRetry).not.toHaveBeenCalled();
+  });
+
+  it("keeps the interstitial retryable when the lock action returns a failure", async () => {
+    const captureFailure = vi.fn();
+    const proceed = vi.fn();
+    const showRetry = vi.fn();
+
+    await completeInterstitialHandoff({
+      lockParentArea: async () => ({ ok: false, message: "Lock unavailable" }),
+      captureFailure,
+      proceed,
+      showRetry,
+    });
+
+    expect(captureFailure).toHaveBeenCalledWith(
+      "handoff interstitial parent lock failed",
+      expect.objectContaining({ message: "Lock unavailable" }),
+    );
+    expect(proceed).not.toHaveBeenCalled();
+    expect(showRetry).toHaveBeenCalledWith("One moment — tap GO again");
+  });
+
+  it("keeps the interstitial retryable when the lock action throws", async () => {
+    const error = new Error("network down");
+    const captureFailure = vi.fn();
+    const proceed = vi.fn();
+    const showRetry = vi.fn();
+
+    await completeInterstitialHandoff({
+      lockParentArea: async () => {
+        throw error;
+      },
+      captureFailure,
+      proceed,
+      showRetry,
+    });
+
+    expect(captureFailure).toHaveBeenCalledWith(
+      "handoff interstitial parent lock failed",
+      error,
+    );
+    expect(proceed).not.toHaveBeenCalled();
+    expect(showRetry).toHaveBeenCalledWith("One moment — tap GO again");
+  });
+
+  it("shows a one-tap handoff interstitial before the learner map", () => {
+    const html = renderToStaticMarkup(
+      <StudioHome
+        program={PROGRAM}
+        handoff={{ learnerId: "L1", showPinNudge: false }}
+      />,
+    );
+
+    expect(html).toContain("Passing to Explorer");
+    expect(html).toContain(">GO!</button>");
+    expect(html).not.toContain("Who is learning today?");
+  });
+
+  it("offers the skippable grown-up lock nudge only when requested", () => {
+    const html = renderToStaticMarkup(
+      <StudioHome
+        program={PROGRAM}
+        handoff={{ learnerId: "L1", showPinNudge: true }}
+      />,
+    );
+
+    expect(html).toContain("Lock the grown-up area first?");
+    expect(html).toContain("/parent/settings#pin");
+  });
+
+  it("uses neutral copy when the handoff id is not in the account learner list", () => {
+    const html = renderToStaticMarkup(
+      <StudioHome
+        program={PROGRAM}
+        handoff={{ learnerId: "missing", showPinNudge: false }}
+      />,
+    );
+
+    expect(html).toContain("Passing the device");
+    expect(html).not.toContain("Passing to missing");
+  });
+
+  it("keeps GO disabled until the selected learner matches the handoff id", () => {
+    testState.selectedLearnerId = "L2";
+
+    const html = renderToStaticMarkup(
+      <StudioHome
+        program={PROGRAM}
+        handoff={{ learnerId: "L1", showPinNudge: false }}
+      />,
+    );
+
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*GO!/);
   });
 });

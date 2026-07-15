@@ -53,6 +53,15 @@ describe("REQUIRED_COLUMNS coverage (schema-drift canary)", () => {
     expect(REQUIRED_COLUMNS.verification).toEqual(
       expect.arrayContaining(["id", "identifier", "value"]),
     );
+    expect(REQUIRED_COLUMNS.parent_pin).toEqual(
+      expect.arrayContaining([
+        "account_id",
+        "pin_hash",
+        "failed_attempts",
+        "locked_until",
+        "updated_at",
+      ]),
+    );
   });
 
   it("covers the new curriculum marketplace tables", () => {

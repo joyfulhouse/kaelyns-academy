@@ -11,6 +11,21 @@ export const healthCheck = pgTable("health_check", {
   checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Optional grown-up lock for a parent account. The PIN is never stored: only a
+ * per-record scrypt hash lives here. One row per Better Auth user keeps the
+ * concern account-scoped and lets account deletion remove it by cascade.
+ */
+export const parentPin = pgTable("parent_pin", {
+  accountId: text("account_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  pinHash: text("pin_hash").notNull(),
+  failedAttempts: integer("failed_attempts").notNull().default(0),
+  lockedUntil: timestamp("locked_until", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ── Curriculum marketplace tables ────────────────────────────────────────────
 // Global (not account-scoped). Slice 1 adds the structure; Slice 2 wires the
 // app to read from these instead of the static content module.

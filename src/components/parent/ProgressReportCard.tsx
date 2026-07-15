@@ -6,6 +6,7 @@ import {
   CheckCircleIcon,
   CircleHalfIcon,
   LightbulbIcon,
+  LockSimpleIcon,
   PlantIcon,
   SparkleIcon,
   SpinnerGapIcon,
@@ -31,11 +32,18 @@ type ViewState =
   | { status: "loading" }
   | { status: "ready"; report: ProgressReport }
   | { status: "empty"; learnerName: string }
+  | { status: "locked"; message: string }
   | { status: "error" };
 
 function nextState(result: ProgressReportResult): ViewState {
   if (result.ok) return { status: "ready", report: result.report };
   if (result.reason === "empty") return { status: "empty", learnerName: result.learnerName };
+  if (result.reason === "locked") {
+    return {
+      status: "locked",
+      message: result.message ?? "The grown-up area is locked. Unlock it to continue.",
+    };
+  }
   return { status: "error" };
 }
 
@@ -137,6 +145,13 @@ export function ProgressReportCard({
               Try again
             </Button>
           </div>
+        )}
+
+        {!busy && view.status === "locked" && (
+          <p className="inline-flex items-start gap-2 text-sm text-ink-soft" role="alert">
+            <LockSimpleIcon weight="regular" className="mt-0.5 size-5 shrink-0 text-accent-deep" />
+            <span>{view.message}</span>
+          </p>
         )}
 
         {!busy && view.status === "ready" && (

@@ -30,6 +30,7 @@ import { CheckpointResultsPanel } from "./CheckpointResultsPanel";
 import { programStats } from "@/content";
 import type { SkillDomain } from "@/content";
 import { cn } from "@/lib/cn";
+import { parentUnlockChallenge } from "@/app/(parent)/parent-unlock-challenge";
 
 // Deliberately a static, non-identifying title. The child's display name is
 // child PII (spec §8) and is shown only inside the authenticated page body —
@@ -74,6 +75,9 @@ export default async function LearnerDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const unlockChallenge = await parentUnlockChallenge();
+  if (unlockChallenge) return unlockChallenge;
+
   const { id } = await params;
   // Fetch detail, curriculum, fluency, and rewards in parallel. Every read is account-scoped.
   const [detail, curriculum, rewards, fluency] = await Promise.all([

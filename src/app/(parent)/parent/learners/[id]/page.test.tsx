@@ -38,6 +38,9 @@ vi.mock("@/components/parent/LearnerDataControls", () => ({
 vi.mock("./CheckpointResultsPanel", () => ({
   CheckpointResultsPanel: () => <section>Check-in results marker</section>,
 }));
+vi.mock("@/app/(parent)/parent-unlock-challenge", () => ({
+  parentUnlockChallenge: vi.fn(async () => null),
+}));
 
 import LearnerDetailPage, { metadata } from "./page";
 

@@ -11,7 +11,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // All spies referenced inside vi.mock factories must be hoisted (the factories
 // are lifted above normal declarations). FakeAPIError is the sentinel
 // verifyPassword throws on a wrong password.
-const { FakeAPIError, getSession, verifyPassword, signOut, deleteAccount } = vi.hoisted(() => {
+const {
+  FakeAPIError,
+  getSession,
+  verifyPassword,
+  signOut,
+  deleteAccount,
+  pinGateLocked,
+  recoveryRate,
+} = vi.hoisted(() => {
   class FakeAPIError extends Error {}
   return {
     FakeAPIError,
@@ -19,6 +27,8 @@ const { FakeAPIError, getSession, verifyPassword, signOut, deleteAccount } = vi.
     verifyPassword: vi.fn(),
     signOut: vi.fn(),
     deleteAccount: vi.fn(),
+    pinGateLocked: { value: false },
+    recoveryRate: vi.fn(),
   };
 });
 
@@ -30,12 +40,18 @@ vi.mock("better-auth/api", () => ({
   isAPIError: (e: unknown) => e instanceof FakeAPIError,
 }));
 
-// Real UnauthenticatedError; withAccount runs fn with a fixed ctx.
-vi.mock("@/lib/tenancy", async (importActual) => ({
-  ...(await importActual<typeof import("@/lib/tenancy")>()),
-  withAccount: vi.fn(async (fn: (ctx: { accountId: string; userId: string }) => unknown) =>
-    fn({ accountId: "U1", userId: "U1" }),
-  ),
+// Keep the PIN gate open in this suite so it can focus on the re-auth boundary.
+vi.mock("@/lib/parent-pin-gate", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/parent-pin-gate")>()),
+  withUnlockedAccount: vi.fn(async (fn: (ctx: { accountId: string; userId: string }) => unknown) => {
+    const actual = await importActual<typeof import("@/lib/parent-pin-gate")>();
+    if (pinGateLocked.value) throw new actual.ParentAreaLockedError();
+    return fn({ accountId: "U1", userId: "U1" });
+  }),
+}));
+
+vi.mock("@/lib/parent-pin-recovery-rate", () => ({
+  checkParentPinRecoveryRateLimit: recoveryRate,
 }));
 
 // The destructive store call — a spy so we can assert it's NEVER hit on refusal.
@@ -52,6 +68,8 @@ import { deleteAccountAction } from "./actions";
 const EMAIL = "parent@example.com";
 
 beforeEach(() => {
+  pinGateLocked.value = false;
+  recoveryRate.mockReturnValue({ ok: true, retryAfterSec: 0 });
   getSession.mockResolvedValue({ user: { id: "U1", email: EMAIL } });
   verifyPassword.mockResolvedValue({ status: true });
   signOut.mockResolvedValue(undefined);
@@ -60,6 +78,38 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 describe("deleteAccountAction re-auth gate", () => {
+  it("returns locked without ever checking the account password", async () => {
+    pinGateLocked.value = true;
+
+    const result = await deleteAccountAction({
+      password: "correct-horse",
+      confirmToken: EMAIL,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: "locked" });
+    expect(getSession).not.toHaveBeenCalled();
+    expect(verifyPassword).not.toHaveBeenCalled();
+    expect(deleteAccount).not.toHaveBeenCalled();
+  });
+
+  it("applies the shared recovery budget before checking the account password", async () => {
+    recoveryRate.mockReturnValueOnce({ ok: false, retryAfterSec: 300 });
+
+    const result = await deleteAccountAction({
+      password: "correct-horse",
+      confirmToken: EMAIL,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "rate-limited",
+      retryAfterSec: 300,
+    });
+    expect(getSession).not.toHaveBeenCalled();
+    expect(verifyPassword).not.toHaveBeenCalled();
+    expect(deleteAccount).not.toHaveBeenCalled();
+  });
+
   it("refuses (reauth-failed) and deletes nothing when the typed email is wrong", async () => {
     const result = await deleteAccountAction({ password: "correct-horse", confirmToken: "WRONG@example.com" });
     expect(result).toMatchObject({ ok: false, reason: "reauth-failed" });

@@ -46,7 +46,7 @@ export const EXPORT_CONTENTS = [
 export const EXPORT_NOT_EXPORTED = [
   "narration audio (shared, content-addressed, no PII)",
   "raw AI prompts (metadata only is kept; prompts can embed a child's name)",
-  "passwords / auth tokens",
+  "passwords / PIN hashes / auth tokens",
 ] as const;
 
 /** Where the manifest points for the retention policy + full inventory rationale. */

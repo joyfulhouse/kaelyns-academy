@@ -2,19 +2,32 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CaretRightIcon } from "@phosphor-icons/react/dist/ssr";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { getAccountEmail, getPrimaryLearnerSettings, listLearnerCards } from "@/app/(parent)/data";
+import {
+  getAccountEmail,
+  getParentPinConfigured,
+  getPrimaryLearnerSettings,
+  listLearnerCards,
+} from "@/app/(parent)/data";
+import { parentUnlockChallenge } from "@/app/(parent)/parent-unlock-challenge";
 import { AccountDataControls } from "@/components/parent/AccountDataControls";
-import { SettingsForm } from "./SettingsForm";
+import { GrownUpLock, SettingsForm } from "./SettingsForm";
 
 export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage() {
+  const unlockChallenge = await parentUnlockChallenge();
+  if (unlockChallenge) return unlockChallenge;
+
   // The §8 AI kill-switch / daily goal / read-aloud are PER CHILD (each learner has
   // its own settings page). So this account page must NOT present one toggle as if
   // it governed every child — a multi-child parent could turn "AI" off here and
   // believe it applied to all kids while only the first changed. Load the learners
   // and branch on count. accountEmail seeds the delete-account typed confirmation.
-  const [learners, accountEmail] = await Promise.all([listLearnerCards(), getAccountEmail()]);
+  const [learners, accountEmail, hasPin] = await Promise.all([
+    listLearnerCards(),
+    getAccountEmail(),
+    getParentPinConfigured(),
+  ]);
 
   // One child → keep the convenient inline form, clearly named. 2+ children → link
   // to each child's own settings page (no single toggle that looks account-wide).
@@ -61,6 +74,10 @@ export default async function SettingsPage() {
           </ul>
         </section>
       ) : null}
+
+      <div className="mt-10">
+        <GrownUpLock initialHasPin={hasPin} />
+      </div>
 
       {/* Account-level export + delete (re-auth gated) — spec §8 COPPA controls. */}
       <AccountDataControls accountEmail={accountEmail} />

@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import {
+  KeyIcon,
   ListChecksIcon,
+  LockKeyIcon,
   MicrophoneIcon,
   RobotIcon,
   SpeakerHighIcon,
@@ -12,9 +14,14 @@ import { Field } from "@/components/ui/Field";
 import { Select } from "@/components/ui/Select";
 import { Switch } from "@/components/ui/Switch";
 import { StatusMessage } from "@/components/ui/StatusMessage";
+import { TextInput } from "@/components/ui/TextInput";
 import { SampleBadge } from "@/components/parent/SampleBadge";
 import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { saveLearnerSettingsAction } from "@/app/(parent)/actions";
+import {
+  clearParentPinByPasswordAction,
+  setParentPinAction,
+} from "@/app/(parent)/pin-actions";
 import type { LearnerSettings } from "@/lib/content/config";
 
 /**
@@ -207,5 +214,169 @@ export function SettingsForm({
         </div>
       </section>
     </div>
+  );
+}
+
+const CLIENT_PIN_REGEX = /^\d{4,6}$/;
+
+/** Account-level shared-device lock controls for `/parent/settings`. */
+export function GrownUpLock({ initialHasPin }: { initialHasPin: boolean }) {
+  const [hasPin, setHasPin] = useState(initialHasPin);
+  const [pin, setPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [password, setPassword] = useState("");
+  const pinAction = useAsyncAction();
+  const removeAction = useAsyncAction();
+
+  function updatePin(value: string, setter: (next: string) => void) {
+    if (/^\d*$/.test(value)) setter(value);
+    pinAction.reset();
+  }
+
+  function handleSetPin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (pinAction.pending) return;
+    if (!CLIENT_PIN_REGEX.test(pin)) {
+      pinAction.fail("Use 4 to 6 numbers.");
+      return;
+    }
+    if (pin !== confirmPin) {
+      pinAction.fail("Those PINs do not match.");
+      return;
+    }
+
+    pinAction.run(() => setParentPinAction(pin, confirmPin), {
+      onSuccess: () => {
+        setHasPin(true);
+        setPin("");
+        setConfirmPin("");
+      },
+      fallbackMessage: "We could not save the PIN right now. Try again.",
+    });
+  }
+
+  function handleRemovePin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (removeAction.pending) return;
+    if (!password) {
+      removeAction.fail("Enter your account password.");
+      return;
+    }
+
+    removeAction.run(() => clearParentPinByPasswordAction(password), {
+      onSuccess: () => {
+        setHasPin(false);
+        setPassword("");
+        setPin("");
+        setConfirmPin("");
+      },
+      fallbackMessage: "We could not remove the PIN right now. Try again.",
+    });
+  }
+
+  return (
+    <section id="pin" className="scroll-mt-24" aria-labelledby="grown-up-lock-heading">
+      <div className="flex items-start gap-3">
+        <span
+          aria-hidden="true"
+          className="mt-0.5 grid size-10 shrink-0 place-items-center rounded-md border border-line bg-accent/12 text-accent-deep"
+        >
+          <LockKeyIcon weight="regular" className="size-5" />
+        </span>
+        <div>
+          <h2 id="grown-up-lock-heading" className="font-display text-xl font-semibold tracking-tight">
+            Grown-up lock
+          </h2>
+          <p className="mt-1 max-w-prose text-sm text-ink-soft">
+            Add a 4–6 digit PIN before handing over a shared device. Once unlocked, the grown-up
+            area stays open for 15 minutes in this browser.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-5 rounded-xl border border-line">
+        <form onSubmit={handleSetPin} className="p-5">
+          <h3 className="font-display text-base font-semibold">
+            {hasPin ? "Change PIN" : "Set PIN"}
+          </h3>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <Field id="grown-up-pin" label={hasPin ? "New PIN" : "PIN"}>
+              {(field) => (
+                <TextInput
+                  {...field}
+                  icon={<KeyIcon weight="regular" className="size-5" />}
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  autoComplete="new-password"
+                  maxLength={6}
+                  value={pin}
+                  onChange={(event) => updatePin(event.target.value, setPin)}
+                  disabled={pinAction.pending}
+                />
+              )}
+            </Field>
+            <Field id="grown-up-pin-confirm" label="Confirm PIN">
+              {(field) => (
+                <TextInput
+                  {...field}
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  autoComplete="new-password"
+                  maxLength={6}
+                  value={confirmPin}
+                  onChange={(event) => updatePin(event.target.value, setConfirmPin)}
+                  disabled={pinAction.pending}
+                />
+              )}
+            </Field>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button type="submit" variant="accent" size="md" disabled={pinAction.pending}>
+              {pinAction.pending ? "Saving…" : hasPin ? "Change PIN" : "Set PIN"}
+            </Button>
+            {pinAction.succeeded && <StatusMessage tone="success">PIN saved.</StatusMessage>}
+            {pinAction.error !== null && (
+              <StatusMessage tone="error">{pinAction.error}</StatusMessage>
+            )}
+          </div>
+        </form>
+
+        {hasPin && (
+          <form onSubmit={handleRemovePin} className="border-t border-line p-5">
+            <h3 className="font-display text-base font-semibold">Remove PIN</h3>
+            <p className="mt-1 text-sm text-ink-soft">
+              Confirm with your account password. This does not change your password.
+            </p>
+            <div className="mt-4 max-w-sm">
+              <Field id="remove-pin-password" label="Account password">
+                {(field) => (
+                  <TextInput
+                    {...field}
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(event) => {
+                      setPassword(event.target.value);
+                      removeAction.reset();
+                    }}
+                    disabled={removeAction.pending}
+                  />
+                )}
+              </Field>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <Button type="submit" variant="soft" size="md" disabled={removeAction.pending}>
+                {removeAction.pending ? "Checking…" : "Remove PIN"}
+              </Button>
+              {removeAction.error !== null && (
+                <StatusMessage tone="error">{removeAction.error}</StatusMessage>
+              )}
+            </div>
+          </form>
+        )}
+      </div>
+    </section>
   );
 }

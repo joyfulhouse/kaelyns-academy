@@ -7,6 +7,7 @@ const { captureNonCritical } = vi.hoisted(() => ({ captureNonCritical: vi.fn() }
 vi.mock("@/lib/capture", () => ({ captureNonCritical }));
 
 import { parseInput, mapActionError } from "./results";
+import { ParentAreaLockedError } from "@/lib/parent-pin-gate";
 import { UnauthenticatedError } from "@/lib/tenancy";
 
 afterEach(() => vi.clearAllMocks());
@@ -47,6 +48,21 @@ describe("mapActionError", () => {
       ok: false,
       reason: "unauthenticated",
       message: "Please sign in again.",
+    });
+    expect(captureNonCritical).not.toHaveBeenCalled();
+  });
+
+  it("maps an opted-in parent lock signal to calm unlock copy without logging", () => {
+    const result = mapActionError(
+      new ParentAreaLockedError(),
+      "ctx",
+      "Unavailable, try again.",
+      { allowLocked: true },
+    );
+    expect(result).toEqual({
+      ok: false,
+      reason: "locked",
+      message: "The grown-up area is locked. Unlock it to continue.",
     });
     expect(captureNonCritical).not.toHaveBeenCalled();
   });

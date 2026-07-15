@@ -9,6 +9,7 @@ import {
   enrollment,
   generatedActivity,
   learner,
+  parentPin,
   publisher,
   reviewSchedule,
   session,
@@ -64,6 +65,10 @@ describe("account-delete cascade map (FK ON DELETE)", () => {
     expect(fkOnDelete(account, "user_id")).toBe("cascade");
   });
 
+  it("cascades the parent PIN row off user", () => {
+    expect(fkOnDelete(parentPin, "account_id")).toBe("cascade");
+  });
+
   it("SET NULL (never cascade) for publisher.ownerUserId — published programs survive", () => {
     // The load-bearing exception: a published program must not vanish because its
     // author closed their account; ownership nulls out instead.
@@ -77,6 +82,20 @@ describe("account-delete cascade map (FK ON DELETE)", () => {
       targets.has(getTableName(fk.reference().foreignTable)),
     );
     expect(refsUserOrLearner).toBe(false);
+  });
+});
+
+describe("parent_pin schema", () => {
+  it("stores the derived hash and durable account-scoped attempt budget", () => {
+    expect(Object.keys(parentPin)).toEqual(
+      expect.arrayContaining([
+        "accountId",
+        "pinHash",
+        "failedAttempts",
+        "lockedUntil",
+        "updatedAt",
+      ]),
+    );
   });
 });
 

@@ -3,7 +3,8 @@
 // package isn't installed; this comment is the guard, and only the parent
 // server components / actions import it.)
 import { getSessionOrNull } from "@/lib/auth";
-import { withAccount } from "@/lib/tenancy";
+import { withUnlockedAccount } from "@/lib/parent-pin-gate";
+import { getParentPinHash } from "@/lib/parent-pin-store";
 import {
   getFluencyHistory,
   getLearnerSettings,
@@ -45,11 +46,12 @@ import type { EnrollmentStatus } from "@/lib/tutor/enrollment";
 import type { EnrolledProgramView } from "@/lib/parent-views";
 
 /**
- * Read helpers for the parent surface, every one scoped through `withAccount`
- * (the tenancy seam) so a parent only ever sees their own account's data. The
+ * Read helpers for the parent surface, every account-scoped one protected by
+ * `withUnlockedAccount` so a valid session cannot outlive the device PIN grace
+ * window during a soft navigation. The
  * pages stay declarative; the DB shaping (skill_state -> per-strand outcomes,
  * attempts -> readable rows) lives here. Build-safe: nothing connects at module
- * top level; `withAccount` resolves the session and opens the DB per-request.
+ * top level; the gate resolves the session and opens the DB per-request.
  */
 
 /** The core program every learner is enrolled in by default (see ensureEnrollment). */
@@ -201,12 +203,14 @@ async function buildLearnerCards(accountId: string): Promise<LearnerCard[]> {
 
 /** The account's learners, each with an outcome summary, for the overview/list. */
 export async function listLearnerCards(): Promise<LearnerCard[]> {
-  return withAccount(({ accountId }) => buildLearnerCards(accountId));
+  return withUnlockedAccount(({ accountId }) => buildLearnerCards(accountId), {
+    lockedFallback: () => [],
+  });
 }
 
 /**
  * The Settings page read: the primary (first) learner's id plus their persisted
- * `LearnerSettings`. Account-scoped (withAccount) and resolved in a single pass
+ * `LearnerSettings`. Account-scoped and unlock-gated in a single pass
  * so the form can initialize its toggles from what's actually stored — a parent
  * who turned the §8 AI kill-switch OFF must see it stay OFF across reloads, not
  * silently re-enabled from hardcoded defaults. Returns null settings when there
@@ -218,13 +222,16 @@ export interface PrimaryLearnerSettings {
 }
 
 export async function getPrimaryLearnerSettings(): Promise<PrimaryLearnerSettings> {
-  return withAccount(async ({ accountId }) => {
-    const learners = await listLearners(accountId);
-    const primary = learners[0];
-    if (!primary) return { primaryLearnerId: null, settings: null };
-    const settings = await getLearnerSettings(accountId, primary.id);
-    return { primaryLearnerId: primary.id, settings };
-  });
+  return withUnlockedAccount(
+    async ({ accountId }) => {
+      const learners = await listLearners(accountId);
+      const primary = learners[0];
+      if (!primary) return { primaryLearnerId: null, settings: null };
+      const settings = await getLearnerSettings(accountId, primary.id);
+      return { primaryLearnerId: primary.id, settings };
+    },
+    { lockedFallback: () => ({ primaryLearnerId: null, settings: null }) },
+  );
 }
 
 /**
@@ -234,8 +241,18 @@ export async function getPrimaryLearnerSettings(): Promise<PrimaryLearnerSetting
  * when there is no session (the gated page won't render in that case anyway).
  */
 export async function getAccountEmail(): Promise<string | null> {
-  const session = await getSessionOrNull();
-  return session?.user?.email ?? null;
+  return withUnlockedAccount(
+    async () => (await getSessionOrNull())?.user?.email ?? null,
+    { lockedFallback: () => null },
+  );
+}
+
+/** Whether the unlocked account currently has a grown-up PIN configured. */
+export async function getParentPinConfigured(): Promise<boolean> {
+  return withUnlockedAccount(
+    async ({ accountId }) => (await getParentPinHash(accountId)) !== null,
+    { lockedFallback: () => false },
+  );
 }
 
 /** The per-learner settings page read: the requested learner + their persisted
@@ -257,16 +274,18 @@ export interface LearnerSettingsForParent {
 export async function getLearnerSettingsForParent(
   learnerId: string,
 ): Promise<LearnerSettingsForParent | null> {
-  return withAccount(({ accountId }) =>
-    withOwnedLearner<LearnerSettingsForParent | null>(
-      accountId,
-      learnerId,
-      async (learner) => {
-        const settings = await getLearnerSettings(accountId, learner.id);
-        return { learner, settings };
-      },
-      null,
-    ),
+  return withUnlockedAccount(
+    ({ accountId }) =>
+      withOwnedLearner<LearnerSettingsForParent | null>(
+        accountId,
+        learnerId,
+        async (learner) => {
+          const settings = await getLearnerSettings(accountId, learner.id);
+          return { learner, settings };
+        },
+        null,
+      ),
+    { lockedFallback: () => null },
   );
 }
 
@@ -288,19 +307,21 @@ export interface LearnerInterestsForParent {
 export async function getLearnerInterestsForParent(
   learnerId: string,
 ): Promise<LearnerInterestsForParent | null> {
-  return withAccount(({ accountId }) =>
-    withOwnedLearner<LearnerInterestsForParent | null>(
-      accountId,
-      learnerId,
-      async (learner) => {
-        const [allInterests, { offered }] = await Promise.all([
-          listPublishedInterests(),
-          getLearnerInterests(accountId, learner.id),
-        ]);
-        return { learner, allInterests, offeredIds: offered.map((o) => o.id) };
-      },
-      null,
-    ),
+  return withUnlockedAccount(
+    ({ accountId }) =>
+      withOwnedLearner<LearnerInterestsForParent | null>(
+        accountId,
+        learnerId,
+        async (learner) => {
+          const [allInterests, { offered }] = await Promise.all([
+            listPublishedInterests(),
+            getLearnerInterests(accountId, learner.id),
+          ]);
+          return { learner, allInterests, offeredIds: offered.map((o) => o.id) };
+        },
+        null,
+      ),
+    { lockedFallback: () => null },
   );
 }
 
@@ -343,13 +364,14 @@ export interface LearnerRewards {
 /**
  * The parent Rewards panel read (Task 10): the requested learner's star balance
  * plus their newest ~10 ledger entries, each enriched with friendly reason copy
- * and a relative date. Account-scoped (withAccount); returns null when the
+ * and a relative date. Account-scoped and unlock-gated; returns null when the
  * learner does not exist or is not this account's (the page 404s), matching
  * {@link getLearnerSettingsForParent}.
  */
 export async function getLearnerRewards(learnerId: string): Promise<LearnerRewards | null> {
-  return withAccount(({ accountId }) =>
-    withOwnedLearner<LearnerRewards | null>(
+  return withUnlockedAccount(
+    ({ accountId }) =>
+      withOwnedLearner<LearnerRewards | null>(
       accountId,
       learnerId,
       async (learner) => {
@@ -370,7 +392,8 @@ export async function getLearnerRewards(learnerId: string): Promise<LearnerRewar
         };
       },
       null,
-    ),
+      ),
+    { lockedFallback: () => null },
   );
 }
 
@@ -388,8 +411,9 @@ export interface FluencySeries {
  * reader runs; the store applies the same gate at its own boundary.
  */
 export async function getLearnerFluency(learnerId: string): Promise<FluencySeries | null> {
-  return withAccount(({ accountId }) =>
-    withOwnedLearner<FluencySeries | null>(
+  return withUnlockedAccount(
+    ({ accountId }) =>
+      withOwnedLearner<FluencySeries | null>(
       accountId,
       learnerId,
       async (learner) => {
@@ -414,7 +438,8 @@ export async function getLearnerFluency(learnerId: string): Promise<FluencySerie
         };
       },
       null,
-    ),
+      ),
+    { lockedFallback: () => null },
   );
 }
 
@@ -442,15 +467,16 @@ export interface LearnerActivityTrail {
  * The per-learner provenance page read (P6 / spec §8 "parent-visible 'what the
  * AI made' trail"): the requested learner + a page of their AI-generated
  * attempts, each enriched with a readable activity title + a friendly date.
- * Account-scoped (withAccount); returns null when the learner isn't this
+ * Account-scoped and unlock-gated; returns null when the learner isn't this
  * account's (the page 404s). Keyset-paginated via `cursor`.
  */
 export async function getLearnerActivityTrail(
   learnerId: string,
   cursor?: string | null,
 ): Promise<LearnerActivityTrail | null> {
-  return withAccount(({ accountId }) =>
-    withOwnedLearner<LearnerActivityTrail | null>(
+  return withUnlockedAccount(
+    ({ accountId }) =>
+      withOwnedLearner<LearnerActivityTrail | null>(
       accountId,
       learnerId,
       async (learner) => {
@@ -469,7 +495,8 @@ export async function getLearnerActivityTrail(
         return { learner, rows, nextCursor: page.nextCursor };
       },
       null,
-    ),
+      ),
+    { lockedFallback: () => null },
   );
 }
 
@@ -524,8 +551,9 @@ function outcomeFor(state: SkillState, slug: SkillTag): SkillOutcome | undefined
  * account's (the page turns that into a 404).
  */
 export async function getLearnerDetail(learnerId: string): Promise<LearnerDetail | null> {
-  return withAccount(({ accountId }) =>
-    withOwnedLearner<LearnerDetail | null>(
+  return withUnlockedAccount(
+    ({ accountId }) =>
+      withOwnedLearner<LearnerDetail | null>(
       accountId,
       learnerId,
       async (learner) => {
@@ -559,7 +587,8 @@ export async function getLearnerDetail(learnerId: string): Promise<LearnerDetail
         };
       },
       null,
-    ),
+      ),
+    { lockedFallback: () => null },
   );
 }
 
@@ -576,23 +605,26 @@ export interface OverviewData {
  * for the first learner, their recent activity. One pass, account-scoped.
  */
 export async function getOverview(): Promise<OverviewData> {
-  return withAccount(async ({ accountId }) => {
-    const cards = await buildLearnerCards(accountId);
-    const first = cards[0];
-    if (!first) return { learners: cards, primary: null };
+  return withUnlockedAccount(
+    async ({ accountId }) => {
+      const cards = await buildLearnerCards(accountId);
+      const first = cards[0];
+      if (!first) return { learners: cards, primary: null };
 
-    const attempts = await getRecentAttempts(accountId, first.learner.id, 6);
-    return {
-      learners: cards,
-      primary: {
-        learner: first.learner,
-        program: first.program,
-        summary: first.summary,
-        recent: await Promise.all(attempts.map((a) => toActivityRow(first.program, a))),
-        hasActivity: attempts.length > 0,
-      },
-    };
-  });
+      const attempts = await getRecentAttempts(accountId, first.learner.id, 6);
+      return {
+        learners: cards,
+        primary: {
+          learner: first.learner,
+          program: first.program,
+          summary: first.summary,
+          recent: await Promise.all(attempts.map((a) => toActivityRow(first.program, a))),
+          hasActivity: attempts.length > 0,
+        },
+      };
+    },
+    { lockedFallback: () => ({ learners: [], primary: null }) },
+  );
 }
 
 /** Map a learner's display name into the initial used for the avatar tile. */
@@ -617,12 +649,13 @@ export interface LearnerCurriculum {
 }
 
 /**
- * Resolve the curriculum view for one learner. Account-scoped (withAccount).
+ * Resolve the unlock-gated curriculum view for one account-owned learner.
  * Returns empty lists when the learner does not exist or is not this account's.
  */
 export async function getLearnerCurriculum(learnerId: string): Promise<LearnerCurriculum> {
-  return withAccount(async ({ accountId }) => {
-    const enrollments = await listEnrollmentsDetailed(accountId, learnerId);
+  return withUnlockedAccount(
+    async ({ accountId }) => {
+      const enrollments = await listEnrollmentsDetailed(accountId, learnerId);
 
     // Resolve each enrollment's program tree for its title + units.
     const enrolled: EnrolledProgramView[] = await Promise.all(
@@ -647,8 +680,10 @@ export async function getLearnerCurriculum(learnerId: string): Promise<LearnerCu
     const allSummaries = await listProgramSummariesAsync();
     const available = allSummaries.filter((s) => !activeSlugs.has(s.slug));
 
-    return { enrolled, available };
-  });
+      return { enrolled, available };
+    },
+    { lockedFallback: () => ({ enrolled: [], available: [] }) },
+  );
 }
 
 /* ── Marketplace catalog read helpers ─────────────────────────────────────── */
@@ -721,11 +756,11 @@ export interface ProgramDetail {
 }
 
 /**
- * Resolve a program-detail view. Account-scoped (withAccount) so each learner's
+ * Resolve a program-detail view. Account-scoped and unlock-gated so each learner's
  * enrollment status is scoped to the signed-in parent. Returns null when the
  * program does not exist (page should 404).
  */
-export async function getProgramDetail(slug: string): Promise<ProgramDetail | null> {
+async function buildProgramDetail(accountId: string, slug: string): Promise<ProgramDetail | null> {
   const program = await getProgramAsync(slug);
   if (!program) return null;
 
@@ -763,17 +798,22 @@ export async function getProgramDetail(slug: string): Promise<ProgramDetail | nu
   const stats = programStats(program);
 
   // Learners: account's children, each with their enrollment status for this slug.
-  const learners = await withAccount(async ({ accountId }) => {
-    const learnerRows = await listLearners(accountId);
-    return Promise.all(
-      learnerRows.map(async (learner) => {
-        const enrollments = await listEnrollmentsDetailed(accountId, learner.id);
-        const enrollment = enrollments.find((e) => e.slug === slug);
-        const status: EnrollmentStatus | "none" = enrollment ? enrollment.status : "none";
-        return { id: learner.id, displayName: learner.displayName, status };
-      }),
-    );
-  });
+  const learnerRows = await listLearners(accountId);
+  const learners = await Promise.all(
+    learnerRows.map(async (learner) => {
+      const enrollments = await listEnrollmentsDetailed(accountId, learner.id);
+      const enrollment = enrollments.find((e) => e.slug === slug);
+      const status: EnrollmentStatus | "none" = enrollment ? enrollment.status : "none";
+      return { id: learner.id, displayName: learner.displayName, status };
+    }),
+  );
 
   return { summary, units, skills, stats, learners };
+}
+
+export async function getProgramDetail(slug: string): Promise<ProgramDetail | null> {
+  return withUnlockedAccount(
+    ({ accountId }) => buildProgramDetail(accountId, slug),
+    { lockedFallback: () => null },
+  );
 }

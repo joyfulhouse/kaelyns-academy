@@ -10,6 +10,7 @@ import { Select } from "@/components/ui/Select";
 import { StatusMessage } from "@/components/ui/StatusMessage";
 import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { createLearnerAction } from "@/app/(parent)/actions";
+import { HandoffButton } from "@/components/parent/HandoffButton";
 
 /**
  * "Add a child" form on the parent learners page. Calm and honest: a name (the
@@ -41,8 +42,8 @@ export function AddChildForm() {
   const monthId = useId();
   const [name, setName] = useState("");
   const [birthMonth, setBirthMonth] = useState("");
-  // Name of the just-added learner, for the success confirmation copy.
-  const [savedName, setSavedName] = useState("");
+  // The just-added learner, for the success confirmation + one-tap handoff.
+  const [savedLearner, setSavedLearner] = useState<{ id: string; displayName: string } | null>(null);
   const { run, pending, error, succeeded, reset, fail } = useAsyncAction();
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -58,7 +59,7 @@ export function AddChildForm() {
 
     run(() => createLearnerAction({ displayName: name, birthMonth }), {
       onSuccess: (result) => {
-        setSavedName(result.learner.displayName);
+        setSavedLearner({ id: result.learner.id, displayName: result.learner.displayName });
         setName("");
         setBirthMonth("");
         router.refresh();
@@ -116,10 +117,19 @@ export function AddChildForm() {
           {pending ? "Adding…" : "Add a child"}
         </Button>
 
-        {succeeded && (
-          <StatusMessage tone="success">
-            {savedName} is enrolled. Welcome aboard.
-          </StatusMessage>
+        {succeeded && savedLearner && (
+          <div className="flex w-full flex-col items-start gap-3 rounded-lg border border-line bg-accent/8 p-4">
+            <StatusMessage tone="success">
+              {savedLearner.displayName} is enrolled. Welcome aboard.
+            </StatusMessage>
+            <p className="text-sm text-ink-soft">
+              {savedLearner.displayName} learns on this device through your account — no child login.
+            </p>
+            <HandoffButton
+              learnerId={savedLearner.id}
+              learnerName={savedLearner.displayName}
+            />
+          </div>
         )}
 
         {error !== null && error.length === 0 && (

@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { BackLink } from "@/components/ui/BackLink";
 import { getLearnerActivityTrail } from "@/app/(parent)/data";
 import { AiProvenanceList } from "@/components/parent/AiProvenanceList";
+import { parentUnlockChallenge } from "@/app/(parent)/parent-unlock-challenge";
 
 // Deliberately a static, non-identifying title (matches the learner-detail page).
 // The child's display name is child PII (spec §8) and appears only in the page
@@ -25,6 +26,9 @@ export default async function LearnerActivityPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ cursor?: string }>;
 }) {
+  const unlockChallenge = await parentUnlockChallenge();
+  if (unlockChallenge) return unlockChallenge;
+
   const { id } = await params;
   const { cursor } = await searchParams;
   const trail = await getLearnerActivityTrail(id, cursor ?? null);

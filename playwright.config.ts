@@ -107,6 +107,12 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: "e2e/.auth/parent.json" },
     },
     {
+      name: "parent-pin",
+      testMatch: /specs\/parent-pin\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: "e2e/.auth/parent.json" },
+    },
+    {
       name: "admin",
       testMatch: /specs\/admin\.spec\.ts/,
       dependencies: ["setup"],

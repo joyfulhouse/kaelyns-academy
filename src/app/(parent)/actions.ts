@@ -6,8 +6,14 @@ import { z } from "zod";
 import { isAPIError } from "better-auth/api";
 import { captureNonCritical } from "@/lib/capture";
 import { getAuth } from "@/lib/auth";
-import { UnauthenticatedError, withAccount } from "@/lib/tenancy";
-import { mapActionError, parseInput } from "@/lib/actions/results";
+import { withUnlockedAccount } from "@/lib/parent-pin-gate";
+import { checkParentPinRecoveryRateLimit } from "@/lib/parent-pin-recovery-rate";
+import { clientIp } from "@/lib/request-ip";
+import {
+  mapActionError,
+  parseInput,
+  type ActionGateReason,
+} from "@/lib/actions/results";
 import { findActivity, getSkill, type SkillTag } from "@/content";
 import { getProgramAsync, listProgramsAsync } from "@/lib/content/repository";
 import { getPublishedVersionId } from "@/lib/content/store";
@@ -45,12 +51,12 @@ import { ADAPTIVE_PROGRAM_SLUG, kindLabel } from "./data";
 
 /**
  * Parent-gated server actions for the parent surface. Every one runs inside
- * `withAccount` (the tenancy seam), which resolves the Better Auth session
- * per-request and scopes all reads/writes to the signed-in account, so a parent
- * can only ever touch their own learners. Build-safe: `withAccount` is the only
- * thing that touches auth/DB and it is invoked per-call, never at module top
- * level.
+ * `withUnlockedAccount`, which resolves the Better Auth session, enforces the
+ * current device's PIN unlock, and scopes all reads/writes to the signed-in
+ * account. It is invoked per-call, never at module top level.
  */
+
+const PARENT_ACTION_ERROR_OPTIONS = { allowLocked: true } as const;
 
 /* ── Create a child profile ──────────────────────────────────────────────── */
 
@@ -86,11 +92,11 @@ const createLearnerSchema = z.object({
 /** Discriminated result so the form renders calm states, never a thrown stack. */
 export type CreateLearnerResult =
   | { ok: true; learner: LearnerRow }
-  | { ok: false; reason: "unauthenticated" | "invalid" | "unavailable"; message: string };
+  | { ok: false; reason: ActionGateReason | "invalid" | "unavailable"; message: string };
 
 /**
  * Create a learner for the current account and enroll them in the adaptive
- * program. Validates input, scopes the write via withAccount, and revalidates
+ * program. Validates input, scopes the write via withUnlockedAccount, and revalidates
  * the parent surfaces so the new learner appears immediately.
  */
 export async function createLearnerAction(input: {
@@ -101,7 +107,7 @@ export async function createLearnerAction(input: {
   if (!parsed.ok) return parsed;
 
   try {
-    const learner = await withAccount(async ({ accountId }) => {
+    const learner = await withUnlockedAccount(async ({ accountId }) => {
       const created = await createLearner(accountId, {
         displayName: parsed.data.displayName,
         birthMonth: parsed.data.birthMonth,
@@ -118,6 +124,7 @@ export async function createLearnerAction(input: {
       error,
       "create learner failed",
       "We could not add the learner right now. Please try again in a moment.",
+      PARENT_ACTION_ERROR_OPTIONS,
     );
   }
 }
@@ -128,12 +135,16 @@ export async function createLearnerAction(input: {
  * Discriminated result so the client renders calm states, never a thrown stack.
  *  - ok+report: a generated narrative grounded in this learner's real data.
  *  - empty: the learner has no attempts yet; we do NOT call the model, we invite.
- *  - unauthenticated / unavailable: gate + graceful AI-failure fallbacks.
+ *  - unauthenticated / locked / unavailable: gate + graceful AI-failure fallbacks.
  */
 export type ProgressReportResult =
   | { ok: true; report: ProgressReport; learnerName: string }
   | { ok: false; reason: "empty"; learnerName: string }
-  | { ok: false; reason: "unauthenticated" | "no-learner" | "unavailable" };
+  | {
+      ok: false;
+      reason: ActionGateReason | "no-learner" | "unavailable";
+      message?: string;
+    };
 
 /** Map a learner's DB skill_state to the labelled shape the report grounds on. */
 function buildReportSkills(state: SkillState): ProgressReportSkill[] {
@@ -152,7 +163,7 @@ function buildReportSkills(state: SkillState): ProgressReportSkill[] {
  * account's first learner) grounded STRICTLY in their real skill_state + recent
  * attempts. If the learner has no activity yet, return a friendly "empty"
  * result instead of inventing progress (assessment.md §3 / child-data posture).
- * Account-scoped via withAccount; build-safe (no top-level auth/DB).
+ * Account-scoped via withUnlockedAccount; build-safe (no top-level auth/DB).
  */
 export async function requestProgressReport(learnerId?: string): Promise<ProgressReportResult> {
   let resolved:
@@ -161,7 +172,7 @@ export async function requestProgressReport(learnerId?: string): Promise<Progres
     | { noLearner: true };
 
   try {
-    resolved = await withAccount(async ({ accountId }) => {
+    resolved = await withUnlockedAccount(async ({ accountId }) => {
       const learners = await listLearners(accountId);
       const learner = learnerId
         ? learners.find((l) => l.id === learnerId)
@@ -190,9 +201,12 @@ export async function requestProgressReport(learnerId?: string): Promise<Progres
       };
     });
   } catch (error) {
-    if (error instanceof UnauthenticatedError) return { ok: false, reason: "unauthenticated" };
-    captureNonCritical("parent progress report read failed", error);
-    return { ok: false, reason: "unavailable" };
+    return mapActionError(
+      error,
+      "parent progress report read failed",
+      "The report is unavailable right now. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
+    );
   }
 
   if ("noLearner" in resolved) return { ok: false, reason: "no-learner" };
@@ -229,7 +243,7 @@ type EnrollmentActionResult =
   | { ok: true }
   | {
       ok: false;
-      reason: "unauthenticated" | "invalid" | "not-found" | "unavailable";
+      reason: ActionGateReason | "invalid" | "not-found" | "unavailable";
       message: string;
     };
 
@@ -258,7 +272,7 @@ export async function assignProgramAction(
 
     const programVersionId = await getPublishedVersionId(slug);
 
-    const assigned = await withAccount(async ({ accountId }) => {
+    const assigned = await withUnlockedAccount(async ({ accountId }) => {
       return assignProgram(accountId, learnerId, slug, programVersionId);
     });
 
@@ -273,7 +287,12 @@ export async function assignProgramAction(
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
   } catch (error) {
-    return mapActionError(error, "assignProgramAction failed", "Could not assign the program. Please try again.");
+    return mapActionError(
+      error,
+      "assignProgramAction failed",
+      "Could not assign the program. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
+    );
   }
 }
 
@@ -291,7 +310,7 @@ export async function removeProgramAction(
   }
 
   try {
-    const updated = await withAccount(async ({ accountId }) => {
+    const updated = await withUnlockedAccount(async ({ accountId }) => {
       return setEnrollmentStatus(accountId, learnerId, slug, "removed");
     });
 
@@ -306,7 +325,12 @@ export async function removeProgramAction(
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
   } catch (error) {
-    return mapActionError(error, "removeProgramAction failed", "Could not remove the program. Please try again.");
+    return mapActionError(
+      error,
+      "removeProgramAction failed",
+      "Could not remove the program. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
+    );
   }
 }
 
@@ -324,7 +348,7 @@ export async function restoreProgramAction(
   }
 
   try {
-    const updated = await withAccount(async ({ accountId }) => {
+    const updated = await withUnlockedAccount(async ({ accountId }) => {
       return setEnrollmentStatus(accountId, learnerId, slug, "active");
     });
 
@@ -339,7 +363,12 @@ export async function restoreProgramAction(
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
   } catch (error) {
-    return mapActionError(error, "restoreProgramAction failed", "Could not restore the program. Please try again.");
+    return mapActionError(
+      error,
+      "restoreProgramAction failed",
+      "Could not restore the program. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
+    );
   }
 }
 
@@ -372,7 +401,7 @@ export async function updateEnrollmentConfigAction(
   };
 
   try {
-    const updated = await withAccount(async ({ accountId }) => {
+    const updated = await withUnlockedAccount(async ({ accountId }) => {
       return setEnrollmentConfig(accountId, learnerId, slug, normalized);
     });
 
@@ -387,7 +416,12 @@ export async function updateEnrollmentConfigAction(
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
   } catch (error) {
-    return mapActionError(error, "updateEnrollmentConfigAction failed", "Could not update the config. Please try again.");
+    return mapActionError(
+      error,
+      "updateEnrollmentConfigAction failed",
+      "Could not update the config. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
+    );
   }
 }
 
@@ -410,7 +444,7 @@ export async function saveLearnerSettingsAction(
   try {
     // settingsParsed.data is already LearnerSettings (inferred from the Zod
     // schema) — no cast, so a schema/type drift surfaces as a type error here.
-    const saved = await withAccount(async ({ accountId }) => {
+    const saved = await withUnlockedAccount(async ({ accountId }) => {
       return saveLearnerSettings(accountId, learnerId, settingsParsed.data);
     });
 
@@ -425,7 +459,12 @@ export async function saveLearnerSettingsAction(
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
   } catch (error) {
-    return mapActionError(error, "saveLearnerSettingsAction failed", "Could not save settings. Please try again.");
+    return mapActionError(
+      error,
+      "saveLearnerSettingsAction failed",
+      "Could not save settings. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
+    );
   }
 }
 
@@ -436,7 +475,7 @@ export async function saveLearnerSettingsAction(
  * "baseline") and flips the checkpoint result to "applied". Nothing about the
  * learner's skill_state changes until the parent explicitly confirms here —
  * never auto-applied. Mirrors {@link saveLearnerSettingsAction}'s
- * parse/withAccount/revalidate shape; `learnerId` isn't needed by the store
+ * parse/withUnlockedAccount/revalidate shape; `learnerId` isn't needed by the store
  * call (tenancy is resolved from the checkpoint row itself) but is taken here
  * so the specific learner page can be revalidated, matching every other
  * enrollment action in this file.
@@ -452,7 +491,7 @@ export async function applyPlacementAction(
   }
 
   try {
-    await withAccount(({ accountId }) => applyPlacement(accountId, checkpointResultId));
+    await withUnlockedAccount(({ accountId }) => applyPlacement(accountId, checkpointResultId));
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
   } catch (error) {
@@ -460,6 +499,7 @@ export async function applyPlacementAction(
       error,
       "applyPlacementAction failed",
       "Could not apply the check-in. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
     );
   }
 }
@@ -480,7 +520,7 @@ export async function redoCheckpointAction(
   }
 
   try {
-    await withAccount(({ accountId }) => redoCheckpoint(accountId, checkpointResultId));
+    await withUnlockedAccount(({ accountId }) => redoCheckpoint(accountId, checkpointResultId));
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
   } catch (error) {
@@ -488,6 +528,7 @@ export async function redoCheckpointAction(
       error,
       "redoCheckpointAction failed",
       "Could not update the check-in. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
     );
   }
 }
@@ -516,7 +557,7 @@ export async function setOfferedInterestsAction(
   }
 
   try {
-    const saved = await withAccount(async ({ accountId }) => {
+    const saved = await withUnlockedAccount(async ({ accountId }) => {
       return setOfferedInterests(accountId, learnerId, idsParsed.data);
     });
 
@@ -535,6 +576,7 @@ export async function setOfferedInterestsAction(
       error,
       "setOfferedInterestsAction failed",
       "Could not save interests. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
     );
   }
 }
@@ -546,7 +588,7 @@ const bonusStarsSchema = z.number().int().min(1).max(20);
 /**
  * Parent "offline win" bonus (spec §5): grant 1–20 bonus stars to a learner's
  * star ledger (reason "adjustment"). Mirrors {@link saveLearnerSettingsAction}'s
- * parseInput/withAccount/result/revalidate shape.
+ * parseInput/withUnlockedAccount/result/revalidate shape.
  */
 export async function grantBonusStarsAction(
   learnerId: string,
@@ -561,7 +603,7 @@ export async function grantBonusStarsAction(
   if (!amountParsed.ok) return amountParsed;
 
   try {
-    const granted = await withAccount(async ({ accountId }) => {
+    const granted = await withUnlockedAccount(async ({ accountId }) => {
       return grantBonusStars(accountId, learnerId, amountParsed.data);
     });
 
@@ -576,7 +618,12 @@ export async function grantBonusStarsAction(
     revalidateEnrollmentPaths(learnerId);
     return { ok: true };
   } catch (error) {
-    return mapActionError(error, "grantBonusStarsAction failed", "Could not grant bonus stars. Please try again.");
+    return mapActionError(
+      error,
+      "grantBonusStarsAction failed",
+      "Could not grant bonus stars. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
+    );
   }
 }
 
@@ -585,7 +632,11 @@ export async function grantBonusStarsAction(
 /** Discriminated result for exportLearnerAction. */
 export type ExportLearnerResult =
   | { ok: true; data: LearnerExport }
-  | { ok: false; reason: "unauthenticated" | "not-found" | "unavailable"; message?: string };
+  | {
+      ok: false;
+      reason: ActionGateReason | "not-found" | "unavailable";
+      message?: string;
+    };
 
 /**
  * Build and return the minimized per-child data export (spec §8). The
@@ -599,7 +650,7 @@ export async function exportLearnerAction(learnerId: string): Promise<ExportLear
   }
 
   try {
-    const data = await withAccount(async ({ accountId }) => {
+    const data = await withUnlockedAccount(async ({ accountId }) => {
       // Stamp exportedAt here so the pure shaper stays free of new Date().
       return buildLearnerExport(accountId, learnerId, new Date().toISOString());
     });
@@ -607,25 +658,30 @@ export async function exportLearnerAction(learnerId: string): Promise<ExportLear
     if (!data) return { ok: false, reason: "not-found", message: "Learner not found." };
     return { ok: true, data };
   } catch (error) {
-    return mapActionError(error, "exportLearnerAction failed", "Could not export data. Please try again.");
+    return mapActionError(
+      error,
+      "exportLearnerAction failed",
+      "Could not export data. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
+    );
   }
 }
 
 /** Discriminated result for exportAccountAction. */
 export type ExportAccountResult =
   | { ok: true; data: AccountExport }
-  | { ok: false; reason: "unauthenticated" | "unavailable"; message?: string };
+  | { ok: false; reason: ActionGateReason | "unavailable"; message?: string };
 
 /**
  * Build and return the WHOLE-ACCOUNT data export (P6 / spec §8 COPPA "export …
  * all its data"): the minimized parent record + every learner + a self-describing
  * data-inventory manifest. No args — the scope is the session. Like the per-child
  * export, the JSON is returned to the client, which triggers the browser download
- * (no server temp files). Account-scoped via withAccount; build-safe.
+ * (no server temp files). Account-scoped via withUnlockedAccount; build-safe.
  */
 export async function exportAccountAction(): Promise<ExportAccountResult> {
   try {
-    const data = await withAccount(async ({ accountId }) => {
+    const data = await withUnlockedAccount(async ({ accountId }) => {
       // Stamp exportedAt here so the pure shaper stays free of new Date().
       return buildAccountExport(accountId, new Date().toISOString());
     });
@@ -637,14 +693,23 @@ export async function exportAccountAction(): Promise<ExportAccountResult> {
     }
     return { ok: true, data };
   } catch (error) {
-    return mapActionError(error, "exportAccountAction failed", "Could not export data. Please try again.");
+    return mapActionError(
+      error,
+      "exportAccountAction failed",
+      "Could not export data. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
+    );
   }
 }
 
 /** Discriminated result for deleteLearnerAction. */
 export type DeleteLearnerResult =
   | { ok: true }
-  | { ok: false; reason: "unauthenticated" | "not-found" | "unavailable"; message?: string };
+  | {
+      ok: false;
+      reason: ActionGateReason | "not-found" | "unavailable";
+      message?: string;
+    };
 
 /**
  * Delete a child profile and all its data (enrollment/attempt/skill_state via
@@ -658,7 +723,7 @@ export async function deleteLearnerAction(learnerId: string): Promise<DeleteLear
   }
 
   try {
-    const deleted = await withAccount(async ({ accountId }) => {
+    const deleted = await withUnlockedAccount(async ({ accountId }) => {
       return deleteLearner(accountId, learnerId);
     });
 
@@ -668,7 +733,12 @@ export async function deleteLearnerAction(learnerId: string): Promise<DeleteLear
     revalidatePath("/parent/learners");
     return { ok: true };
   } catch (error) {
-    return mapActionError(error, "deleteLearnerAction failed", "Could not delete the profile. Please try again.");
+    return mapActionError(
+      error,
+      "deleteLearnerAction failed",
+      "Could not delete the profile. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
+    );
   }
 }
 
@@ -677,7 +747,17 @@ export async function deleteLearnerAction(learnerId: string): Promise<DeleteLear
 /** Discriminated result for deleteAccountAction. */
 export type DeleteAccountActionResult =
   | { ok: true; summary: { deletedLearners: number; deletedAttempts: number } }
-  | { ok: false; reason: "unauthenticated" | "reauth-failed" | "invalid" | "unavailable"; message?: string };
+  | {
+      ok: false;
+      reason:
+        | ActionGateReason
+        | "reauth-failed"
+        | "rate-limited"
+        | "invalid"
+        | "unavailable";
+      message?: string;
+      retryAfterSec?: number;
+    };
 
 const deleteAccountSchema = z.object({
   /** The account password, re-verified through Better Auth before any delete. */
@@ -717,64 +797,85 @@ export async function deleteAccountAction(input: {
   const { password, confirmToken } = parsed.data;
 
   try {
-    const auth = getAuth();
     const requestHeaders = await headers();
-
-    // Resolve the session FIRST — both the email check and the password
-    // re-verification are scoped to the signed-in user (verifyPassword reads the
-    // user from these headers; the email is checked against the session user).
-    const session = await auth.api.getSession({ headers: requestHeaders });
-    if (!session?.user) {
-      return { ok: false, reason: "unauthenticated", message: "Please sign in again." };
-    }
-
-    // (1) Typed confirmation — the parent must type their OWN email. Compared
-    // trimmed + case-insensitively (emails are case-insensitive in practice).
-    const emailMatches =
-      confirmToken.trim().toLowerCase() === session.user.email.trim().toLowerCase();
-    if (!emailMatches) {
-      // Re-auth failed → NOTHING is deleted.
-      return {
-        ok: false,
-        reason: "reauth-failed",
-        message: "That didn't match. Type your account email and password to confirm.",
-      };
-    }
-
-    // (2) Re-verify the password via Better Auth (throws APIError on mismatch;
-    // no session is created/rotated). This runs BEFORE any delete.
-    try {
-      await auth.api.verifyPassword({ body: { password }, headers: requestHeaders });
-    } catch (error) {
-      if (isAPIError(error)) {
-        // Wrong password → re-auth failed, NOTHING is deleted.
+    const result = await withUnlockedAccount(async ({ accountId }) => {
+      const ip = clientIp(requestHeaders) ?? "unknown";
+      const rate = checkParentPinRecoveryRateLimit(accountId, ip);
+      if (!rate.ok) {
         return {
-          ok: false,
-          reason: "reauth-failed",
+          ok: false as const,
+          reason: "rate-limited" as const,
+          message: "Too many tries. Try again later.",
+          retryAfterSec: rate.retryAfterSec,
+        };
+      }
+
+      const auth = getAuth();
+      const session = await auth.api.getSession({ headers: requestHeaders });
+      if (!session?.user) {
+        return {
+          ok: false as const,
+          reason: "unauthenticated" as const,
+          message: "Please sign in again.",
+        };
+      }
+
+      // Typed confirmation — the parent must type their OWN email. Compared
+      // trimmed + case-insensitively (emails are case-insensitive in practice).
+      const emailMatches =
+        confirmToken.trim().toLowerCase() === session.user.email.trim().toLowerCase();
+      if (!emailMatches) {
+        return {
+          ok: false as const,
+          reason: "reauth-failed" as const,
           message: "That didn't match. Type your account email and password to confirm.",
         };
       }
-      throw error; // unexpected — fall through to the generic handler
-    }
 
-    // Both gates passed → perform the irreversible delete (audit row written
-    // first, inside the same transaction; see deleteAccount).
-    const result = await withAccount(({ accountId }) => deleteAccount(accountId));
+      // The PIN gate and shared account+IP recovery budget both run before this
+      // password KDF, so a locked shared-device user cannot use deletion as an
+      // unmetered password oracle.
+      try {
+        await auth.api.verifyPassword({ body: { password }, headers: requestHeaders });
+      } catch (error) {
+        if (isAPIError(error)) {
+          return {
+            ok: false as const,
+            reason: "reauth-failed" as const,
+            message: "That didn't match. Type your account email and password to confirm.",
+          };
+        }
+        throw error;
+      }
+
+      const deleted = await deleteAccount(accountId);
+      return {
+        ok: true as const,
+        summary: {
+          deletedLearners: deleted.deletedLearners,
+          deletedAttempts: deleted.deletedAttempts,
+        },
+      };
+    });
+
+    if (!result.ok) return result;
 
     // Invalidate the session cookie. The session ROW already cascaded with the
     // user delete; this clears the client cookie so the redirect lands signed-out.
     // Best-effort: a failure here must not turn a successful delete into an error.
     try {
-      await auth.api.signOut({ headers: requestHeaders });
+      await getAuth().api.signOut({ headers: requestHeaders });
     } catch (error) {
       captureNonCritical("signOut after account delete failed (non-fatal)", error);
     }
 
-    return {
-      ok: true,
-      summary: { deletedLearners: result.deletedLearners, deletedAttempts: result.deletedAttempts },
-    };
+    return result;
   } catch (error) {
-    return mapActionError(error, "deleteAccountAction failed", "Could not delete your account. Please try again.");
+    return mapActionError(
+      error,
+      "deleteAccountAction failed",
+      "Could not delete your account. Please try again.",
+      PARENT_ACTION_ERROR_OPTIONS,
+    );
   }
 }

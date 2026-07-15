@@ -14,6 +14,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { AvatarBadge } from "@/components/ui/AvatarBadge";
 import { ProgressReportCard } from "@/components/parent/ProgressReportCard";
 import { ActivityRowItem } from "@/components/parent/ActivityRowItem";
+import { HandoffButton } from "@/components/parent/HandoffButton";
 import { outcomeDisplay } from "@/components/parent/skill-display";
 import {
   getOverview,
@@ -22,10 +23,14 @@ import {
 } from "@/app/(parent)/data";
 import type { LearnerRow } from "@/lib/tutor/store";
 import type { Program } from "@/content";
+import { parentUnlockChallenge } from "@/app/(parent)/parent-unlock-challenge";
 
 export const metadata: Metadata = { title: "Home" };
 
 export default async function ParentHomePage() {
+  const unlockChallenge = await parentUnlockChallenge();
+  if (unlockChallenge) return unlockChallenge;
+
   const overview = await getOverview();
 
   if (!overview.primary) return <NoLearners />;
@@ -124,6 +129,8 @@ function ProfileCard({ learner, program }: { learner: LearnerRow; program: Progr
           <p className="text-sm text-ink-soft">{program.subtitle}</p>
         </div>
       )}
+
+      <HandoffButton learnerId={learner.id} learnerName={learner.displayName} />
 
       <Link
         href={`/parent/learners/${learner.id}`}
