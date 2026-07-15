@@ -145,7 +145,7 @@ describe("phonics-wordbuild score", () => {
       correct: 2,
       total: 2,
       stars: 3,
-      skillEvidence: [{ skill: "phonics.digraphs", outcome: "emerging" }],
+      skillEvidence: [{ skill: "phonics.decode.digraph-sh", outcome: "emerging" }],
     });
   });
 
