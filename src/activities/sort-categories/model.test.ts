@@ -36,6 +36,31 @@ describe("sort-categories model", () => {
     expect(sortSeed(sameLengthLabels)).not.toBe(sortSeed(config));
   });
 
+  it("disperses grouped answer categories instead of leaking them in long runs", () => {
+    const grouped: SortCategoriesConfig = {
+      instruction: "Sort each one: is it living or not living?",
+      bins: [
+        { id: "living", label: "Living", emoji: "🌱" },
+        { id: "nonliving", label: "Nonliving", emoji: "🪨" },
+      ],
+      items: [
+        { label: "Dog", emoji: "🐶", binId: "living" },
+        { label: "Tree", emoji: "🌳", binId: "living" },
+        { label: "Fish", emoji: "🐟", binId: "living" },
+        { label: "Bird", emoji: "🐦", binId: "living" },
+        { label: "Rock", emoji: "🪨", binId: "nonliving" },
+        { label: "Toy car", emoji: "🚗", binId: "nonliving" },
+        { label: "Cup", emoji: "🥤", binId: "nonliving" },
+        { label: "Ball", emoji: "⚽", binId: "nonliving" },
+      ],
+    };
+
+    const order = initialItemOrder(grouped);
+    const binOrder = order.map((itemIndex) => grouped.items[itemIndex].binId);
+    expect(longestRun(binOrder)).toBeLessThanOrEqual(2);
+    expect(order).toEqual(initialItemOrder(grouped));
+  });
+
   it("places an item, moves it between bins, and unplaces it", () => {
     const placed = placeItem([], 0, "land", config);
     expect(placed).toEqual([{ itemIndex: 0, binId: "land" }]);
@@ -76,3 +101,15 @@ describe("sort-categories model", () => {
     ).toBe(false);
   });
 });
+
+function longestRun(values: readonly string[]): number {
+  let longest = 0;
+  let current = 0;
+  let previous: string | null = null;
+  for (const value of values) {
+    current = value === previous ? current + 1 : 1;
+    longest = Math.max(longest, current);
+    previous = value;
+  }
+  return longest;
+}

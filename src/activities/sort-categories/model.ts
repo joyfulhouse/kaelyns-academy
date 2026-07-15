@@ -22,10 +22,45 @@ export function sortSeed(config: SortCategoriesConfig): number {
 }
 
 export function initialItemOrder(config: SortCategoriesConfig): number[] {
-  return shuffleNonIdentity(
-    config.items.map((_item, itemIndex) => itemIndex),
-    sortSeed(config),
-  );
+  const indices = config.items.map((_item, itemIndex) => itemIndex);
+  const seed = sortSeed(config);
+  let best = shuffleNonIdentity(indices, seed);
+  let bestRun = longestCategoryRun(best, config);
+  const targetRun = minimumPossibleCategoryRun(config);
+
+  // A plain shuffle can accidentally preserve authored answer blocks. Try a
+  // small deterministic seed family and keep the most dispersed permutation.
+  // Eight items is the schema maximum, so this remains tiny and synchronous.
+  for (let attempt = 1; attempt <= 64 && bestRun > targetRun; attempt += 1) {
+    const candidate = shuffleNonIdentity(indices, stableSeed([seed, attempt]));
+    const candidateRun = longestCategoryRun(candidate, config);
+    if (candidateRun < bestRun) {
+      best = candidate;
+      bestRun = candidateRun;
+    }
+  }
+  return best;
+}
+
+function longestCategoryRun(order: readonly number[], config: SortCategoriesConfig): number {
+  let longest = 0;
+  let current = 0;
+  let previousBin: string | null = null;
+  for (const itemIndex of order) {
+    const binId = config.items[itemIndex]?.binId ?? null;
+    current = binId === previousBin ? current + 1 : 1;
+    longest = Math.max(longest, current);
+    previousBin = binId;
+  }
+  return longest;
+}
+
+function minimumPossibleCategoryRun(config: SortCategoriesConfig): number {
+  const counts = new Map<string, number>();
+  for (const item of config.items) counts.set(item.binId, (counts.get(item.binId) ?? 0) + 1);
+  const largest = Math.max(0, ...counts.values());
+  const others = config.items.length - largest;
+  return largest === 0 ? 0 : Math.ceil(largest / (others + 1));
 }
 
 export function placeItem(
