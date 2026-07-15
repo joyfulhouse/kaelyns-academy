@@ -115,7 +115,7 @@ describe("useLearnerState record completion", () => {
     await expect(
       state.record(
         ACTIVITY,
-        { attempts: 1, setHour: 6, setMinute: 0 },
+        { attempts: 1, totalMinutes: 360 },
         { unitKey: "unit-1" },
         completionId,
       ),

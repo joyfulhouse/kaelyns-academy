@@ -240,7 +240,7 @@ const BASE_INPUT: RecordAttemptInput = {
   completionId: "11111111-1111-4111-8111-111111111111",
   unitKey: "unit-1",
   activityId: "act-1",
-  response: { attempts: 1, setHour: 6, setMinute: 0 },
+  response: { attempts: 1, totalMinutes: 360 },
 };
 
 describe("getTutorSession", () => {
@@ -407,7 +407,7 @@ describe("recordAttemptAction generated-shelf witness (earn-once boundary)", () 
     programSlug: "kaelyn-adaptive",
     completionId: "22222222-2222-4222-8222-222222222222",
     generatedActivityId: "gen-1",
-    response: { attempts: 1, setHour: 6, setMinute: 0 },
+    response: { attempts: 1, totalMinutes: 360 },
   } as RecordAttemptInput;
 
   it("rejects a generated id not owned by the selected learner", async () => {

@@ -131,7 +131,7 @@ import { ActivityHost } from "./ActivityHost";
 import { GeneratedPracticeHost } from "./GeneratedPracticeHost";
 
 const COMPLETION_ID = "11111111-1111-4111-8111-111111111111";
-const RESPONSE = { attempts: 1, setHour: 6, setMinute: 0 };
+const RESPONSE = { attempts: 1, totalMinutes: 360 };
 const SCORE = {
   correct: 1,
   total: 1,
