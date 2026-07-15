@@ -88,6 +88,21 @@ describe("audioPlaybackReducer", () => {
     });
   });
 
+  it("returns a locale-cancelled fallback request to idle", () => {
+    const playing = audioPlaybackReducer(initialAudioPlaybackState, {
+      type: "play",
+      requestId: 1,
+      request,
+    });
+    const fallback = audioPlaybackReducer(playing, { type: "fallback", requestId: 1 });
+
+    expect(audioPlaybackReducer(fallback, { type: "cancelled", requestId: 1 })).toMatchObject({
+      status: "idle",
+      requestId: 1,
+      lastRequest: request,
+    });
+  });
+
   it("ignores stale async completion after a new item starts", () => {
     const first = audioPlaybackReducer(initialAudioPlaybackState, {
       type: "play",

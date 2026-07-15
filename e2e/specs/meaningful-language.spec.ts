@@ -207,10 +207,6 @@ test("listening choices unlock only after fallback speech actually finishes", as
   await page.goto(LISTEN);
 
   const firstChoice = page.getByRole("button", { name: "ㄅ", exact: true });
-  await expect(page.getByText("The sound is resting.", { exact: false })).toBeVisible({
-    timeout: 25_000,
-  });
-  await page.getByRole("button", { name: "Try sound again" }).click();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -218,6 +214,7 @@ test("listening choices unlock only after fallback speech actually finishes", as
       ),
     )
     .toBeGreaterThan(0);
+  await expect(page.getByText("The sound is resting.", { exact: false })).toHaveCount(0);
   await expect(firstChoice).toBeDisabled();
 
   await page.evaluate(() => {

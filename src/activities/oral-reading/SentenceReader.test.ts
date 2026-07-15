@@ -6,6 +6,7 @@ import {
   parseSentenceRouteResult,
   sentenceWordVisualState,
   splitPassageWords,
+  startLatestListenWordSweep,
   startListenWordSweep,
   startSettleWordReveal,
 } from "./SentenceReader";
@@ -112,6 +113,24 @@ describe("sentence modeled-read karaoke timeline", () => {
     unmountCleanup();
     vi.runAllTimers();
     expect(unmounted).toEqual([0, null]);
+  });
+
+  it("lets a rapid replay keep ownership of its own active-word sweep", () => {
+    const states: (number | null)[] = [];
+    const slot = { current: null as (() => void) | null };
+    const first = startLatestListenWordSweep(slot, 3, false, (activeWord) =>
+      states.push(activeWord),
+    );
+
+    startLatestListenWordSweep(slot, 3, false, (activeWord) => states.push(activeWord));
+    expect(states).toEqual([0, null, 0]);
+
+    // The first speech promise settles as cancelled after replay has begun. Its
+    // cleanup must not clear or cancel the second request's sweep.
+    first();
+    expect(states).toEqual([0, null, 0]);
+    vi.advanceTimersByTime(LISTEN_WORD_DWELL_MS);
+    expect(states).toEqual([0, null, 0, 1]);
   });
 
   it("disables the active cursor for reduced-motion users", () => {

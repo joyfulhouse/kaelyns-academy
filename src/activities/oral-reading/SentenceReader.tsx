@@ -110,6 +110,31 @@ export function startListenWordSweep(
   };
 }
 
+/**
+ * Replace the current karaoke sweep and return cleanup owned by this request.
+ * A superseded speech promise may settle after its replacement has started; its
+ * cleanup is deliberately unable to clear the replacement's active word.
+ */
+export function startLatestListenWordSweep(
+  slot: { current: (() => void) | null },
+  wordCount: number,
+  reducedMotion: boolean,
+  onActiveWord: (activeWord: number | null) => void,
+): () => void {
+  slot.current?.();
+
+  let stopSweep = (): void => {};
+  const stopOwnedSweep = (): void => {
+    stopSweep();
+    if (slot.current === stopOwnedSweep) slot.current = null;
+  };
+  slot.current = stopOwnedSweep;
+  stopSweep = startListenWordSweep(wordCount, reducedMotion, (activeWord) => {
+    if (slot.current === stopOwnedSweep) onActiveWord(activeWord);
+  });
+  return stopOwnedSweep;
+}
+
 /** Reveal derived word states in authored order, never as a red/error state. */
 export function startSettleWordReveal(
   wordCount: number,
@@ -321,8 +346,8 @@ export function SentenceReader({
 
   const speakPassage = useCallback<SpeechController["speak"]>(
     (text, options) => {
-      cancelListenSweep();
-      listenSweepCancelRef.current = startListenWordSweep(
+      const stopOwnSweep = startLatestListenWordSweep(
+        listenSweepCancelRef,
         passageWords.length,
         reducedMotion,
         (nextActiveWord) => {
@@ -330,11 +355,11 @@ export function SentenceReader({
         },
       );
       return speech.speak(text, options).then((outcome) => {
-        cancelListenSweep();
+        stopOwnSweep();
         return outcome;
       });
     },
-    [cancelListenSweep, passageWords.length, reducedMotion, speech],
+    [passageWords.length, reducedMotion, speech],
   );
   const karaokeSpeech = useMemo<SpeechController>(
     () => ({ ...speech, speak: speakPassage }),

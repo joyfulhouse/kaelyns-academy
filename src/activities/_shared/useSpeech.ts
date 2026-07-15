@@ -16,7 +16,7 @@ import { pickVoice, speechParamsFor } from "./voiceUtils";
  * we also resolve on the `voiceschanged` event, not just first paint.
  */
 export interface SpeechController {
-  /** True only when speechSynthesis exists in this browser. */
+  /** True when this locale has a usable neural or browser speech path. */
   supported: boolean;
   /**
    * True when this locale can actually be voiced: English is ubiquitous so we
@@ -44,12 +44,12 @@ function getSynth(): SpeechSynthesis | null {
   return window.speechSynthesis ?? null;
 }
 
-/** speechSynthesis support never changes within a page, so the store is static. */
+/** Browser media capabilities do not change within a page, so the store is static. */
 function subscribe(): () => void {
   return () => {};
 }
-function isSupported(): boolean {
-  return getSynth() !== null && typeof window !== "undefined" && "SpeechSynthesisUtterance" in window;
+function hasSynth(): boolean {
+  return getSynth() !== null && typeof SpeechSynthesisUtterance === "function";
 }
 
 /** English voices ship with every engine, so non-English is the only "might be missing" case. */
@@ -57,14 +57,28 @@ function isEnglish(locale: string): boolean {
   return locale.toLowerCase().startsWith("en");
 }
 
+function hasNeuralAudio(): boolean {
+  return typeof window !== "undefined" && typeof Audio === "function";
+}
+
+function hasPlaybackPath(locale: string): boolean {
+  return isEnglish(locale) ? hasNeuralAudio() || hasSynth() : hasSynth();
+}
+
 export function useSpeech(locale = "en-US"): SpeechController {
-  const supported = useSyncExternalStore(subscribe, isSupported, () => false);
+  const supported = useSyncExternalStore(
+    subscribe,
+    () => hasPlaybackPath(locale),
+    () => false,
+  );
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
   const narrateRef = useRef<NarrateHandle | null>(null);
   const requestIdRef = useRef(0);
   const activeRequestRef = useRef<ActiveSpeechRequest | null>(null);
+  const lifecycleRef = useRef(0);
+  const lifecycleLocaleRef = useRef(locale);
   // English is assumed available; for other locales we flip true only once a
   // matching voice resolves (drives whether callers offer that language's audio).
   const [hasVoice, setHasVoice] = useState(() => isEnglish(locale));
@@ -80,12 +94,19 @@ export function useSpeech(locale = "en-US"): SpeechController {
   }, []);
 
   useEffect(() => {
+    const lifecycle = lifecycleRef.current + 1;
+    lifecycleRef.current = lifecycle;
+    lifecycleLocaleRef.current = locale;
     const synth = getSynth();
     synthRef.current = synth;
-    if (!synth) return;
 
     // Re-read the voice list and resolve the best match for the current locale.
     const refresh = (): void => {
+      if (!synth) {
+        voiceRef.current = null;
+        setHasVoice(isEnglish(locale));
+        return;
+      }
       voicesRef.current = synth.getVoices();
       const match = pickVoice(voicesRef.current, locale);
       voiceRef.current = match;
@@ -93,10 +114,16 @@ export function useSpeech(locale = "en-US"): SpeechController {
     };
 
     refresh(); // list may already be populated (Safari/Firefox)
-    synth.addEventListener("voiceschanged", refresh); // Chrome populates async
+    synth?.addEventListener("voiceschanged", refresh); // Chrome populates async
     return () => {
-      synth.removeEventListener("voiceschanged", refresh);
-      cancel();
+      synth?.removeEventListener("voiceschanged", refresh);
+      const requestId = requestIdRef.current;
+      queueMicrotask(() => {
+        const remountedSameLocale =
+          lifecycleRef.current !== lifecycle && lifecycleLocaleRef.current === locale;
+        if (remountedSameLocale || requestIdRef.current !== requestId) return;
+        cancel();
+      });
     };
   }, [cancel, locale]);
 
@@ -133,9 +160,24 @@ export function useSpeech(locale = "en-US"): SpeechController {
   const speak = useCallback(
     (text: string, opts?: SpeakOptions): Promise<SpeechPlaybackOutcome> => {
       cancel();
-      if (!supported || !hasVoice || !text.trim()) {
+      const trimmed = text.trim();
+      const english = isEnglish(locale);
+      const synth = getSynth();
+      let liveVoice = voiceRef.current;
+      if (!english) {
+        try {
+          liveVoice = synth ? pickVoice(synth.getVoices(), locale) : null;
+        } catch (error) {
+          captureNonCritical("Speech synthesis failed", error);
+          return Promise.resolve("unavailable");
+        }
+      }
+      const liveSupported = hasPlaybackPath(locale);
+      const liveHasVoice = english || liveVoice !== null;
+      if (!liveSupported || !liveHasVoice || !trimmed) {
         return Promise.resolve("unavailable");
       }
+      voiceRef.current = liveVoice;
 
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
@@ -172,7 +214,7 @@ export function useSpeech(locale = "en-US"): SpeechController {
         }
       });
     },
-    [cancel, hasVoice, locale, speakViaSynth, supported],
+    [cancel, locale, speakViaSynth],
   );
 
   // Return a stable controller so consumers' useCallback/effects that depend on

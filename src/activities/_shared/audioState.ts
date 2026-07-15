@@ -23,6 +23,7 @@ export type AudioPlaybackEvent =
   | { type: "finished"; requestId: number }
   | { type: "fallback"; requestId: number }
   | { type: "unavailable"; requestId: number }
+  | { type: "cancelled"; requestId: number }
   | { type: "stop"; requestId: number };
 
 /**
@@ -61,6 +62,9 @@ export function audioPlaybackReducer(
   }
   if (event.type === "unavailable") {
     return { ...state, status: "unavailable" };
+  }
+  if (event.type === "cancelled") {
+    return { ...state, status: "idle" };
   }
   return state;
 }

@@ -83,6 +83,39 @@ async function installControlledModelSpeech(
   }, { completeAutomatically: autoComplete });
 }
 
+async function installSuccessfulNeuralModelWithoutWebSpeech(page: Page): Promise<void> {
+  await page.route("**/api/tts", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "audio/wav",
+      body: "bounded e2e audio",
+    });
+  });
+  await page.addInitScript(() => {
+    class SuccessfulNeuralAudio extends EventTarget {
+      onerror: ((event: Event) => void) | null = null;
+      onended: ((event: Event) => void) | null = null;
+
+      play(): Promise<void> {
+        queueMicrotask(() => this.onended?.(new Event("ended")));
+        return Promise.resolve();
+      }
+
+      pause(): void {}
+    }
+
+    Object.defineProperty(window, "Audio", {
+      configurable: true,
+      value: SuccessfulNeuralAudio,
+    });
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: undefined,
+    });
+    Reflect.deleteProperty(window, "SpeechSynthesisUtterance");
+  });
+}
+
 test("a guest completes through the grown-up fallback and one host reward", async ({
   page,
   context,
@@ -129,11 +162,15 @@ test("a guest cold read exposes no model audio before participation fallback", a
   await expectSingleHostReward(page);
 });
 
-test("modeled practice without TTS finishes as grown-up participation only", async ({
+test("modeled practice without any audio finishes as grown-up participation only", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "public", "guest-only assertion");
   await page.addInitScript(() => {
+    Object.defineProperty(window, "Audio", {
+      configurable: true,
+      value: undefined,
+    });
     Object.defineProperty(window, "speechSynthesis", {
       configurable: true,
       value: undefined,
@@ -149,6 +186,17 @@ test("modeled practice without TTS finishes as grown-up participation only", asy
   await expect(page.getByRole("button", { name: "Read it aloud" })).toHaveCount(0);
   await page.getByRole("button", { name: "A grown-up read it with me" }).click();
   await expectSingleHostReward(page);
+});
+
+test("English neural modeling works when Web Speech is absent", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "public", "guest-only assertion");
+  await installSuccessfulNeuralModelWithoutWebSpeech(page);
+
+  await page.goto(ACTIVITY);
+  const listen = page.getByRole("button", { name: "Listen to the word the" });
+  await expect(listen).toBeVisible({ timeout: 25_000 });
+  await listen.click();
+  await expect(page.getByText("The model finished. Now it is your turn.")).toBeVisible();
 });
 
 test("modeled practice unlocks only after the model finishes", async ({ page }, testInfo) => {

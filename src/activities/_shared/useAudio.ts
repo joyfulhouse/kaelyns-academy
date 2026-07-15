@@ -89,6 +89,11 @@ export function useAudio(locale = "en-US"): AudioController {
     } else if (outcome === "unavailable") {
       dispatch({ type: "unavailable", requestId });
       active.handlers?.onUnavailable?.();
+    } else {
+      // useSpeech owns locale lifecycle. If that locale changes while a hybrid
+      // fallback is speaking, its cancelled result must not leave this UI in a
+      // perpetual "playing" state.
+      dispatch({ type: "cancelled", requestId });
     }
     active.resolve(outcome);
   }, []);
