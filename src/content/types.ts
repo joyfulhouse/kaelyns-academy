@@ -130,7 +130,9 @@ export interface ActivityScore {
 
 export interface ActivityPlayerProps<Config, Response> {
   config: Config;
-  onComplete: (response: Response, score: ActivityScore) => void;
+  /** The host ignores the optional legacy score while Players migrate to the
+   * response-only contract; it will be removed once every plugin is converted. */
+  onComplete: (response: Response, legacyScore?: ActivityScore) => void;
   onExit?: () => void;
   /** Account-only learner context. Guests receive no context and Players must
    * degrade without calling gated learner APIs. */
