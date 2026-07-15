@@ -1,7 +1,7 @@
 # Meaningful Lesson Interactions
 
 **Date:** 2026-07-14
-**Status:** Design approved in conversation; written spec awaiting final user review
+**Status:** Approved 2026-07-15
 **Scope:** Every live activity plugin, its active Kaelyn curriculum uses, completion integrity, and shared learner-host behavior
 
 ## 1. Context
@@ -192,7 +192,7 @@ A response requires at least a drawing mark, typed idea, scribed idea, or bounde
 
 Sentence frames and word-bank items insert at the caret or into explicit blanks rather than appending blindly. Dictation uses functional state updates, separates transcript chunks with whitespace, surfaces unsupported and error states, and cannot overwrite newer typed text.
 
-Canvas PNG data URLs are removed from attempt JSON. This pass records a didDraw flag and bounded text only. A saved-artifact gallery would require a separate privacy, retention, and object-storage design.
+Canvas PNG data URLs are removed from attempt JSON. This pass records only a bounded participation summary (`markCount`, `textLength`, `usedDictation`, `mode`, and `didDraw`) and never persists the child's text, transcript, strokes, or image data. A saved-artifact gallery or writing archive would require a separate privacy, retention, and object-storage design.
 
 ### 8.10 phonics-wordbuild
 
@@ -323,7 +323,7 @@ Work happens in isolated branches based on the same reviewed foundation commit.
 
 ### Wave 0: Foundation
 
-Owns ActivityType response validation, server-safe scoring registry, attempt action integrity, host pinned readiness, generated learner scoping, one reward flow, shared feedback seams, and all central schema contract changes needed by later waves.
+Owns ActivityType response validation, server-safe scoring registry, attempt action integrity, host pinned readiness, generated learner scoping, one reward flow, shared feedback seams, and a behavior-preserving split of central config/program files into per-kind and per-unit modules so later worktrees are genuinely disjoint.
 
 ### Wave 1: Parallel plugin work
 
@@ -337,9 +337,8 @@ Wave 2 begins from the reviewed, integrated Wave 1 base.
 
 - literacy worktree: phonics-wordbuild, sightword-game, reading-comprehension, oral-reading;
 - language worktree: lang-listen-match, lang-symbol-intro;
-- content-alignment worktree: active authored curriculum, generated validators and briefs, cross-plugin evidence invariants.
 
-The centralized kaelyn-adaptive program file is modified only by content alignment. Shared foundation files are not edited concurrently by plugin worktrees. Each worktree follows TDD, runs its targeted suite and typecheck, commits intentionally, and receives a separate spec and quality review before integration.
+Each plugin worktree owns the per-kind config modules and per-unit authored content it changes. After both plugin waves integrate, a content-alignment worktree owns centralized generated validators/briefs and the cross-plugin evidence audit. Shared aggregators and centralized AI files are never edited concurrently. Each worktree follows TDD, runs its targeted suite and typecheck, commits intentionally, and receives a separate spec and quality review before integration.
 
 The integration branch merges reviewed commits, resolves only planned contract updates, runs the full gate, performs local browser walkthroughs, and receives a final whole-branch review.
 
