@@ -1,5 +1,6 @@
 import { mathClockConfig, type MathClockConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
+import { z } from "zod";
 import {
   evenSkillEvidence,
   firstTryRateFromAttempts,
@@ -11,18 +12,35 @@ import {
 export const schema = mathClockConfig;
 
 /** The child's final action + how many checks it took (≥1). */
-export interface MathClockResponse {
-  attempts: number;
-  /** read mode: the digital-time choice index the child tapped. */
-  selectedIndex?: number;
-  /** set mode: the clock the child made. */
-  setHour?: number;
-  setMinute?: number;
-}
+const clockAttempts = z.number().int().min(1).max(100);
+export const responseSchema = z.union([
+  z
+    .object({
+      attempts: clockAttempts,
+      /** read mode: the digital-time choice index the child tapped. */
+      selectedIndex: z.number().int().min(0).max(3),
+    })
+    .strict(),
+  z
+    .object({
+      attempts: clockAttempts,
+      /** set mode: the clock the child made. */
+      setHour: z.number().int().min(1).max(12),
+      setMinute: z.union([z.literal(0), z.literal(30)]),
+    })
+    .strict(),
+]);
+export type MathClockResponse = z.infer<typeof responseSchema>;
 
 export function isCorrect(config: MathClockConfig, response: MathClockResponse): boolean {
-  if (config.mode === "read") return response.selectedIndex === config.answerIndex;
-  return response.setHour === config.targetHour && response.setMinute === config.targetMinute;
+  if (config.mode === "read") {
+    return "selectedIndex" in response && response.selectedIndex === config.answerIndex;
+  }
+  return (
+    "setHour" in response &&
+    response.setHour === config.targetHour &&
+    response.setMinute === config.targetMinute
+  );
 }
 
 export function score(config: MathClockConfig, response: MathClockResponse): ActivityScore {

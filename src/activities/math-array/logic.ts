@@ -1,5 +1,6 @@
 import { mathArrayConfig, type MathArrayConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
+import { z } from "zod";
 import { evenSkillEvidence, outcomeFromAccuracy, starsFromAccuracy } from "../_shared/scoring";
 
 /** Server-safe schema + scoring for math-array. No "use client". */
@@ -10,12 +11,15 @@ export const schema = mathArrayConfig;
  * array), so `entered` is the final tile count; the other modes record the
  * number they typed/tapped and how many tries it took.
  */
-export interface MathArrayResponse {
-  /** The product / quotient the child entered (or filled-tile count in build). */
-  entered: number;
-  /** Check attempts before it was right (>=1). build mode is always 1. */
-  attempts: number;
-}
+export const responseSchema = z
+  .object({
+    /** The product / quotient the child entered (or filled-tile count in build). */
+    entered: z.number().int().min(0).max(1_000),
+    /** Check attempts before it was right (>=1). build mode is always 1. */
+    attempts: z.number().int().min(1).max(100),
+  })
+  .strict();
+export type MathArrayResponse = z.infer<typeof responseSchema>;
 
 /** The total quantity in the full array (the dividend in "divide"). */
 export function totalFor(config: MathArrayConfig): number {

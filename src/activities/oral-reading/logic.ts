@@ -1,6 +1,6 @@
 import { oralReadingConfig, type OralReadingConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
-import type { OralReadingMatchResult } from "@/lib/ai/oralReadingMatch";
+import { z } from "zod";
 import {
   evenSkillEvidence,
   firstTryRateFromAttempts,
@@ -11,20 +11,28 @@ import {
 /** Server-safe schema + scoring for oral-reading. No transcript is accepted. */
 export const schema = oralReadingConfig;
 
-export interface OralReadingResponse {
-  /** Count of completed verification results. */
-  attempts: number;
-  /** Child-safe result for each completed verification; never transcript text. */
-  results: OralReadingMatchResult[];
-  /** True when verification completed through any forgiving fallback path. */
-  fallbackUsed: boolean;
-  /** Derived fluency evidence for sentence mode; never a client-timed value. */
-  wcpm?: number;
-  /** One child-safe state per authored passage word. */
-  perWord?: { state: "correct" | "unclear" }[];
-  correctCount?: number;
-  totalWords?: number;
-}
+const oralReadingResult = z.enum(["matched", "unclear", "no-speech"]);
+export const responseSchema = z
+  .object({
+    /** Count of completed verification results. */
+    attempts: z.number().int().min(0).max(2),
+    /** Child-safe result for each completed verification; never transcript text. */
+    results: z.array(oralReadingResult).max(2),
+    /** True when verification completed through any forgiving fallback path. */
+    fallbackUsed: z.boolean(),
+    /** Derived fluency evidence for sentence mode; never a client-timed value. */
+    wcpm: z.number().min(0).max(300).optional(),
+    /** One child-safe state per authored passage word. */
+    perWord: z
+      .array(z.object({ state: z.enum(["correct", "unclear"]) }).strict())
+      .min(1)
+      .max(7)
+      .optional(),
+    correctCount: z.number().int().min(0).max(7).optional(),
+    totalWords: z.number().int().min(1).max(7).optional(),
+  })
+  .strict();
+export type OralReadingResponse = z.infer<typeof responseSchema>;
 
 export function score(config: OralReadingConfig, response: OralReadingResponse): ActivityScore {
   if (config.mode === "sentence") return scoreSentence(config, response);

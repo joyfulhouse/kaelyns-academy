@@ -2,6 +2,7 @@ import type { MathClockConfig } from "@/content/activity-configs";
 import type { ActivityType } from "@/content/types";
 import { MathClockPlayer } from "./Player";
 import {
+  responseSchema,
   schema,
   score,
   skillsAffected,
@@ -14,6 +15,7 @@ export const mathClock: ActivityType<MathClockConfig, MathClockResponse> = {
   kind: "math-clock",
   label: "Clock",
   schema,
+  responseSchema,
   Player: MathClockPlayer,
   score,
   skillsAffected,

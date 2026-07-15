@@ -1,5 +1,6 @@
 import { sortCategoriesConfig, type SortCategoriesConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
+import { z } from "zod";
 import {
   evenSkillEvidence,
   firstTryRateFromAttempts,
@@ -11,10 +12,13 @@ import {
 export const schema = sortCategoriesConfig;
 
 /** The child's final placement (one binId per item, by item index) + attempts. */
-export interface SortCategoriesResponse {
-  attempts: number;
-  placements: string[];
-}
+export const responseSchema = z
+  .object({
+    attempts: z.number().int().min(1).max(100),
+    placements: z.array(z.string().min(1).max(24)).min(3).max(8),
+  })
+  .strict();
+export type SortCategoriesResponse = z.infer<typeof responseSchema>;
 
 export function isCorrect(config: SortCategoriesConfig, response: SortCategoriesResponse): boolean {
   if (response.placements.length !== config.items.length) return false;

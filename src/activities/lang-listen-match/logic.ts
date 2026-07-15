@@ -1,14 +1,16 @@
 import { langListenMatchConfig, type LangListenMatchConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
+import { z } from "zod";
 import { evenSkillEvidence, outcomeFromAccuracy, starsFromAccuracy } from "../_shared/scoring";
 
 /** Server-safe schema + scoring for lang-listen-match. No "use client". */
 export const schema = langListenMatchConfig;
 
 /** The choice index the child tapped for each listening item. */
-export interface LangListenMatchResponse {
-  answers: number[];
-}
+export const responseSchema = z
+  .object({ answers: z.array(z.number().int().min(0).max(5)).min(1).max(12) })
+  .strict();
+export type LangListenMatchResponse = z.infer<typeof responseSchema>;
 
 export function score(
   config: LangListenMatchConfig,

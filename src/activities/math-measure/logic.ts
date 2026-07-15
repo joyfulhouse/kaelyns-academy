@@ -1,5 +1,6 @@
 import { mathMeasureConfig, type MathMeasureConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
+import { z } from "zod";
 import {
   evenSkillEvidence,
   firstTryRateFromAttempts,
@@ -11,10 +12,13 @@ import {
 export const schema = mathMeasureConfig;
 
 /** Both modes are tap-a-choice; the child's pick + attempts. */
-export interface MathMeasureResponse {
-  attempts: number;
-  selectedIndex: number;
-}
+export const responseSchema = z
+  .object({
+    attempts: z.number().int().min(1).max(100),
+    selectedIndex: z.number().int().min(0).max(3),
+  })
+  .strict();
+export type MathMeasureResponse = z.infer<typeof responseSchema>;
 
 export function isCorrect(config: MathMeasureConfig, response: MathMeasureResponse): boolean {
   return response.selectedIndex === config.answerIndex;

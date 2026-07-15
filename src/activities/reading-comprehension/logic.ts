@@ -3,6 +3,7 @@ import {
   type ReadingComprehensionConfig,
 } from "@/content/activity-configs";
 import type { ActivityScore, SkillOutcome, SkillTag } from "@/content/types";
+import { z } from "zod";
 import { outcomeFromAccuracy, starsFromAccuracy } from "../_shared/scoring";
 
 /** Server-safe schema + scoring for reading-comprehension. No "use client". */
@@ -16,16 +17,19 @@ type QuestionKind = ReadingComprehensionConfig["questions"][number]["kind"];
  * retell is a "say it out loud" affordance, never graded, so it carries no
  * correctness.
  */
-export interface ReadingComprehensionResponse {
-  /** One entry per question, in order: true when answered correctly first try. */
-  firstTry: boolean[];
-  /**
-   * Historical self-attestation flag. The Player no longer asks the child to
-   * attest (the retell panel just offers Continue), so new responses always
-   * record false; kept for stored-response shape compatibility, never scored.
-   */
-  retold: boolean;
-}
+export const responseSchema = z
+  .object({
+    /** One entry per question, in order: true when answered correctly first try. */
+    firstTry: z.array(z.boolean()).min(1).max(32),
+    /**
+     * Historical self-attestation flag. The Player no longer asks the child to
+     * attest (the retell panel just offers Continue), so new responses always
+     * record false; kept for stored-response shape compatibility, never scored.
+     */
+    retold: z.boolean(),
+  })
+  .strict();
+export type ReadingComprehensionResponse = z.infer<typeof responseSchema>;
 
 /**
  * Each question kind exercises a different reading muscle, mapped to the

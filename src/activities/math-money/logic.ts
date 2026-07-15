@@ -1,5 +1,6 @@
 import { mathMoneyConfig, type MathMoneyConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
+import { z } from "zod";
 import {
   evenSkillEvidence,
   firstTryRateFromAttempts,
@@ -18,17 +19,31 @@ export function coinsTotal(coins: Coin[]): number {
 }
 
 /** The child's final action + how many checks it took (≥1). */
-export interface MathMoneyResponse {
-  attempts: number;
-  /** identify mode: the coin the child tapped. */
-  tappedCoin?: Coin;
-  /** count mode: the coins the child dropped into the tray. */
-  tappedCoins?: Coin[];
-}
+const moneyAttempts = z.number().int().min(1).max(100);
+const responseCoin = z.enum(["penny", "nickel", "dime", "quarter"]);
+export const responseSchema = z.union([
+  z
+    .object({
+      attempts: moneyAttempts,
+      /** identify mode: the coin the child tapped. */
+      tappedCoin: responseCoin,
+    })
+    .strict(),
+  z
+    .object({
+      attempts: moneyAttempts,
+      /** count mode: the coins the child dropped into the tray. */
+      tappedCoins: z.array(responseCoin).max(100),
+    })
+    .strict(),
+]);
+export type MathMoneyResponse = z.infer<typeof responseSchema>;
 
 export function isCorrect(config: MathMoneyConfig, response: MathMoneyResponse): boolean {
-  if (config.mode === "identify") return response.tappedCoin === config.targetCoin;
-  return coinsTotal(response.tappedCoins ?? []) === config.targetCents;
+  if (config.mode === "identify") {
+    return "tappedCoin" in response && response.tappedCoin === config.targetCoin;
+  }
+  return "tappedCoins" in response && coinsTotal(response.tappedCoins) === config.targetCents;
 }
 
 export function score(config: MathMoneyConfig, response: MathMoneyResponse): ActivityScore {

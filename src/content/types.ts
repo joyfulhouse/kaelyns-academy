@@ -147,6 +147,7 @@ export interface ActivityType<Config = unknown, Response = unknown> {
   kind: ActivityKind;
   label: string;
   schema: ZodType<Config>;
+  responseSchema: ZodType<Response>;
   Player: ComponentType<ActivityPlayerProps<Config, Response>>;
   score: (config: Config, response: Response) => ActivityScore;
   skillsAffected: (config: Config) => SkillTag[];

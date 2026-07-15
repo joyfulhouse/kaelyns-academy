@@ -2,6 +2,7 @@ import type { SeqOrderConfig } from "@/content/activity-configs";
 import type { ActivityType } from "@/content/types";
 import { SeqOrderPlayer } from "./Player";
 import {
+  responseSchema,
   schema,
   score,
   skillsAffected,
@@ -14,6 +15,7 @@ export const seqOrder: ActivityType<SeqOrderConfig, SeqOrderResponse> = {
   kind: "seq-order",
   label: "Order",
   schema,
+  responseSchema,
   Player: SeqOrderPlayer,
   score,
   skillsAffected,

@@ -1,14 +1,16 @@
 import { langSymbolIntroConfig, type LangSymbolIntroConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
+import { z } from "zod";
 import { evenSkillEvidence, outcomeFromAccuracy, starsFromAccuracy } from "../_shared/scoring";
 
 /** Server-safe schema + scoring for lang-symbol-intro. No "use client". */
 export const schema = langSymbolIntroConfig;
 
 /** The child's answers to the quick verify questions (one choice index per item). */
-export interface LangSymbolIntroResponse {
-  verifyAnswers: number[];
-}
+export const responseSchema = z
+  .object({ verifyAnswers: z.array(z.number().int().min(0).max(5)).min(1).max(6) })
+  .strict();
+export type LangSymbolIntroResponse = z.infer<typeof responseSchema>;
 
 export function score(
   config: LangSymbolIntroConfig,

@@ -1,15 +1,29 @@
 import { phonicsWordbuildConfig, type PhonicsWordbuildConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
+import { z } from "zod";
 import { evenSkillEvidence, outcomeFromAccuracy, starsFromAccuracy } from "../_shared/scoring";
 
 /** Server-safe schema + scoring for phonics-wordbuild. No "use client". */
 export const schema = phonicsWordbuildConfig;
 
 /** What the Player reports back: per-word, how many tries it took to build it. */
-export interface PhonicsWordbuildResponse {
-  /** One entry per target word, in config order. `tries` ≥ 1 for completed words. */
-  builds: { word: string; tries: number }[];
-}
+export const responseSchema = z
+  .object({
+    /** One entry per target word, in config order. `tries` ≥ 1 for completed words. */
+    builds: z
+      .array(
+        z
+          .object({
+            word: z.string().min(1).max(32),
+            tries: z.number().int().min(1).max(100),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(12),
+  })
+  .strict();
+export type PhonicsWordbuildResponse = z.infer<typeof responseSchema>;
 
 /** Words that were spelled correctly on the very first attempt. */
 function firstTryCount(response: PhonicsWordbuildResponse): number {

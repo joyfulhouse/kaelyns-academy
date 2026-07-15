@@ -1,17 +1,21 @@
 import { sightwordGameConfig, type SightwordGameConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
+import { z } from "zod";
 import { evenSkillEvidence, outcomeFromAccuracy, starsFromAccuracy } from "../_shared/scoring";
 
 /** Server-safe schema + scoring for sightword-game. No "use client". */
 export const schema = sightwordGameConfig;
 
 /** The Player reports how many real words were found and how many decoy taps happened. */
-export interface SightwordGameResponse {
-  /** Target sight words the child correctly identified. */
-  found: string[];
-  /** Count of taps on decoys (gentle misses, not failures). */
-  decoyTaps: number;
-}
+export const responseSchema = z
+  .object({
+    /** Target sight words the child correctly identified. */
+    found: z.array(z.string().min(1).max(64)).max(64),
+    /** Count of taps on decoys (gentle misses, not failures). */
+    decoyTaps: z.number().int().min(0).max(100),
+  })
+  .strict();
+export type SightwordGameResponse = z.infer<typeof responseSchema>;
 
 export function score(
   config: SightwordGameConfig,

@@ -2,6 +2,7 @@ import type { SortCategoriesConfig } from "@/content/activity-configs";
 import type { ActivityType } from "@/content/types";
 import { SortCategoriesPlayer } from "./Player";
 import {
+  responseSchema,
   schema,
   score,
   skillsAffected,
@@ -14,6 +15,7 @@ export const sortCategories: ActivityType<SortCategoriesConfig, SortCategoriesRe
   kind: "sort-categories",
   label: "Sort",
   schema,
+  responseSchema,
   Player: SortCategoriesPlayer,
   score,
   skillsAffected,

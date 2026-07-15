@@ -1,5 +1,6 @@
 import { mathTenframeConfig, type MathTenframeConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
+import { z } from "zod";
 import {
   evenSkillEvidence,
   firstTryRateFromAttempts,
@@ -11,12 +12,15 @@ import {
 export const schema = mathTenframeConfig;
 
 /** The Player reports the final dot count and how many check attempts it took. */
-export interface MathTenframeResponse {
-  /** Dots the child placed (represent) or the running total (add). */
-  count: number;
-  /** Check attempts before the answer was right (≥1). */
-  attempts: number;
-}
+export const responseSchema = z
+  .object({
+    /** Dots the child placed (represent) or the running total (add). */
+    count: z.number().int().min(0).max(40),
+    /** Check attempts before the answer was right (≥1). */
+    attempts: z.number().int().min(1).max(100),
+  })
+  .strict();
+export type MathTenframeResponse = z.infer<typeof responseSchema>;
 
 /** The number the child must reach. represent → target; add → target + addend. */
 export function goalFor(config: MathTenframeConfig): number {
