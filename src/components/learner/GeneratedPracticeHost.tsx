@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { MapTrifoldIcon } from "@phosphor-icons/react/dist/ssr";
@@ -31,6 +31,7 @@ import {
   safeParsePlayerConfig,
   type LoadedGeneratedPractice,
 } from "./activityResolution";
+import { claimPlayerCompletion, type CompletionClaim } from "./completionClaim";
 
 /**
  * The play host for a generated SHELF item (Adventure 2.0 B3). A minimal mirror
@@ -63,6 +64,7 @@ export function GeneratedPracticeHost({
   const { record, config, mode, ready, selectedLearnerId, available } = learnerState;
   const [phase, setPhase] = useState<Phase>({ kind: "playing" });
   const [loaded, setLoaded] = useState<LoadedGeneratedPractice<PlayableShelfItem> | null>(null);
+  const completionClaimRef = useRef<CompletionClaim | null>(null);
 
   const requestKey =
     mode === "account" && ready && available && selectedLearnerId
@@ -151,7 +153,10 @@ export function GeneratedPracticeHost({
   };
 
   const handleComplete = (response: unknown) => {
-    void persistCompletion(response, globalThis.crypto.randomUUID());
+    const claim = claimPlayerCompletion(completionClaimRef.current, requestKey);
+    if (!claim) return;
+    completionClaimRef.current = claim;
+    void persistCompletion(response, claim.completionId);
   };
 
   const handleExit = () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
@@ -34,6 +34,7 @@ import {
   resolvePlayableActivity,
   safeParsePlayerConfig,
 } from "./activityResolution";
+import { claimPlayerCompletion, type CompletionClaim } from "./completionClaim";
 
 /**
  * The next activity within the SAME (resolved) unit — kept inside the world so a
@@ -91,6 +92,7 @@ export function ActivityHost({
   const { record, signedIn, config, selectedLearnerId, program, mode, available, ready } =
     learnerState;
   const [phase, setPhase] = useState<Phase>({ kind: "play" });
+  const completionClaimRef = useRef<CompletionClaim | null>(null);
 
   // Fail closed until the surface mode + selected account learner's pinned tree
   // are ready. Account mode never falls back to the published SSR activity, and
@@ -180,7 +182,10 @@ export function ActivityHost({
   };
 
   const handleComplete = (response: unknown) => {
-    void persistCompletion(response, globalThis.crypto.randomUUID());
+    const claim = claimPlayerCompletion(completionClaimRef.current, completionKey);
+    if (!claim) return;
+    completionClaimRef.current = claim;
+    void persistCompletion(response, claim.completionId);
   };
 
   const handleExit = () => {

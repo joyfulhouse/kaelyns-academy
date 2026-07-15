@@ -9,6 +9,8 @@ const fixtures = vi.hoisted(() => {
   return {
     TestPlayer,
     record: vi.fn(),
+    refIndex: 0,
+    refValues: [] as { current: unknown }[],
     stateIndex: 0,
     stateValues: [] as unknown[],
     stateSetters: [] as ReturnType<typeof vi.fn>[],
@@ -50,6 +52,11 @@ const fixtures = vi.hoisted(() => {
 vi.mock("react", async (importActual) => ({
   ...(await importActual<typeof import("react")>()),
   useEffect: () => undefined,
+  useRef: (initial: unknown) => {
+    const index = fixtures.refIndex++;
+    if (index >= fixtures.refValues.length) fixtures.refValues[index] = { current: initial };
+    return fixtures.refValues[index];
+  },
   useState: (initial: unknown) => {
     const index = fixtures.stateIndex++;
     if (index >= fixtures.stateValues.length) fixtures.stateValues[index] = initial;
@@ -150,6 +157,7 @@ function findElement(
 }
 
 function renderActivityHost() {
+  fixtures.refIndex = 0;
   fixtures.stateIndex = 0;
   return ActivityHost({
     programSlug: "kaelyn-adaptive",
@@ -162,6 +170,7 @@ function renderActivityHost() {
 }
 
 function renderGeneratedHost() {
+  fixtures.refIndex = 0;
   fixtures.stateIndex = 0;
   return GeneratedPracticeHost({ programSlug: "kaelyn-adaptive", generatedId: "gen-1" });
 }
@@ -174,6 +183,8 @@ async function flushCompletion() {
 describe("completion host retry identity", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    fixtures.refIndex = 0;
+    fixtures.refValues = [];
     fixtures.stateIndex = 0;
     fixtures.stateValues = [];
     fixtures.stateSetters = [];
@@ -258,6 +269,46 @@ describe("completion host retry identity", () => {
       COMPLETION_ID,
     );
     expect(fixtures.stateValues[0]).toMatchObject({ kind: "reward", stars: 3 });
+  });
+
+  it("ActivityHost accepts only the first rapid completion for one player identity", async () => {
+    fixtures.record.mockResolvedValue({ ok: true, score: SCORE });
+    const first = renderActivityHost();
+    const player = findElement(first, (element) => element.type === fixtures.TestPlayer);
+    const complete = player?.props.onComplete as (response: unknown) => void;
+
+    complete(RESPONSE);
+    complete({ ...RESPONSE, attempts: 2 });
+    await flushCompletion();
+
+    expect(globalThis.crypto.randomUUID).toHaveBeenCalledTimes(1);
+    expect(fixtures.record).toHaveBeenCalledTimes(1);
+    expect(fixtures.record).toHaveBeenCalledWith(
+      fixtures.activity,
+      RESPONSE,
+      { unitKey: "unit-1" },
+      COMPLETION_ID,
+    );
+  });
+
+  it("GeneratedPracticeHost accepts only the first rapid completion for one player identity", async () => {
+    fixtures.record.mockResolvedValue({ ok: true, score: SCORE });
+    const first = renderGeneratedHost();
+    const player = findElement(first, (element) => element.type === fixtures.TestPlayer);
+    const complete = player?.props.onComplete as (response: unknown) => void;
+
+    complete(RESPONSE);
+    complete({ ...RESPONSE, attempts: 2 });
+    await flushCompletion();
+
+    expect(globalThis.crypto.randomUUID).toHaveBeenCalledTimes(1);
+    expect(fixtures.record).toHaveBeenCalledTimes(1);
+    expect(fixtures.record).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "gen-1" }),
+      RESPONSE,
+      { generatedActivityId: "gen-1" },
+      COMPLETION_ID,
+    );
   });
 
   it("ActivityHost converts a rejected record call into the retry posture", async () => {
