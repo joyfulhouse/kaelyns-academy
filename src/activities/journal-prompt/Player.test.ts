@@ -43,6 +43,14 @@ describe("journal-prompt Player participation contract", () => {
     expect(toggleDictation).toContain('"dictation"');
   });
 
+  it("restores insertion selection during commit so it cannot override newer caret work", () => {
+    const restoreSelection = functionBody("restoreSelection", "insertChunk");
+    expect(source).toContain("useLayoutEffect(() => {");
+    expect(source).toContain("pendingSelectionRef.current = null");
+    expect(restoreSelection).toContain("pendingSelectionRef.current =");
+    expect(restoreSelection).not.toContain("requestAnimationFrame");
+  });
+
   it("submits only the bounded summary fields", () => {
     const finish = functionBody("finish", "ComposeView");
     expect(finish).toContain("markCount,");

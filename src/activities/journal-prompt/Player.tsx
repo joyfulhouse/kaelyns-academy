@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { EraserIcon, MicrophoneIcon, StopIcon } from "@phosphor-icons/react/dist/ssr";
 import type { JournalPromptConfig } from "@/content/activity-configs";
@@ -315,6 +315,7 @@ function ComposeView({
   const abortDictation = dictation.abort;
   const micAllowedRef = useRef(micAllowed);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const pendingSelectionRef = useRef<{ start: number; end: number } | null>(null);
   const allowedWritingModes = config.allowModes.filter(isWritingMode);
   const [writingMode, setWritingMode] = useState<WritingMode>(() => initialWritingMode(config));
   const dictationConfigured = config.allowModes.includes("dictate");
@@ -329,13 +330,17 @@ function ComposeView({
     if (!micAllowed) abortDictation();
   }, [abortDictation, micAllowed]);
 
+  useLayoutEffect(() => {
+    const pending = pendingSelectionRef.current;
+    const textarea = textareaRef.current;
+    if (!pending || !textarea) return;
+    pendingSelectionRef.current = null;
+    textarea.focus();
+    textarea.setSelectionRange(pending.start, pending.end);
+  });
+
   function restoreSelection(selectionStart: number, selectionEnd: number) {
-    window.requestAnimationFrame(() => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-      textarea.focus();
-      textarea.setSelectionRange(selectionStart, selectionEnd);
-    });
+    pendingSelectionRef.current = { start: selectionStart, end: selectionEnd };
   }
 
   function insertChunk(chunk: string, preferBlank: boolean) {
