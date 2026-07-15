@@ -16,13 +16,13 @@ export function CompletionHeading({
 
   return (
     <h1
+      {...props}
       ref={headingRef}
       tabIndex={-1}
       className={cn(
         "outline-none focus-visible:ring-4 focus-visible:ring-honey-deep",
         className,
       )}
-      {...props}
     />
   );
 }
