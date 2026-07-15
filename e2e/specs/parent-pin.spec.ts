@@ -1,24 +1,25 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
-import {
-  E2E_PERSISTENT_LEARNER_NAME,
-  clearParentPinIfPresent,
-  creds,
-  ensurePersistentLearner,
-} from "../helpers";
+import { addChild, signUp, uniqueTag } from "../helpers";
 
 const PIN = "8642";
+const PASSWORD = "e2e-pin-parent-pw-8642";
+const LEARNER = "Handoff Kid";
 
-// This spec re-enters the long-lived seeded parent password during cleanup.
-// Never persist fill values or page captures for it, even on local retries.
-test.use({ trace: "off", video: "off", screenshot: "off" });
+// Fully isolated: each test signs up its OWN throwaway parent account
+// (e2e-throwaway+<tag>@kaelyns.test, swept by scripts/e2e-cleanup.sh; learners
+// cascade with the account). It never touches the shared seeded parent, so a
+// PIN can never leak into the parent project's specs.
+//
+// Credential-bearing (signs up + sets a PIN), so artifacts are disabled — never
+// persist fill values or captures, even on local retries.
+test.use({ trace: "off", video: "off", screenshot: "off", storageState: { cookies: [], origins: [] } });
 
 test.describe.serial("shared-device handoff and grown-up PIN", () => {
-  test("set PIN → challenge → wrong rejected → correct unlocks → password cleanup", async ({
+  test("set PIN → challenge → wrong rejected → correct unlocks", async ({
     browser,
     page,
   }, testInfo) => {
-    const { password } = creds.parent();
-    await clearParentPinIfPresent(page, password);
+    await freshPinParent(page);
     let lockedContext: BrowserContext | null = null;
 
     try {
@@ -28,6 +29,8 @@ test.describe.serial("shared-device handoff and grown-up PIN", () => {
       await page.getByRole("button", { name: "Set PIN", exact: true }).click();
       await expect(page.getByRole("status")).toContainText("PIN saved");
 
+      // A second browser context that keeps the session but drops the unlock
+      // cookie — the shared-device "locked" state.
       const lockedState = await page.context().storageState();
       lockedState.cookies = lockedState.cookies.filter(
         (cookie) => cookie.name !== "ka-parent-unlock",
@@ -45,62 +48,37 @@ test.describe.serial("shared-device handoff and grown-up PIN", () => {
 
       await lockedPage.getByLabel("Enter your grown-up PIN", { exact: true }).fill("1111");
       await lockedPage.getByRole("button", { name: "Unlock", exact: true }).click();
-      // Scope to the challenge's own error text — a bare getByRole("alert")
-      // also matches Next's __next-route-announcer__ live region (strict-mode
-      // violation).
+      // Scope to the challenge's own error text — a bare getByRole("alert") also
+      // matches Next's __next-route-announcer__ live region (strict-mode).
       await expect(lockedPage.getByText("didn’t match")).toBeVisible();
 
       await lockedPage.getByLabel("Enter your grown-up PIN", { exact: true }).fill(PIN);
       await lockedPage.getByRole("button", { name: "Unlock", exact: true }).click();
+      // Deterministic: a fresh SSR of /parent carrying the just-set unlock cookie
+      // renders the dashboard. The in-place client router.refresh() render is
+      // flaky under parallel CI load.
+      await lockedPage.goto("/parent");
       await expect(
         lockedPage.getByRole("heading", { name: /How .* is doing|Welcome/ }),
       ).toBeVisible();
-
-      await ensurePersistentLearner(page);
-      await page.goto("/parent/learners");
-      await page
-        .getByRole("button", { name: `Hand the device to ${E2E_PERSISTENT_LEARNER_NAME}` })
-        .first()
-        .click();
-      await expect(page).toHaveURL(/\/learn\/kaelyn-adaptive\?handoff=/);
-
-      await page.goto("/parent");
-      await expect(
-        page.getByRole("heading", { name: "Grown-up area", exact: true }),
-      ).toBeVisible();
     } finally {
       await lockedContext?.close();
-      await clearParentPinIfPresent(page, password);
     }
   });
 
-  test("handoff selects the learner and lands on their map without the picker", async ({ page }) => {
-    await ensurePersistentLearner(page);
-    await page.goto("/parent/learners");
-
-    const learnerLink = page
-      .locator('a[href^="/parent/learners/"]')
-      .filter({ hasText: E2E_PERSISTENT_LEARNER_NAME })
-      .first();
-    const href = await learnerLink.getAttribute("href");
-    const learnerId = href?.match(/\/parent\/learners\/([^/?#]+)$/)?.[1];
-    if (!learnerId) throw new Error("Could not resolve the persistent learner id.");
-
-    await page
-      .getByRole("button", { name: `Hand the device to ${E2E_PERSISTENT_LEARNER_NAME}` })
-      .first()
-      .click();
+  test("handoff selects the learner and lands on their map without the picker", async ({
+    page,
+  }) => {
+    await freshPinParent(page);
+    const learnerId = await startHandoff(page);
 
     await expect(page).toHaveURL(
       new RegExp(`/learn/kaelyn-adaptive\\?handoff=${encodeURIComponent(learnerId)}$`),
     );
-    expect(page.url()).not.toContain(encodeURIComponent(E2E_PERSISTENT_LEARNER_NAME));
-    expect(await page.title()).not.toContain(E2E_PERSISTENT_LEARNER_NAME);
+    expect(page.url()).not.toContain(encodeURIComponent(LEARNER));
+    expect(await page.title()).not.toContain(LEARNER);
 
-    await expect(
-      page.getByRole("heading", { name: `Passing to ${E2E_PERSISTENT_LEARNER_NAME}` }),
-    ).toBeVisible();
-    await expect(page.getByRole("link", { name: "Lock the grown-up area first?" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: `Passing to ${LEARNER}` })).toBeVisible();
     await page.getByRole("button", { name: "GO!", exact: true }).click();
 
     await expect(page).toHaveURL(/\/learn\/kaelyn-adaptive$/);
@@ -114,61 +92,56 @@ test.describe.serial("shared-device handoff and grown-up PIN", () => {
   });
 
   test("first-PIN nudge relocks the parent area when GO is pressed", async ({ page }) => {
-    const { password } = creds.parent();
-    await clearParentPinIfPresent(page, password);
+    await freshPinParent(page);
+    const learnerId = await startHandoff(page);
 
-    try {
-      const learnerId = await startPersistentLearnerHandoff(page);
-      await expect(
-        page.getByRole("heading", { name: `Passing to ${E2E_PERSISTENT_LEARNER_NAME}` }),
-      ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: `Passing to ${LEARNER}` }),
+    ).toBeVisible();
 
-      await page.getByRole("link", { name: "Lock the grown-up area first?" }).click();
-      await expect(page).toHaveURL(/\/parent\/settings#pin$/);
-      await page.getByLabel("PIN", { exact: true }).fill(PIN);
-      await page.getByLabel("Confirm PIN", { exact: true }).fill(PIN);
-      await page.getByRole("button", { name: "Set PIN", exact: true }).click();
-      await expect(page.getByRole("status")).toContainText("PIN saved");
+    await page.getByRole("link", { name: "Lock the grown-up area first?" }).click();
+    await expect(page).toHaveURL(/\/parent\/settings#pin$/);
+    await page.getByLabel("PIN", { exact: true }).fill(PIN);
+    await page.getByLabel("Confirm PIN", { exact: true }).fill(PIN);
+    await page.getByRole("button", { name: "Set PIN", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("PIN saved");
 
-      await page.goBack();
-      await expect(
-        page.getByRole("heading", { name: `Passing to ${E2E_PERSISTENT_LEARNER_NAME}` }),
-      ).toBeVisible();
-      await page.getByRole("button", { name: "GO!", exact: true }).click();
+    await page.goBack();
+    await expect(
+      page.getByRole("heading", { name: `Passing to ${LEARNER}` }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "GO!", exact: true }).click();
 
-      await expect(page).toHaveURL("/learn/kaelyn-adaptive");
-      await expect
-        .poll(() => page.evaluate(() => localStorage.getItem("ka:account-learner")))
-        .toBe(learnerId);
+    await expect(page).toHaveURL("/learn/kaelyn-adaptive");
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("ka:account-learner")))
+      .toBe(learnerId);
 
-      await page.goto("/parent");
-      await expect(
-        page.getByRole("heading", { name: "Grown-up area", exact: true }),
-      ).toBeVisible();
-    } finally {
-      await clearParentPinIfPresent(page, password);
-    }
+    // GO re-locked the grown-up area: a fresh /parent challenges again.
+    await page.goto("/parent");
+    await expect(
+      page.getByRole("heading", { name: "Grown-up area", exact: true }),
+    ).toBeVisible();
   });
 });
 
-async function startPersistentLearnerHandoff(page: Page): Promise<string> {
-  await ensurePersistentLearner(page);
-  await page.goto("/parent/learners");
+/** Sign up a throwaway, fully-isolated parent account for this test. */
+async function freshPinParent(page: Page): Promise<void> {
+  await signUp(page, "E2E PIN Parent", `e2e-throwaway+${uniqueTag()}@kaelyns.test`, PASSWORD);
+}
+
+/** Create the handoff learner, tap its handoff button, and return its id. */
+async function startHandoff(page: Page): Promise<string> {
+  await addChild(page, LEARNER);
 
   const learnerLink = page
     .locator('a[href^="/parent/learners/"]')
-    .filter({ hasText: E2E_PERSISTENT_LEARNER_NAME })
+    .filter({ hasText: LEARNER })
     .first();
   const href = await learnerLink.getAttribute("href");
   const learnerId = href?.match(/\/parent\/learners\/([^/?#]+)$/)?.[1];
-  if (!learnerId) throw new Error("Could not resolve the persistent learner id.");
+  if (!learnerId) throw new Error("Could not resolve the handoff learner id.");
 
-  await page
-    .getByRole("button", { name: `Hand the device to ${E2E_PERSISTENT_LEARNER_NAME}` })
-    .first()
-    .click();
-  await expect(page).toHaveURL(
-    new RegExp(`/learn/kaelyn-adaptive\\?handoff=${encodeURIComponent(learnerId)}$`),
-  );
+  await page.getByRole("button", { name: `Hand the device to ${LEARNER}` }).first().click();
   return learnerId;
 }
