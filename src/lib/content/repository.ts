@@ -227,31 +227,22 @@ export async function resolveProgramByVersionPin(
  * CLOSED if that version can't be resolved (`undefined` → the calm "unavailable"
  * state, never a silent swap to current published content); a null pin / no
  * enrollment / unowned learner falls back to the current published (or static)
- * tree by slug — the guest-equivalent the picker + gate handle separately. Note
- * the try/catch below is on the pin READ only: a DB error reading the enrollment
- * row degrades to the null-pin/`bySlug` path; a SET pin whose version doesn't
- * resolve still fails closed.
+ * tree by slug — the guest-equivalent the picker + gate handle separately. An
+ * enrollment-pin read error is deliberately allowed to throw so account learner
+ * callers can fail closed instead of silently switching to the slug tree.
  *
  * Build-safe: the tutor store is imported lazily (per-request), never at module
  * top level. `cache()`-wrapped for per-request memoization like the other
  * resolvers.
  */
-export const resolveLearnerProgram: (
+export const resolveAccountLearnerProgram: (
   accountId: string,
   learnerId: string,
   slug: string,
 ) => Promise<Program | undefined> = cache(
   async (accountId: string, learnerId: string, slug: string): Promise<Program | undefined> => {
-    let pin: { programVersionId: string | null } | null = null;
-    try {
-      const { getEnrollmentVersionId } = await import("@/lib/tutor/store");
-      pin = await getEnrollmentVersionId(accountId, learnerId, slug);
-    } catch (err) {
-      // A DB blip reading the pin must not break the learner surface — degrade to
-      // the current published/static tree (the null-pin path) rather than crash.
-      captureNonCritical("resolveLearnerProgram enrollment-pin read failed", err);
-      pin = null;
-    }
+    const { getEnrollmentVersionId } = await import("@/lib/tutor/store");
+    const pin = await getEnrollmentVersionId(accountId, learnerId, slug);
     return resolveProgramByVersionPin(
       pin,
       (versionId) => getProgramVersionAsync(versionId),

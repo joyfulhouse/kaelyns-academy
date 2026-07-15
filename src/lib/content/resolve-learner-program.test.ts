@@ -4,14 +4,14 @@
  *  - `resolveProgramByVersionPin` is pure: assert the dispatch decision directly
  *    (pinned → version tree; set pin whose version can't resolve → undefined,
  *    fail-closed with NO slug fallback; null pin / no-enrollment → published).
- *  - `resolveLearnerProgram` is exercised against a MOCKED store (no DB): a
+ *  - `resolveAccountLearnerProgram` is exercised against a MOCKED store (no DB): a
  *    pinned enrollment resolves the version tree; an unowned/absent enrollment
  *    (store returns null) falls back to the current published/static tree.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Program } from "@/content";
 
-// Mock the tutor store so resolveLearnerProgram needs no DB. getProgramVersionAsync
+// Mock the tutor store so resolveAccountLearnerProgram needs no DB. getProgramVersionAsync
 // has NO static fallback, so to assert the pinned path we also stub the version
 // tree read in the content store; the slug path uses the real no-DB static fallback.
 vi.mock("@/lib/tutor/store", () => ({ getEnrollmentVersionId: vi.fn() }));
@@ -20,7 +20,7 @@ vi.mock("./store", async (importActual) => ({
   getProgramVersionTreeRows: vi.fn(),
 }));
 
-const { resolveProgramByVersionPin, resolveLearnerProgram } = await import("./repository");
+const { resolveProgramByVersionPin, resolveAccountLearnerProgram } = await import("./repository");
 const { getEnrollmentVersionId } = await import("@/lib/tutor/store");
 const { getProgramVersionTreeRows } = await import("./store");
 
@@ -69,7 +69,7 @@ describe("resolveProgramByVersionPin (pure dispatch)", () => {
   });
 });
 
-describe("resolveLearnerProgram (mocked store, no DB)", () => {
+describe("resolveAccountLearnerProgram (mocked store, no DB)", () => {
   beforeEach(() => {
     // A version tree read that returns one assemblable version row set. The
     // shape only needs to survive assembleProgram for this slug-agnostic check.
@@ -98,7 +98,7 @@ describe("resolveLearnerProgram (mocked store, no DB)", () => {
 
   it("resolves the PINNED version tree when the enrollment is pinned", async () => {
     vi.mocked(getEnrollmentVersionId).mockResolvedValue({ programVersionId: "v-1" });
-    const result = await resolveLearnerProgram("acc-1", "l-1", "kaelyn-adaptive");
+    const result = await resolveAccountLearnerProgram("acc-1", "l-1", "kaelyn-adaptive");
     expect(getEnrollmentVersionId).toHaveBeenCalledWith("acc-1", "l-1", "kaelyn-adaptive");
     expect(getProgramVersionTreeRows).toHaveBeenCalledWith("v-1");
     expect(result?.title).toBe("Pinned Program v2");
@@ -106,7 +106,7 @@ describe("resolveLearnerProgram (mocked store, no DB)", () => {
 
   it("falls back to the current published/static tree when unowned/no enrollment (store → null)", async () => {
     vi.mocked(getEnrollmentVersionId).mockResolvedValue(null);
-    const result = await resolveLearnerProgram("acc-1", "l-1", "kaelyn-adaptive");
+    const result = await resolveAccountLearnerProgram("acc-1", "l-1", "kaelyn-adaptive");
     // No version read; resolves the slug's published (here: static fallback) tree.
     expect(getProgramVersionTreeRows).not.toHaveBeenCalled();
     expect(result?.slug).toBe("kaelyn-adaptive");
@@ -114,8 +114,17 @@ describe("resolveLearnerProgram (mocked store, no DB)", () => {
 
   it("falls back to the published tree when the enrollment pin is null", async () => {
     vi.mocked(getEnrollmentVersionId).mockResolvedValue({ programVersionId: null });
-    const result = await resolveLearnerProgram("acc-1", "l-1", "kaelyn-adaptive");
+    const result = await resolveAccountLearnerProgram("acc-1", "l-1", "kaelyn-adaptive");
     expect(getProgramVersionTreeRows).not.toHaveBeenCalled();
     expect(result?.slug).toBe("kaelyn-adaptive");
+  });
+
+  it("fails closed when the enrollment pin read throws", async () => {
+    vi.mocked(getEnrollmentVersionId).mockRejectedValue(new Error("pin database unavailable"));
+
+    await expect(
+      resolveAccountLearnerProgram("acc-1", "l-1", "kaelyn-adaptive"),
+    ).rejects.toThrow("pin database unavailable");
+    expect(getProgramVersionTreeRows).not.toHaveBeenCalled();
   });
 });

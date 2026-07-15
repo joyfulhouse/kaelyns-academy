@@ -38,7 +38,7 @@ vi.mock("@/lib/tutor/store", () => ({
 }));
 
 vi.mock("@/lib/content/repository", () => ({
-  resolveLearnerProgram: vi.fn(),
+  resolveAccountLearnerProgram: vi.fn(),
 }));
 
 // The heavy AI + shelf modules are mocked so the action tests stay pure: we
@@ -78,7 +78,7 @@ import {
   type NewGeneratedActivity,
 } from "@/lib/tutor/store";
 import { requireAccount, UnauthenticatedError } from "@/lib/tenancy";
-import { resolveLearnerProgram } from "@/lib/content/repository";
+import { resolveAccountLearnerProgram } from "@/lib/content/repository";
 import { generatePracticeItems } from "@/lib/ai/practice";
 import { pickGenerationTargets, type GenerationTarget } from "@/lib/tutor/shelf";
 import {
@@ -149,6 +149,7 @@ const PROGRAM = {
 describe("getGeneratedPracticeAction", () => {
   beforeEach(() => {
     vi.mocked(getPlayableGeneratedActivity).mockReset();
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
   });
 
   it("resolves a shelf row through the selected learner-scoped store boundary", async () => {
@@ -191,6 +192,43 @@ describe("getGeneratedPracticeAction", () => {
     ).resolves.toBeNull();
     expect(getPlayableGeneratedActivity).not.toHaveBeenCalled();
   });
+
+  it("fails closed before reading a shelf row when the enrollment pin read fails", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockRejectedValue(new Error("pin read failed"));
+    vi.mocked(getPlayableGeneratedActivity).mockResolvedValue({} as never);
+
+    await expect(
+      getGeneratedPracticeAction({
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+        generatedId: "gen-1",
+      }),
+    ).resolves.toBeNull();
+    expect(getPlayableGeneratedActivity).not.toHaveBeenCalled();
+  });
+
+  it("rejects a shelf row whose unit-local lesson is absent from the pinned tree", async () => {
+    vi.mocked(getPlayableGeneratedActivity).mockResolvedValue({
+      id: "gen-1",
+      learnerId: "L1",
+      lessonId: "lesson-1",
+      unitKey: "unit-2",
+      programSlug: "kaelyn-adaptive",
+      kind: "math-clock",
+      title: "Stale generated item",
+      config: { mode: "set", instruction: "Make six o'clock.", targetHour: 6, targetMinute: 0 },
+      skillTags: ["math.time"],
+      gen: { model: "ds4-fast", route: "shelf", at: "2026-07-01T00:00:00.000Z" },
+    });
+
+    await expect(
+      getGeneratedPracticeAction({
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+        generatedId: "gen-1",
+      }),
+    ).resolves.toBeNull();
+  });
 });
 
 const BASE_INPUT: RecordAttemptInput = {
@@ -221,7 +259,7 @@ describe("getLearnerStateAction learner defaults", () => {
       status: "active",
       config: { band: "ready", aiPractice: true },
     });
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
     vi.mocked(getSkillState).mockResolvedValue({});
     vi.mocked(getCompletedActivityIds).mockResolvedValue([]);
     vi.mocked(getDueReviews).mockResolvedValue([]);
@@ -252,7 +290,7 @@ afterEach(() => vi.resetAllMocks());
 
 describe("recordAttemptAction canonical authored scoring", () => {
   it("rejects an activity that is not inside the claimed route unit", async () => {
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
 
     const result = await recordAttemptAction({ ...BASE_INPUT, unitKey: "unit-2" });
 
@@ -261,7 +299,7 @@ describe("recordAttemptAction canonical authored scoring", () => {
   });
 
   it("rejects malformed response facts before persistence", async () => {
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
 
     const result = await recordAttemptAction({ ...BASE_INPUT, response: { attempts: 0 } });
 
@@ -270,7 +308,7 @@ describe("recordAttemptAction canonical authored scoring", () => {
   });
 
   it("fails closed when the pinned program cannot be resolved", async () => {
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(undefined);
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(undefined);
 
     const result = await recordAttemptAction(BASE_INPUT);
 
@@ -279,7 +317,7 @@ describe("recordAttemptAction canonical authored scoring", () => {
   });
 
   it("ignores a forged browser score and persists the canonical plugin score", async () => {
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
     const forged = {
       ...BASE_INPUT,
       score: {
@@ -325,6 +363,7 @@ describe("recordAttemptAction generated-shelf witness (earn-once boundary)", () 
   } as RecordAttemptInput;
 
   it("rejects a generated id not owned by the selected learner", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
     vi.mocked(getGeneratedActivity).mockResolvedValue(null);
 
     const result = await recordAttemptAction(generatedInput);
@@ -335,10 +374,11 @@ describe("recordAttemptAction generated-shelf witness (earn-once boundary)", () 
   });
 
   it("derives kind, score, unit, tags, and provenance from the owned shelf row", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
     vi.mocked(getGeneratedActivity).mockResolvedValue({
       id: "gen-1",
-      lessonId: "u1-l1",
-      unitKey: "u1",
+      lessonId: "lesson-1",
+      unitKey: "unit-1",
       programSlug: "kaelyn-adaptive",
       kind: "math-clock",
       title: "Fresh: clocks",
@@ -371,7 +411,7 @@ describe("recordAttemptAction generated-shelf witness (earn-once boundary)", () 
         generated: true,
         shelfEligible: true,
         creditEligible: false,
-        unitId: "u1",
+        unitId: "unit-1",
         provenance: {
           model: "ds4-fast",
           route: "shelf",
@@ -379,6 +419,41 @@ describe("recordAttemptAction generated-shelf witness (earn-once boundary)", () 
         },
       }),
     );
+  });
+
+  it("returns unavailable before reading a generated row when the enrollment pin read fails", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockRejectedValue(new Error("pin read failed"));
+
+    const result = await recordAttemptAction(generatedInput);
+
+    expect(result).toEqual({ ok: false, reason: "unavailable" });
+    expect(getGeneratedActivity).not.toHaveBeenCalled();
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("rejects a generated row whose unit-local lesson is absent from the pinned tree", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(getGeneratedActivity).mockResolvedValue({
+      id: "gen-1",
+      lessonId: "lesson-1",
+      unitKey: "unit-2",
+      programSlug: "kaelyn-adaptive",
+      kind: "math-clock",
+      title: "Stale generated item",
+      config: {
+        mode: "set",
+        instruction: "Make six o'clock.",
+        targetHour: 6,
+        targetMinute: 0,
+      },
+      skillTags: ["math.time"],
+      gen: { model: "ds4-fast", route: "shelf", at: "2026-07-01T00:00:00.000Z" },
+    });
+
+    const result = await recordAttemptAction(generatedInput);
+
+    expect(result).toEqual({ ok: false, reason: "invalid" });
+    expect(recordAttempt).not.toHaveBeenCalled();
   });
 });
 
@@ -469,7 +544,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
       avatar: null,
       birthMonth: null,
     });
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(makeProgram(["a1", "a2"]));
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(makeProgram(["a1", "a2"]));
     vi.mocked(getLearnerSettings).mockResolvedValue({});
     vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
     vi.mocked(getCompletedActivityIds).mockResolvedValue([
@@ -485,7 +560,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     // room mirrors the real helper's empty-shelf case (min(SHELF_BATCH, cap)).
     lastGeneratedRows = null;
     vi.mocked(withLessonGenerationLock).mockImplementation(
-      async (_accountId, _learnerId, _lessonId, _more, generate) => {
+      async (_accountId, _learnerId, _scope, _more, generate) => {
         lastGeneratedRows = await generate(4);
         return lastGeneratedRows.map((_r, i) => shelfItem(`new${i}`));
       },
@@ -612,6 +687,27 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     expect(withLessonGenerationLock).not.toHaveBeenCalled();
   });
 
+  it("does not let the same unit-local lesson key in another unit satisfy this shelf", async () => {
+    vi.mocked(listGeneratedShelf).mockResolvedValue([
+      { ...shelfItem("other-unit"), unitKey: "u2" },
+    ]);
+
+    const result = await ensureLessonPractice({
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      lessonId: LESSON_ID,
+    });
+
+    expect(result.items).toHaveLength(4);
+    expect(withLessonGenerationLock).toHaveBeenCalledWith(
+      "acc-1",
+      "L1",
+      { programSlug: "kaelyn-adaptive", unitKey: UNIT_ID, lessonId: LESSON_ID },
+      false,
+      expect.any(Function),
+    );
+  });
+
   it("honors the per-lesson cap: a full shelf never grows, even with `more`", async () => {
     const full = Array.from({ length: 8 }, (_, i) => shelfItem(`e${i}`));
     vi.mocked(listGeneratedShelf).mockResolvedValue(full);
@@ -688,7 +784,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     // or written.
     const program = makeProgram(["a1", "a2"]);
     (program.units[0] as unknown as { checkpoint: string }).checkpoint = "baseline";
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(program);
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(program);
 
     const result = await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
 

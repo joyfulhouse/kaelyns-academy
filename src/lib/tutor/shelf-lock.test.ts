@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // withLessonGenerationLock claims a lesson's LLM spend BEFORE the model call by
-// serializing recount → generate → insert behind a per-(learner, lesson) advisory
+// serializing recount → generate → insert behind a per-(learner, program, unit,
+// lesson) advisory
 // lock (final review Fix 2). There is no live test DB, so this drives it against a
 // hand-rolled fake `tx` that records an op-log — mirroring store.test.ts's ordering
 // assertions — to prove the SEQUENCE (lock first, recount INSIDE the lock, generate
@@ -15,6 +16,8 @@ const ops: string[] = [];
 const ownedRows = { value: [{ id: "L1" }] as Record<string, unknown>[] };
 const existingRows = { value: [] as Record<string, unknown>[] };
 const insertedRows = { value: [] as Record<string, unknown>[] };
+const lockKeys: string[] = [];
+const generatedWhere = { value: [] as unknown[] };
 
 function tableName(t: unknown): string {
   return (t as { _name?: string })._name ?? "unknown";
@@ -28,7 +31,8 @@ function builder(op: string, table = "unknown") {
       table = tableName(t);
       return chain;
     },
-    where() {
+    where(predicate: unknown) {
+      if (table === "generated_activity") generatedWhere.value = predicate as unknown[];
       return chain;
     },
     limit() {
@@ -60,8 +64,10 @@ function builder(op: string, table = "unknown") {
 
 const tx = {
   // The advisory-lock statement (pg_advisory_xact_lock): recorded as the first op.
-  execute() {
+  execute(query: unknown) {
     ops.push("lock");
+    const values = (query as { values?: unknown[] }).values ?? [];
+    lockKeys.push(String(values[0]));
     return Promise.resolve();
   },
   select() {
@@ -81,8 +87,10 @@ vi.mock("@/lib/db/schema", () => ({
   generatedActivity: {
     _name: "generated_activity",
     id: {},
-    learnerId: {},
-    lessonId: {},
+    learnerId: "generated_activity.learner_id",
+    programSlug: "generated_activity.program_slug",
+    unitKey: "generated_activity.unit_key",
+    lessonId: "generated_activity.lesson_id",
     createdAt: {},
   },
 }));
@@ -92,7 +100,7 @@ vi.mock("@/lib/db/schema", () => ({
 // named imports.
 vi.mock("drizzle-orm", () => ({
   and: (...a: unknown[]) => a,
-  eq: (...a: unknown[]) => a,
+  eq: (column: unknown, value: unknown) => ({ column, value }),
   asc: (a: unknown) => a,
   sql: (strings: TemplateStringsArray, ...values: unknown[]) => ({ strings, values }),
   count: () => ({}),
@@ -127,6 +135,8 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
     ownedRows.value = [{ id: "L1" }];
     existingRows.value = [];
     insertedRows.value = [];
+    lockKeys.length = 0;
+    generatedWhere.value = [];
   });
 
   it("takes the lock, recounts INSIDE it, THEN generates + inserts (empty shelf → the winner)", async () => {
@@ -150,7 +160,13 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
       return [built];
     });
 
-    const items = await withLessonGenerationLock("acc-1", "L1", "u1-l1", false, generate);
+    const items = await withLessonGenerationLock(
+      "acc-1",
+      "L1",
+      { programSlug: "p", unitKey: "u1", lessonId: "u1-l1" },
+      false,
+      generate,
+    );
 
     expect(ops).toEqual([
       "lock",
@@ -160,6 +176,13 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
       "insert:generated_activity",
     ]);
     expect(generate).toHaveBeenCalledTimes(1);
+    expect(lockKeys).toEqual(["L1:p:u1:u1-l1"]);
+    expect(generatedWhere.value).toEqual([
+      { column: "generated_activity.learner_id", value: "L1" },
+      { column: "generated_activity.program_slug", value: "p" },
+      { column: "generated_activity.unit_key", value: "u1" },
+      { column: "generated_activity.lesson_id", value: "u1-l1" },
+    ]);
     expect(items).toHaveLength(1);
     expect(items[0]!.id).toBe("g1");
   });
@@ -173,7 +196,13 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
       return [];
     });
 
-    const items = await withLessonGenerationLock("acc-1", "L1", "u1-l1", false, generate);
+    const items = await withLessonGenerationLock(
+      "acc-1",
+      "L1",
+      { programSlug: "p", unitKey: "u1", lessonId: "u1-l1" },
+      false,
+      generate,
+    );
 
     expect(generate).not.toHaveBeenCalled();
     expect(ops).toEqual(["lock", "select:learner", "select:generated_activity"]);
@@ -185,9 +214,15 @@ describe("withLessonGenerationLock (spend claimed under an advisory lock)", () =
     ownedRows.value = [];
     const generate = vi.fn();
 
-    await expect(withLessonGenerationLock("acc-2", "L1", "u1-l1", false, generate)).rejects.toThrow(
-      "learner not found",
-    );
+    await expect(
+      withLessonGenerationLock(
+        "acc-2",
+        "L1",
+        { programSlug: "p", unitKey: "u1", lessonId: "u1-l1" },
+        false,
+        generate,
+      ),
+    ).rejects.toThrow("learner not found");
     expect(generate).not.toHaveBeenCalled();
     // The lock is still taken first (serialization holds even for a doomed call).
     expect(ops).toEqual(["lock", "select:learner"]);

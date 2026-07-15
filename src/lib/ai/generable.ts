@@ -81,7 +81,7 @@ export const KIND_BRIEF: Partial<Record<ActivityKind, string>> = {
  * True for the World-Languages kinds (their own inventory-guarded path) and
  * for any kind with a {@link KIND_BRIEF} entry; false otherwise (authored-only).
  * Single source of truth used by `generatePracticeItems`'s refusal, the
- * /api/practice gate, the shelf generator, AND the kid-surface More gate.
+ * bounded generator and the durable shelf target picker.
  */
 export function isGenerableKind(kind: ActivityKind): boolean {
   return isLangKind(kind) || KIND_BRIEF[kind] !== undefined;

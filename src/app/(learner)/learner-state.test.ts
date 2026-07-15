@@ -33,7 +33,7 @@ vi.mock("@/lib/tutor/store", () => ({
 
 // The resolver for the learner's pinned tree.
 vi.mock("@/lib/content/repository", () => ({
-  resolveLearnerProgram: vi.fn(),
+  resolveAccountLearnerProgram: vi.fn(),
   listProgramsAsync: vi.fn(),
 }));
 
@@ -44,7 +44,7 @@ vi.mock("@/content", () => ({
 }));
 
 import type { Program } from "@/content";
-import { resolveLearnerProgram } from "@/lib/content/repository";
+import { resolveAccountLearnerProgram } from "@/lib/content/repository";
 import {
   ensureEnrollment,
   getCompletedActivityIds,
@@ -66,7 +66,7 @@ beforeEach(() => {
   vi.mocked(getDueReviews).mockResolvedValue([]);
   vi.mocked(getEnrollmentConfig).mockResolvedValue({});
   vi.mocked(getLearnerSettings).mockResolvedValue({});
-  vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+  vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
   vi.mocked(listGeneratedShelf).mockResolvedValue([]);
   vi.mocked(getGeneratedCompletions).mockResolvedValue([]);
   // Default: an active enrollment → playable.
@@ -81,7 +81,7 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();
     // The pinned tree is never resolved when the gate is closed.
-    expect(resolveLearnerProgram).not.toHaveBeenCalled();
+    expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
   });
 
   it("returns available:false (no program) when the enrollment is removed", async () => {
@@ -140,7 +140,7 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
 
   it("returns available:false when active but the program no longer resolves", async () => {
     vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(undefined);
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(undefined);
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();

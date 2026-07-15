@@ -41,7 +41,7 @@ import {
   shelfCompletions,
   SHELF_LESSON_CAP,
 } from "@/lib/tutor/shelf";
-import { resolveLearnerProgram } from "@/lib/content/repository";
+import { resolveAccountLearnerProgram } from "@/lib/content/repository";
 import type { SkillState } from "@/lib/tutor";
 
 /**
@@ -173,6 +173,15 @@ const generatedPracticeLookupSchema = z.object({
 
 export type GeneratedPracticeLookup = z.infer<typeof generatedPracticeLookupSchema>;
 
+/** A generated row remains playable only while its authored shelf location is
+ * present in the learner's resolved program tree. Lesson keys are unit-local. */
+function programContainsGeneratedLocation(
+  program: Program,
+  row: { unitKey: string; lessonId: string },
+): boolean {
+  return getUnit(program, row.unitKey)?.lessons.some((lesson) => lesson.id === row.lessonId) ?? false;
+}
+
 /**
  * Resolve one generated shelf item only after the client has resolved its
  * selected account learner. The store repeats both account tenancy and learner
@@ -185,14 +194,21 @@ export async function getGeneratedPracticeAction(
   if (!parsed.success) return null;
 
   try {
-    return await withAccount(({ accountId }) =>
-      getPlayableGeneratedActivity(
+    return await withAccount(async ({ accountId }) => {
+      const program = await resolveAccountLearnerProgram(
+        accountId,
+        parsed.data.learnerId,
+        parsed.data.programSlug,
+      );
+      if (!program) return null;
+      const row = await getPlayableGeneratedActivity(
         accountId,
         parsed.data.learnerId,
         parsed.data.programSlug,
         parsed.data.generatedId,
-      ),
-    );
+      );
+      return row && programContainsGeneratedLocation(program, row) ? row : null;
+    });
   } catch (error) {
     if (!(error instanceof UnauthenticatedError)) {
       captureNonCritical("getGeneratedPracticeAction failed", error);
@@ -248,13 +264,27 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
       // activity kind registers the narrow oral-reading verifier, fail closed.
       if (data.verificationId) return { ok: false, reason: "invalid" };
 
+      let program: Program | null;
+      try {
+        program =
+          (await resolveAccountLearnerProgram(accountId, data.learnerId, data.programSlug)) ?? null;
+      } catch (error) {
+        captureNonCritical("recordAttemptAction pinned program unavailable", error);
+        return { ok: false, reason: "unavailable" };
+      }
+      if (!program) return { ok: false, reason: "unavailable" };
+
       if ("generatedActivityId" in data) {
         const row = await getGeneratedActivity(
           accountId,
           data.learnerId,
           data.generatedActivityId,
         );
-        if (!row || row.programSlug !== data.programSlug) {
+        if (
+          !row ||
+          row.programSlug !== data.programSlug ||
+          !programContainsGeneratedLocation(program, row)
+        ) {
           return { ok: false, reason: "invalid" };
         }
         const canonical = parseAndScoreActivity(
@@ -289,16 +319,6 @@ export async function recordAttemptAction(input: RecordAttemptInput): Promise<Re
         });
         return { ok: true, score: canonical.score };
       }
-
-      let program: Program | null;
-      try {
-        program =
-          (await resolveLearnerProgram(accountId, data.learnerId, data.programSlug)) ?? null;
-      } catch (error) {
-        captureNonCritical("recordAttemptAction pinned program unavailable", error);
-        return { ok: false, reason: "unavailable" };
-      }
-      if (!program) return { ok: false, reason: "unavailable" };
 
       const unit = getUnit(program, data.unitKey);
       const activity = unit?.lessons
@@ -424,9 +444,8 @@ export async function getLearnerStateAction(
 
       // Resolve the learner's PINNED program version (C#5). State scoping AND the
       // rendered tree both derive from this same resolved tree, so they always
-      // agree on the version — and they match the /api/practice gate, which also
-      // resolves via resolveLearnerProgram.
-      const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
+      // agree on the version — and they match the durable shelf-generation gate.
+      const program = await resolveAccountLearnerProgram(accountId, learnerId, programSlug);
       if (!program) return EMPTY_STATE;
       const activityIds = new Set(activityIdsForProgram(program));
       const skillTags = new Set(skillTagsForProgram(program));
@@ -548,7 +567,7 @@ function locateLesson(
  * Everything the model is steered by is SERVER-derived (§8): the band, focus, and
  * skill hints come from the resolved authored tree + the parent's enrollment
  * config — never from the client, which supplies only identifiers. The §8 gate
- * mirrors /api/practice exactly (owned learner, ACTIVE enrollment, and NEITHER
+ * requires an owned learner, ACTIVE enrollment, and NEITHER
  * aiPractice kill-switch off), and generation is bounded (SHELF_BATCH per call,
  * SHELF_LESSON_CAP per lesson). A lesson only generates once its authored
  * activities are all complete (the completion witness), and re-calls are no-ops
@@ -571,12 +590,12 @@ export async function ensureLessonPractice(
 
   try {
     return await withAccount(async ({ accountId }): Promise<{ ok: boolean; items: ShelfItem[] }> => {
-      // 1. §8 gate — mirrors /api/practice (fail-closed). Ownership first, then
+      // 1. §8 gate (fail-closed). Ownership first, then
       //    the resolved tree, then ACTIVE enrollment + BOTH aiPractice flags.
       const owned = await getLearner(accountId, learnerId);
       if (!owned) return { ok: false, items: [] };
 
-      const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
+      const program = await resolveAccountLearnerProgram(accountId, learnerId, programSlug);
       if (!program) return { ok: false, items: [] };
 
       const [settings, gate] = await Promise.all([
@@ -610,7 +629,9 @@ export async function ensureLessonPractice(
       // The existing shelf for this lesson (needed by both the incomplete no-op
       // and the idempotency/cap returns below).
       const shelf = await listGeneratedShelf(accountId, learnerId, programSlug);
-      const existing = shelf.filter((s) => s.lessonId === lesson.id);
+      const existing = shelf.filter(
+        (s) => s.unitKey === unit.id && s.lessonId === lesson.id,
+      );
 
       // 3. Completion witness: every AUTHORED activity in the lesson must be a
       //    (non-generated) completion. Incomplete → calm no-op returning existing
@@ -641,7 +662,7 @@ export async function ensureLessonPractice(
       const items = await withLessonGenerationLock(
         accountId,
         learnerId,
-        lesson.id,
+        { programSlug, unitKey: unit.id, lessonId: lesson.id },
         more ?? false,
         async (room): Promise<NewGeneratedActivity[]> => {
           const targets = pickGenerationTargets(lesson, room);

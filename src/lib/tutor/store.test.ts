@@ -322,7 +322,7 @@ vi.mock("drizzle-orm", () => ({
 }));
 
 vi.mock("@/lib/content/repository", () => ({
-  resolveLearnerProgram: vi.fn(),
+  resolveAccountLearnerProgram: vi.fn(),
 }));
 
 import {
@@ -336,7 +336,7 @@ import {
   recordAttempt,
   redoCheckpoint,
 } from "./store";
-import { resolveLearnerProgram } from "@/lib/content/repository";
+import { resolveAccountLearnerProgram } from "@/lib/content/repository";
 import type { Program } from "@/content";
 
 const input = {
@@ -1299,8 +1299,8 @@ describe("getDueReviews (owned authored review read)", () => {
   beforeEach(() => {
     ops.length = 0;
     learnerRows.value = [{ id: "L1" }];
-    vi.mocked(resolveLearnerProgram).mockReset();
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(DUE_PROGRAM);
+    vi.mocked(resolveAccountLearnerProgram).mockReset();
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(DUE_PROGRAM);
     reviewScheduleRows.value = [
       { id: "R1", learnerId: "L1", skill: "math.add", programSlug: "kaelyn-adaptive", intervalIndex: 1, nextReviewOn: "2026-07-10", lastReviewedOn: null, lastOutcome: "solid" },
       { id: "R2", learnerId: "L1", skill: "reading.fluency", programSlug: "kaelyn-adaptive", intervalIndex: 0, nextReviewOn: "2026-07-12", lastReviewedOn: null, lastOutcome: "solid" },
@@ -1347,7 +1347,7 @@ describe("getDueReviews (owned authored review read)", () => {
     reviewScheduleRows.value = [
       { id: "R1", learnerId: "L1", skill: "math.add", programSlug: "kaelyn-adaptive", intervalIndex: 1, nextReviewOn: "2026-07-10", lastReviewedOn: null, lastOutcome: "solid" },
     ];
-    vi.mocked(resolveLearnerProgram).mockResolvedValue({
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue({
       ...DUE_PROGRAM,
       units: DUE_PROGRAM.units.map((unit) =>
         unit.id === "numbers" ? { ...unit, checkpoint: "baseline" } : unit,
@@ -1365,7 +1365,7 @@ describe("getDueReviews (owned authored review read)", () => {
     await expect(
       getDueReviews("acct-2", "L1", "kaelyn-adaptive", "2026-07-13"),
     ).resolves.toEqual([]);
-    expect(resolveLearnerProgram).not.toHaveBeenCalled();
+    expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
     expect(ops.some((op) => op.table === "review_schedule")).toBe(false);
   });
 });

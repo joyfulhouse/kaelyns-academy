@@ -81,7 +81,7 @@ export async function POST(req: Request): Promise<Response> {
   // length check all agree (a whitespace-padded body can't bypass the cap).
   const text = typeof body.text === "string" ? normalizeText(body.text) : "";
   // Empty/whitespace-only or over-long text is nothing to synthesize → a clear,
-  // JSON 400 (matching the api/practice error-response style) so callers can act
+  // JSON 400 with a stable error envelope so callers can act
   // on it rather than parse an empty body.
   if (!text || text.length > MAX_TTS_TEXT_LEN) {
     return NextResponse.json({ error: "invalid_text" }, { status: 400 });

@@ -6,7 +6,7 @@ End-to-end tests that drive a real browser against the running app.
 > `E2E_BASE_URL` to point elsewhere (e.g. a local `bun run dev` at
 > `http://localhost:3000`). Because the default target is the **pilot prod DB**,
 > every spec creates per-run, uniquely-tagged data and tears it down; learner
-> tests use **authored** content only (never the paid `/api/practice` AI path);
+> tests use **authored** content only (never the paid LiteLLM generation path);
 > the admin lifecycle never publishes to the live catalog unless you opt in.
 >
 > **Hitting prod is a deliberate act.** When the resolved target is

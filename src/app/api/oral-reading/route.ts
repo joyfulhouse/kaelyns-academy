@@ -183,7 +183,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const { learnerId, programSlug } = parsed.data;
   try {
-    // §8 two-control gate, same as /api/practice: the learner must belong to
+    // §8 two-control gate, same as durable shelf generation: the learner must belong to
     // this account with an ACTIVE enrollment in the program being played
     // (getEnrollmentForGate resolves ownership), AND the parent must have
     // explicitly opted this learner in (default is off). Fail closed on all.

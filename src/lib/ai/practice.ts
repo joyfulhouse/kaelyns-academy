@@ -47,8 +47,8 @@ const MAX_ITEMS = 8;
 // KIND_BRIEF (the per-kind generation briefs) and isGenerableKind (the
 // authored-only gate) moved to the pure, client-safe `./generable` module so
 // the kid surface can share the gate without dragging this server-only
-// generator into the client bundle. Re-exported here so existing importers
-// (the /api/practice route, tests) keep resolving them from `@/lib/ai/practice`.
+// generator into the client bundle. Re-exported here for the server generator's
+// tests and existing server-side importers.
 export { KIND_BRIEF, isGenerableKind };
 
 /** Band → tutor route (B3 §3). */

@@ -63,7 +63,7 @@ export function spokenEnglishStrings(item: unknown): string[] {
 const PREWARM_MAX = 128;
 
 /** The deduped, hard-capped list of strings to pre-warm for a batch of generated
- *  activity configs. Bounds fan-out so one /api/practice response can't enqueue an
+ *  activity configs. Bounds fan-out so one generated batch can't enqueue an
  *  unbounded burst of durable Kokoro/MinIO synths. */
 export function prewarmTexts(items: readonly unknown[], cap: number = PREWARM_MAX): string[] {
   const out: string[] = [];

@@ -527,8 +527,8 @@ export async function getDueReviews(
     async () => {
       // Lazy to keep the repository ↔ tutor-store enrollment-pin seam free of a
       // module-initialization cycle. No resolver or DB factory runs at import time.
-      const { resolveLearnerProgram } = await import("@/lib/content/repository");
-      const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
+      const { resolveAccountLearnerProgram } = await import("@/lib/content/repository");
+      const program = await resolveAccountLearnerProgram(accountId, learnerId, programSlug);
       if (!program) return [];
 
       const [scheduled, completedToday] = await Promise.all([
@@ -1053,11 +1053,10 @@ export interface GeneratedActivityRow {
 }
 
 /**
- * A shelf item resolved for PLAY by account + program (Task 4). Carries the
- * playable `config`/`kind` PLUS the stored generation provenance as an ISO
- * string (`gen`), so the client host can relay it onto the recorded attempt
- * exactly like ActivityHost's practice path (P6 / §8). Client-safe: no learner
- * id, no Date objects — everything crosses the server→client boundary cleanly.
+ * A shelf item resolved for play by account + selected learner + program.
+ * Carries the playable `config`/`kind` plus stored generation provenance for
+ * display; attempt recording reloads the authoritative row server-side.
+ * Client-safe: no Date objects cross the server→client boundary.
  */
 export interface PlayableShelfItem {
   id: string;
@@ -1139,8 +1138,8 @@ function toShelfItem(r: typeof generatedActivity.$inferSelect): ShelfItem {
 
 /**
  * Serialize a lesson's recount → generate → insert critical section behind a
- * per-(learner, lesson) transaction-scoped advisory lock, so the LLM spend is
- * claimed BEFORE the model call (final review Fix 2). Without this, N concurrent
+ * per-(learner, program, unit, lesson) transaction-scoped advisory lock, so the
+ * LLM spend is claimed BEFORE the model call (final review Fix 2). Without this, N concurrent
  * completions each pass a pre-lock cap check and each burn an LLM batch; the rows
  * stay capped (the in-tx recount + slice below does that), but the SPEND does
  * not. Here the lock is taken first, then the shelf is re-read INSIDE it: the
@@ -1157,18 +1156,24 @@ function toShelfItem(r: typeof generatedActivity.$inferSelect): ShelfItem {
  * freshly inserted), oldest-first.
  * @throws when the learner is not owned by the account (tenancy).
  */
+export interface LessonGenerationScope {
+  programSlug: string;
+  unitKey: string;
+  lessonId: string;
+}
+
 export async function withLessonGenerationLock(
   accountId: string,
   learnerId: string,
-  lessonId: string,
+  scope: LessonGenerationScope,
   more: boolean,
   generate: (room: number) => Promise<NewGeneratedActivity[]>,
 ): Promise<ShelfItem[]> {
   return getDb().transaction(async (tx) => {
-    // Serialize per (learner, lesson): concurrent completions for the SAME lesson
-    // wait here until the holder's tx commits (the lock auto-releases at commit).
-    // hashtextextended folds the composite key to the bigint pg_advisory takes.
-    const key = `${learnerId}:${lessonId}`;
+    // Lesson keys are unique only within their unit, and unit keys are scoped to
+    // a program. Include every dimension so unrelated shelves never contend or
+    // share a cap. The lock auto-releases at commit.
+    const key = `${learnerId}:${scope.programSlug}:${scope.unitKey}:${scope.lessonId}`;
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 
     // Tenancy boundary, re-checked inside the tx (same pattern as recordAttempt).
@@ -1185,7 +1190,14 @@ export async function withLessonGenerationLock(
     const existingRows = await tx
       .select()
       .from(generatedActivity)
-      .where(and(eq(generatedActivity.learnerId, learnerId), eq(generatedActivity.lessonId, lessonId)))
+      .where(
+        and(
+          eq(generatedActivity.learnerId, learnerId),
+          eq(generatedActivity.programSlug, scope.programSlug),
+          eq(generatedActivity.unitKey, scope.unitKey),
+          eq(generatedActivity.lessonId, scope.lessonId),
+        ),
+      )
       .orderBy(asc(generatedActivity.createdAt));
     const existing = existingRows.map(toShelfItem);
 
