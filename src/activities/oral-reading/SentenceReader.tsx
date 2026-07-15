@@ -298,7 +298,9 @@ export function SentenceReader({
   const micAllowed = learnerContext?.oralReading === true;
   const [phase, setPhase] = useState<OralReadingPhase>("ready");
   const [results, setResults] = useState<VerificationResult[]>([]);
-  const [listenStepStarted, setListenStepStarted] = useState(false);
+  const [modelStatus, setModelStatus] = useState<
+    "idle" | "playing" | "completed" | "unavailable"
+  >("idle");
   const [submitted, setSubmitted] = useState(0);
   const [feedback, setFeedback] = useState<SentenceRouteResult | null>(null);
   const [activeWord, setActiveWord] = useState<number | null>(null);
@@ -310,6 +312,7 @@ export function SentenceReader({
   const activeRef = useRef(true);
   const listenSweepCancelRef = useRef<(() => void) | null>(null);
   const settleCancelRef = useRef<(() => void) | null>(null);
+  const modelRequestRef = useRef(0);
 
   const cancelListenSweep = useCallback((): void => {
     listenSweepCancelRef.current?.();
@@ -326,7 +329,10 @@ export function SentenceReader({
           if (activeRef.current) setActiveWord(nextActiveWord);
         },
       );
-      speech.speak(text, options);
+      return speech.speak(text, options).then((outcome) => {
+        cancelListenSweep();
+        return outcome;
+      });
     },
     [cancelListenSweep, passageWords.length, reducedMotion, speech],
   );
@@ -453,7 +459,7 @@ export function SentenceReader({
     if (
       !micAllowed ||
       !micSupported ||
-      !canStartOralAttempt(config.presentation, listenStepStarted) ||
+      !canStartOralAttempt(config.presentation, modelStatus === "completed") ||
       !canRecordAnother(submitted) ||
       (phase !== "ready" && phase !== "unclear" && phase !== "fallback")
     ) {
@@ -531,15 +537,23 @@ export function SentenceReader({
   }
 
   const fallbackMode = !micAllowed || !micSupported || phase === "fallback";
-  const readyForAttempt = canStartOralAttempt(config.presentation, listenStepStarted);
-  const adultModelFallback = needsAdultModelFallback(
+  const readyForAttempt = canStartOralAttempt(
     config.presentation,
-    speech.supported,
+    modelStatus === "completed",
   );
+  const adultModelFallback =
+    needsAdultModelFallback(config.presentation, speech.supported) ||
+    (config.presentation === "listen-repeat" && modelStatus === "unavailable");
 
   function playModel(): void {
-    karaokeSpeech.speak(config.passage);
-    setListenStepStarted(true);
+    const requestId = modelRequestRef.current + 1;
+    modelRequestRef.current = requestId;
+    setModelStatus("playing");
+    void karaokeSpeech.speak(config.passage).then((outcome) => {
+      if (!activeRef.current || modelRequestRef.current !== requestId) return;
+      if (outcome === "completed") setModelStatus("completed");
+      else if (outcome === "unavailable") setModelStatus("unavailable");
+    });
   }
 
   return (
@@ -559,8 +573,8 @@ export function SentenceReader({
 
       <OralModelStep
         presentation={config.presentation}
-        speechSupported={speech.supported}
-        listenStepStarted={listenStepStarted}
+        speechSupported={speech.supported && modelStatus !== "unavailable"}
+        modelStatus={modelStatus === "unavailable" ? "idle" : modelStatus}
         label="Listen to the sentence"
         onPlay={playModel}
       />

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   E2E_LEARNER_PREFIX,
   addChild,
@@ -19,12 +19,77 @@ const SENTENCE_ACTIVITY = "/learn/kaelyn-adaptive/word-study/word-sentence-see-c
 const DECODABLE_ACTIVITY =
   "/learn/kaelyn-adaptive/decodable-readers/decodable-short-a-cvc-01";
 
+async function installControlledModelSpeech(
+  page: Page,
+  autoComplete = false,
+): Promise<void> {
+  await page.route("**/api/tts", async (route) => {
+    await route.fulfill({ status: 503, body: "neural model unavailable in this journey" });
+  });
+  await page.addInitScript(({ completeAutomatically }) => {
+    class ControlledUtterance {
+      lang = "";
+      onend: ((event: SpeechSynthesisEvent) => void) | null = null;
+      onerror: ((event: SpeechSynthesisErrorEvent) => void) | null = null;
+      pitch = 1;
+      rate = 1;
+      voice: SpeechSynthesisVoice | null = null;
+
+      constructor(readonly text: string) {}
+    }
+    const utterances: ControlledUtterance[] = [];
+    const voice = {
+      default: true,
+      lang: "en-US",
+      localService: true,
+      name: "Controlled English",
+      voiceURI: "controlled-english",
+    } as SpeechSynthesisVoice;
+    Object.defineProperty(window, "SpeechSynthesisUtterance", {
+      configurable: true,
+      value: ControlledUtterance,
+    });
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: {
+        addEventListener: () => {},
+        cancel: () => {},
+        getVoices: () => [voice],
+        removeEventListener: () => {},
+        speak: (utterance: ControlledUtterance) => {
+          utterances.push(utterance);
+          if (completeAutomatically) {
+            queueMicrotask(() =>
+              utterance.onend?.(new Event("end") as SpeechSynthesisEvent),
+            );
+          }
+        },
+      },
+    });
+    const controls = window as Window & {
+      modelSpeechCount?: () => number;
+      finishModelSpeech?: (index: number) => void;
+      failModelSpeech?: (index: number) => void;
+    };
+    controls.modelSpeechCount = () => utterances.length;
+    controls.finishModelSpeech = (index) => {
+      utterances[index]?.onend?.(new Event("end") as SpeechSynthesisEvent);
+    };
+    controls.failModelSpeech = (index) => {
+      utterances[index]?.onerror?.(
+        new Event("error") as SpeechSynthesisErrorEvent,
+      );
+    };
+  }, { completeAutomatically: autoComplete });
+}
+
 test("a guest completes through the grown-up fallback and one host reward", async ({
   page,
   context,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "public", "guest-only assertion");
 
+  await installControlledModelSpeech(page, true);
   await context.clearPermissions();
   await page.goto(ACTIVITY);
   await expect(page.getByText("Listen, then read this word aloud.")).toBeVisible({
@@ -33,7 +98,7 @@ test("a guest completes through the grown-up fallback and one host reward", asyn
   await expect(page.getByText("the", { exact: true })).toBeVisible();
   await expect(page.getByText("Step 1: Listen to the model")).toBeVisible();
   await page.getByRole("button", { name: "Listen to the word the" }).click();
-  await expect(page.getByText("The listen step started. Now it is your turn.")).toBeVisible();
+  await expect(page.getByText("The model finished. Now it is your turn.")).toBeVisible();
 
   // Guests land straight on the world map and deep-links remain guest mode.
   // The microphone is never offered; the deterministic grown-up path completes.
@@ -86,12 +151,68 @@ test("modeled practice without TTS finishes as grown-up participation only", asy
   await expectSingleHostReward(page);
 });
 
+test("modeled practice unlocks only after the model finishes", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "public", "guest-only assertion");
+  await installControlledModelSpeech(page);
+  await page.goto(ACTIVITY);
+
+  const listen = page.getByRole("button", { name: "Listen to the word the" });
+  await listen.click();
+  await expect(page.getByText("Listening to the whole model…")).toBeVisible();
+  await expect(page.getByText("Now it is your turn.", { exact: false })).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as Window & { modelSpeechCount?: () => number }).modelSpeechCount?.(),
+      ),
+    )
+    .toBeGreaterThan(0);
+
+  await page.evaluate(() => {
+    const controls = window as Window & {
+      modelSpeechCount?: () => number;
+      finishModelSpeech?: (index: number) => void;
+    };
+    controls.finishModelSpeech?.((controls.modelSpeechCount?.() ?? 1) - 1);
+  });
+  await expect(page.getByText("The model finished. Now it is your turn.")).toBeVisible();
+});
+
+test("a model playback failure offers the adult model instead of unlocking", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "public", "guest-only assertion");
+  await installControlledModelSpeech(page);
+  await page.goto(ACTIVITY);
+
+  await page.getByRole("button", { name: "Listen to the word the" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as Window & { modelSpeechCount?: () => number }).modelSpeechCount?.(),
+      ),
+    )
+    .toBeGreaterThan(0);
+  await page.evaluate(() => {
+    const controls = window as Window & {
+      modelSpeechCount?: () => number;
+      failModelSpeech?: (index: number) => void;
+    };
+    controls.failModelSpeech?.((controls.modelSpeechCount?.() ?? 1) - 1);
+  });
+
+  await expect(page.getByRole("heading", { name: "The model audio is not available." })).toBeVisible();
+  await expect(page.getByText("Now it is your turn.", { exact: false })).toHaveCount(0);
+});
+
 test("an opted-in signed-in learner settles a check and gets one host reward", async ({
   page,
   context,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "parent", "signed-in assertion");
   const learnerName = `${E2E_LEARNER_PREFIX} ${uniqueTag()}`;
+
+  await installControlledModelSpeech(page, true);
 
   await page.addInitScript(() => {
     const stream = {
@@ -215,6 +336,8 @@ test("sentence reading keeps mic denial safe and finishes through one host rewar
 }, testInfo) => {
   test.skip(testInfo.project.name !== "parent", "signed-in assertion");
   const learnerName = `${E2E_LEARNER_PREFIX} ${uniqueTag()}`;
+
+  await installControlledModelSpeech(page, true);
 
   await page.addInitScript(() => {
     const stream = {

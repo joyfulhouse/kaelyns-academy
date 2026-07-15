@@ -1,4 +1,8 @@
-import type { NarrateHandle, Persist } from "@/components/learner/narrate";
+import type {
+  NarrateHandle,
+  NarrateOptions,
+  Persist,
+} from "@/components/learner/narrate";
 
 /** English locales get the Kokoro neural voice; everything else uses browser TTS. */
 export function isEnglishLocale(locale: string): boolean {
@@ -22,8 +26,17 @@ export function localeForRole(targetLocale: string, role: "instruction" | "conte
 }
 
 export interface SpeakRouter {
-  narrate: (text: string, opts: { persist: Persist; onUnavailable: () => void }) => NarrateHandle;
-  speakViaSynth: (text: string) => void;
+  narrate: (
+    text: string,
+    opts: NarrateOptions & { persist: Persist },
+  ) => NarrateHandle;
+  speakViaSynth: (text: string, callbacks?: SpeechPlaybackCallbacks) => void;
+}
+
+/** Low-level delivery callbacks used to settle a request exactly once. */
+export interface SpeechPlaybackCallbacks {
+  onComplete: () => void;
+  onUnavailable: () => void;
 }
 
 /**
@@ -48,16 +61,22 @@ export function routeSpeak(
   text: string,
   router: SpeakRouter,
   opts?: SpeakOptions,
+  callbacks?: SpeechPlaybackCallbacks,
 ): NarrateHandle | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
   const neural = opts?.tts?.trim() || trimmed;
+  const speakViaSynth = (): void => {
+    if (callbacks) router.speakViaSynth(trimmed, callbacks);
+    else router.speakViaSynth(trimmed);
+  };
   if (isEnglishLocale(locale)) {
     return router.narrate(neural, {
       persist: "durable",
-      onUnavailable: () => router.speakViaSynth(trimmed),
+      onComplete: callbacks?.onComplete,
+      onUnavailable: speakViaSynth,
     });
   }
-  router.speakViaSynth(trimmed);
+  speakViaSynth();
   return null;
 }

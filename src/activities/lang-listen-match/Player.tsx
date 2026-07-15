@@ -28,13 +28,13 @@ export function LangListenMatchPlayer({
   const item = parsed.items[state.step];
 
   const play = useCallback(() => {
-    audio.play({ audioKey: item.audioKey, text: item.spoken });
+    void audio.play({ audioKey: item.audioKey, text: item.spoken });
   }, [audio, item.audioKey, item.spoken]);
 
   useEffectOncePerKey(play, state.step, { essentialContentAudio: true });
 
   const choose = (choiceIndex: number): void => {
-    if (audio.status !== "ready") return;
+    if (audio.status !== "completed") return;
     setState((current) => chooseListenMatch(current, choiceIndex, item.answerIndex));
   };
 
@@ -90,7 +90,7 @@ export function LangListenMatchPlayer({
         onChoose={choose}
         labels={labels}
         revealAnswer={state.feedback === "correct"}
-        disabled={audio.status !== "ready" || state.feedback === "correct"}
+        disabled={audio.status !== "completed" || state.feedback === "correct"}
       />
 
       <div className="grid min-h-20 place-items-center gap-3 text-center" aria-live="polite">

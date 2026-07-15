@@ -12,6 +12,8 @@ export interface NarrateOptions {
   persist?: Persist;
   /** Called when the neural clip cannot be played; speak via browser TTS here. */
   onUnavailable: () => void;
+  /** Called only after the neural clip reaches its natural end. */
+  onComplete?: () => void;
 }
 
 export interface NarrateHandle {
@@ -79,6 +81,12 @@ export function narrate(text: string, options: NarrateOptions): NarrateHandle {
       if (audio === el && !cancelled) {
         audio = null;
         options.onUnavailable();
+      }
+    };
+    el.onended = () => {
+      if (audio === el && !cancelled) {
+        audio = null;
+        options.onComplete?.();
       }
     };
     void el.play().catch(() => {

@@ -11,19 +11,19 @@ const request: AudioRequest = {
 };
 
 describe("audioPlaybackReducer", () => {
-  it("moves a successful clip from playing to ready", () => {
+  it("moves a successful clip from playing to completed", () => {
     const playing = audioPlaybackReducer(initialAudioPlaybackState, {
       type: "play",
       requestId: 1,
       request,
     });
-    const ready = audioPlaybackReducer(playing, { type: "finished", requestId: 1 });
+    const completed = audioPlaybackReducer(playing, { type: "finished", requestId: 1 });
 
     expect(playing.status).toBe("playing");
-    expect(ready.status).toBe("ready");
+    expect(completed.status).toBe("completed");
   });
 
-  it("keeps the request available when a failed clip falls back to TTS", () => {
+  it("keeps playback pending while a failed clip falls back to TTS", () => {
     const playing = audioPlaybackReducer(initialAudioPlaybackState, {
       type: "play",
       requestId: 1,
@@ -32,11 +32,10 @@ describe("audioPlaybackReducer", () => {
     const fallback = audioPlaybackReducer(playing, {
       type: "fallback",
       requestId: 1,
-      available: true,
     });
 
     expect(fallback).toMatchObject({
-      status: "ready",
+      status: "playing",
       requestId: 1,
       lastRequest: request,
     });
@@ -51,9 +50,8 @@ describe("audioPlaybackReducer", () => {
 
     expect(
       audioPlaybackReducer(playing, {
-        type: "fallback",
+        type: "unavailable",
         requestId: 1,
-        available: false,
       }).status,
     ).toBe("unavailable");
   });
@@ -65,7 +63,7 @@ describe("audioPlaybackReducer", () => {
         requestId: 1,
         request,
       }),
-      { type: "fallback", requestId: 1, available: false },
+      { type: "unavailable", requestId: 1 },
     );
     const replaying = audioPlaybackReducer(unavailable, { type: "retry", requestId: 2 });
 
@@ -105,7 +103,7 @@ describe("audioPlaybackReducer", () => {
 
     expect(audioPlaybackReducer(second, { type: "finished", requestId: 1 })).toBe(second);
     expect(
-      audioPlaybackReducer(second, { type: "fallback", requestId: 1, available: false }),
+      audioPlaybackReducer(second, { type: "unavailable", requestId: 1 }),
     ).toBe(second);
   });
 });

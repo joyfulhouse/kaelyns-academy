@@ -44,10 +44,10 @@ export function LangSymbolIntroPlayer({
   const playTarget = useCallback(
     (
       request: { audioKey?: string; text: string },
-      handlers?: { onReady?: () => void; onUnavailable?: () => void },
+      handlers?: { onComplete?: () => void; onUnavailable?: () => void },
     ) => {
       base.stop();
-      target.play(request, handlers);
+      return target.play(request, handlers);
     },
     [base, target],
   );
@@ -69,10 +69,12 @@ export function LangSymbolIntroPlayer({
     playTarget(
       { audioKey: audioKey ?? symbolId, text: spoken },
       {
-        onReady: () => {
+        onComplete: () => {
           setState((current) => activateSymbol(current, symbolId));
-          setPendingSymbolId(null);
+          setPendingSymbolId((current) => (current === symbolId ? null : current));
         },
+        onUnavailable: () =>
+          setPendingSymbolId((current) => (current === symbolId ? null : current)),
       },
     );
   };
@@ -82,10 +84,12 @@ export function LangSymbolIntroPlayer({
     playTarget(
       { text: spoken },
       {
-        onReady: () => {
+        onComplete: () => {
           setState((current) => activateExample(current, symbolId));
-          setPendingSymbolId(null);
+          setPendingSymbolId((current) => (current === symbolId ? null : current));
         },
+        onUnavailable: () =>
+          setPendingSymbolId((current) => (current === symbolId ? null : current)),
       },
     );
   };

@@ -25,6 +25,8 @@ async function installSuccessfulAudio(page: Page): Promise<void> {
     });
     class SuccessfulUtterance {
       lang = "";
+      onend: ((event: SpeechSynthesisEvent) => void) | null = null;
+      onerror: ((event: SpeechSynthesisErrorEvent) => void) | null = null;
       pitch = 1;
       rate = 1;
       voice: SpeechSynthesisVoice | null = null;
@@ -45,13 +47,85 @@ async function installSuccessfulAudio(page: Page): Promise<void> {
         cancel: () => {},
         getVoices: () => [targetVoice],
         removeEventListener: () => {},
-        speak: () => {},
+        speak: (utterance: SuccessfulUtterance) => {
+          queueMicrotask(() =>
+            utterance.onend?.(new Event("end") as SpeechSynthesisEvent),
+          );
+        },
       },
     });
     Object.defineProperty(window, "SpeechSynthesisUtterance", {
       configurable: true,
       value: SuccessfulUtterance,
     });
+  });
+}
+
+async function installControlledSpeechFallback(page: Page): Promise<void> {
+  await page.route("**/api/tts", async (route) => {
+    await route.fulfill({ status: 503, body: "model unavailable in this journey" });
+  });
+  await page.addInitScript(() => {
+    class MissingAudio extends EventTarget {
+      onerror: ((event: Event) => void) | null = null;
+      onended: ((event: Event) => void) | null = null;
+
+      play(): Promise<void> {
+        return Promise.reject(new Error("Clip unavailable in this journey"));
+      }
+
+      pause(): void {}
+    }
+
+    class ControlledUtterance {
+      lang = "";
+      onend: ((event: SpeechSynthesisEvent) => void) | null = null;
+      onerror: ((event: SpeechSynthesisErrorEvent) => void) | null = null;
+      pitch = 1;
+      rate = 1;
+      voice: SpeechSynthesisVoice | null = null;
+
+      constructor(readonly text: string) {}
+    }
+
+    const utterances: ControlledUtterance[] = [];
+    const targetVoice = {
+      default: true,
+      lang: "zh-TW",
+      localService: true,
+      name: "Controlled Mandarin",
+      voiceURI: "controlled-mandarin",
+    } as SpeechSynthesisVoice;
+    Object.defineProperty(window, "Audio", { configurable: true, value: MissingAudio });
+    Object.defineProperty(window, "SpeechSynthesisUtterance", {
+      configurable: true,
+      value: ControlledUtterance,
+    });
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: {
+        addEventListener: () => {},
+        cancel: () => {},
+        getVoices: () => [targetVoice],
+        removeEventListener: () => {},
+        speak: (utterance: ControlledUtterance) => utterances.push(utterance),
+      },
+    });
+
+    const controls = window as Window & {
+      lessonSpeechCount?: () => number;
+      finishLessonSpeech?: (index: number) => void;
+      failLessonSpeech?: (index: number) => void;
+    };
+    controls.lessonSpeechCount = () => utterances.length;
+    controls.finishLessonSpeech = (index) => {
+      utterances[index]?.onend?.(new Event("end") as SpeechSynthesisEvent);
+    };
+    controls.failLessonSpeech = (index) => {
+      utterances[index]?.onerror?.(
+        new Event("error") as SpeechSynthesisErrorEvent,
+      );
+    };
   });
 }
 
@@ -126,6 +200,35 @@ test("unavailable prompt audio stays retryable and cannot complete the round", a
   await page.getByRole("button", { name: "Try sound again" }).click();
   await expect(firstChoice).toBeDisabled();
   await expect(page.getByRole("button", { name: "Finish" })).toHaveCount(0);
+});
+
+test("listening choices unlock only after fallback speech actually finishes", async ({ page }) => {
+  await installControlledSpeechFallback(page);
+  await page.goto(LISTEN);
+
+  const firstChoice = page.getByRole("button", { name: "ㄅ", exact: true });
+  await expect(page.getByText("The sound is resting.", { exact: false })).toBeVisible({
+    timeout: 25_000,
+  });
+  await page.getByRole("button", { name: "Try sound again" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as Window & { lessonSpeechCount?: () => number }).lessonSpeechCount?.(),
+      ),
+    )
+    .toBeGreaterThan(0);
+  await expect(firstChoice).toBeDisabled();
+
+  await page.evaluate(() => {
+    const controls = window as Window & {
+      lessonSpeechCount?: () => number;
+      finishLessonSpeech?: (index: number) => void;
+    };
+    const count = controls.lessonSpeechCount?.() ?? 0;
+    controls.finishLessonSpeech?.(count - 1);
+  });
+  await expect(firstChoice).toBeEnabled();
 });
 
 test("symbol introduction guides every spoken batch before forgiving verification", async ({
@@ -205,4 +308,52 @@ test("unavailable symbol audio does not claim a genuine exposure", async ({ page
   await page.getByRole("button", { name: "Try sound again" }).click();
   await expect(symbol).toHaveAttribute("aria-pressed", "false");
   await expect(page.getByText(/^(?:Sound|Example) heard$/)).toHaveCount(0);
+});
+
+test("cancelled symbol speech never counts as exposure", async ({ page }) => {
+  await installControlledSpeechFallback(page);
+  await page.goto(SYMBOLS);
+
+  const first = page.getByRole("button", { name: /ㄅ, dad.*Hear this sound/ });
+  const second = page.getByRole("button", { name: /ㄆ, grandma.*Hear this sound/ });
+  await expect(first).toBeVisible({ timeout: 25_000 });
+
+  await first.click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as Window & { lessonSpeechCount?: () => number }).lessonSpeechCount?.(),
+      ),
+    )
+    .toBeGreaterThan(0);
+  const firstRequest = await page.evaluate(() =>
+    ((window as Window & { lessonSpeechCount?: () => number }).lessonSpeechCount?.() ?? 1) - 1,
+  );
+  await expect(first).toHaveAttribute("aria-pressed", "false");
+
+  await second.click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as Window & { lessonSpeechCount?: () => number }).lessonSpeechCount?.(),
+      ),
+    )
+    .toBeGreaterThan(firstRequest + 1);
+  const secondRequest = await page.evaluate(() =>
+    ((window as Window & { lessonSpeechCount?: () => number }).lessonSpeechCount?.() ?? 1) - 1,
+  );
+
+  await page.evaluate((index) => {
+    (window as Window & { finishLessonSpeech?: (request: number) => void })
+      .finishLessonSpeech?.(index);
+  }, firstRequest);
+  await expect(first).toHaveAttribute("aria-pressed", "false");
+  await expect(second).toHaveAttribute("aria-pressed", "false");
+
+  await page.evaluate((index) => {
+    (window as Window & { finishLessonSpeech?: (request: number) => void })
+      .finishLessonSpeech?.(index);
+  }, secondRequest);
+  await expect(second).toHaveAttribute("aria-pressed", "true");
+  await expect(first).toHaveAttribute("aria-pressed", "false");
 });

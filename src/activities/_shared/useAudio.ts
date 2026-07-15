@@ -9,6 +9,9 @@ import {
   type AudioStatus,
 } from "./audioState";
 import { useSpeech } from "./useSpeech";
+import type { SpeechPlaybackOutcome } from "./useSpeech";
+
+export type AudioPlaybackOutcome = SpeechPlaybackOutcome;
 
 /**
  * Hybrid audio: play a pre-generated clip when one exists, else fall back to
@@ -25,9 +28,12 @@ export interface AudioController {
   /** Bounded, child-facing availability state for the current request. */
   status: AudioStatus;
   /** Play `audioKey`'s clip if present, else speak `text`. Cancels anything in flight. */
-  play: (opts: AudioRequest, handlers?: AudioPlaybackHandlers) => void;
+  play: (
+    opts: AudioRequest,
+    handlers?: AudioPlaybackHandlers,
+  ) => Promise<AudioPlaybackOutcome>;
   /** Replay the most recent request, including after an unavailable result. */
-  retry: () => void;
+  retry: () => Promise<AudioPlaybackOutcome>;
   /** Stop the current clip and any speech. */
   stop: () => void;
   /** Backward-compatible alias for {@link stop}. */
@@ -36,8 +42,14 @@ export interface AudioController {
 
 /** Request-scoped media outcomes; superseded requests never invoke these handlers. */
 export interface AudioPlaybackHandlers {
-  onReady?: () => void;
+  onComplete?: () => void;
   onUnavailable?: () => void;
+}
+
+interface ActiveAudioRequest {
+  id: number;
+  handlers?: AudioPlaybackHandlers;
+  resolve: (outcome: AudioPlaybackOutcome) => void;
 }
 
 export function useAudio(locale = "en-US"): AudioController {
@@ -48,6 +60,7 @@ export function useAudio(locale = "en-US"): AudioController {
   const lastRequestRef = useRef<AudioRequest | null>(null);
   const lastHandlersRef = useRef<AudioPlaybackHandlers | undefined>(undefined);
   const lifecycleRef = useRef(0);
+  const activeRequestRef = useRef<ActiveAudioRequest | null>(null);
   const [playback, dispatch] = useReducer(audioPlaybackReducer, initialAudioPlaybackState);
 
   // Stop and detach any in-flight clip (also clears its listeners via .onerror/.onended).
@@ -66,17 +79,34 @@ export function useAudio(locale = "en-US"): AudioController {
     cancelSpeech();
   }, [cancelSpeech, stopClip]);
 
+  const settleRequest = useCallback((requestId: number, outcome: AudioPlaybackOutcome) => {
+    const active = activeRequestRef.current;
+    if (!active || active.id !== requestId) return;
+    activeRequestRef.current = null;
+    if (outcome === "completed") {
+      dispatch({ type: "finished", requestId });
+      active.handlers?.onComplete?.();
+    } else if (outcome === "unavailable") {
+      dispatch({ type: "unavailable", requestId });
+      active.handlers?.onUnavailable?.();
+    }
+    active.resolve(outcome);
+  }, []);
+
+  const cancelActiveRequest = useCallback(() => {
+    const active = activeRequestRef.current;
+    activeRequestRef.current = null;
+    active?.resolve("cancelled");
+  }, []);
+
   const playRequest = useCallback(
-    (request: AudioRequest, requestId: number, handlers?: AudioPlaybackHandlers) => {
+    (request: AudioRequest, requestId: number) => {
       const { audioKey, text } = request;
 
       const fallBackToSpeech = (): void => {
         if (requestIdRef.current !== requestId) return;
-        const ttsAvailable = speech.supported && speech.hasVoice;
-        if (ttsAvailable) speech.speak(text);
-        dispatch({ type: "fallback", requestId, available: ttsAvailable });
-        if (ttsAvailable) handlers?.onReady?.();
-        else handlers?.onUnavailable?.();
+        dispatch({ type: "fallback", requestId });
+        void speech.speak(text).then((outcome) => settleRequest(requestId, outcome));
       };
 
       if (!audioKey || typeof Audio === "undefined") {
@@ -99,8 +129,7 @@ export function useAudio(locale = "en-US"): AudioController {
       el.onended = () => {
         if (audioRef.current === el) {
           audioRef.current = null;
-          dispatch({ type: "finished", requestId });
-          handlers?.onReady?.();
+          settleRequest(requestId, "completed");
         }
       };
       // play() can also reject (autoplay policy, load failure) → same fallback.
@@ -111,38 +140,47 @@ export function useAudio(locale = "en-US"): AudioController {
         }
       });
     },
-    [locale, speech],
+    [locale, settleRequest, speech],
   );
 
   const play = useCallback(
-    (request: AudioRequest, handlers?: AudioPlaybackHandlers) => {
+    (request: AudioRequest, handlers?: AudioPlaybackHandlers): Promise<AudioPlaybackOutcome> => {
+      requestIdRef.current += 1;
+      cancelActiveRequest();
       stopMedia();
-      const requestId = requestIdRef.current + 1;
-      requestIdRef.current = requestId;
+      const requestId = requestIdRef.current;
       lastRequestRef.current = request;
       lastHandlersRef.current = handlers;
       dispatch({ type: "play", requestId, request });
-      playRequest(request, requestId, handlers);
+      return new Promise<AudioPlaybackOutcome>((resolve) => {
+        activeRequestRef.current = { id: requestId, handlers, resolve };
+        playRequest(request, requestId);
+      });
     },
-    [playRequest, stopMedia],
+    [cancelActiveRequest, playRequest, stopMedia],
   );
 
-  const retry = useCallback(() => {
+  const retry = useCallback((): Promise<AudioPlaybackOutcome> => {
     const request = lastRequestRef.current;
-    if (!request) return;
+    if (!request) return Promise.resolve("unavailable");
+    requestIdRef.current += 1;
+    cancelActiveRequest();
     stopMedia();
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
+    const requestId = requestIdRef.current;
     dispatch({ type: "retry", requestId });
-    playRequest(request, requestId, lastHandlersRef.current);
-  }, [playRequest, stopMedia]);
+    const handlers = lastHandlersRef.current;
+    return new Promise<AudioPlaybackOutcome>((resolve) => {
+      activeRequestRef.current = { id: requestId, handlers, resolve };
+      playRequest(request, requestId);
+    });
+  }, [cancelActiveRequest, playRequest, stopMedia]);
 
   const stop = useCallback(() => {
+    requestIdRef.current += 1;
+    cancelActiveRequest();
     stopMedia();
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
-    dispatch({ type: "stop", requestId });
-  }, [stopMedia]);
+    dispatch({ type: "stop", requestId: requestIdRef.current });
+  }, [cancelActiveRequest, stopMedia]);
 
   useEffect(() => {
     const lifecycle = lifecycleRef.current + 1;
@@ -155,10 +193,11 @@ export function useAudio(locale = "en-US"): AudioController {
       queueMicrotask(() => {
         if (lifecycleRef.current !== lifecycle) return;
         requestIdRef.current += 1;
+        cancelActiveRequest();
         stopMedia();
       });
     };
-  }, [stopMedia]);
+  }, [cancelActiveRequest, stopMedia]);
 
   // Return a stable controller so consumers' useCallback/effects that depend on
   // it don't churn every render. Members are stable primitives (from useSpeech)

@@ -72,7 +72,9 @@ function WordReadingPlayer({
   const micAllowed = learnerContext?.oralReading === true;
   const [phase, setPhase] = useState<OralReadingPhase>("ready");
   const [results, setResults] = useState<VerificationResult[]>([]);
-  const [listenStepStarted, setListenStepStarted] = useState(false);
+  const [modelStatus, setModelStatus] = useState<
+    "idle" | "playing" | "completed" | "unavailable"
+  >("idle");
   // Counts every UPLOADED recording, including ones whose verification came
   // back "unavailable" — the attempt cap bounds recordings and STT calls, so
   // gateway failures must not grant extra tries around it.
@@ -81,6 +83,7 @@ function WordReadingPlayer({
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const modelRequestRef = useRef(0);
   const activeRef = useRef(true);
 
   useEffect(() => {
@@ -96,11 +99,13 @@ function WordReadingPlayer({
   }, []);
 
   const fallbackMode = !micAllowed || !micSupported || phase === "fallback";
-  const readyForAttempt = canStartOralAttempt(parsed.presentation, listenStepStarted);
-  const adultModelFallback = needsAdultModelFallback(
+  const readyForAttempt = canStartOralAttempt(
     parsed.presentation,
-    speech.supported,
+    modelStatus === "completed",
   );
+  const adultModelFallback =
+    needsAdultModelFallback(parsed.presentation, speech.supported) ||
+    (parsed.presentation === "listen-repeat" && modelStatus === "unavailable");
 
   function response(status: OralReadingResponse["status"]): OralReadingResponse {
     return { attempts: results.length, results, status };
@@ -112,8 +117,14 @@ function WordReadingPlayer({
   }
 
   function playModel(): void {
-    speech.speak(parsed.target);
-    setListenStepStarted(true);
+    const requestId = modelRequestRef.current + 1;
+    modelRequestRef.current = requestId;
+    setModelStatus("playing");
+    void speech.speak(parsed.target).then((outcome) => {
+      if (!activeRef.current || modelRequestRef.current !== requestId) return;
+      if (outcome === "completed") setModelStatus("completed");
+      else if (outcome === "unavailable") setModelStatus("unavailable");
+    });
   }
 
   async function verify(blob: Blob, recordingFailed = false): Promise<void> {
@@ -266,8 +277,8 @@ function WordReadingPlayer({
 
       <OralModelStep
         presentation={parsed.presentation}
-        speechSupported={speech.supported}
-        listenStepStarted={listenStepStarted}
+        speechSupported={speech.supported && modelStatus !== "unavailable"}
+        modelStatus={modelStatus === "unavailable" ? "idle" : modelStatus}
         label={`Listen to the word ${parsed.target}`}
         onPlay={playModel}
       />

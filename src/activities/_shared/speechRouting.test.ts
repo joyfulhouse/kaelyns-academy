@@ -36,6 +36,25 @@ describe("routeSpeak", () => {
     expect(handle).not.toBeNull();
   });
 
+  it("English reports only the neural clip's real completion", () => {
+    const onComplete = vi.fn();
+    const onUnavailable = vi.fn();
+    const narrate = vi.fn<SpeakRouter["narrate"]>(() => ({ cancel: vi.fn() }));
+    const speakViaSynth = vi.fn<SpeakRouter["speakViaSynth"]>();
+
+    routeSpeak(
+      "en-US",
+      "Read the whole word",
+      { narrate, speakViaSynth },
+      undefined,
+      { onComplete, onUnavailable },
+    );
+
+    expect(onComplete).not.toHaveBeenCalled();
+    narrate.mock.calls[0]![1].onComplete?.();
+    expect(onComplete).toHaveBeenCalledOnce();
+  });
+
   it("non-English → synth, not narrate; returns null", () => {
     const narrate = vi.fn<SpeakRouter["narrate"]>(() => ({ cancel: vi.fn() }));
     const speakViaSynth = vi.fn();
@@ -45,14 +64,25 @@ describe("routeSpeak", () => {
     expect(handle).toBeNull();
   });
 
+  it("passes completion and failure callbacks to non-English browser speech", () => {
+    const callbacks = { onComplete: vi.fn(), onUnavailable: vi.fn() };
+    const narrate = vi.fn<SpeakRouter["narrate"]>(() => ({ cancel: vi.fn() }));
+    const speakViaSynth = vi.fn<SpeakRouter["speakViaSynth"]>();
+
+    routeSpeak("ko-KR", "안녕", { narrate, speakViaSynth }, undefined, callbacks);
+
+    expect(speakViaSynth).toHaveBeenCalledExactlyOnceWith("안녕", callbacks);
+  });
+
   it("English onUnavailable falls back to synth", () => {
     const narrate = vi.fn<SpeakRouter["narrate"]>((_t, opts) => {
       opts.onUnavailable();
       return { cancel: vi.fn() };
     });
-    const speakViaSynth = vi.fn();
-    routeSpeak("en-GB", "hi", { narrate, speakViaSynth });
-    expect(speakViaSynth).toHaveBeenCalledWith("hi");
+    const speakViaSynth = vi.fn<SpeakRouter["speakViaSynth"]>();
+    const callbacks = { onComplete: vi.fn(), onUnavailable: vi.fn() };
+    routeSpeak("en-GB", "hi", { narrate, speakViaSynth }, undefined, callbacks);
+    expect(speakViaSynth).toHaveBeenCalledWith("hi", callbacks);
   });
 
   it("English with a phoneme override → neural gets the override, synth fallback gets the plain text", () => {

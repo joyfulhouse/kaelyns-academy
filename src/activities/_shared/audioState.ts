@@ -1,4 +1,4 @@
-export type AudioStatus = "idle" | "playing" | "ready" | "unavailable";
+export type AudioStatus = "idle" | "playing" | "completed" | "unavailable";
 
 export interface AudioRequest {
   audioKey?: string;
@@ -21,7 +21,8 @@ export type AudioPlaybackEvent =
   | { type: "play"; requestId: number; request: AudioRequest }
   | { type: "retry"; requestId: number }
   | { type: "finished"; requestId: number }
-  | { type: "fallback"; requestId: number; available: boolean }
+  | { type: "fallback"; requestId: number }
+  | { type: "unavailable"; requestId: number }
   | { type: "stop"; requestId: number };
 
 /**
@@ -53,10 +54,13 @@ export function audioPlaybackReducer(
   if (event.requestId !== state.requestId) return state;
 
   if (event.type === "finished") {
-    return { ...state, status: "ready" };
+    return { ...state, status: "completed" };
   }
   if (event.type === "fallback") {
-    return { ...state, status: event.available ? "ready" : "unavailable" };
+    return state;
+  }
+  if (event.type === "unavailable") {
+    return { ...state, status: "unavailable" };
   }
   return state;
 }
