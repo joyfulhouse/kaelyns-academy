@@ -117,11 +117,11 @@ export function comparisonDescription(
   if (!left || !right) return "Balance comparison.";
   const tilt = balanceTiltDirection(left.size, right.size);
   if (tilt === "level") {
-    return `Balance comparison. ${left.label} and ${right.label} pans are level because the objects have equal relative weight.`;
+    return `Balance comparison. ${left.label} and ${right.label} pans are level.`;
   }
   const lower = tilt === "left" ? left : right;
   const higher = tilt === "left" ? right : left;
-  return `Balance comparison. ${lower.label} pan is lower and ${lower.label} is heavier; ${higher.label} pan is higher and ${higher.label} is lighter.`;
+  return `Balance comparison. ${lower.label} pan is lower; ${higher.label} pan is higher.`;
 }
 
 /** Locate a beam attachment after tilt so its hanging pan can remain upright. */

@@ -39,6 +39,7 @@ import {
   settlePlayerCompletion,
   type CompletionClaim,
 } from "./completionClaim";
+import { CompletionHeading } from "./CompletionHeading";
 
 /**
  * The next activity within the SAME (resolved) unit — kept inside the world so a
@@ -356,9 +357,9 @@ function RewardScreen({
         )}
       </div>
 
-      <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight sm:text-4xl">
+      <CompletionHeading className="mt-5 font-display text-3xl font-semibold tracking-tight sm:text-4xl">
         {headline}
-      </h1>
+      </CompletionHeading>
 
       {/* Big celebratory stars with the signature star-pop (scale .6→1 + fade). */}
       <div className="mt-5 flex items-center justify-center gap-3" aria-hidden>
@@ -412,9 +413,9 @@ function SavingScreen() {
         Saving your work.
       </p>
       <Mascot mood="think" size={120} className={reduce ? undefined : "motion-safe:animate-float"} />
-      <h1 className="mt-4 font-display text-3xl font-semibold tracking-tight">
+      <CompletionHeading className="mt-4 font-display text-3xl font-semibold tracking-tight">
         Saving your work...
-      </h1>
+      </CompletionHeading>
       <p className="mt-3 text-lg text-ink-soft">Almost there!</p>
     </motion.div>
   );
@@ -440,9 +441,9 @@ function SaveFailed({
         Your work is still here. Try saving again.
       </p>
       <Mascot mood="think" size={120} />
-      <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight">
+      <CompletionHeading className="mt-5 font-display text-3xl font-semibold tracking-tight">
         Your work is still here
-      </h1>
+      </CompletionHeading>
       <p className="mt-3 text-lg text-ink-soft">Let&rsquo;s try saving it one more time.</p>
 
       <div className="mt-9 flex w-full flex-col items-stretch gap-3">

@@ -36,6 +36,7 @@ import {
   settlePlayerCompletion,
   type CompletionClaim,
 } from "./completionClaim";
+import { CompletionHeading } from "./CompletionHeading";
 
 /**
  * The play host for a generated SHELF item (Adventure 2.0 B3). A minimal mirror
@@ -230,14 +231,7 @@ export function GeneratedPracticeHost({
           {showReward && phase.kind === "reward" ? (
             <ShelfReward key="reward" stars={phase.stars} backHref={backHref} />
           ) : showSaving && phase.kind === "saving" ? (
-            <KidLoadingShell
-              key="saving"
-              ariaLabel="Saving your work"
-              message="Saving your work..."
-              mood="think"
-            >
-              <div aria-hidden className="h-24" />
-            </KidLoadingShell>
+            <ShelfSaving key="saving" />
           ) : showSaveFailed && phase.kind === "save-failed" ? (
             <ShelfSaveFailed
               key="save-failed"
@@ -288,13 +282,35 @@ function GeneratedReadyLoading() {
   );
 }
 
+function ShelfSaving() {
+  const reduce = useReducedMotion();
+  return (
+    <motion.div
+      initial={reduce ? false : { opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+      className="mx-auto flex max-w-md flex-col items-center pt-12 text-center"
+    >
+      <p className="sr-only" role="status" aria-live="polite">
+        Saving your work.
+      </p>
+      <Mascot mood="think" size={120} className={reduce ? undefined : "motion-safe:animate-float"} />
+      <CompletionHeading className="mt-4 font-display text-3xl font-semibold tracking-tight">
+        Saving your work...
+      </CompletionHeading>
+      <p className="mt-3 text-lg text-ink-soft">Almost there!</p>
+    </motion.div>
+  );
+}
+
 function ShelfSaveFailed({ onRetry, onExit }: { onRetry: () => void; onExit: () => void }) {
   return (
     <div className="mx-auto flex max-w-md flex-col items-center pt-10 text-center">
       <Mascot mood="think" size={120} />
-      <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight">
+      <CompletionHeading className="mt-5 font-display text-3xl font-semibold tracking-tight">
         Your work is still here
-      </h1>
+      </CompletionHeading>
       <p className="mt-3 text-lg text-ink-soft" role="status">
         Let&rsquo;s try saving it one more time.
       </p>
@@ -359,9 +375,9 @@ function ShelfReward({
 
       <Mascot mood="cheer" size={132} className={reduce ? undefined : "motion-safe:animate-float"} />
 
-      <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight sm:text-4xl">
+      <CompletionHeading className="mt-5 font-display text-3xl font-semibold tracking-tight sm:text-4xl">
         {headline}
-      </h1>
+      </CompletionHeading>
 
       <div className="mt-5 flex items-center justify-center gap-3" aria-hidden>
         {[0, 1, 2].map((i) => (

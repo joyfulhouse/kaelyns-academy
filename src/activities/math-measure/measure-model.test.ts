@@ -84,15 +84,16 @@ describe("nonvisual comparison descriptions", () => {
     );
   });
 
-  it("names the lower heavier and higher lighter balance pans", () => {
-    expect(
-      comparisonDescription("weight", [
-        { label: "feather", size: 1 },
-        { label: "watermelon", size: 4 },
-      ]),
-    ).toBe(
-      "Balance comparison. watermelon pan is lower and watermelon is heavier; feather pan is higher and feather is lighter.",
+  it("describes raw balance position without announcing the answer", () => {
+    const description = comparisonDescription("weight", [
+      { label: "feather", size: 1 },
+      { label: "watermelon", size: 4 },
+    ]);
+
+    expect(description).toBe(
+      "Balance comparison. watermelon pan is lower; feather pan is higher.",
     );
+    expect(description).not.toMatch(/heavier|lighter/i);
   });
 });
 
