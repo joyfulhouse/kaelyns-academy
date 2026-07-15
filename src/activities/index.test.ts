@@ -34,7 +34,15 @@ const VALID_RESPONSES = {
   },
   "math-array": { mode: "build", builtRows: 2, attempts: 1 },
   "math-fraction-bar": { mode: "partition", partitionCount: 4, attempts: 1 },
-  "lang-symbol-intro": { verifyAnswers: [0] },
+  "lang-symbol-intro": {
+    exposures: ["one", "two", "three"].map((symbolId) => ({
+      symbolId,
+      activated: true,
+      heardExample: false,
+      usedHelp: false,
+    })),
+    checks: [{ choiceIndex: 0, attempts: 1 }],
+  },
   "lang-listen-match": {
     items: [{ choiceIndex: 0, attempts: 1, usedHelp: false }],
   },
@@ -95,7 +103,15 @@ const OVER_BOUNDED_RESPONSES = {
     attempts: 1,
   },
   "math-fraction-bar": { mode: "partition", partitionCount: 4, attempts: 21 },
-  "lang-symbol-intro": { verifyAnswers: Array.from({ length: 7 }, () => 0) },
+  "lang-symbol-intro": {
+    exposures: Array.from({ length: 9 }, (_, index) => ({
+      symbolId: `symbol-${index}`,
+      activated: true,
+      heardExample: false,
+      usedHelp: false,
+    })),
+    checks: [{ choiceIndex: 0, attempts: 1 }],
+  },
   "lang-listen-match": {
     items: Array.from({ length: 13 }, () => ({
       choiceIndex: 0,

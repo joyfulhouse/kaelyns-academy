@@ -1,4 +1,5 @@
 import type { Unit } from "../../types";
+import { spokenVerifications } from "./spoken-verifications";
 
 /**
  * Japanese — a new language with its own scripts (actually two). Starter ladder
@@ -45,11 +46,11 @@ export const japaneseUnit: Unit = {
               { id: "hiragana-e", symbol: "え", romanization: "e", spoken: "え", audioKey: "hiragana-e" },
               { id: "hiragana-o", symbol: "お", romanization: "o", spoken: "お", audioKey: "hiragana-o" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which hiragana says “a”?", choices: ["あ", "い", "う", "え", "お"], answerIndex: 0 },
               { prompt: "Which hiragana says “u”?", choices: ["あ", "い", "う", "え", "お"], answerIndex: 2 },
               { prompt: "Which hiragana says “o”?", choices: ["あ", "い", "う", "え", "お"], answerIndex: 4 },
-            ],
+            ]),
           },
         },
         {
@@ -99,11 +100,11 @@ export const japaneseUnit: Unit = {
               { id: "hiragana-shi", symbol: "し", romanization: "shi", spoken: "し", audioKey: "hiragana-shi" },
               { id: "hiragana-ta", symbol: "た", romanization: "ta", spoken: "た", audioKey: "hiragana-ta" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which hiragana says “ka”?", choices: ["か", "さ", "た", "き"], answerIndex: 0 },
               { prompt: "Which hiragana says “shi”?", choices: ["さ", "し", "き", "た"], answerIndex: 1 },
               { prompt: "Which hiragana says “ta”?", choices: ["か", "く", "た", "さ"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {
@@ -154,11 +155,11 @@ export const japaneseUnit: Unit = {
               { id: "hiragana-ma", symbol: "ま", romanization: "ma", spoken: "ま", audioKey: "hiragana-ma" },
               { id: "hiragana-mi", symbol: "み", romanization: "mi", spoken: "み", audioKey: "hiragana-mi" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which hiragana says “na”?", choices: ["な", "は", "ま", "に"], answerIndex: 0 },
               { prompt: "Which hiragana says “ha”?", choices: ["ま", "は", "な", "み"], answerIndex: 1 },
               { prompt: "Which hiragana says “mi”?", choices: ["に", "ひ", "み", "な"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {
@@ -209,11 +210,11 @@ export const japaneseUnit: Unit = {
               { id: "katakana-o", symbol: "オ", romanization: "o", spoken: "オ", audioKey: "katakana-o" },
               { id: "katakana-ka", symbol: "カ", romanization: "ka", spoken: "カ", audioKey: "katakana-ka" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which katakana says “a”?", choices: ["ア", "イ", "ウ", "エ", "オ"], answerIndex: 0 },
               { prompt: "Which katakana says “i”?", choices: ["ア", "イ", "ウ", "エ", "オ"], answerIndex: 1 },
               { prompt: "Which katakana says “ka”?", choices: ["オ", "ウ", "カ", "エ"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {
@@ -263,11 +264,11 @@ export const japaneseUnit: Unit = {
               { id: "ja-hai", symbol: "はい", romanization: "hai", spoken: "はい", audioKey: "ja-hai", meaning: "yes" },
               { id: "ja-iie", symbol: "いいえ", romanization: "iie", spoken: "いいえ", audioKey: "ja-iie", meaning: "no" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which word means “Hello”?", choices: ["こんにちは", "ありがとう", "さようなら"], answerIndex: 0 },
               { prompt: "Which word means “Thank you”?", choices: ["おはよう", "ありがとう", "はい"], answerIndex: 1 },
               { prompt: "Which word means “Goodbye”?", choices: ["はい", "いいえ", "さようなら"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {

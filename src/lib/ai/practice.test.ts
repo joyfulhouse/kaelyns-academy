@@ -265,8 +265,12 @@ describe("generatePracticeItems (bounded + schema-validated)", () => {
           skillTags: ["zhuyin.symbols.initials"],
           symbols: [
             { id: "zhuyin-b", symbol: "ㄅ", romanization: "b", spoken: "ㄅㄛ" },
+            { id: "zhuyin-p", symbol: "ㄆ", romanization: "p", spoken: "ㄆㄛ" },
+            { id: "zhuyin-m", symbol: "ㄇ", romanization: "m", spoken: "ㄇㄛ" },
           ],
-          verify: [{ prompt: "Which one is b?", choices: ["ㄅ", "ㄆ"], answerIndex: 0 }],
+          verify: [
+            { prompt: "Which one is b?", choices: ["ㄅ", "ㄆ", "ㄇ"], answerIndex: 0 },
+          ],
         },
       ],
     });

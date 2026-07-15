@@ -6,6 +6,7 @@ import {
   schema,
   score,
   skillsAffected,
+  validateGenerated,
   type LangSymbolIntroResponse,
 } from "./logic";
 
@@ -18,5 +19,6 @@ export const langSymbolIntro: ActivityType<LangSymbolIntroConfig, LangSymbolIntr
   Player: LangSymbolIntroPlayer,
   score,
   skillsAffected,
+  validateGenerated,
 };
 export type { LangSymbolIntroResponse };

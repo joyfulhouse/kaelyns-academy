@@ -1,4 +1,5 @@
 import type { Unit } from "../../types";
+import { spokenVerifications } from "./spoken-verifications";
 
 /**
  * Spanish — a new language on the familiar Latin alphabet. Listening- and
@@ -42,11 +43,11 @@ export const spanishUnit: Unit = {
               { id: "es-gracias", symbol: "Gracias", romanization: "GRAH-syahs", spoken: "Gracias", audioKey: "es-gracias", meaning: "Thank you" },
               { id: "es-por-favor", symbol: "Por favor", romanization: "por fah-VOR", spoken: "Por favor", audioKey: "es-por-favor", meaning: "Please" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which word means “Hello”?", choices: ["Hola", "Adiós", "Gracias"], answerIndex: 0 },
               { prompt: "Which word means “Thank you”?", choices: ["Por favor", "Adiós", "Gracias"], answerIndex: 2 },
               { prompt: "Which word means “Goodbye”?", choices: ["Hola", "Adiós", "Por favor"], answerIndex: 1 },
-            ],
+            ]),
           },
         },
         {
@@ -95,11 +96,11 @@ export const spanishUnit: Unit = {
               { id: "es-cuatro", symbol: "cuatro", romanization: "KWAH-troh", spoken: "cuatro", audioKey: "es-cuatro", meaning: "four" },
               { id: "es-cinco", symbol: "cinco", romanization: "SEEN-koh", spoken: "cinco", audioKey: "es-cinco", meaning: "five" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which word means “one”?", choices: ["uno", "tres", "cinco"], answerIndex: 0 },
               { prompt: "Which word means “three”?", choices: ["dos", "tres", "cuatro"], answerIndex: 1 },
               { prompt: "Which word means “five”?", choices: ["cuatro", "uno", "cinco"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {
@@ -148,11 +149,11 @@ export const spanishUnit: Unit = {
               { id: "es-verde", symbol: "verde", romanization: "VEHR-deh", spoken: "verde", audioKey: "es-verde", meaning: "green" },
               { id: "es-amarillo", symbol: "amarillo", romanization: "ah-mah-REE-yoh", spoken: "amarillo", audioKey: "es-amarillo", meaning: "yellow" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which word means “red”?", choices: ["rojo", "azul", "verde"], answerIndex: 0 },
               { prompt: "Which word means “blue”?", choices: ["verde", "azul", "amarillo"], answerIndex: 1 },
               { prompt: "Which word means “yellow”?", choices: ["rojo", "verde", "amarillo"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {
@@ -200,11 +201,11 @@ export const spanishUnit: Unit = {
               { id: "es-hermano", symbol: "hermano", romanization: "ehr-MAH-noh", spoken: "hermano", audioKey: "es-hermano", meaning: "brother" },
               { id: "es-hermana", symbol: "hermana", romanization: "ehr-MAH-nah", spoken: "hermana", audioKey: "es-hermana", meaning: "sister" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which word means “mom”?", choices: ["mamá", "papá", "hermano"], answerIndex: 0 },
               { prompt: "Which word means “dad”?", choices: ["hermana", "papá", "mamá"], answerIndex: 1 },
               { prompt: "Which word means “sister”?", choices: ["hermano", "papá", "hermana"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {
@@ -251,10 +252,10 @@ export const spanishUnit: Unit = {
               { id: "es-frase-tengo-seis-anos", symbol: "Tengo seis años", romanization: "TEHN-goh SAYSS AH-nyohs", spoken: "Tengo seis años", audioKey: "es-frase-tengo-seis-anos", example: "Hola, tengo seis años.", exampleSpoken: "Hola, tengo seis años.", meaning: "I am six years old" },
               { id: "es-hola", symbol: "Hola", romanization: "OH-lah", spoken: "Hola", audioKey: "es-hola", meaning: "Hello" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which one means “My name is ___”?", choices: ["Me llamo ___", "Tengo seis años", "Hola"], answerIndex: 0 },
               { prompt: "Which one means “I am six years old”?", choices: ["Hola", "Tengo seis años", "Me llamo ___"], answerIndex: 1 },
-            ],
+            ]),
           },
         },
         {

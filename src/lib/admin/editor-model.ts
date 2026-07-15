@@ -88,15 +88,19 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
     case "lang-symbol-intro":
       return {
         locale: "zh-TW",
-        instruction: "",
+        instruction: "Tap each symbol to hear it.",
         skillTags: ["zhuyin.symbols.initials"],
-        symbols: [{ id: "b", symbol: "ㄅ", romanization: "b", spoken: "ㄅ" }],
-        verify: [{ prompt: "What is ㄅ?", choices: ["b", "p"], answerIndex: 0 }],
+        symbols: [
+          { id: "zhuyin-b", symbol: "ㄅ", romanization: "b", spoken: "ㄅㄛ" },
+          { id: "zhuyin-p", symbol: "ㄆ", romanization: "p", spoken: "ㄆㄛ" },
+          { id: "zhuyin-m", symbol: "ㄇ", romanization: "m", spoken: "ㄇㄛ" },
+        ],
+        verify: [{ prompt: "Which one says b?", choices: ["ㄅ", "ㄆ", "ㄇ"], answerIndex: 0 }],
       };
     case "lang-listen-match":
       return {
         locale: "zh-TW",
-        instruction: "",
+        instruction: "Listen, then tap the symbol you heard.",
         skillTags: ["zhuyin.symbols.initials"],
         items: [
           { spoken: "ㄅ", choices: ["ㄅ", "ㄆ"], answerIndex: 0 },

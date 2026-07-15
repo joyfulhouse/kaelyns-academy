@@ -1,4 +1,5 @@
 import type { Unit } from "../../types";
+import { spokenVerifications } from "./spoken-verifications";
 
 /**
  * Korean — a new language with a logical, learnable alphabet. Letters snap into
@@ -47,11 +48,11 @@ export const koreanUnit: Unit = {
               { id: "jamo-u", symbol: "ㅜ", romanization: "u", spoken: "우", audioKey: "jamo-u" },
               { id: "jamo-i", symbol: "ㅣ", romanization: "i", spoken: "이", audioKey: "jamo-i" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which vowel says “a”?", choices: ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ"], answerIndex: 0 },
               { prompt: "Which vowel says “o”?", choices: ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ"], answerIndex: 2 },
               { prompt: "Which vowel says “i”?", choices: ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ"], answerIndex: 4 },
-            ],
+            ]),
           },
         },
         {
@@ -124,11 +125,11 @@ export const koreanUnit: Unit = {
               { id: "jamo-r", symbol: "ㄹ", romanization: "r", spoken: "라", audioKey: "jamo-r" },
               { id: "jamo-m", symbol: "ㅁ", romanization: "m", spoken: "마", audioKey: "jamo-m" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which letter makes the “g” sound?", choices: ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ"], answerIndex: 0 },
               { prompt: "Which letter makes the “m” sound?", choices: ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ"], answerIndex: 4 },
               { prompt: "Which letter makes the “n” sound?", choices: ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ"], answerIndex: 1 },
-            ],
+            ]),
           },
         },
         {
@@ -202,11 +203,11 @@ export const koreanUnit: Unit = {
               { id: "jamo-k", symbol: "ㅋ", romanization: "k", spoken: "카", audioKey: "jamo-k" },
               { id: "jamo-h", symbol: "ㅎ", romanization: "h", spoken: "하", audioKey: "jamo-h" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which letter makes the “b” sound?", choices: ["ㅂ", "ㅅ", "ㅈ", "ㅊ", "ㅋ", "ㅎ"], answerIndex: 0 },
               { prompt: "Which letter makes the “s” sound?", choices: ["ㅂ", "ㅅ", "ㅈ", "ㅊ", "ㅋ", "ㅎ"], answerIndex: 1 },
               { prompt: "Which letter makes the “h” sound?", choices: ["ㅂ", "ㅅ", "ㅈ", "ㅊ", "ㅋ", "ㅎ"], answerIndex: 5 },
-            ],
+            ]),
           },
         },
         {
@@ -287,11 +288,11 @@ export const koreanUnit: Unit = {
               { id: "syl-ba", symbol: "바", romanization: "ba", spoken: "바", audioKey: "syl-ba" },
               { id: "syl-sa", symbol: "사", romanization: "sa", spoken: "사", audioKey: "syl-sa" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "ㄱ + ㅏ makes which block?", choices: ["가", "나", "다", "마", "바", "사"], answerIndex: 0 },
               { prompt: "Which block means “I / me”?", choices: ["가", "나", "다", "마", "바", "사"], answerIndex: 1 },
               { prompt: "ㅅ + ㅏ makes which block?", choices: ["가", "나", "다", "마", "바", "사"], answerIndex: 5 },
-            ],
+            ]),
           },
         },
         {
@@ -392,7 +393,7 @@ export const koreanUnit: Unit = {
               { id: "ko-ne", symbol: "네", romanization: "ne", spoken: "네", audioKey: "ko-ne", meaning: "yes" },
               { id: "ko-aniyo", symbol: "아니요", romanization: "aniyo", spoken: "아니요", audioKey: "ko-aniyo", meaning: "no" },
             ],
-            verify: [
+            verify: spokenVerifications([
               {
                 prompt: "Which one means “Hello”?",
                 choices: ["안녕하세요", "감사합니다", "네", "아니요"],
@@ -404,7 +405,7 @@ export const koreanUnit: Unit = {
                 answerIndex: 1,
               },
               { prompt: "Which one means “yes”?", choices: ["안녕하세요", "감사합니다", "네", "아니요"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {
