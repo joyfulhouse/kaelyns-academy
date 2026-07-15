@@ -21,6 +21,7 @@ vi.mock("@/lib/tutor/store", () => ({
   // The generated-shelf star witness (B3): recordAttemptAction reads this for a
   // generated attempt to decide shelfEligible + the shelf unit.
   getGeneratedActivity: vi.fn(),
+  getPlayableGeneratedActivity: vi.fn(),
   // ensureLessonPractice gate + shelf reads/writes (all account-scoped store fns).
   getLearner: vi.fn(),
   getLearnerSettings: vi.fn(),
@@ -62,6 +63,7 @@ import {
   recordAttempt,
   listLearners,
   getGeneratedActivity,
+  getPlayableGeneratedActivity,
   getLearner,
   getLearnerSettings,
   getEnrollmentForGate,
@@ -81,6 +83,7 @@ import { generatePracticeItems } from "@/lib/ai/practice";
 import { pickGenerationTargets, type GenerationTarget } from "@/lib/tutor/shelf";
 import {
   recordAttemptAction,
+  getGeneratedPracticeAction,
   ensureLessonPractice,
   getLearnerStateAction,
   getTutorSession,
@@ -142,6 +145,53 @@ const PROGRAM = {
     },
   ],
 } satisfies Program;
+
+describe("getGeneratedPracticeAction", () => {
+  beforeEach(() => {
+    vi.mocked(getPlayableGeneratedActivity).mockReset();
+  });
+
+  it("resolves a shelf row through the selected learner-scoped store boundary", async () => {
+    const row = {
+      id: "gen-1",
+      learnerId: "L1",
+      lessonId: "lesson-1",
+      unitKey: "unit-1",
+      programSlug: "kaelyn-adaptive",
+      kind: "math-tenframe" as const,
+      title: "Made for you",
+      config: { target: 5 },
+      skillTags: ["math.add"],
+      gen: { model: "ha-assist", route: "ready", at: "2026-07-15T12:00:00.000Z" },
+    };
+    vi.mocked(getPlayableGeneratedActivity).mockResolvedValue(row);
+
+    await expect(
+      getGeneratedPracticeAction({
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+        generatedId: "gen-1",
+      }),
+    ).resolves.toEqual(row);
+    expect(getPlayableGeneratedActivity).toHaveBeenCalledWith(
+      "acc-1",
+      "L1",
+      "kaelyn-adaptive",
+      "gen-1",
+    );
+  });
+
+  it("rejects malformed lookup identifiers before reading the store", async () => {
+    await expect(
+      getGeneratedPracticeAction({
+        learnerId: "",
+        programSlug: "kaelyn-adaptive",
+        generatedId: "gen-1",
+      }),
+    ).resolves.toBeNull();
+    expect(getPlayableGeneratedActivity).not.toHaveBeenCalled();
+  });
+});
 
 const BASE_INPUT: RecordAttemptInput = {
   learnerId: "L1",

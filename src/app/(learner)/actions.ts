@@ -12,6 +12,7 @@ import {
   getEnrollmentConfig,
   getEnrollmentForGate,
   getGeneratedActivity,
+  getPlayableGeneratedActivity,
   getGeneratedCompletions,
   getLearner,
   getLearnerSettings,
@@ -23,6 +24,7 @@ import {
   type NewGeneratedActivity,
   type DueReview,
   type ShelfItem,
+  type PlayableShelfItem,
 } from "@/lib/tutor/store";
 import type { EnrollmentConfig, LearnerSurfaceConfig } from "@/lib/content/config";
 import {
@@ -160,6 +162,42 @@ export async function getEnrollmentsAction(learnerId: string): Promise<string[]>
       captureNonCritical("getEnrollmentsAction failed", error);
     }
     return [];
+  }
+}
+
+const generatedPracticeLookupSchema = z.object({
+  learnerId: z.string().min(1).max(100),
+  programSlug: z.string().min(1).max(100),
+  generatedId: z.string().min(1).max(100),
+});
+
+export type GeneratedPracticeLookup = z.infer<typeof generatedPracticeLookupSchema>;
+
+/**
+ * Resolve one generated shelf item only after the client has resolved its
+ * selected account learner. The store repeats both account tenancy and learner
+ * scoping, so siblings under one household cannot open each other's practice.
+ */
+export async function getGeneratedPracticeAction(
+  input: GeneratedPracticeLookup,
+): Promise<PlayableShelfItem | null> {
+  const parsed = generatedPracticeLookupSchema.safeParse(input);
+  if (!parsed.success) return null;
+
+  try {
+    return await withAccount(({ accountId }) =>
+      getPlayableGeneratedActivity(
+        accountId,
+        parsed.data.learnerId,
+        parsed.data.programSlug,
+        parsed.data.generatedId,
+      ),
+    );
+  } catch (error) {
+    if (!(error instanceof UnauthenticatedError)) {
+      captureNonCritical("getGeneratedPracticeAction failed", error);
+    }
+    return null;
   }
 }
 

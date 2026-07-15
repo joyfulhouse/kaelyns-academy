@@ -52,6 +52,7 @@ const checkpointResultRows = {
 // the repeat-completion test overrides to two rows (prior + just-inserted).
 const attemptRows = { value: [{ id: "new" }] as Record<string, unknown>[] };
 const completedTodayRows = { value: [] as Record<string, unknown>[] };
+const generatedActivityRows = { value: [] as Record<string, unknown>[] };
 // The day's learner_quest rows (Adventure 2.0 fold); applyAttemptToQuests only
 // SELECTs status="active" rows (mirroring the real query's WHERE clause) — the
 // fake filters here so "offered leaves untouched" is actually observable.
@@ -183,6 +184,13 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
                     : attemptRows.value
                 : chain.op === "select" && chain.table === "checkpoint_result"
                   ? checkpointResultRows.value
+                  : chain.op === "select" && chain.table === "generated_activity"
+                    ? applyQueryShape(
+                        generatedActivityRows.value,
+                        chain.predicate,
+                        chain.ordering,
+                        chain.limitValue,
+                      )
                   : chain.op === "select" && chain.table === "learner_quest"
                     ? // Mirrors applyAttemptToQuests's WHERE: status="active" AND
                       // programSlug=<the recorded attempt's program> (Finding 1: cross-
@@ -286,6 +294,22 @@ vi.mock("@/lib/db/schema", () => ({
     phase: {},
     createdAt: {},
   },
+  generatedActivity: {
+    _name: "generated_activity",
+    id: { name: "id" },
+    learnerId: { name: "learnerId" },
+    programSlug: { name: "programSlug" },
+    unitKey: { name: "unitKey" },
+    lessonId: { name: "lessonId" },
+    kind: { name: "kind" },
+    title: { name: "title" },
+    config: { name: "config" },
+    skillTags: { name: "skillTags" },
+    genModel: { name: "genModel" },
+    genRoute: { name: "genRoute" },
+    genAt: { name: "genAt" },
+    createdAt: { name: "createdAt" },
+  },
 }));
 // drizzle-orm operators are used only to build opaque predicate objects here.
 vi.mock("drizzle-orm", () => ({
@@ -306,6 +330,7 @@ import {
   EnrollmentNotActiveError,
   getDueReviews,
   getFluencyHistory,
+  getPlayableGeneratedActivity,
   getPendingCheckpointResults,
   nextSkillRecord,
   recordAttempt,
@@ -335,6 +360,63 @@ const input = {
 function baseInput(): typeof input {
   return input;
 }
+
+describe("getPlayableGeneratedActivity (selected learner boundary)", () => {
+  const generatedRow = {
+    id: "gen-1",
+    learnerId: "L1",
+    programSlug: "kaelyn-adaptive",
+    unitKey: "unit-1",
+    lessonId: "lesson-1",
+    kind: "math-tenframe",
+    title: "Made for you",
+    config: { target: 5 },
+    skillTags: ["math.add"],
+    genModel: "ha-assist",
+    genRoute: "ready",
+    genAt: new Date("2026-07-15T12:00:00.000Z"),
+    createdAt: new Date("2026-07-15T12:00:00.000Z"),
+  };
+
+  beforeEach(() => {
+    ops.length = 0;
+    learnerRows.value = [{ id: "L1" }];
+    generatedActivityRows.value = [generatedRow];
+  });
+
+  it("returns a bounded playable DTO including its owning learner", async () => {
+    await expect(
+      getPlayableGeneratedActivity("acct-1", "L1", "kaelyn-adaptive", "gen-1"),
+    ).resolves.toEqual({
+      id: "gen-1",
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      unitKey: "unit-1",
+      lessonId: "lesson-1",
+      kind: "math-tenframe",
+      title: "Made for you",
+      config: { target: 5 },
+      skillTags: ["math.add"],
+      gen: {
+        model: "ha-assist",
+        route: "ready",
+        at: "2026-07-15T12:00:00.000Z",
+      },
+    });
+  });
+
+  it("returns null for another learner under the same account", async () => {
+    await expect(
+      getPlayableGeneratedActivity("acct-1", "L2", "kaelyn-adaptive", "gen-1"),
+    ).resolves.toBeNull();
+  });
+
+  it("returns null when the selected learner's row belongs to another program", async () => {
+    await expect(
+      getPlayableGeneratedActivity("acct-1", "L1", "world-languages", "gen-1"),
+    ).resolves.toBeNull();
+  });
+});
 
 describe("recordAttempt (atomic persistence)", () => {
   beforeEach(() => {

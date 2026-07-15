@@ -1061,6 +1061,8 @@ export interface GeneratedActivityRow {
  */
 export interface PlayableShelfItem {
   id: string;
+  /** Owning learner identity, used by the client as a render-boundary witness. */
+  learnerId: string;
   lessonId: string;
   unitKey: string;
   programSlug: string;
@@ -1069,6 +1071,57 @@ export interface PlayableShelfItem {
   config: unknown;
   skillTags: string[];
   gen: { model: string; route: string; at: string };
+}
+
+/**
+ * One shelf item resolved for play through account + selected learner + program.
+ * The owning learner is repeated in the bounded DTO so the client can fail
+ * closed across a learner switch before mounting a Player. The store boundary
+ * remains authoritative: tenancy is checked first, then every row dimension is
+ * constrained in the generated_activity query.
+ */
+export async function getPlayableGeneratedActivity(
+  accountId: string,
+  learnerId: string,
+  programSlug: string,
+  id: string,
+): Promise<PlayableShelfItem | null> {
+  return withOwnedLearner<PlayableShelfItem | null>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select()
+        .from(generatedActivity)
+        .where(
+          and(
+            eq(generatedActivity.id, id),
+            eq(generatedActivity.learnerId, learnerId),
+            eq(generatedActivity.programSlug, programSlug),
+          ),
+        )
+        .limit(1);
+      const row = rows[0];
+      if (!row) return null;
+      return {
+        id: row.id,
+        learnerId: row.learnerId,
+        lessonId: row.lessonId,
+        unitKey: row.unitKey,
+        programSlug: row.programSlug,
+        kind: row.kind as ActivityKind,
+        title: row.title,
+        config: row.config,
+        skillTags: row.skillTags,
+        gen: {
+          model: row.genModel,
+          route: row.genRoute,
+          at: row.genAt.toISOString(),
+        },
+      };
+    },
+    null,
+  );
 }
 
 /** Project a generated_activity row into the client-safe {@link ShelfItem}. */
@@ -1239,59 +1292,6 @@ export async function getGeneratedActivity(
     },
     null,
   );
-}
-
-/**
- * One shelf item resolved for PLAY, scoped by ACCOUNT + PROGRAM (Task 4). Unlike
- * {@link getGeneratedActivity} (which needs a known learnerId), the play route
- * only has the account (session) + programSlug + the shelf id, so ownership is
- * resolved through the JOIN to the owning learner: the row is returned only when
- * its learner belongs to `accountId` AND its programSlug matches. A
- * foreign/mismatched/unknown id → null (the host renders the calm "moved" state).
- * Carries the generation provenance as an ISO string for the client relay.
- */
-export async function getGeneratedActivityForAccount(
-  accountId: string,
-  programSlug: string,
-  id: string,
-): Promise<PlayableShelfItem | null> {
-  const rows = await getDb()
-    .select({
-      id: generatedActivity.id,
-      lessonId: generatedActivity.lessonId,
-      unitKey: generatedActivity.unitKey,
-      programSlug: generatedActivity.programSlug,
-      kind: generatedActivity.kind,
-      title: generatedActivity.title,
-      config: generatedActivity.config,
-      skillTags: generatedActivity.skillTags,
-      genModel: generatedActivity.genModel,
-      genRoute: generatedActivity.genRoute,
-      genAt: generatedActivity.genAt,
-    })
-    .from(generatedActivity)
-    .innerJoin(learner, eq(generatedActivity.learnerId, learner.id))
-    .where(
-      and(
-        eq(generatedActivity.id, id),
-        eq(generatedActivity.programSlug, programSlug),
-        eq(learner.accountId, accountId),
-      ),
-    )
-    .limit(1);
-  const r = rows[0];
-  if (!r) return null;
-  return {
-    id: r.id,
-    lessonId: r.lessonId,
-    unitKey: r.unitKey,
-    programSlug: r.programSlug,
-    kind: r.kind as ActivityKind,
-    title: r.title,
-    config: r.config,
-    skillTags: r.skillTags,
-    gen: { model: r.genModel, route: r.genRoute, at: r.genAt.toISOString() },
-  };
 }
 
 /** Outcome tally across a learner's skills (for the dashboard summary). */

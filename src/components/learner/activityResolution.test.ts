@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { Activity, Program, Unit } from "@/content";
 import {
+  generatedPracticeRequestKey,
   playerIdentityKey,
+  resolveGeneratedPractice,
   resolvePlayableActivity,
   safeParsePlayerConfig,
 } from "./activityResolution";
@@ -173,5 +175,108 @@ describe("playerIdentityKey", () => {
     const second = playerIdentityKey({ ...base, content: {}, config: { b: 2, a: 1 } });
 
     expect(first).toBe(second);
+  });
+});
+
+describe("resolveGeneratedPractice", () => {
+  const row = {
+    id: "generated-1",
+    learnerId: "learner-1",
+    programSlug: "kaelyn-adaptive",
+    unitKey: "route-unit",
+  };
+  const activeRequestKey = generatedPracticeRequestKey(
+    "learner-1",
+    "kaelyn-adaptive",
+    "generated-1",
+  );
+
+  it("stays loading until the selected account learner is ready", () => {
+    expect(
+      resolveGeneratedPractice({
+        mode: "account",
+        ready: false,
+        available: true,
+        selectedLearnerId: "learner-1",
+        programSlug: "kaelyn-adaptive",
+        generatedId: "generated-1",
+        activeUnitKeys: undefined,
+        loaded: null,
+      }),
+    ).toEqual({ status: "loading" });
+  });
+
+  it("does not expose a previously loaded sibling row after learner selection changes", () => {
+    expect(
+      resolveGeneratedPractice({
+        mode: "account",
+        ready: true,
+        available: true,
+        selectedLearnerId: "learner-2",
+        programSlug: "kaelyn-adaptive",
+        generatedId: "generated-1",
+        activeUnitKeys: undefined,
+        loaded: { requestKey: activeRequestKey, row },
+      }),
+    ).toEqual({ status: "loading" });
+  });
+
+  it("rejects a row whose owner does not match the selected learner", () => {
+    expect(
+      resolveGeneratedPractice({
+        mode: "account",
+        ready: true,
+        available: true,
+        selectedLearnerId: "learner-1",
+        programSlug: "kaelyn-adaptive",
+        generatedId: "generated-1",
+        activeUnitKeys: undefined,
+        loaded: {
+          requestKey: activeRequestKey,
+          row: { ...row, learnerId: "learner-2" },
+        },
+      }),
+    ).toEqual({ status: "moved" });
+  });
+
+  it("returns the row only for the exact selected learner/program/id request", () => {
+    expect(
+      resolveGeneratedPractice({
+        mode: "account",
+        ready: true,
+        available: true,
+        selectedLearnerId: "learner-1",
+        programSlug: "kaelyn-adaptive",
+        generatedId: "generated-1",
+        activeUnitKeys: ["route-unit"],
+        loaded: { requestKey: activeRequestKey, row },
+      }),
+    ).toEqual({ status: "ready", row });
+  });
+
+  it("blocks unavailable and curated-out generated practice", () => {
+    const unavailable = resolveGeneratedPractice({
+      mode: "account",
+      ready: true,
+      available: false,
+      selectedLearnerId: "learner-1",
+      programSlug: "kaelyn-adaptive",
+      generatedId: "generated-1",
+      activeUnitKeys: undefined,
+      loaded: null,
+    });
+    const curatedOut = resolveGeneratedPractice({
+      mode: "account",
+      ready: true,
+      available: true,
+      selectedLearnerId: "learner-1",
+      programSlug: "kaelyn-adaptive",
+      generatedId: "generated-1",
+      activeUnitKeys: ["another-unit"],
+      loaded: { requestKey: activeRequestKey, row },
+    });
+
+    expect(unavailable).toEqual({ status: "blocked" });
+    expect(curatedOut).toEqual({ status: "blocked" });
   });
 });

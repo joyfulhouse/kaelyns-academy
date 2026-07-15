@@ -101,6 +101,75 @@ export function playerIdentityKey(input: PlayerIdentityInput): string {
   return `${prefix}:${fingerprint({ content: input.content, config: input.config })}`;
 }
 
+export interface GeneratedPracticeRowIdentity {
+  id: string;
+  learnerId: string;
+  programSlug: string;
+  unitKey: string;
+}
+
+export interface LoadedGeneratedPractice<Row extends GeneratedPracticeRowIdentity> {
+  requestKey: string;
+  row: Row | null;
+}
+
+export interface GeneratedPracticeResolutionInput<Row extends GeneratedPracticeRowIdentity> {
+  mode: LearnerMode;
+  ready: boolean;
+  available: boolean;
+  selectedLearnerId: string | null;
+  programSlug: string;
+  generatedId: string;
+  activeUnitKeys: string[] | undefined;
+  loaded: LoadedGeneratedPractice<Row> | null;
+}
+
+export type GeneratedPracticeResolution<Row extends GeneratedPracticeRowIdentity> =
+  | { status: "loading" }
+  | { status: "blocked" }
+  | { status: "moved" }
+  | { status: "ready"; row: Row };
+
+export function generatedPracticeRequestKey(
+  learnerId: string,
+  programSlug: string,
+  generatedId: string,
+): string {
+  return [learnerId, programSlug, generatedId].map(encodeURIComponent).join(":");
+}
+
+export function resolveGeneratedPractice<Row extends GeneratedPracticeRowIdentity>(
+  input: GeneratedPracticeResolutionInput<Row>,
+): GeneratedPracticeResolution<Row> {
+  if (input.mode === "loading" || input.mode === "error") return { status: "loading" };
+  if (input.mode === "guest") return { status: "moved" };
+  if (!input.ready || !input.selectedLearnerId) return { status: "loading" };
+  if (!input.available) return { status: "blocked" };
+
+  const requestKey = generatedPracticeRequestKey(
+    input.selectedLearnerId,
+    input.programSlug,
+    input.generatedId,
+  );
+  if (input.loaded?.requestKey !== requestKey) return { status: "loading" };
+
+  const row = input.loaded.row;
+  if (
+    !row ||
+    row.id !== input.generatedId ||
+    row.learnerId !== input.selectedLearnerId ||
+    row.programSlug !== input.programSlug
+  ) {
+    return { status: "moved" };
+  }
+
+  const curatedOut =
+    input.activeUnitKeys !== undefined &&
+    input.activeUnitKeys.length > 0 &&
+    !input.activeUnitKeys.includes(row.unitKey);
+  return curatedOut ? { status: "blocked" } : { status: "ready", row };
+}
+
 function fingerprint(value: unknown): string {
   const canonical = stableSerialize(value);
   let hash = 0x811c9dc5;

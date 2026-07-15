@@ -1,6 +1,4 @@
 import type { Metadata } from "next";
-import { getSessionOrNull } from "@/lib/auth";
-import { getGeneratedActivityForAccount } from "@/lib/tutor/store";
 import { studioTitle } from "@/lib/site";
 import { GeneratedPracticeHost } from "@/components/learner/GeneratedPracticeHost";
 
@@ -19,19 +17,12 @@ export function generateMetadata(): Metadata {
 
 /**
  * The generated-shelf play route (Adventure 2.0 B3). Account-only by
- * construction: it resolves the Better Auth session lazily per-request
- * (build-safe — no getAuth()/getDb() at module top level), then loads the shelf
- * row scoped by ACCOUNT + programSlug (ownership resolved through the owning
- * learner). No session / a foreign or unknown id → row = null, and
- * GeneratedPracticeHost renders the calm "moved" state (mirroring the authored
- * route's posture) rather than a 404/500. unitId/world/next links are all
- * derived client-side inside the host from the row.
+ * construction, but the server page intentionally does not perform an
+ * account-wide shelf lookup. GeneratedPracticeHost first resolves the selected
+ * account learner, then calls the learner-scoped action. No session / a foreign
+ * or unknown id degrades to the calm "moved" state rather than a 404/500.
  */
 export default async function GeneratedActivityPage({ params }: GeneratedActivityPageProps) {
   const { programSlug, generatedId } = await params;
-  const session = await getSessionOrNull();
-  const row = session
-    ? await getGeneratedActivityForAccount(session.user.id, programSlug, generatedId)
-    : null;
-  return <GeneratedPracticeHost programSlug={programSlug} row={row} />;
+  return <GeneratedPracticeHost programSlug={programSlug} generatedId={generatedId} />;
 }
