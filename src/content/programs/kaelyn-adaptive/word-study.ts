@@ -128,24 +128,21 @@ export const wordStudyUnit: Unit = {
         {
           id: "word-r4-a1",
           kind: "phonics-wordbuild",
-          title: "Build by syllable type",
-          blurb: "Build the word, then say if the vowel is short or long.",
+          title: "Build by syllable",
+          blurb: "Join the syllable parts, then blend the whole word.",
           estMinutes: 10,
           band: "ready",
           skillTags: ["word.syllables.types"],
           config: {
             focus: "the six syllable types (closed, open, silent-e, vowel team, r-controlled, consonant-le)",
-            instruction: "Build each word from its syllable tiles, then say whether the vowel is short or long and why.",
-            tiles: ["rab", "bit", "ta", "ble", "ti", "ger", "gar", "den"],
-            // Open/r-controlled/consonant-le tiles mis-voice in isolation
-            // (ta→"tah", ble→"blee", ti→"tee", ger→soft-g "jer"); pin the
-            // in-word sound. rab/bit/gar/den already voice correctly.
-            say: { ta: "tˈA", ble: "bəl", ti: "tˈI", ger: "ɡˈɜɹ" },
+            instruction: "Build each word from its syllable tiles. Listen to each part, then blend the whole word.",
+            // Two stable `co` instances make the repeated syllable in cocoa a
+            // real inventory constraint instead of an infinitely reusable label.
+            tiles: ["rab", "bit", "co", "co", "a"],
+            say: { co: "kˈoʊ", a: "ə" },
             words: [
               { word: "rabbit" },
-              { word: "table" },
-              { word: "tiger" },
-              { word: "garden" },
+              { word: "cocoa" },
             ],
           },
         },

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validatePhonicsTileInventory } from "@/content/phonics";
 
 /**
  * The per-activity-type config contract. Content authors type their activities
@@ -35,5 +36,8 @@ export const phonicsWordbuildConfig = z.object({
     )
     .min(1)
     .max(12),
+}).superRefine((config, context) => {
+  const reason = validatePhonicsTileInventory(config);
+  if (reason) context.addIssue({ code: "custom", message: reason });
 });
 export type PhonicsWordbuildConfig = z.input<typeof phonicsWordbuildConfig>;

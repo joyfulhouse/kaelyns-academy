@@ -93,7 +93,7 @@ export default defineConfig({
     {
       name: "public",
       testMatch:
-        /specs\/(smoke|auth|learner|life-skills-math|meaningful-(clock|money|measure|array|tenframe|fraction|order|journal)|science|baseline-placement|adaptive-generation|oral-reading)\.spec\.ts/,
+        /specs\/(smoke|auth|learner|life-skills-math|meaningful-(clock|money|measure|array|tenframe|fraction|order|journal|phonics|sightword|comprehension)|science|baseline-placement|adaptive-generation|oral-reading)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
     {

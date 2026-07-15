@@ -6,6 +6,7 @@ import {
   schema,
   score,
   skillsAffected,
+  validateGenerated,
   type PhonicsWordbuildResponse,
 } from "./logic";
 
@@ -18,5 +19,6 @@ export const phonicsWordbuild: ActivityType<PhonicsWordbuildConfig, PhonicsWordb
   Player: PhonicsWordbuildPlayer,
   score,
   skillsAffected,
+  validateGenerated,
 };
 export type { PhonicsWordbuildResponse };

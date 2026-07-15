@@ -1,10 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { ArrowCounterClockwiseIcon, BackspaceIcon } from "@phosphor-icons/react/dist/ssr";
 import type { PhonicsWordbuildConfig } from "@/content/activity-configs";
-import { segmentWord } from "@/content/phonics";
 import type { ActivityPlayerProps } from "@/content/types";
 import { tilePhonemeText, wordPhonemeText } from "@/lib/audio/phonemes";
 import { cn } from "@/lib/cn";
@@ -16,6 +15,15 @@ import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
+import {
+  addTileToBuild,
+  constructedText,
+  createTileInventory,
+  findExactSegmentation,
+  MAX_PHONICS_ATTEMPTS,
+  releaseTileFromBuild,
+  startPhonemeSweep,
+} from "./model";
 import { schema, type PhonicsWordbuildResponse } from "./logic";
 
 export function PhonicsWordbuildPlayer({
@@ -28,86 +36,162 @@ export function PhonicsWordbuildPlayer({
   const shake = useWrongShake();
 
   const [wordIndex, setWordIndex] = useState(0);
-  const [built, setBuilt] = useState<string[]>([]);
-  const [tries, setTries] = useState(1);
+  const [builtTileIndices, setBuiltTileIndices] = useState<number[]>([]);
+  const [attempts, setAttempts] = useState(1);
   const [builds, setBuilds] = useState<PhonicsWordbuildResponse["builds"]>([]);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [activeTileIndex, setActiveTileIndex] = useState<number | null>(null);
+  const [sweepLabel, setSweepLabel] = useState<string | null>(null);
+  const [blendLabel, setBlendLabel] = useState<string | null>(null);
+  const [sweeping, setSweeping] = useState(false);
+  const trayButtonRefs = useRef(new Map<number, HTMLButtonElement>());
+  const cancelSweepRef = useRef<(() => void) | null>(null);
 
   const current = parsed.words[wordIndex];
-  const targetSegments = useMemo(
-    () => (current ? segmentWord(current.word, parsed.tiles) : []),
+  const targetTileIndices = useMemo(
+    () => (current ? findExactSegmentation(current.word, parsed.tiles) ?? [] : []),
     [current, parsed.tiles],
   );
+  const inventory = useMemo(() => createTileInventory(parsed.tiles), [parsed.tiles]);
   const tray = useMemo(
-    () => shuffle(parsed.tiles, parsed.tiles.join("").length + wordIndex * 7),
-    [parsed.tiles, wordIndex],
+    () => shuffle(inventory, parsed.tiles.join("").length + wordIndex * 7),
+    [inventory, parsed.tiles, wordIndex],
   );
+  const builtText = constructedText(builtTileIndices, parsed.tiles);
 
-  // Read the instruction aloud once when the activity opens.
   useSpeakOnce(speech.speak, parsed.instruction);
+  useEffect(
+    () => () => {
+      cancelSweepRef.current?.();
+    },
+    [],
+  );
 
   if (!current) return null;
 
-  const isComplete = built.length === targetSegments.length;
+  const isComplete = builtTileIndices.length === targetTileIndices.length;
 
-  function tapTile(tile: string) {
-    if (shake.wrong || isComplete) return;
-    setBuilt((prev) => [...prev, tile]);
-    // Silent letters (e.g. the magic-e) fill the slot but make no sound — cancel
-    // any in-flight utterance so a quick tap can't leave the prior tile audible.
+  function copyLabel(tileIndex: number): string {
+    const tile = parsed.tiles[tileIndex];
+    const total = parsed.tiles.filter((candidate) => candidate === tile).length;
+    if (total === 1) return `Use tile ${tile}`;
+    const copy = parsed.tiles.slice(0, tileIndex + 1).filter((candidate) => candidate === tile).length;
+    return `Use tile ${tile}, copy ${copy} of ${total}`;
+  }
+
+  function focusTrayTile(tileIndex: number): void {
+    window.requestAnimationFrame(() => trayButtonRefs.current.get(tileIndex)?.focus());
+  }
+
+  function placeTile(tileIndex: number): void {
+    if (shake.wrong || sweeping || isComplete || builtTileIndices.includes(tileIndex)) return;
+    const tile = parsed.tiles[tileIndex];
+    if (tile === undefined) return;
+    setBuiltTileIndices((previous) =>
+      addTileToBuild(previous, tileIndex, parsed.tiles.length),
+    );
+    setFeedback(null);
     if (parsed.silent?.includes(tile)) {
       speech.cancel();
+    } else {
+      const tts = tilePhonemeText(tile, parsed.say);
+      speech.speak(tile, tts ? { tts } : undefined);
+    }
+  }
+
+  function removeTile(tileIndex: number): void {
+    if (shake.wrong || sweeping) return;
+    setBuiltTileIndices((previous) => releaseTileFromBuild(previous, tileIndex));
+    setFeedback(null);
+    focusTrayTile(tileIndex);
+  }
+
+  function undo(): void {
+    const tileIndex = builtTileIndices.at(-1);
+    if (tileIndex === undefined) return;
+    removeTile(tileIndex);
+  }
+
+  function clearBuild(): void {
+    if (shake.wrong || sweeping) return;
+    const firstTileIndex = builtTileIndices[0];
+    setBuiltTileIndices([]);
+    setFeedback(null);
+    if (firstTileIndex !== undefined) focusTrayTile(firstTileIndex);
+  }
+
+  function finishWord(responseBuild: PhonicsWordbuildResponse["builds"][number]): void {
+    const nextBuilds = [...builds, responseBuild];
+    setBuilds(nextBuilds);
+    const isLast = wordIndex === parsed.words.length - 1;
+    if (isLast) {
+      onComplete({ builds: nextBuilds });
       return;
     }
-    // A lone tile is voiced out of context; its authored IPA (when present) makes
-    // the neural voice say the in-word sound instead of mis-reading the spelling.
-    const tts = tilePhonemeText(tile, parsed.say);
-    speech.speak(tile, tts ? { tts } : undefined);
+    setWordIndex((index) => index + 1);
+    setBuiltTileIndices([]);
+    setAttempts(1);
+    setFeedback(null);
+    setSweepLabel(null);
+    setBlendLabel(null);
   }
 
-  function undo() {
-    setBuilt((prev) => prev.slice(0, -1));
-  }
-
-  function clearBuild() {
-    setBuilt([]);
-  }
-
-  function check() {
-    const correct = built.join("").toLowerCase() === targetSegments.join("").toLowerCase();
-    if (correct) {
-      const nextBuilds = [...builds, { word: current.word, tries }];
-      setBuilds(nextBuilds);
-      const isLast = wordIndex === parsed.words.length - 1;
-      if (isLast) {
-        onComplete({ builds: nextBuilds });
-      } else {
-        setWordIndex((i) => i + 1);
-        setBuilt([]);
-        setTries(1);
-      }
-    } else {
-      // Forgiving: no red X. Gentle nudge, clear, and let them try again.
-      setTries((t) => t + 1);
+  function check(): void {
+    const correct = builtText.toLocaleLowerCase() === current.word.toLocaleLowerCase();
+    if (!correct) {
+      setAttempts((value) => Math.min(MAX_PHONICS_ATTEMPTS, value + 1));
+      setFeedback("Keep your tiles and try a different order.");
       shake.trigger({
-        speak: () => speech.speak("So close. Let's try that one again."),
-        onClear: () => setBuilt([]),
+        speak: () => speech.speak("Keep your tiles and try a different order."),
+        holdMs: 600,
       });
+      return;
     }
+
+    setSweeping(true);
+    setFeedback("You built it. Listen to the sounds, then the whole word.");
+    const responseBuild = { wordIndex, tileIndices: builtTileIndices, attempts };
+    cancelSweepRef.current = startPhonemeSweep({
+      tileIndices: builtTileIndices,
+      tiles: parsed.tiles,
+      silent: parsed.silent,
+      onActiveTile: (tileIndex) => {
+        setActiveTileIndex(tileIndex);
+        if (tileIndex === null) setSweepLabel(null);
+      },
+      onSpeakTile: (tile) => {
+        setSweepLabel(tile);
+        const tts = tilePhonemeText(tile, parsed.say);
+        speech.speak(tile, tts ? { tts } : undefined);
+      },
+      onSpeakWord: () => {
+        setBlendLabel(current.word);
+        speech.speak(
+          current.word,
+          current.ipa ? { tts: wordPhonemeText(current.word, current.ipa) } : undefined,
+        );
+      },
+      onDone: () => {
+        cancelSweepRef.current = null;
+        setSweeping(false);
+        finishWord(responseBuild);
+      },
+      dwellMs: reduced ? 500 : 700,
+    });
   }
 
   return (
     <div className="grid gap-8">
       <Prompt speech={speech} instruction={parsed.instruction} />
 
-      {/* Target picture + the word's spoken form */}
       <div className="flex flex-col items-center gap-3">
         {current.picture && (
           <motion.div
             key={current.word}
             className="grid size-36 place-items-center rounded-2xl border-[3px] border-ink bg-paper-raised shadow-pop"
-            initial={reduced ? { opacity: 0 } : { scale: 0.9, opacity: 0 }}
+            initial={reduced ? { opacity: 1 } : { scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: reduced ? 0.001 : 0.24, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: reduced ? 0 : 0.24, ease: [0.16, 1, 0.3, 1] }}
           >
             <span className="text-7xl" role="img" aria-label={current.word}>
               {current.picture}
@@ -121,65 +205,113 @@ export function PhonicsWordbuildPlayer({
             tts={wordPhonemeText(current.word, current.ipa)}
             label={`Say the word ${current.word}`}
           />
-          <span className="text-sm text-ink-soft">Word {wordIndex + 1} of {parsed.words.length}</span>
+          <span className="text-sm text-ink-soft">
+            Word {wordIndex + 1} of {parsed.words.length}
+          </span>
         </div>
       </div>
 
-      {/* Build slots */}
       <motion.div
+        role="group"
+        aria-label={`Built word ${builtText || "empty"}`}
         className="flex flex-wrap items-center justify-center gap-2"
         {...shake.shakeProps(reduced)}
-        aria-live="polite"
       >
-        {targetSegments.map((_, slot) => {
-          const filled = built[slot];
-          return (
+        {targetTileIndices.map((_, slot) => {
+          const tileIndex = builtTileIndices[slot];
+          const tile = tileIndex === undefined ? undefined : parsed.tiles[tileIndex];
+          return tileIndex === undefined || tile === undefined ? (
             <span
-              key={slot}
+              key={`empty-${slot}`}
+              aria-label={`Empty sound slot ${slot + 1}`}
+              className="grid h-16 min-w-16 place-items-center rounded-xl border-[3px] border-dashed border-ink/30 bg-paper-sunk px-3 font-display text-3xl text-ink/30"
+            />
+          ) : (
+            <button
+              key={tileIndex}
+              type="button"
+              onClick={() => removeTile(tileIndex)}
+              onKeyDown={(event) => {
+                if (event.key === "Delete" || event.key === "Backspace") {
+                  event.preventDefault();
+                  removeTile(tileIndex);
+                }
+              }}
+              disabled={sweeping || shake.wrong}
+              aria-label={`Placed tile ${tile} in slot ${slot + 1}. Activate to return it`}
               className={cn(
-                "grid h-16 min-w-16 place-items-center rounded-xl border-[3px] px-3 font-display text-3xl",
-                filled
-                  ? "border-ink bg-honey text-ink shadow-pop"
-                  : "border-dashed border-ink/30 bg-paper-sunk text-ink/30",
+                "grid h-16 min-w-16 place-items-center rounded-xl border-[3px] border-ink px-3 font-display text-3xl text-ink shadow-pop",
+                activeTileIndex === tileIndex ? "bg-success ring-4 ring-success/30" : "bg-honey",
+                reduced ? "" : "transition-colors duration-150",
               )}
             >
-              {filled ?? ""}
-            </span>
+              {tile}
+            </button>
           );
         })}
       </motion.div>
 
-      {/* Tile tray */}
       <div className="flex flex-wrap items-center justify-center gap-3">
-        {tray.map((tile, i) => (
-          <button
-            key={`${tile}-${i}`}
-            type="button"
-            onClick={() => tapTile(tile)}
-            disabled={shake.wrong}
-            aria-label={`Letter tile ${tile}`}
-            className={cn(
-              "grid h-24 min-w-24 place-items-center rounded-2xl border-[3px] border-ink bg-paper-raised px-4",
-              "font-display text-3xl text-ink shadow-pop transition duration-200 ease-out",
-              "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-50",
-            )}
-          >
-            {tile}
-          </button>
-        ))}
+        {tray.map((tile) => {
+          const used = builtTileIndices.includes(tile.index);
+          return (
+            <button
+              key={tile.index}
+              ref={(element) => {
+                if (element) trayButtonRefs.current.set(tile.index, element);
+                else trayButtonRefs.current.delete(tile.index);
+              }}
+              type="button"
+              onClick={() => placeTile(tile.index)}
+              disabled={used || shake.wrong || sweeping || isComplete}
+              aria-label={copyLabel(tile.index)}
+              className={cn(
+                "grid h-20 min-w-20 place-items-center rounded-2xl border-[3px] border-ink bg-paper-raised px-4",
+                "font-display text-3xl text-ink shadow-pop transition duration-200 ease-out",
+                "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-35",
+              )}
+            >
+              {tile.text}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Controls: undo / clear / done — forgiving, no scoring penalty */}
+      <div aria-live="polite" aria-atomic="true" className="min-h-7 text-center">
+        {sweepLabel ? (
+          <p className="font-display text-lg text-ink">Sound sweep: {sweepLabel}</p>
+        ) : blendLabel ? (
+          <p className="font-display text-lg text-success">Blending the whole word: {blendLabel}</p>
+        ) : feedback ? (
+          <p className="font-display text-lg text-ink">{feedback}</p>
+        ) : null}
+      </div>
+
       <PlayerControls>
-        <Button variant="soft" size="md" onClick={undo} disabled={built.length === 0 || shake.wrong}>
+        <Button
+          variant="soft"
+          size="md"
+          onClick={undo}
+          disabled={builtTileIndices.length === 0 || shake.wrong || sweeping}
+        >
           <BackspaceIcon weight="bold" aria-hidden="true" />
           Undo
         </Button>
-        <Button variant="soft" size="md" onClick={clearBuild} disabled={built.length === 0 || shake.wrong}>
+        <Button
+          variant="soft"
+          size="md"
+          onClick={clearBuild}
+          disabled={builtTileIndices.length === 0 || shake.wrong || sweeping}
+        >
           <ArrowCounterClockwiseIcon weight="bold" aria-hidden="true" />
           Start over
         </Button>
-        <Button variant="primary" size="kid" onClick={check} disabled={!isComplete || shake.wrong}>
+        <Button
+          variant="primary"
+          size="kid"
+          onClick={check}
+          disabled={!isComplete || shake.wrong || sweeping}
+        >
           Check it
         </Button>
       </PlayerControls>

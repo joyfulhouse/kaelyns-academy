@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { score, skillsAffected, type PhonicsWordbuildResponse } from "./logic";
+import {
+  responseSchema,
+  score,
+  skillsAffected,
+  validateGenerated,
+  type PhonicsWordbuildResponse,
+} from "./logic";
 import type { PhonicsWordbuildConfig } from "@/content/activity-configs";
 
 const config: PhonicsWordbuildConfig = {
@@ -16,8 +22,8 @@ function resp(builds: PhonicsWordbuildResponse["builds"]): PhonicsWordbuildRespo
 describe("phonics-wordbuild score", () => {
   it("awards 3 stars + solid when every word is built first try", () => {
     const result = score(config, resp([
-      { word: "ship", tries: 1 },
-      { word: "chat", tries: 1 },
+      { wordIndex: 0, tileIndices: [0, 1, 2], attempts: 1 },
+      { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 1 },
     ]));
     expect(result.stars).toBe(3);
     expect(result.correct).toBe(2);
@@ -27,8 +33,8 @@ describe("phonics-wordbuild score", () => {
 
   it("awards 2 stars + emerging with one retry", () => {
     const result = score(config, resp([
-      { word: "ship", tries: 1 },
-      { word: "chat", tries: 3 },
+      { wordIndex: 0, tileIndices: [0, 1, 2], attempts: 1 },
+      { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 3 },
     ]));
     expect(result.stars).toBe(2);
     expect(result.skillEvidence[0].outcome).toBe("emerging");
@@ -36,8 +42,8 @@ describe("phonics-wordbuild score", () => {
 
   it("never drops below 1 star when finished, and flags not_yet on heavy help", () => {
     const result = score(config, resp([
-      { word: "ship", tries: 4 },
-      { word: "chat", tries: 5 },
+      { wordIndex: 0, tileIndices: [0, 1, 2], attempts: 4 },
+      { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 5 },
     ]));
     expect(result.stars).toBe(1);
     expect(result.skillEvidence[0].outcome).toBe("not_yet");
@@ -50,23 +56,23 @@ describe("phonics-wordbuild score", () => {
     expect(skillsAffected({ ...config, focus: "short vowels CVC" })).toEqual(["phonics.cvc"]);
   });
 
-  it("maps Word Study focus strings to their authored word.* skills", () => {
+  it("emits only build-observable Word Study evidence", () => {
     // The real Program-02 (kaelyn-adaptive) Word Study focus strings.
     expect(
       skillsAffected({
         ...config,
         focus: "the six syllable types (closed, open, silent-e, vowel team, r-controlled, consonant-le)",
       }),
-    ).toEqual(["word.syllables.types"]);
+    ).toEqual([]);
     expect(
       skillsAffected({ ...config, focus: "dividing multisyllable words (VC/CV, V/CV, C+le)" }),
     ).toEqual(["word.syllables.division"]);
     expect(
       skillsAffected({ ...config, focus: "prefixes that change meaning (un-, re-, pre-, dis-, mis-, non-)" }),
-    ).toEqual(["word.morphology.prefixes"]);
+    ).toEqual([]);
     expect(
       skillsAffected({ ...config, focus: "Greek and Latin roots (tele = far, graph = write)" }),
-    ).toEqual(["word.morphology.roots"]);
+    ).toEqual([]);
   });
 
   it("leaves Program-01 phonics focus strings byte-identical", () => {
@@ -74,5 +80,57 @@ describe("phonics-wordbuild score", () => {
     expect(skillsAffected({ ...config, focus: "digraphs sh / ch / th" })).toEqual([
       "phonics.digraphs",
     ]);
+  });
+
+  it("bounds response builds and tile indices", () => {
+    expect(
+      responseSchema.safeParse({
+        builds: [{ wordIndex: 0, tileIndices: [0, 1, 2], attempts: 20 }],
+      }).success,
+    ).toBe(true);
+    expect(
+      responseSchema.safeParse({
+        builds: [{ wordIndex: 0, tileIndices: [0, 0], attempts: 1 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      responseSchema.safeParse({
+        builds: [{ wordIndex: 12, tileIndices: [0], attempts: 1 }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("derives constructed text and rejects reuse, unknown indices, or wrong words", () => {
+    expect(() =>
+      score(config, resp([
+        { wordIndex: 0, tileIndices: [0, 1, 1], attempts: 1 },
+        { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 1 },
+      ])),
+    ).toThrow("invalid phonics build");
+    expect(() =>
+      score(config, resp([
+        { wordIndex: 0, tileIndices: [0, 1, 99], attempts: 1 },
+        { wordIndex: 1, tileIndices: [3, 4, 5], attempts: 1 },
+      ])),
+    ).toThrow("invalid phonics build");
+    expect(() =>
+      score(config, resp([
+        { wordIndex: 0, tileIndices: [3, 4, 5], attempts: 1 },
+        { wordIndex: 1, tileIndices: [0, 1, 2], attempts: 1 },
+      ])),
+    ).toThrow("invalid phonics build");
+  });
+
+  it("requires every target word exactly once", () => {
+    expect(() =>
+      score(config, resp([{ wordIndex: 0, tileIndices: [0, 1, 2], attempts: 1 }])),
+    ).toThrow("invalid phonics build");
+  });
+
+  it("validates generated inventory multiplicity and audio metadata", () => {
+    expect(validateGenerated(config)).toBeNull();
+    expect(validateGenerated({ ...config, tiles: ["sh", "i", "p", "ch", "a"] }))
+      .toContain("cannot be built");
+    expect(validateGenerated({ ...config, say: { zz: "z" } })).toContain("say key");
   });
 });
