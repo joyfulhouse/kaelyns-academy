@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { expectSingleHostReward } from "./meaningful-helpers";
+import { expectSingleHostReward } from "../helpers";
 
 const ACTIVITY =
   "/learn/kaelyn-adaptive/life-skills-math/lsm-money-count-2";
