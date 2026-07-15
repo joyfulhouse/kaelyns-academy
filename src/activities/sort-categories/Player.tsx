@@ -6,13 +6,12 @@ import type { SortCategoriesConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { PlayerControls, Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
-import { schema, score, type SortCategoriesResponse } from "./logic";
+import { schema, type SortCategoriesResponse } from "./logic";
 
 export function SortCategoriesPlayer({
   config,
@@ -28,21 +27,9 @@ export function SortCategoriesPlayer({
   const [placements, setPlacements] = useState<string[]>(() => parsed.items.map(() => ""));
   const [selected, setSelected] = useState<number | null>(null);
   const [wrongBin, setWrongBin] = useState<string | null>(null);
-  const [done, setDone] = useState<SortCategoriesResponse | null>(null);
 
   // Read the instruction aloud once when the activity opens.
   useSpeakOnce(speech.speak, parsed.instruction);
-
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message="You sorted them all."
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
 
   const placedCount = placements.filter((p) => p !== "").length;
 
@@ -63,8 +50,12 @@ export function SortCategoriesPlayer({
       if (next.every((p) => p !== "")) {
         // attempts counts only mistakes across the whole sort; the completing
         // placement reports mistakes + 1 (mirrors math-money's tapIdentify), so
-        // a flawless sort scores first-try (3 stars), not one increment per item.
-        setDone({ attempts: attempts + 1, placements: next });
+        // a flawless sort is recorded as a first try, not one try per item.
+        const response: SortCategoriesResponse = {
+          attempts: attempts + 1,
+          placements: next,
+        };
+        onComplete(response);
       }
     } else {
       setAttempts(attempts + 1);

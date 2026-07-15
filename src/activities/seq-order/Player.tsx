@@ -6,14 +6,13 @@ import type { SeqOrderConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { PlayerControls, Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { shuffle } from "../_shared/shuffle";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
-import { schema, score, type SeqOrderResponse } from "./logic";
+import { schema, type SeqOrderResponse } from "./logic";
 
 export function SeqOrderPlayer({
   config,
@@ -38,21 +37,9 @@ export function SeqOrderPlayer({
   // Original card indices, in the order the child has tapped them so far.
   const [order, setOrder] = useState<number[]>([]);
   const [wrongIndex, setWrongIndex] = useState<number | null>(null);
-  const [done, setDone] = useState<SeqOrderResponse | null>(null);
 
   // Read the instruction aloud once when the activity opens.
   useSpeakOnce(speech.speak, parsed.instruction);
-
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message="You put them in order."
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
 
   function tapCard(originalIndex: number) {
     if (shake.wrong || order.includes(originalIndex)) return;
@@ -63,8 +50,9 @@ export function SeqOrderPlayer({
       if (next.length === parsed.cards.length) {
         // attempts counts only mistakes across the whole sequence; the completing
         // tap reports mistakes + 1 (mirrors sort-categories' tapBin), so a
-        // flawless order scores first-try (3 stars), not one increment per card.
-        setDone({ attempts: attempts + 1, order: next });
+        // flawless order is recorded as a first try, not one try per card.
+        const response: SeqOrderResponse = { attempts: attempts + 1, order: next };
+        onComplete(response);
       }
     } else {
       setAttempts(attempts + 1);

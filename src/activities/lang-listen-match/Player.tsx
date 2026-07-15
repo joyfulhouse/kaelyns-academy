@@ -1,16 +1,15 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import type { LangListenMatchConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
 import { ChoiceGrid } from "../_shared/ChoiceGrid";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useActivity } from "../_shared/useActivity";
 import { useAudio } from "../_shared/useAudio";
 import { useMultipleChoice } from "../_shared/useMultipleChoice";
 import { useEffectOncePerKey } from "../_shared/useSpeakOnce";
-import { schema, score, type LangListenMatchResponse } from "./logic";
+import { schema, type LangListenMatchResponse } from "./logic";
 
 /**
  * Audio-first discrimination: the child hears a sound/word (big play button,
@@ -25,12 +24,13 @@ export function LangListenMatchPlayer({
   const parsed = useActivity(schema, config);
   const audio = useAudio(parsed.locale);
 
-  const [done, setDone] = useState<LangListenMatchResponse | null>(null);
-
   const { step, picked, choose } = useMultipleChoice({
     count: parsed.items.length,
     voiceChoice: (i, itemIndex) => audio.play({ text: parsed.items[itemIndex].choices[i] }),
-    onFinish: (answers) => setDone({ answers }),
+    onFinish: (answers) => {
+      const response: LangListenMatchResponse = { answers };
+      onComplete(response);
+    },
   });
 
   const item = parsed.items[step];
@@ -42,17 +42,6 @@ export function LangListenMatchPlayer({
   // Auto-play the prompt once per item — keyed on the step so a re-render (or a
   // choice tap that voices the choice) can't clobber it with a prompt replay.
   useEffectOncePerKey(play, step, { essentialContentAudio: true });
-
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message="Great listening!"
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
 
   return (
     <div className="grid gap-8">

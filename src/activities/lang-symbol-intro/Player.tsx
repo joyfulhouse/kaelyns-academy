@@ -5,13 +5,12 @@ import type { LangSymbolIntroConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
 import { ChoiceGrid } from "../_shared/ChoiceGrid";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { localeForRole } from "../_shared/speechRouting";
 import { useActivity } from "../_shared/useActivity";
 import { useAudio } from "../_shared/useAudio";
 import { useMultipleChoice } from "../_shared/useMultipleChoice";
 import { useEffectOncePerKey } from "../_shared/useSpeakOnce";
-import { schema, score, type LangSymbolIntroResponse } from "./logic";
+import { schema, type LangSymbolIntroResponse } from "./logic";
 
 /**
  * Meet a small set of symbols (see the glyph, tap to hear it), then a short,
@@ -31,7 +30,6 @@ export function LangSymbolIntroPlayer({
   const base = useAudio(localeForRole(parsed.locale, "instruction"));
 
   const [phase, setPhase] = useState<"learn" | "quiz">("learn");
-  const [done, setDone] = useState<LangSymbolIntroResponse | null>(null);
 
   // Each helper cancels the other engine first so the two voices never overlap.
   const sayInstruction = useCallback(() => {
@@ -56,19 +54,11 @@ export function LangSymbolIntroPlayer({
   const { step, picked, choose } = useMultipleChoice({
     count: parsed.verify.length,
     voiceChoice: (i, itemIndex) => playContent({ text: parsed.verify[itemIndex].choices[i] }),
-    onFinish: (answers) => setDone({ verifyAnswers: answers }),
+    onFinish: (answers) => {
+      const response: LangSymbolIntroResponse = { verifyAnswers: answers };
+      onComplete(response);
+    },
   });
-
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message="You met some new symbols!"
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
 
   if (phase === "learn") {
     return (

@@ -8,13 +8,12 @@ import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { Prompt, SpeakerButton } from "../_shared/ActivityChrome";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useDictation } from "./useDictation";
-import { schema, score, type JournalPromptResponse } from "./logic";
+import { schema, type JournalPromptResponse } from "./logic";
 
 /** The post-parse config: zod defaults (frames, wordBank, allowModes, mode) are
  *  all resolved, so they are never undefined inside the Player. */
@@ -36,7 +35,6 @@ export function JournalPromptPlayer({
   const didDrawRef = useRef(false);
   const lastRef = useRef<{ x: number; y: number } | null>(null);
   const [text, setText] = useState(parsed.sentenceStarter ?? "");
-  const [done, setDone] = useState<JournalPromptResponse | null>(null);
 
   // Read the prompt aloud once when the activity opens.
   useSpeakOnce(speech.speak, parsed.prompt);
@@ -116,22 +114,12 @@ export function JournalPromptPlayer({
     const starter = (parsed.sentenceStarter ?? "").trim();
     const wroteSomething = trimmed.length > 0 && trimmed !== starter;
     const didDraw = didDrawRef.current;
-    setDone({
+    const response: JournalPromptResponse = {
       text: wroteSomething ? trimmed : "",
       didDraw,
       drawingDataUrl: showCanvas && didDraw ? canvasRef.current?.toDataURL("image/png") : undefined,
-    });
-  }
-
-  if (done) {
-    return (
-      <RewardOverlay
-        stars={3}
-        message="You made something today."
-        onContinue={() => onComplete(done, score(parsed, done))}
-        continueLabel="All done"
-      />
-    );
+    };
+    onComplete(response);
   }
 
   // Compose mode: the writing bridge (type, scribe, dictate) — no canvas.
