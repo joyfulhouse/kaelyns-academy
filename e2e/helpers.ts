@@ -57,11 +57,11 @@ export const E2E_PERSISTENT_LEARNER_NAME = "E2E Learner";
  * link CTAs; a same-named button would reveal a stale Player reward phase.
  */
 export async function expectSingleHostReward(page: Page): Promise<void> {
-  await expect(
-    page.getByRole("heading", {
-      name: /Wow! Three stars!|You did it!|Great trying!/,
-    }),
-  ).toHaveCount(1, { timeout: 20_000 });
+  const heading = page.getByRole("heading", {
+    name: /Wow! Three stars!|You did it!|Great trying!/,
+  });
+  await expect(heading).toHaveCount(1, { timeout: 20_000 });
+  await expect(heading).toBeFocused();
   await expect(page.getByRole("button", { name: "Keep going" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: /Keep going|Map/ }).first()).toBeVisible();
 }
