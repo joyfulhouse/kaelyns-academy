@@ -59,6 +59,7 @@ test.describe.serial("shared-device handoff and grown-up PIN", () => {
       await page.goto("/parent/learners");
       await page
         .getByRole("button", { name: `Hand the device to ${E2E_PERSISTENT_LEARNER_NAME}` })
+        .first()
         .click();
       await expect(page).toHaveURL(/\/learn\/kaelyn-adaptive\?handoff=/);
 
@@ -86,6 +87,7 @@ test.describe.serial("shared-device handoff and grown-up PIN", () => {
 
     await page
       .getByRole("button", { name: `Hand the device to ${E2E_PERSISTENT_LEARNER_NAME}` })
+      .first()
       .click();
 
     await expect(page).toHaveURL(
@@ -162,6 +164,7 @@ async function startPersistentLearnerHandoff(page: Page): Promise<string> {
 
   await page
     .getByRole("button", { name: `Hand the device to ${E2E_PERSISTENT_LEARNER_NAME}` })
+    .first()
     .click();
   await expect(page).toHaveURL(
     new RegExp(`/learn/kaelyn-adaptive\\?handoff=${encodeURIComponent(learnerId)}$`),
