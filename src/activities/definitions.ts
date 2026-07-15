@@ -1,4 +1,4 @@
-import type { ZodType } from "zod";
+import type { ZodError, ZodType } from "zod";
 import type { ActivityKind } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
 import * as phonicsWordbuild from "./phonics-wordbuild/logic";
@@ -92,4 +92,42 @@ export function getServerActivityType(kind: ActivityKind): ServerActivityDefinit
 
 export function allServerActivityTypes(): ServerActivityDefinition[] {
   return Object.values(SERVER_ACTIVITY_TYPES);
+}
+
+export type PlayableActivityConfigValidation =
+  | { ok: true; data: unknown }
+  | { ok: false; reason: "unknown-kind" }
+  | { ok: false; reason: "invalid"; error: ZodError }
+  | { ok: false; reason: "unplayable"; message: string };
+
+/**
+ * Server-only activity config boundary. Parse through the registered kind's
+ * exact schema first, then run its deterministic internal-consistency check.
+ * The successful value is always the parsed output, so defaults and stripping
+ * are applied once before a config is persisted or assembled for a learner.
+ */
+export function validatePlayableActivityConfig(
+  kind: string,
+  config: unknown,
+): PlayableActivityConfigValidation {
+  const definition: ServerActivityDefinition | undefined =
+    SERVER_ACTIVITY_TYPES[kind as ActivityKind];
+  if (definition === undefined) return { ok: false, reason: "unknown-kind" };
+
+  const parsed = definition.schema.safeParse(config);
+  if (!parsed.success) return { ok: false, reason: "invalid", error: parsed.error };
+
+  let message: string | null;
+  try {
+    message = definition.validateGenerated?.(parsed.data) ?? null;
+  } catch {
+    return {
+      ok: false,
+      reason: "unplayable",
+      message: "activity playability check failed",
+    };
+  }
+  if (message !== null) return { ok: false, reason: "unplayable", message };
+
+  return { ok: true, data: parsed.data };
 }

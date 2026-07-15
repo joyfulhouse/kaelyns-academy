@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProgramTreeRows } from "./store";
 
 // Capture non-critical is called on bad configs — mock Sentry so it doesn't blow up in test env.
+const captureException = vi.fn();
 vi.mock("@sentry/nextjs", () => ({
   withScope: (fn: (scope: unknown) => void) => fn({ setLevel: vi.fn() }),
-  captureException: vi.fn(),
+  captureException: (error: unknown) => captureException(error),
 }));
 
 // Lazy import so the mock is in place before the module loads.
@@ -29,6 +30,41 @@ describe("assembleProgram", () => {
     // programSlug is carried forward from the program table lookup
     programSlug: "test-slug",
   };
+
+  function rowsWithActivities(activities: ProgramTreeRows["activities"]): ProgramTreeRows {
+    return {
+      version: baseVersion,
+      units: [
+        {
+          id: "u1",
+          programVersionId: "v1",
+          unitKey: "math",
+          orderKey: "01",
+          title: "Math",
+          emoji: "➕",
+          world: "garden",
+          bigIdea: "Numbers",
+          phonicsFocus: null,
+          mathFocus: "Time",
+          project: null,
+          checkpoint: null,
+          branchKey: null,
+        },
+      ],
+      lessons: [
+        {
+          id: "l1",
+          unitId: "u1",
+          lessonKey: "lesson-1",
+          orderKey: "01",
+          title: "Lesson 1",
+        },
+      ],
+      activities,
+    };
+  }
+
+  beforeEach(() => captureException.mockClear());
 
   it("builds a Program with units/lessons/activities ordered by orderKey", () => {
     const rows: ProgramTreeRows = {
@@ -344,6 +380,59 @@ describe("assembleProgram", () => {
     expect(activities[0].id).toBe("good"); // activityKey of the valid row
     // the bad-config row (activityKey "bad") was silently dropped
     expect(activities.find((a) => a.id === "bad")).toBeUndefined();
+  });
+
+  it("drops and reports a schema-valid activity whose answer model is unplayable", () => {
+    const rows = rowsWithActivities([
+      {
+        id: "good-clock-row",
+        lessonId: "l1",
+        activityKey: "good-clock",
+        orderKey: "01",
+        kind: "math-clock",
+        title: "Set the Clock",
+        blurb: null,
+        estMinutes: 5,
+        band: "ready",
+        skillTags: ["math.time"],
+        standardTags: [],
+        config: {
+          mode: "set",
+          instruction: "Set the clock",
+          targetHour: 3,
+          targetMinute: 0,
+        },
+      },
+      {
+        id: "bad-clock-row",
+        lessonId: "l1",
+        activityKey: "bad-clock",
+        orderKey: "02",
+        kind: "math-clock",
+        title: "Read the Clock",
+        blurb: null,
+        estMinutes: 5,
+        band: "ready",
+        skillTags: ["math.time"],
+        standardTags: [],
+        config: {
+          mode: "read",
+          instruction: "Read the clock",
+          hour: 3,
+          minute: 0,
+          choices: ["4:00", "3:00"],
+          answerIndex: 0,
+        },
+      },
+    ]);
+
+    const program = assembleProgram(rows);
+
+    expect(program.units[0].lessons[0].activities.map((activity) => activity.id)).toEqual([
+      "good-clock",
+    ]);
+    expect(captureException).toHaveBeenCalledOnce();
+    expect(captureException.mock.calls[0]?.[0]).toBeInstanceOf(Error);
   });
 
   it("handles unknown activity kind by dropping the activity", () => {

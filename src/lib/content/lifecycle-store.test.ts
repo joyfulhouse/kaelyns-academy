@@ -75,8 +75,13 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-const { publishVersion, saveVersionTree, cloneVersionToDraft, VersionNotDraftError } =
-  await import("./store");
+const {
+  publishVersion,
+  saveVersionTree,
+  cloneVersionToDraft,
+  ActivityConfigValidationError,
+  VersionNotDraftError,
+} = await import("./store");
 
 // ── Configurable fake `tx` (Fix-F B1/B2) ─────────────────────────────────────
 // The publish/save tx bodies now do a row-lock SELECT … FOR UPDATE and a
@@ -91,6 +96,9 @@ const txSelectForRows = { value: [{ status: "draft" }] as Record<string, unknown
 const txPublishReturns = { value: [{ id: "v1" }] as Record<string, unknown>[] };
 // Ordered record of the tx statements so a test can assert archive-before-publish.
 const txOps: string[] = [];
+// Exact values handed to tx.insert(...).values(...), used to prove save persists
+// schema-parsed configs rather than the raw admin JSON objects.
+const txInsertedValues: unknown[] = [];
 
 /** A chainable fake `tx` covering update/set/where/returning, insert/values,
  *  delete, and select(...).from(...).where(...).for("update") — so both the
@@ -109,7 +117,10 @@ function fakeTx() {
       if (v && typeof v.status === "string") setStatus = v.status;
       return chain;
     };
-    chain.values = () => chain;
+    chain.values = (values: unknown) => {
+      if (kind === "insert") txInsertedValues.push(values);
+      return chain;
+    };
     chain.delete = () => chain;
     chain.for = () => {
       usedFor = true;
@@ -152,6 +163,7 @@ beforeEach(() => {
   txSelectForRows.value = [{ status: "draft" }];
   txPublishReturns.value = [{ id: "v1" }];
   txOps.length = 0;
+  txInsertedValues.length = 0;
   transaction.mockReset();
   transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) => fn(fakeTx()));
 });
@@ -212,6 +224,34 @@ describe("saveVersionTree (Fix-F B2: in-tx draft re-check)", () => {
     units: [],
   };
 
+  function inputWithActivities(
+    activities: { activityKey: string; kind: string; config: unknown }[],
+  ) {
+    return {
+      metadata: { title: "T", languages: ["en-US"] },
+      units: [
+        {
+          unitKey: "math",
+          title: "Math",
+          world: "garden",
+          lessons: [
+            {
+              lessonKey: "lesson-1",
+              title: "Lesson 1",
+              activities: activities.map((activity) => ({
+                ...activity,
+                title: activity.activityKey,
+                band: "ready",
+                skillTags: [],
+                standardTags: [],
+              })),
+            },
+          ],
+        },
+      ],
+    };
+  }
+
   it("throws VersionNotDraftError when the version is not a draft at tx time (race)", async () => {
     // Pre-tx findFirst passes (draft), but the in-tx FOR UPDATE lock sees that a
     // concurrent publish flipped it to published → throw before any delete.
@@ -233,6 +273,113 @@ describe("saveVersionTree (Fix-F B2: in-tx draft re-check)", () => {
     versionFindFirst.value = { id: "v1", programId: "p1", status: "published" };
     await expect(saveVersionTree("v1", emptyInput)).rejects.toBeInstanceOf(VersionNotDraftError);
     expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      kind: "math-clock",
+      config: {
+        mode: "read",
+        instruction: "Read the clock",
+        hour: 3,
+        minute: 0,
+        choices: ["4:00", "3:00"],
+        answerIndex: 0,
+      },
+    },
+    {
+      kind: "math-money",
+      config: {
+        mode: "count",
+        instruction: "Make 7 cents",
+        palette: ["nickel"],
+        targetCents: 7,
+      },
+    },
+    {
+      kind: "sort-categories",
+      config: {
+        instruction: "Sort the animals",
+        bins: [
+          { id: "farm", label: "Farm" },
+          { id: "ocean", label: "Ocean" },
+        ],
+        items: [
+          { label: "Cow", binId: "farm" },
+          { label: "Pig", binId: "farm" },
+          { label: "Hen", binId: "farm" },
+        ],
+      },
+    },
+    {
+      kind: "seq-order",
+      config: {
+        instruction: "Put the steps in order",
+        cards: [{ label: "Wash" }, { label: "wash" }, { label: "Dry" }],
+      },
+    },
+  ])("rejects an unplayable $kind config before opening a write transaction", async ({ kind, config }) => {
+    versionFindFirst.value = { id: "v1", programId: "p1", status: "draft" };
+    const input = inputWithActivities([{ activityKey: "unplayable", kind, config }]);
+
+    await expect(saveVersionTree("v1", input)).rejects.toBeInstanceOf(
+      ActivityConfigValidationError,
+    );
+    expect(transaction).not.toHaveBeenCalled();
+    expect(txInsertedValues).toEqual([]);
+  });
+
+  it("persists schema-parsed configs with defaults applied and unknown fields stripped", async () => {
+    versionFindFirst.value = { id: "v1", programId: "p1", status: "draft" };
+    const input = inputWithActivities([
+      {
+        activityKey: "clock",
+        kind: "math-clock",
+        config: {
+          mode: "read",
+          instruction: "Read the clock",
+          hour: 3,
+          minute: 0,
+          choices: ["3:00", "4:00"],
+          answerIndex: 0,
+          editorOnly: "strip me",
+        },
+      },
+      {
+        activityKey: "journal",
+        kind: "journal-prompt",
+        config: { prompt: "Draw and tell about your day." },
+      },
+    ]);
+
+    await saveVersionTree("v1", input);
+
+    const activityRows = txInsertedValues.find(
+      (values): values is { activityKey: string; config: unknown }[] =>
+        Array.isArray(values) &&
+        values.length > 0 &&
+        values.every(
+          (value) =>
+            typeof value === "object" && value !== null && "activityKey" in value && "config" in value,
+        ),
+    );
+    expect(activityRows).toBeDefined();
+    expect(activityRows?.find((row) => row.activityKey === "clock")?.config).toEqual({
+      mode: "read",
+      instruction: "Read the clock",
+      hour: 3,
+      minute: 0,
+      choices: ["3:00", "4:00"],
+      answerIndex: 0,
+    });
+    expect(activityRows?.find((row) => row.activityKey === "journal")?.config).toEqual({
+      prompt: "Draw and tell about your day.",
+      drawing: true,
+      mode: "draw",
+      frames: [],
+      wordBank: [],
+      allowModes: ["type"],
+    });
   });
 });
 

@@ -6,8 +6,9 @@
  * calls the write mutations directly.
  */
 import { eq, max, and, desc } from "drizzle-orm";
+import { validatePlayableActivityConfig } from "@/activities/definitions";
 import type { Activity, Band, Program, SkillTag, Unit, Lesson, World } from "@/content/types";
-import { validateActivityConfig, firstConfigIssueMessage } from "@/content/validate";
+import { firstConfigIssueMessage } from "@/content/validate";
 import { captureNonCritical } from "@/lib/capture";
 import { getDb, schema } from "@/lib/db";
 
@@ -58,9 +59,9 @@ export function byOrderKey(a: { orderKey: string }, b: { orderKey: string }): nu
  * Build a `Program` (the @/content runtime shape) from flat DB rows.
  * - Units, lessons, and activities are ordered by `orderKey` ascending
  *   (locale-insensitive text sort; keys are authored as zero-padded strings).
- * - Each activity row is validated against its kind's config schema. A row
- *   with an unknown kind or failing schema is silently DROPPED and reported
- *   via `captureNonCritical` — a single bad row must never crash a learner.
+ * - Each activity row is validated against its kind's config schema and
+ *   deterministic playability invariant. A failing row is silently DROPPED
+ *   and reported via `captureNonCritical` — one bad row never crashes a learner.
  * PURE: no I/O, no side effects beyond the captureNonCritical call.
  */
 export function assembleProgram(rows: ProgramTreeRows): Program {
@@ -123,16 +124,18 @@ export function assembleProgram(rows: ProgramTreeRows): Program {
   };
 }
 
-/** Validate one activity row against its config schema; return null on failure. */
+/** Validate one activity row for schema + playability; return null on failure. */
 function assembleActivity(row: ActivityRow): Activity | null {
-  const result = validateActivityConfig(row.kind, row.config);
+  const result = validatePlayableActivityConfig(row.kind, row.config);
   if (!result.ok) {
     // A single bad row must never crash a learner: drop it and report.
     captureNonCritical(
       "activity config invalid",
       result.reason === "unknown-kind"
         ? new Error(`Unknown activity kind: ${row.kind} (id=${row.id})`)
-        : result.error,
+        : result.reason === "unplayable"
+          ? new Error(`Unplayable activity config: ${result.message} (id=${row.id})`)
+          : result.error,
     );
     return null;
   }
@@ -411,7 +414,7 @@ export class VersionNotDraftError extends Error {
   }
 }
 
-/** Thrown when activity config fails schema validation during saveVersionTree. */
+/** Thrown when an activity config fails schema or playability validation. */
 export class ActivityConfigValidationError extends Error {
   constructor(activityKey: string, message: string) {
     super(`Activity "${activityKey}" config validation failed: ${message}`);
@@ -677,11 +680,11 @@ export async function loadVersionForEdit(versionId: string): Promise<EditableVer
 }
 
 /**
- * Full-tree-replace for a draft version. Validates each activity config before
- * writing. Transaction: update version metadata → delete units (cascades
+ * Full-tree-replace for a draft version. Validates and canonicalizes every
+ * activity config before writing. Transaction: update metadata → delete units (cascades
  * lessons/activities) → reinsert from input.
  * @throws {VersionNotDraftError} when the version is not in `draft` status.
- * @throws {ActivityConfigValidationError} when any activity config fails its schema.
+ * @throws {ActivityConfigValidationError} when a config fails schema or playability validation.
  */
 export async function saveVersionTree(
   versionId: string,
@@ -705,24 +708,31 @@ export async function saveVersionTree(
     throw new DuplicateKeyError(`Duplicate ${dup.level} key: "${dup.key}"`);
   }
 
-  // Validate all activity configs BEFORE touching the DB.
-  for (const unit of input.units) {
-    for (const lesson of unit.lessons) {
-      for (const activity of lesson.activities) {
-        const result = validateActivityConfig(activity.kind, activity.config);
+  // Validate and canonicalize all activity configs BEFORE opening the write
+  // transaction. Persist the parsed output, never the raw admin JSON: this
+  // applies schema defaults and strips unknown keys at the trust boundary.
+  const canonicalUnits = input.units.map((unit) => ({
+    ...unit,
+    lessons: unit.lessons.map((lesson) => ({
+      ...lesson,
+      activities: lesson.activities.map((activity) => {
+        const result = validatePlayableActivityConfig(activity.kind, activity.config);
         if (!result.ok) {
           const msg =
             result.reason === "unknown-kind"
               ? `Unknown activity kind: "${activity.kind}"`
-              : firstConfigIssueMessage(result.error, { fallback: "invalid config" });
+              : result.reason === "unplayable"
+                ? result.message
+                : firstConfigIssueMessage(result.error, { fallback: "invalid config" });
           throw new ActivityConfigValidationError(activity.activityKey, msg);
         }
-      }
-    }
-  }
+        return { ...activity, config: result.data };
+      }),
+    })),
+  }));
 
   const { units: unitRows, lessons: lessonRows, activities: activityRows } =
-    buildVersionTreeRows(versionId, input.units);
+    buildVersionTreeRows(versionId, canonicalUnits);
 
   await db.transaction(async (tx) => {
     // Re-check the draft status INSIDE the tx, locking the version row FOR UPDATE
