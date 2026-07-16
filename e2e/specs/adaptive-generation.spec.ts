@@ -39,6 +39,15 @@ test("a guest finishes an authored activity through one host-owned reward", asyn
   const correctChoice = page.getByRole("button", { name: "A shiny rock" });
   await expect(correctChoice).toBeVisible();
   await correctChoice.click();
+  // Meaningful interactions: choosing selects; the explicit check submits.
+  await page.getByRole("button", { name: "Check answer" }).click();
+
+  // The activity now ends with a structured retell: place the three events in
+  // story order, then check.
+  await page.getByRole("button", { name: "Add event Ben finds a shiny rock." }).click();
+  await page.getByRole("button", { name: "Add event Ben puts the rock in his pocket." }).click();
+  await page.getByRole("button", { name: "Add event Ben runs home to show his sister." }).click();
+  await page.getByRole("button", { name: "Check event order" }).click();
 
   // Player completion goes straight through the host's save boundary. Only the
   // host reward remains, and its continuation actions are links rather than a

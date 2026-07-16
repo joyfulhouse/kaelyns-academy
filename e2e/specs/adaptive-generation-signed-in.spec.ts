@@ -57,6 +57,15 @@ test("a signed-in learner reaches one host reward without ephemeral AI practice"
     const correctChoice = page.getByRole("button", { name: "A shiny rock" });
     await expect(correctChoice).toBeVisible();
     await correctChoice.click();
+    // Meaningful interactions: choosing selects; the explicit check submits.
+    await page.getByRole("button", { name: "Check answer" }).click();
+
+    // The activity now ends with a structured retell: place the three events in
+    // story order, then check.
+    await page.getByRole("button", { name: "Add event Ben finds a shiny rock." }).click();
+    await page.getByRole("button", { name: "Add event Ben puts the rock in his pocket." }).click();
+    await page.getByRole("button", { name: "Add event Ben runs home to show his sister." }).click();
+    await page.getByRole("button", { name: "Check event order" }).click();
 
     // The Player submits directly to the host. The host waits for the account
     // write, then replaces the Player with its single reward screen.
