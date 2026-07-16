@@ -6,6 +6,15 @@ const ACTIVITY = "/learn/kaelyn-adaptive/word-study/word-sight-find";
 test("spoken sight-word rounds retain a wrong card and advance only on the target", async ({
   page,
 }) => {
+  // The spoken path gates each round's cards on the target word's audio
+  // COMPLETING. Real browser speech only completes where a TTS engine exists
+  // (it never fires events in the CI gate's engineless chromium), so make
+  // playback deterministic: neural route down, browser speech always succeeds
+  // ("$^" matches no utterance, so nothing is marked unavailable).
+  await page.route("**/api/tts", async (route) => {
+    await route.fulfill({ status: 503 });
+  });
+  await installSelectiveBrowserSpeech(page, "$^");
   await page.goto(ACTIVITY);
 
   await expect(page.getByRole("button", { name: "Show the word" })).toBeVisible({
