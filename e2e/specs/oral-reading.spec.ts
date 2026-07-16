@@ -475,7 +475,7 @@ test("sentence reading keeps mic denial safe and finishes through one host rewar
     });
     await page.getByRole("button", { name: "Listen to the sentence" }).click();
     await page.getByRole("button", { name: "Read it aloud" }).click();
-    await expect(page.getByText("Read it to a grown-up.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Read it to a grown-up." })).toBeVisible();
 
     await context.grantPermissions(["microphone"]);
     await page.evaluate(() => localStorage.setItem("e2e-oral-mic", "allow"));
@@ -595,7 +595,7 @@ test("a decodable reader finishes through one linked host reward", async ({
     await expect(page.getByRole("button", { name: "Listen to the sentence" })).toHaveCount(0);
     await page.getByRole("button", { name: "Read it aloud" }).click();
     await page.getByRole("button", { name: "Stop listening" }).click();
-    await expect(page.getByText("Read it to a grown-up.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Read it to a grown-up." })).toBeVisible();
     await expect(page.getByRole("button", { name: "Listen to the sentence" })).toHaveCount(0);
     await page.getByRole("button", { name: "A grown-up listened - I read it" }).click();
     await expectSingleHostReward(page);
