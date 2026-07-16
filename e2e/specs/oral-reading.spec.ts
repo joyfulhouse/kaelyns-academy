@@ -326,14 +326,14 @@ test("an opted-in signed-in learner settles a check and gets one host reward", a
       .getByRole("navigation", { name: /^Manage/ })
       .getByRole("link", { name: "Settings" })
       .click();
-    const oralReading = page.getByRole("switch", { name: "Oral reading check" });
+    const oralReading = page.getByRole("switch", { name: "Microphone activities" });
     await expect(oralReading).not.toBeChecked();
     await oralReading.click();
     // The settings page has one "Save changes" per section (Learning & AI,
     // Interests) — scope to the section that owns the oral-reading switch.
     await page
       .locator("section")
-      .filter({ has: page.getByRole("switch", { name: "Oral reading check" }) })
+      .filter({ has: page.getByRole("switch", { name: "Microphone activities" }) })
       .getByRole("button", { name: "Save changes" })
       .click();
     await expect(page.getByText("Settings saved.")).toBeVisible();
@@ -456,7 +456,7 @@ test("sentence reading keeps mic denial safe and finishes through one host rewar
       .getByRole("navigation", { name: /^Manage/ })
       .getByRole("link", { name: "Settings" })
       .click();
-    const oralReading = page.getByRole("switch", { name: "Oral reading check" });
+    const oralReading = page.getByRole("switch", { name: "Microphone activities" });
     await oralReading.click();
     await page
       .locator("section")
@@ -573,7 +573,7 @@ test("a decodable reader finishes through one linked host reward", async ({
       .getByRole("navigation", { name: /^Manage/ })
       .getByRole("link", { name: "Settings" })
       .click();
-    const oralReading = page.getByRole("switch", { name: "Oral reading check" });
+    const oralReading = page.getByRole("switch", { name: "Microphone activities" });
     await oralReading.click();
     await page
       .locator("section")

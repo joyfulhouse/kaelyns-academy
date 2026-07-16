@@ -28,8 +28,14 @@ test("the Life Skills Math world tile renders on the map", async ({ page }) => {
 test("a Life Skills Math activity renders its interactive player", async ({ page }) => {
   await page.goto(CLOCK_ACTIVITY);
   // "What time is it?" (math-clock, read mode): the clock face + the correct
-  // digital-time choice are real, tappable controls — no AI involved.
-  await expect(page.getByRole("img", { name: /Clock showing 3:00/i })).toBeVisible({ timeout: 25_000 });
+  // digital-time choice are real, tappable controls — no AI involved. The face's
+  // accessible name deliberately does NOT announce the digital answer (that
+  // would hand a screen-reader child the solution — see meaningful-clock.spec).
+  await expect(
+    page.getByRole("img", {
+      name: "Analog clock face. Read the hour and minute hands, then choose the matching digital time.",
+    }),
+  ).toBeVisible({ timeout: 25_000 });
   const answer = page.getByRole("button", { name: "Digital time 3:00" });
   await expect(answer).toBeVisible();
 

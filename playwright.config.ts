@@ -84,7 +84,16 @@ export default defineConfig({
     // or a CI upload. Local/staging targets keep full artifacts for debugging.
     trace: isProd ? "off" : "on-first-retry",
     screenshot: isProd ? "off" : "only-on-failure",
-    video: isProd ? "off" : "retain-on-failure",
+    // Video encodes every test on the CPU: in the CI deploy gate (a GPU-less
+    // DinD chromium on a shared runner) that overhead pushed the branch's
+    // animation-heavy players past their expect timeouts. CI keeps traces +
+    // failure screenshots; local runs keep video too.
+    video: isProd || process.env.CI ? "off" : "retain-on-failure",
+    // The CI gate's chromium software-renders (no GPU), so motion is pure CPU
+    // tax there. The app treats reduced motion as a first-class supported mode
+    // (useReducedMotion paths), so the gate exercises that mode; every
+    // semantic assertion is unchanged. Local runs keep full motion.
+    contextOptions: process.env.CI ? { reducedMotion: "reduce" } : {},
     actionTimeout: 15_000,
     navigationTimeout: 30_000,
   },
