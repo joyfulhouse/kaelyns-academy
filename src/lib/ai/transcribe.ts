@@ -22,6 +22,12 @@ export interface VerboseTranscription {
 
 export interface TranscriptionOptions {
   wordTimestamps?: boolean;
+  /**
+   * Caller abort (e.g. the request's `signal` on client disconnect / consent
+   * revocation). Combined with the internal timeout so an abandoned request
+   * stops the upstream STT work instead of transcribing audio nobody awaits.
+   */
+  signal?: AbortSignal;
 }
 
 function transcriptionUrl(base: string): string {
@@ -33,11 +39,15 @@ function transcriptionUrl(base: string): string {
  * transcription route. Environment reads and network work remain lazy so builds
  * never connect to services at module evaluation time.
  */
-export function transcribeOralReading(audio: Blob, target: string): Promise<string>;
 export function transcribeOralReading(
   audio: Blob,
   target: string,
-  options: { wordTimestamps: true },
+  options?: { signal?: AbortSignal },
+): Promise<string>;
+export function transcribeOralReading(
+  audio: Blob,
+  target: string,
+  options: { wordTimestamps: true; signal?: AbortSignal },
 ): Promise<VerboseTranscription>;
 export async function transcribeOralReading(
   audio: Blob,
@@ -52,11 +62,14 @@ export async function transcribeOralReading(
   form.append("prompt", target);
   if (options.wordTimestamps === true) form.append("response_format", "verbose_json");
 
+  const timeoutSignal = AbortSignal.timeout(15_000);
   const response = await fetch(transcriptionUrl(base), {
     method: "POST",
     headers: { authorization: `Bearer ${apiKey}` },
     body: form,
-    signal: AbortSignal.timeout(15_000),
+    // Combine the caller's abort (client disconnect / consent revocation) with
+    // the internal timeout so either stops the upstream STT request.
+    signal: options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal,
   });
   if (!response.ok) {
     throw new Error(`LiteLLM transcription failed (${response.status})`);

@@ -76,6 +76,25 @@ served until evicted, so:
 - Keep every migration expand-only across one deploy (add columns/tables; remove only in a later deploy after the code no longer references them).
 - Grow `REQUIRED_COLUMNS` in `src/lib/db/health.ts` whenever a newly-required column must gate the canary.
 
+### Journal-derived mastery cleanup (migration 0016 — IRREVERSIBLE)
+
+Migration **0016** is the first pass that removes mastery/review state wrongly
+derived from journal participation before journal scoring became participation-
+only: it `DELETE`s the journal-exclusive `review_schedule` and `skill_state`
+rows and scrubs journal-prompt `attempt` response artifacts. Migration 0017
+re-runs the same cleanup and installs the enforcing trigger. Every delete/scrub
+is gated by the fail-closed `journal_skill_state_is_exclusive` predicate — it
+only touches state that is provably an exact multiset of well-formed journal
+ledger emissions, and fails closed on any malformed/ambiguous shape — so it
+never removes non-journal mastery.
+
+These deletes are **irreversible** and run pre-traffic in the migrate step. The
+recovery story is PITR: **before promoting a deploy that first applies 0016,
+confirm the Barman → B2 base backup + WAL archive is current** (a restore point
+exists ahead of the migration). No app-level snapshot of the purged rows is
+kept; if you need one, snapshot `review_schedule`/`skill_state` to an audit
+table before applying. There is no forward "undo" migration.
+
 ### Journal privacy guard compatibility (migration 0017)
 
 Migration 0017 installs a `BEFORE INSERT OR UPDATE` trigger ahead of the database

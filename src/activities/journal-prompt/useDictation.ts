@@ -1,148 +1,315 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { browserHasMicrophone, supportedMimeType } from "@/activities/oral-reading/recording";
+import {
+  createJournalDictationForm,
+  type DictationIdentity,
+  JOURNAL_DICTATION_ENDPOINT,
+  MAX_DICTATION_MS,
+  parseDictationResponse,
+} from "./dictation";
 
 /**
  * The dictation half of the writing bridge (compose mode): the child speaks and
- * we transcribe via the Web Speech *recognition* API. It is the lowest-tax way
- * to get ideas down, but it is an *enhancement, never required* — when the
- * browser lacks recognition (Firefox, many mobile webviews) the hook reports
- * `supported: false` and the caller hides the affordance entirely.
+ * we transcribe the recording.
  *
- * `SpeechRecognition` is not in lib.dom.d.ts (only its event/result types are),
- * so we declare the minimal instance + constructor shape here and narrow the
- * vendor-prefixed globals from `unknown` rather than reaching for `any`.
+ * §8 (child-data): the audio is captured with `MediaRecorder` and POSTed to the
+ * same-origin, LiteLLM-backed {@link JOURNAL_DICTATION_ENDPOINT}. It is NEVER
+ * routed through the browser Web Speech API, which streams open-ended child
+ * speech to a browser vendor's cloud (Google/Apple) outside the gateway. When
+ * the browser cannot record (no `MediaRecorder`/`getUserMedia`) or the activity
+ * lacks an authored route identity, the hook reports `supported: false` and the
+ * caller hides the affordance entirely — dictation is an enhancement, never
+ * required.
+ *
+ * Lifecycle safety: every take carries a monotonic token. Any teardown —
+ * `abort()` (consent revocation), a superseding `start()`, or unmount — bumps
+ * the token AND aborts the in-flight upload, and every asynchronous
+ * continuation (getUserMedia resolve, recorder stop, fetch result, state
+ * updates) is discarded unless it still owns the current token. This is what
+ * guarantees a pending permission grant can never start a hidden recording, and
+ * a revoked take can never keep uploading a child's audio.
  */
 
-/** The subset of the recognition instance we use. Reuses the lib.dom event type. */
-interface RecognitionInstance {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  start: () => void;
+export interface Dictation {
+  /** True only when this browser can record AND the activity is authored (gateable). */
+  supported: boolean;
+  /** True while the mic is capturing or the take is being transcribed. */
+  listening: boolean;
+  /** Calm, child-facing fallback when recording or transcription cannot proceed. */
+  message: string | null;
+  /** Start a take; `onText` receives the transcribed phrase once it returns. */
+  start: (onText: (text: string) => void) => void;
+  /** Stop capturing now and transcribe what was said. */
   stop: () => void;
+  /** Cancel the take without transcribing (for live consent revocation). */
   abort: () => void;
-  onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onend: (() => void) | null;
-  onerror: (() => void) | null;
 }
 
-type RecognitionConstructor = new () => RecognitionInstance;
+const MIC_BREAK_MESSAGE =
+  "The microphone needs a break. Your words are safe, and you can keep typing.";
+const NO_MIC_MESSAGE =
+  "The microphone is not available here. You can type or ask a grown-up to write.";
+// A generous ceiling on the transcription round-trip so a hung upload can never
+// hold the mic-busy state (or a child's audio in flight) open indefinitely.
+const TRANSCRIBE_TIMEOUT_MS = 20_000;
 
-/** Pull the (possibly vendor-prefixed) constructor off window without `any`. */
-function getRecognitionCtor(): RecognitionConstructor | null {
-  if (typeof window === "undefined") return null;
-  const w = window as unknown as Record<string, unknown>;
-  const ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
-  return typeof ctor === "function" ? (ctor as RecognitionConstructor) : null;
-}
-
-/** Recognition support never changes within a page, so the store is static
- *  (same pattern as useSpeech): server snapshot false, resolved on the client. */
-function subscribeSupport(): () => void {
+function subscribeStatic(): () => void {
   return () => {};
 }
-function isRecognitionSupported(): boolean {
-  return getRecognitionCtor() !== null;
+
+/** Recording support is static within a page (same pattern as useSpeech). */
+function isRecordingSupported(identity: DictationIdentity | undefined): boolean {
+  if (!identity?.unitKey || !identity.activityId) return false;
+  return browserHasMicrophone();
 }
 
-/** Concatenate every final alternative in the result list into one string. */
-function transcriptOf(event: SpeechRecognitionEvent): string {
-  let out = "";
-  const { results } = event;
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
-    if (result.length > 0) out += result[0].transcript;
-  }
-  return out.trim();
-}
-
-export interface Dictation {
-  /** True only when speech recognition exists in this browser. */
-  supported: boolean;
-  /** True while the mic is actively listening. */
-  listening: boolean;
-  /** Calm, child-facing fallback when recognition cannot start or continue. */
-  message: string | null;
-  /** Start a listening session; `onText` receives the recognized phrase. */
-  start: (onText: (text: string) => void) => void;
-  /** Stop listening now. */
-  stop: () => void;
-  /** Cancel listening without accepting a final result (for live consent revocation). */
-  abort: () => void;
-}
-
-export function useDictation(lang = "en-US"): Dictation {
-  const recognitionRef = useRef<RecognitionInstance | null>(null);
-  const supported = useSyncExternalStore(subscribeSupport, isRecognitionSupported, () => false);
+export function useDictation(identity?: DictationIdentity): Dictation {
+  const supported = useSyncExternalStore(
+    subscribeStatic,
+    () => isRecordingSupported(identity),
+    () => false,
+  );
   const [listening, setListening] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
+  // Latest identity for the async take, synced in an effect (never during render).
+  const identityRef = useRef(identity);
   useEffect(() => {
-    return () => {
-      recognitionRef.current?.abort();
-      recognitionRef.current = null;
-    };
-  }, []);
+    identityRef.current = identity;
+  }, [identity]);
+  // Monotonic take token: bumping it invalidates every earlier take's async work.
+  const takeRef = useRef(0);
 
-  const stop = useCallback(() => {
-    try {
-      recognitionRef.current?.stop();
-    } catch {
-      // The browser may have ended the one-shot session between tap and stop.
+  const releaseStream = useCallback(() => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    recorderRef.current = null;
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
     }
-    setListening(false);
   }, []);
 
+  /** End the current take: invalidate it, cancel any upload, free the mic. */
   const abort = useCallback(() => {
-    const recognition = recognitionRef.current;
-    recognitionRef.current = null;
-    if (recognition) {
-      recognition.onresult = null;
+    takeRef.current += 1;
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
       try {
-        recognition.abort();
+        recorder.stop();
       } catch {
-        // The one-shot session may already have ended.
+        // The take may already have ended between tap and abort.
       }
     }
+    releaseStream();
     setListening(false);
+  }, [releaseStream]);
+
+  // Layout effect (not passive): tear down synchronously on unmount so no
+  // recording/upload or `onText` insertion survives past the component.
+  useLayoutEffect(() => abort, [abort]);
+
+  const stop = useCallback(() => {
+    const recorder = recorderRef.current;
+    if (recorder?.state === "recording") {
+      try {
+        recorder.stop();
+      } catch {
+        // Already stopped between tap and stop; the stop handler still runs.
+      }
+    }
   }, []);
 
   const start = useCallback(
     (onText: (text: string) => void) => {
-      const Ctor = getRecognitionCtor();
-      if (!Ctor) {
-        setMessage("The microphone is not available here. You can type or ask a grown-up to write.");
+      const currentIdentity = identityRef.current;
+      if (!isRecordingSupported(currentIdentity) || !currentIdentity) {
+        setMessage(NO_MIC_MESSAGE);
         return;
       }
-      recognitionRef.current?.abort();
+      const mimeType = supportedMimeType();
+      if (!mimeType) {
+        setMessage(NO_MIC_MESSAGE);
+        return;
+      }
+      // Supersede any earlier take: invalidate it, cancel its upload, and stop
+      // its recorder/microphone before starting a new one.
+      takeRef.current += 1;
+      const take = takeRef.current;
+      controllerRef.current?.abort();
+      controllerRef.current = null;
+      const priorRecorder = recorderRef.current;
+      if (priorRecorder && priorRecorder.state !== "inactive") {
+        try {
+          priorRecorder.stop();
+        } catch {
+          // Already ended between takes.
+        }
+      }
+      releaseStream();
+      const isCurrent = () => take === takeRef.current;
       setMessage(null);
 
-      const recognition = new Ctor();
-      recognition.lang = lang;
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.onresult = (event) => {
-        const text = transcriptOf(event);
-        if (text) onText(text);
-      };
-      recognition.onend = () => setListening(false);
-      recognition.onerror = () => {
-        setListening(false);
-        setMessage("The microphone needs a break. Your words are safe, and you can keep typing.");
-      };
+      void (async () => {
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch {
+          if (isCurrent()) {
+            setMessage(MIC_BREAK_MESSAGE);
+            setListening(false);
+          }
+          return;
+        }
+        // Aborted / superseded / unmounted while the permission prompt was open:
+        // drop the stream without ever recording. This closes the "hidden
+        // recording after teardown" hole.
+        if (!isCurrent()) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        const mediaStream = stream;
+        streamRef.current = mediaStream;
+        // Take-local auto-stop timer handle, cleared only by THIS take's cleanup.
+        let localTimer: ReturnType<typeof setTimeout> | null = null;
 
-      recognitionRef.current = recognition;
-      try {
-        recognition.start();
+        // Cleanup scoped to THIS take's stream/recorder/timer (by identity), so a
+        // late handler from a superseded take can never free — or cancel the
+        // auto-stop timer of — a newer take's recording.
+        const finishTake = (recorder: MediaRecorder | null): void => {
+          if (localTimer) {
+            clearTimeout(localTimer);
+            if (timerRef.current === localTimer) timerRef.current = null;
+            localTimer = null;
+          }
+          mediaStream.getTracks().forEach((track) => track.stop());
+          if (recorder && recorderRef.current === recorder) recorderRef.current = null;
+          if (streamRef.current === mediaStream) streamRef.current = null;
+        };
+
+        let recorder: MediaRecorder;
+        try {
+          recorder = new MediaRecorder(mediaStream, { mimeType });
+        } catch {
+          finishTake(null);
+          if (isCurrent()) {
+            setMessage(MIC_BREAK_MESSAGE);
+            setListening(false);
+          }
+          return;
+        }
+        recorderRef.current = recorder;
+        const chunks: Blob[] = [];
+
+        recorder.addEventListener("dataavailable", (event) => {
+          if (event.data.size > 0) chunks.push(event.data);
+        });
+        recorder.addEventListener(
+          "stop",
+          () => {
+            const blob = new Blob(chunks, { type: recorder.mimeType });
+            finishTake(recorder);
+            if (!isCurrent()) return;
+            setListening(false);
+            if (blob.size === 0) return;
+            void transcribe(blob, currentIdentity, onText, setMessage, isCurrent, controllerRef);
+          },
+          { once: true },
+        );
+        recorder.addEventListener(
+          "error",
+          () => {
+            const own = isCurrent();
+            // Invalidate this take so its own queued `stop` event can never
+            // transcribe partial audio from a recorder that just failed.
+            if (own) takeRef.current += 1;
+            finishTake(recorder);
+            if (own) {
+              setListening(false);
+              setMessage(MIC_BREAK_MESSAGE);
+            }
+          },
+          { once: true },
+        );
+
+        try {
+          recorder.start();
+        } catch {
+          finishTake(recorder);
+          if (isCurrent()) {
+            setMessage(MIC_BREAK_MESSAGE);
+            setListening(false);
+          }
+          return;
+        }
         setListening(true);
-      } catch {
-        setListening(false);
-        setMessage("The microphone needs a break. Your words are safe, and you can keep typing.");
-      }
+        localTimer = setTimeout(() => {
+          if (recorder.state === "recording") recorder.stop();
+        }, MAX_DICTATION_MS);
+        timerRef.current = localTimer;
+      })();
     },
-    [lang],
+    [releaseStream],
   );
 
   return { supported, listening, message, start, stop, abort };
+}
+
+/**
+ * POST one recorded take to the LiteLLM-backed route and hand the bounded
+ * transcript to the caller. The upload is bound to an `AbortController` (shared
+ * via `controllerRef`) so `abort()`/supersession/unmount cancel the child-audio
+ * upload in flight, and a hard timeout stops a hung request from holding it
+ * open. Every continuation re-checks the take token; raw audio is never
+ * retained here (the caller freed the stream before this runs).
+ */
+async function transcribe(
+  blob: Blob,
+  identity: DictationIdentity,
+  onText: (text: string) => void,
+  setMessage: (message: string | null) => void,
+  isCurrent: () => boolean,
+  controllerRef: { current: AbortController | null },
+): Promise<void> {
+  const form = createJournalDictationForm(blob, identity);
+  if (!form) return;
+  const controller = new AbortController();
+  controllerRef.current = controller;
+  const timeout = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(JOURNAL_DICTATION_ENDPOINT, {
+      method: "POST",
+      body: form,
+      signal: controller.signal,
+    });
+    if (!isCurrent()) return;
+    if (!response.ok) {
+      setMessage(MIC_BREAK_MESSAGE);
+      return;
+    }
+    const text = parseDictationResponse(await response.json());
+    if (isCurrent() && text) onText(text);
+  } catch {
+    // An abort (consent revocation / supersession / unmount) lands here too —
+    // stay silent unless this is still the live take failing on its own.
+    if (isCurrent()) setMessage(MIC_BREAK_MESSAGE);
+  } finally {
+    clearTimeout(timeout);
+    if (controllerRef.current === controller) controllerRef.current = null;
+  }
 }

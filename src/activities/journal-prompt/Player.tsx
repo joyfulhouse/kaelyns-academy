@@ -26,6 +26,7 @@ import {
   recognizedPhrase,
   usedDictation,
 } from "./state";
+import type { DictationIdentity } from "./dictation";
 import { useDictation } from "./useDictation";
 
 type ParsedJournalConfig = ReturnType<typeof schema.parse>;
@@ -206,6 +207,7 @@ export function JournalPromptPlayer({
         onClearText={clearIdea}
         speech={speech}
         micAllowed={learnerContext?.oralReading === true}
+        dictationIdentity={learnerContext}
         canFinish={canFinish}
         onFinish={finish}
       />
@@ -295,6 +297,7 @@ function ComposeView({
   onClearText,
   speech,
   micAllowed,
+  dictationIdentity,
   canFinish,
   onFinish,
 }: {
@@ -306,12 +309,13 @@ function ComposeView({
   onClearText: () => void;
   speech: ReturnType<typeof useSpeech>;
   micAllowed: boolean;
+  dictationIdentity: DictationIdentity | undefined;
   canFinish: boolean;
   onFinish: () => void;
 }) {
   const text = textState.text;
   const reduced = useReducedMotion();
-  const dictation = useDictation();
+  const dictation = useDictation(dictationIdentity);
   const abortDictation = dictation.abort;
   const micAllowedRef = useRef(micAllowed);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -325,7 +329,10 @@ function ComposeView({
     (!micAllowed || !dictation.supported || dictation.message !== null);
   const canUseTextSurface = allowedWritingModes.length > 0 || calmFallback;
 
-  useEffect(() => {
+  // Layout effect (not passive): sync the consent ref and abort synchronously
+  // after commit, so a revoked mic can't leave a window where a late transcript
+  // observes stale consent and gets inserted.
+  useLayoutEffect(() => {
     micAllowedRef.current = micAllowed;
     if (!micAllowed) abortDictation();
   }, [abortDictation, micAllowed]);
@@ -407,7 +414,9 @@ function ComposeView({
   }
 
   function clearText() {
-    dictation.stop();
+    // Abort, don't stop: stopping would transcribe the in-progress take and
+    // asynchronously repopulate the field the child just cleared.
+    dictation.abort();
     onClearText();
     restoreSelection(0, 0);
   }
@@ -560,7 +569,17 @@ function ComposeView({
       )}
 
       <div className="grid justify-items-center gap-2">
-        <Button variant="primary" size="kid" onClick={onFinish} disabled={!canFinish}>
+        <Button
+          variant="primary"
+          size="kid"
+          onClick={() => {
+            // Stop any in-progress recording/upload before the Player begins its
+            // exit animation (it stays mounted during the transition).
+            dictation.abort();
+            onFinish();
+          }}
+          disabled={!canFinish}
+        >
           I&apos;m done
         </Button>
         {!canFinish && (
