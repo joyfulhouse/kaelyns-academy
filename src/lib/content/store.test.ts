@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProgramTreeRows } from "./store";
 
 // Capture non-critical is called on bad configs — mock Sentry so it doesn't blow up in test env.
+const captureException = vi.fn();
 vi.mock("@sentry/nextjs", () => ({
   withScope: (fn: (scope: unknown) => void) => fn({ setLevel: vi.fn() }),
-  captureException: vi.fn(),
+  captureException: (error: unknown) => captureException(error),
 }));
 
 // Lazy import so the mock is in place before the module loads.
@@ -29,6 +30,41 @@ describe("assembleProgram", () => {
     // programSlug is carried forward from the program table lookup
     programSlug: "test-slug",
   };
+
+  function rowsWithActivities(activities: ProgramTreeRows["activities"]): ProgramTreeRows {
+    return {
+      version: baseVersion,
+      units: [
+        {
+          id: "u1",
+          programVersionId: "v1",
+          unitKey: "math",
+          orderKey: "01",
+          title: "Math",
+          emoji: "➕",
+          world: "garden",
+          bigIdea: "Numbers",
+          phonicsFocus: null,
+          mathFocus: "Time",
+          project: null,
+          checkpoint: null,
+          branchKey: null,
+        },
+      ],
+      lessons: [
+        {
+          id: "l1",
+          unitId: "u1",
+          lessonKey: "lesson-1",
+          orderKey: "01",
+          title: "Lesson 1",
+        },
+      ],
+      activities,
+    };
+  }
+
+  beforeEach(() => captureException.mockClear());
 
   it("builds a Program with units/lessons/activities ordered by orderKey", () => {
     const rows: ProgramTreeRows = {
@@ -92,9 +128,15 @@ describe("assembleProgram", () => {
           blurb: null,
           estMinutes: 5,
           band: "ready",
-          skillTags: ["math.counting"],
+          skillTags: ["math.add.make-ten"],
           standardTags: [],
-          config: { instruction: "Count the dots", mode: "represent", target: 5 },
+          config: {
+            instruction: "Make ten, then keep going.",
+            mode: "make-ten",
+            target: 5,
+            addend: 7,
+            frames: 2,
+          },
         },
         {
           id: "a1",
@@ -106,9 +148,15 @@ describe("assembleProgram", () => {
           blurb: null,
           estMinutes: 5,
           band: "ready",
-          skillTags: ["math.counting"],
+          skillTags: ["math.add.make-ten"],
           standardTags: [],
-          config: { instruction: "Count the dots", mode: "represent", target: 3 },
+          config: {
+            instruction: "Make ten, then keep going.",
+            mode: "make-ten",
+            target: 3,
+            addend: 8,
+            frames: 2,
+          },
         },
       ],
     };
@@ -187,9 +235,12 @@ describe("assembleProgram", () => {
           blurb: null,
           estMinutes: 5,
           band: "ready",
-          skillTags: ["reading.sight"],
+          skillTags: [],
           standardTags: [],
-          config: { instruction: "Tap the word", words: ["the", "and"], decoys: [] },
+          config: {
+            instruction: "Find the word.",
+            rounds: [{ target: "the", choices: ["the", "they"] }],
+          },
         },
       ],
     };
@@ -249,9 +300,15 @@ describe("assembleProgram", () => {
           blurb: "Use ten frames",
           estMinutes: 10,
           band: "stretch",
-          skillTags: ["math.tenframe"],
+          skillTags: ["math.add.make-ten"],
           standardTags: ["CCSS.MATH.1.OA"],
-          config: { instruction: "Show 7 on the ten frame", mode: "represent", target: 7 },
+          config: {
+            instruction: "Make ten, then keep going.",
+            mode: "make-ten",
+            target: 7,
+            addend: 5,
+            frames: 2,
+          },
         },
       ],
     };
@@ -265,10 +322,10 @@ describe("assembleProgram", () => {
     expect(activity.blurb).toBe("Use ten frames");
     expect(activity.estMinutes).toBe(10);
     expect(activity.band).toBe("stretch");
-    expect(activity.skillTags).toEqual(["math.tenframe"]);
+    expect(activity.skillTags).toEqual(["math.add.make-ten"]);
     if (activity.kind === "math-tenframe") {
       expect(activity.config.target).toBe(7);
-      expect(activity.config.mode).toBe("represent");
+      expect(activity.config.mode).toBe("make-ten");
     }
   });
 
@@ -312,9 +369,15 @@ describe("assembleProgram", () => {
           blurb: null,
           estMinutes: 5,
           band: "ready",
-          skillTags: [],
+          skillTags: ["math.add.make-ten"],
           standardTags: [],
-          config: { instruction: "Count", mode: "represent", target: 4 },
+          config: {
+            instruction: "Make ten.",
+            mode: "make-ten",
+            target: 4,
+            addend: 7,
+            frames: 2,
+          },
         },
         {
           id: "bad-act",
@@ -344,6 +407,59 @@ describe("assembleProgram", () => {
     expect(activities[0].id).toBe("good"); // activityKey of the valid row
     // the bad-config row (activityKey "bad") was silently dropped
     expect(activities.find((a) => a.id === "bad")).toBeUndefined();
+  });
+
+  it("drops and reports a schema-valid activity whose answer model is unplayable", () => {
+    const rows = rowsWithActivities([
+      {
+        id: "good-clock-row",
+        lessonId: "l1",
+        activityKey: "good-clock",
+        orderKey: "01",
+        kind: "math-clock",
+        title: "Set the Clock",
+        blurb: null,
+        estMinutes: 5,
+        band: "ready",
+        skillTags: ["math.time"],
+        standardTags: [],
+        config: {
+          mode: "set",
+          instruction: "Set the clock",
+          targetHour: 3,
+          targetMinute: 0,
+        },
+      },
+      {
+        id: "bad-clock-row",
+        lessonId: "l1",
+        activityKey: "bad-clock",
+        orderKey: "02",
+        kind: "math-clock",
+        title: "Read the Clock",
+        blurb: null,
+        estMinutes: 5,
+        band: "ready",
+        skillTags: ["math.time"],
+        standardTags: [],
+        config: {
+          mode: "read",
+          instruction: "Read the clock",
+          hour: 3,
+          minute: 0,
+          choices: ["4:00", "3:00"],
+          answerIndex: 0,
+        },
+      },
+    ]);
+
+    const program = assembleProgram(rows);
+
+    expect(program.units[0].lessons[0].activities.map((activity) => activity.id)).toEqual([
+      "good-clock",
+    ]);
+    expect(captureException).toHaveBeenCalledOnce();
+    expect(captureException.mock.calls[0]?.[0]).toBeInstanceOf(Error);
   });
 
   it("handles unknown activity kind by dropping the activity", () => {
@@ -477,7 +593,10 @@ describe("buildVersionTreeRows", () => {
                 band: "ready",
                 skillTags: ["reading.sight"],
                 standardTags: [],
-                config: { instruction: "Tap the word", words: ["the", "and"], decoys: [] },
+                config: {
+                  instruction: "Find the word.",
+                  rounds: [{ target: "the", choices: ["the", "they"] }],
+                },
               },
             ],
           },

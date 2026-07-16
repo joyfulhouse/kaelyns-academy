@@ -2,6 +2,7 @@ import type { MathMeasureConfig } from "@/content/activity-configs";
 import type { ActivityType } from "@/content/types";
 import { MathMeasurePlayer } from "./Player";
 import {
+  responseSchema,
   schema,
   score,
   skillsAffected,
@@ -14,6 +15,7 @@ export const mathMeasure: ActivityType<MathMeasureConfig, MathMeasureResponse> =
   kind: "math-measure",
   label: "Measure",
   schema,
+  responseSchema,
   Player: MathMeasurePlayer,
   score,
   skillsAffected,

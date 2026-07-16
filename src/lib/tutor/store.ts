@@ -2,6 +2,7 @@
 // a Client Component. (the `server-only` package isn't installed; this comment
 // is the guard, and only server actions / route handlers import it.)
 import { and, asc, count, desc, eq, inArray, lt, lte, or, sql, sum } from "drizzle-orm";
+import { z } from "zod";
 import { getDb } from "@/lib/db";
 import {
   attempt,
@@ -14,18 +15,20 @@ import {
   learnerInterest,
   learnerQuest,
   learnerSticker,
+  oralReadingVerification,
   reviewSchedule,
   skillState,
   starLedger,
   user,
   verification,
 } from "@/lib/db/schema";
-import type { Activity, ActivityScore, Lesson, SkillOutcome, SkillTag, Unit } from "@/content";
+import type { Activity, ActivityScore, Lesson, Program, SkillOutcome, SkillTag, Unit } from "@/content";
 import type { ActivityKind } from "@/content/activity-configs";
 import { SHELF_BATCH, SHELF_LESSON_CAP } from "./shelf";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
 import {
   enrollmentConfigSchema,
+  isEnrollmentUnitActive,
   learnerSettingsSchema,
   type EnrollmentConfig,
   type LearnerSettings,
@@ -36,11 +39,12 @@ import { computePlacement, outcomeToRate, type PlacementVerdict } from "@/lib/pl
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
 import { shapeLearnerExport, type LearnerExport } from "./export";
 import { shapeAccountExport, type AccountExport } from "./account-export";
-import { parseJsonbFailClosed } from "./jsonb";
+import { parseJsonbFailClosed, parseJsonbFailClosedWithValidity } from "./jsonb";
 import { getLearner, toLearnerRow, withOwnedLearner, type LearnerRow } from "./scope";
 import { applyAttemptToQuests } from "@/lib/quests/store";
 import { unitSkills } from "./recommend";
 import { nextSchedule, type ReviewScheduleState } from "./schedule";
+import { responseSchema as oralReadingResponseSchema } from "@/activities/oral-reading/logic";
 
 /** The transaction type recordAttempt's tx-scoped helpers share (mirrors the
  *  same derivation in src/lib/quests/store.ts). */
@@ -61,6 +65,136 @@ export type { LearnerRow };
 
 /** Bound stored evidence (jsonb can otherwise grow without limit). */
 const MAX_HISTORY = 24;
+
+/** A witness only bridges the upload and its immediate completion save. */
+export const ORAL_READING_VERIFICATION_TTL_MS = 5 * 60_000;
+
+const oralVerificationIdentitySchema = z.object({
+  learnerId: z.string().min(1).max(100),
+  programSlug: z.string().min(1).max(100),
+  expectedProgramVersionId: z.string().min(1).max(100).nullable(),
+  unitKey: z.string().min(1).max(100),
+  activityId: z.string().min(1).max(100),
+});
+
+const newOralReadingVerificationSchema = z.discriminatedUnion("mode", [
+  oralVerificationIdentitySchema
+    .extend({
+      mode: z.literal("word"),
+      result: z.enum(["matched", "unclear", "no-speech"]),
+      perWord: z.null(),
+      correctCount: z.number().int().min(0).max(1),
+      totalWords: z.literal(1),
+      wcpm: z.null(),
+    })
+    .strict()
+    .superRefine((value, ctx) => {
+      if ((value.result === "matched") !== (value.correctCount === 1)) {
+        ctx.addIssue({ code: "custom", path: ["correctCount"], message: "result mismatch" });
+      }
+    }),
+  oralVerificationIdentitySchema
+    .extend({
+      mode: z.literal("sentence"),
+      result: z.enum(["matched", "unclear"]),
+      perWord: z
+        .array(z.object({ state: z.enum(["correct", "unclear"]) }).strict())
+        .min(1)
+        .max(7),
+      correctCount: z.number().int().min(0).max(7),
+      totalWords: z.number().int().min(1).max(7),
+      wcpm: z.number().int().min(0).max(300).nullable(),
+    })
+    .strict()
+    .superRefine((value, ctx) => {
+      const derivedCorrect = value.perWord.filter(({ state }) => state === "correct").length;
+      if (value.perWord.length !== value.totalWords) {
+        ctx.addIssue({ code: "custom", path: ["totalWords"], message: "word count mismatch" });
+      }
+      if (derivedCorrect !== value.correctCount) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["correctCount"],
+          message: "correct count mismatch",
+        });
+      }
+      if ((value.result === "matched") !== (derivedCorrect === value.totalWords)) {
+        ctx.addIssue({ code: "custom", path: ["result"], message: "result mismatch" });
+      }
+    }),
+]);
+
+export type NewOralReadingVerification = z.infer<
+  typeof newOralReadingVerificationSchema
+>;
+
+/**
+ * Persist one privacy-safe verification result after re-checking learner
+ * ownership. The expiry is server-issued; callers cannot extend witness life.
+ */
+export async function createOralReadingVerification(
+  accountId: string,
+  input: NewOralReadingVerification,
+): Promise<string | null> {
+  const parsed = newOralReadingVerificationSchema.parse(input);
+  return getDb().transaction(async (tx) => {
+    // Lock the learner settings row so the parent microphone opt-in is checked
+    // at the same authorization point as the witness insert, after STT returns.
+    const owned = await tx
+      .select({ id: learner.id, settings: learner.settings })
+      .from(learner)
+      .where(and(eq(learner.id, parsed.learnerId), eq(learner.accountId, accountId)))
+      .limit(1)
+      .for("update");
+    const settings = learnerSettingsSchema.safeParse(owned[0]?.settings ?? {});
+    if (!owned[0] || !settings.success || settings.data.oralReading !== true) return null;
+
+    const activeEnrollment = await lockActiveEnrollment(
+      tx,
+      parsed.learnerId,
+      parsed.programSlug,
+      parsed.unitKey,
+    );
+    if (
+      !activeEnrollment ||
+      activeEnrollment.programVersionId !== parsed.expectedProgramVersionId
+    ) {
+      return null;
+    }
+
+    // Operational witness facts are disposable. Clear stale rows whenever this
+    // low-volume path is used; a claimed row is deleted immediately below.
+    await tx
+      .delete(oralReadingVerification)
+      .where(
+        and(
+          eq(oralReadingVerification.learnerId, parsed.learnerId),
+          lte(oralReadingVerification.expiresAt, new Date()),
+        ),
+      );
+
+    const rows = await tx
+      .insert(oralReadingVerification)
+      .values({
+        learnerId: parsed.learnerId,
+        programSlug: parsed.programSlug,
+        programVersionId: activeEnrollment.programVersionId,
+        unitKey: parsed.unitKey,
+        activityId: parsed.activityId,
+        mode: parsed.mode,
+        result: parsed.result,
+        perWord: parsed.perWord,
+        correctCount: parsed.correctCount,
+        totalWords: parsed.totalWords,
+        wcpm: parsed.wcpm,
+        expiresAt: new Date(Date.now() + ORAL_READING_VERIFICATION_TTL_MS),
+      })
+      .returning({ id: oralReadingVerification.id });
+    const row = rows[0];
+    if (!row) throw new Error("oral-reading verification was not persisted");
+    return row.id;
+  });
+}
 
 /** Pure: fold one attempt's evidence for a skill into its prior history and
  *  re-derive the outcome. Extracted so the gate logic is unit-testable.
@@ -246,16 +380,84 @@ export class EnrollmentNotActiveError extends Error {
   }
 }
 
+/** The learner's enrollment moved after server-side content was resolved. */
+export class EnrollmentVersionChangedError extends Error {
+  constructor(learnerId: string, programSlug: string) {
+    super(`Enrollment version changed for learner "${learnerId}" in program "${programSlug}"`);
+    this.name = "EnrollmentVersionChangedError";
+  }
+}
+
+/** A durable generated shelf item is a one-shot. A different completion token
+ * may not replay it after its first successful attempt. */
+export class GeneratedActivityAlreadyCompletedError extends Error {
+  constructor(activityId: string) {
+    super(`Generated shelf activity "${activityId}" was already completed`);
+    this.name = "GeneratedActivityAlreadyCompletedError";
+  }
+}
+
+/** A completion UUID may only ever identify one immutable attempt identity. */
+export class CompletionReplayMismatchError extends Error {
+  constructor() {
+    super("completion id belongs to a different attempt identity");
+    this.name = "CompletionReplayMismatchError";
+  }
+}
+
 /** The (learner, program) composite predicate shared by every single-enrollment
  *  query (keyed on the `enrollment_learner_program_uq` unique index). */
 function enrollmentKey(learnerId: string, programSlug: string) {
   return and(eq(enrollment.learnerId, learnerId), eq(enrollment.programSlug, programSlug));
 }
 
+/** Lock and validate the server-authoritative enrollment + unit-curation gate.
+ * Malformed JSON fails closed; omitted/empty activeUnitKeys means all units. */
+async function lockActiveEnrollment(
+  tx: Db,
+  learnerId: string,
+  programSlug: string,
+  unitKey: string | null | undefined,
+): Promise<{
+  id: string;
+  config: EnrollmentConfig;
+  programVersionId: string | null;
+} | null> {
+  const rows = await tx
+    .select({
+      id: enrollment.id,
+      status: enrollment.status,
+      config: enrollment.config,
+      programVersionId: enrollment.programVersionId,
+    })
+    .from(enrollment)
+    .where(enrollmentKey(learnerId, programSlug))
+    .limit(1)
+    .for("update");
+  const row = rows[0];
+  const parsed = enrollmentConfigSchema.safeParse(row?.config);
+  if (
+    row?.status !== "active" ||
+    !parsed.success ||
+    !isEnrollmentUnitActive(parsed.data, unitKey ?? undefined)
+  ) {
+    return null;
+  }
+  return {
+    id: row.id,
+    config: parsed.data,
+    programVersionId: row.programVersionId,
+  };
+}
+
 export interface RecordAttemptInput {
   learnerId: string;
   /** The program the activity belongs to — the active-enrollment gate keys on it. */
   programSlug: string;
+  /** Server-resolved enrollment pin used to score this exact content tree. */
+  expectedProgramVersionId: string | null;
+  /** One browser completion token, reused verbatim for every retry. */
+  completionId: string;
   activityId: string;
   kind: string;
   generated?: boolean;
@@ -272,7 +474,7 @@ export interface RecordAttemptInput {
   /** Quest-fold context (Adventure 2.0): the containing unit id, resolved
    *  server-side by the action from the learner's pinned tree. Null when
    *  unresolvable — complete_n still counts; unit-targeted quests just miss. */
-  unitId?: string | null;
+  unitId: string;
   /**
    * Server-derived in the action — TRUE only when the activityId was verified
    * to belong to the learner's pinned authored tree. Never client-supplied.
@@ -306,14 +508,27 @@ export interface RecordAttemptInput {
  *   (learner, programSlug) pair — nothing is persisted (server-authoritative
  *   curation gate, Fix-F A4).
  */
-export async function recordAttempt(accountId: string, input: RecordAttemptInput): Promise<void> {
+export async function recordAttempt(
+  accountId: string,
+  input: RecordAttemptInput,
+): Promise<ActivityScore> {
   // The attempt row and every per-skill fold must commit together: a partial
   // write (attempt saved, skill_state not) loses mastery evidence, and two
   // concurrent submits racing the read-modify-write would otherwise either
   // throw a unique violation after the attempt row is already in, or drop one
   // submit's evidence (last-writer-wins). One transaction + a row lock per
   // (learner,skill) makes the whole thing atomic and serialized.
-  await getDb().transaction(async (tx) => {
+  return getDb().transaction((tx) => recordAttemptInTransaction(tx, accountId, input));
+}
+
+/** Existing attempt writer, parameterized by a caller-owned transaction so the
+ * oral-reading witness claim can commit atomically with the unchanged ledger,
+ * mastery, checkpoint, review, and quest folds below. */
+async function recordAttemptInTransaction(
+  tx: Db,
+  accountId: string,
+  input: RecordAttemptInput,
+): Promise<ActivityScore> {
     // Tenancy boundary, re-checked inside the tx so it shares the snapshot.
     const owned = await tx
       .select({ id: learner.id })
@@ -326,36 +541,112 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
     // program. Read inside the same tx (shares the snapshot with the tenancy
     // check above). A removed/paused/missing enrollment → no write at all; the
     // client render-block (A3) is the UX, this is the non-bypassable enforcement.
-    const enrolled = await tx
-      .select({ id: enrollment.id, status: enrollment.status })
-      .from(enrollment)
-      .where(enrollmentKey(input.learnerId, input.programSlug))
-      .limit(1)
-      // Lock the enrollment row for the tx's lifetime so a concurrent pause/remove
-      // can't commit between this active-check and the attempt insert below (the
-      // skill_state folds already lock FOR UPDATE; this closes the same race here).
-      .for("update");
-    if (enrolled[0]?.status !== "active") {
+    const activeEnrollment = await lockActiveEnrollment(
+      tx,
+      input.learnerId,
+      input.programSlug,
+      input.unitId,
+    );
+    if (!activeEnrollment) {
       throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
     }
-    const enrollmentId = enrolled[0].id;
+    if (!input.unitId?.trim()) {
+      throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
+    }
+    if (activeEnrollment.programVersionId !== input.expectedProgramVersionId) {
+      throw new EnrollmentVersionChangedError(input.learnerId, input.programSlug);
+    }
+    const enrollmentId = activeEnrollment.id;
 
     // Provenance is written ONLY for a generated attempt (and only when supplied),
     // so an authored row can never carry gen_* metadata even if a caller passes it.
     const generated = input.generated ?? false;
     const provenance = generated ? input.provenance : undefined;
-    await tx.insert(attempt).values({
-      learnerId: input.learnerId,
-      activityId: input.activityId,
-      kind: input.kind,
-      generated,
-      score: input.score,
-      response: input.response ?? null,
-      day: input.day,
-      genModel: provenance?.model ?? null,
-      genRoute: provenance?.route ?? null,
-      genAt: provenance?.at ?? null,
-    });
+
+    // The locked enrollment row above serializes every attempt for this
+    // learner+program. Check the one-shot shelf contract while that lock is
+    // held, before the attempt insert or ANY mastery/review/quest/ledger fold.
+    // Same-completion retries continue into the ordinary idempotent replay path.
+    if (generated && input.shelfEligible === true) {
+      const priorShelfCompletions = await tx
+        .select({ completionId: attempt.completionId })
+        .from(attempt)
+        .where(
+          and(
+            eq(attempt.learnerId, input.learnerId),
+            eq(attempt.activityId, input.activityId),
+            eq(attempt.generated, true),
+          ),
+        )
+        .limit(1);
+      const priorCompletion = priorShelfCompletions[0];
+      if (priorCompletion && priorCompletion.completionId !== input.completionId) {
+        throw new GeneratedActivityAlreadyCompletedError(input.activityId);
+      }
+    }
+
+    const inserted = await tx
+      .insert(attempt)
+      .values({
+        learnerId: input.learnerId,
+        completionId: input.completionId,
+        activityId: input.activityId,
+        kind: input.kind,
+        programSlug: input.programSlug,
+        unitKey: input.unitId,
+        programVersionId: activeEnrollment.programVersionId,
+        generated,
+        score: input.score,
+        response: input.response ?? null,
+        day: input.day,
+        genModel: provenance?.model ?? null,
+        genRoute: provenance?.route ?? null,
+        genAt: provenance?.at ?? null,
+      })
+      .onConflictDoNothing({ target: [attempt.learnerId, attempt.completionId] })
+      .returning({ id: attempt.id });
+
+    // A concurrent or retried completion lost the unique-key insert. Replay the
+    // original canonical score and return before ANY derived fold. PostgreSQL's
+    // INSERT conflict check waits for an in-flight winner, and the following
+    // READ COMMITTED statement can then see that committed row.
+    if (!inserted[0]) {
+      const replayed = await tx
+        .select({
+          activityId: attempt.activityId,
+          kind: attempt.kind,
+          programSlug: attempt.programSlug,
+          unitKey: attempt.unitKey,
+          programVersionId: attempt.programVersionId,
+          generated: attempt.generated,
+          score: attempt.score,
+        })
+        .from(attempt)
+        .where(
+          and(
+            eq(attempt.learnerId, input.learnerId),
+            eq(attempt.completionId, input.completionId),
+          ),
+        )
+        .limit(1);
+      const original = replayed[0];
+      if (!original) {
+        throw new Error("completion id conflict could not be replayed");
+      }
+      if (
+        original.activityId !== input.activityId ||
+        original.kind !== input.kind ||
+        original.generated !== generated ||
+        original.programSlug === null ||
+        original.unitKey === null ||
+        original.programSlug !== input.programSlug ||
+        original.unitKey !== input.unitId ||
+        original.programVersionId !== activeEnrollment.programVersionId
+      ) {
+        throw new CompletionReplayMismatchError();
+      }
+      return original.score;
+    }
 
     // Star economy (Adventure 2.0): first authored completion earns score.stars
     // into the append-only ledger, inside this same transaction (all-or-nothing
@@ -476,6 +767,181 @@ export async function recordAttempt(accountId: string, input: RecordAttemptInput
         });
       }
     }
+  return input.score;
+}
+
+export interface OralReadingWitnessFacts {
+  mode: "word" | "sentence";
+  result: "matched" | "unclear" | "no-speech";
+  perWord: { state: "correct" | "unclear" }[] | null;
+  correctCount: number;
+  totalWords: number;
+  wcpm: number | null;
+}
+
+export interface RecordOralReadingAttemptInput {
+  learnerId: string;
+  programSlug: string;
+  expectedProgramVersionId: string | null;
+  completionId: string;
+  unitKey: string;
+  activityId: string;
+  verificationId?: string;
+  day: DayKey;
+  checkpointPhase?: "baseline" | "mid" | "final" | null;
+  canonicalize: (
+    witness: OralReadingWitnessFacts | null,
+  ) => { response: unknown; score: ActivityScore } | null;
+}
+
+/**
+ * Claim one oral-reading witness and write its canonical attempt in the same
+ * transaction. A learner-row lock serializes this low-volume path per learner,
+ * making completion reuse deterministic before either unique constraint is
+ * reached. The attempt row is the durable idempotency record; a consumed
+ * witness is deleted in the same transaction and never retained for replay.
+ */
+export async function recordOralReadingAttempt(
+  accountId: string,
+  input: RecordOralReadingAttemptInput,
+): Promise<ActivityScore | null> {
+  return getDb().transaction(async (tx) => {
+    const owned = await tx
+      .select({ id: learner.id, settings: learner.settings })
+      .from(learner)
+      .where(and(eq(learner.id, input.learnerId), eq(learner.accountId, accountId)))
+      .limit(1)
+      .for("update");
+    if (!owned[0]) return null;
+
+    const activeEnrollment = await lockActiveEnrollment(
+      tx,
+      input.learnerId,
+      input.programSlug,
+      input.unitKey,
+    );
+    if (!activeEnrollment) {
+      throw new EnrollmentNotActiveError(input.learnerId, input.programSlug);
+    }
+    if (activeEnrollment.programVersionId !== input.expectedProgramVersionId) return null;
+
+    // A retry replays the canonical attempt, not the disposable witness. Keep
+    // the same active-enrollment and active-unit gate as a first submission.
+    const replayed = await tx
+      .select({
+        activityId: attempt.activityId,
+        kind: attempt.kind,
+        programSlug: attempt.programSlug,
+        unitKey: attempt.unitKey,
+        programVersionId: attempt.programVersionId,
+        generated: attempt.generated,
+        score: attempt.score,
+      })
+      .from(attempt)
+      .where(
+        and(
+          eq(attempt.learnerId, input.learnerId),
+          eq(attempt.completionId, input.completionId),
+        ),
+      )
+      .limit(1);
+    const original = replayed[0];
+    if (original) {
+      return original.activityId === input.activityId &&
+        original.kind === "oral-reading" &&
+        original.generated === false &&
+        original.programSlug !== null &&
+        original.unitKey !== null &&
+        original.programSlug === input.programSlug &&
+        original.unitKey === input.unitKey &&
+        original.programVersionId === activeEnrollment.programVersionId
+        ? original.score
+        : null;
+    }
+
+    if (input.verificationId) {
+      const settings = learnerSettingsSchema.safeParse(owned[0].settings ?? {});
+      if (!settings.success || settings.data.oralReading !== true) return null;
+    }
+
+    await tx
+      .delete(oralReadingVerification)
+      .where(
+        and(
+          eq(oralReadingVerification.learnerId, input.learnerId),
+          lte(oralReadingVerification.expiresAt, new Date()),
+        ),
+      );
+
+    let witnessRow: typeof oralReadingVerification.$inferSelect | null = null;
+    let witnessFacts: OralReadingWitnessFacts | null = null;
+    if (input.verificationId) {
+      const rows = await tx
+        .select()
+        .from(oralReadingVerification)
+        .where(eq(oralReadingVerification.id, input.verificationId))
+        .limit(1)
+        .for("update");
+      witnessRow = rows[0] ?? null;
+      if (
+        !witnessRow ||
+        witnessRow.learnerId !== input.learnerId ||
+        witnessRow.programSlug !== input.programSlug ||
+        witnessRow.programVersionId !== activeEnrollment.programVersionId ||
+        witnessRow.unitKey !== input.unitKey ||
+        witnessRow.activityId !== input.activityId
+      ) {
+        return null;
+      }
+
+      // Legacy consumed rows should always have a matching attempt, handled by
+      // the replay branch above. If that durable row is missing, fail closed.
+      if (witnessRow.consumedCompletionId) return null;
+      if (witnessRow.expiresAt.getTime() <= Date.now()) return null;
+
+      const mode = witnessRow.mode;
+      const result = witnessRow.result;
+      if (
+        (mode !== "word" && mode !== "sentence") ||
+        (result !== "matched" && result !== "unclear" && result !== "no-speech")
+      ) {
+        return null;
+      }
+      witnessFacts = {
+        mode,
+        result,
+        perWord: witnessRow.perWord,
+        correctCount: witnessRow.correctCount ?? 0,
+        totalWords: witnessRow.totalWords ?? 0,
+        wcpm: witnessRow.wcpm,
+      };
+    }
+
+    const canonical = input.canonicalize(witnessFacts);
+    if (!canonical) return null;
+    const score = await recordAttemptInTransaction(tx, accountId, {
+      learnerId: input.learnerId,
+      programSlug: input.programSlug,
+      expectedProgramVersionId: activeEnrollment.programVersionId,
+      completionId: input.completionId,
+      activityId: input.activityId,
+      kind: "oral-reading",
+      generated: false,
+      response: canonical.response,
+      score: canonical.score,
+      day: input.day,
+      unitId: input.unitKey,
+      creditEligible: true,
+      shelfEligible: false,
+      checkpointPhase: input.checkpointPhase ?? null,
+    });
+
+    if (witnessRow) {
+      await tx
+        .delete(oralReadingVerification)
+        .where(eq(oralReadingVerification.id, witnessRow.id));
+    }
+    return score;
   });
 }
 
@@ -510,51 +976,51 @@ const MAX_DUE_SKILLS = 24;
 const MAX_DUE_REVIEWS = 8;
 
 /**
- * Resolve due skill schedules to replayable authored activities in the
- * learner's version-pinned program tree. The read is account-owned, scoped to
- * one program and calendar day, and omits authored activities already played
- * today so the Warm-up row never immediately repeats completed work.
+ * Resolve due skill schedules against the caller's already-resolved exact
+ * program tree. The read is account-owned and omits only authored activities
+ * played today under that same program + version identity, so another program,
+ * an older pin, or ambiguous legacy attempts cannot suppress this Warm-up row.
  */
 export async function getDueReviews(
   accountId: string,
   learnerId: string,
-  programSlug: string,
+  program: Program,
+  programVersionId: string | null,
   today: string,
 ): Promise<DueReview[]> {
   return withOwnedLearner<DueReview[]>(
     accountId,
     learnerId,
     async () => {
-      // Lazy to keep the repository ↔ tutor-store enrollment-pin seam free of a
-      // module-initialization cycle. No resolver or DB factory runs at import time.
-      const { resolveLearnerProgram } = await import("@/lib/content/repository");
-      const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
-      if (!program) return [];
-
+      const db = getDb();
       const [scheduled, completedToday] = await Promise.all([
-        getDb()
+        db
           .select()
           .from(reviewSchedule)
           .where(
             and(
               eq(reviewSchedule.learnerId, learnerId),
-              eq(reviewSchedule.programSlug, programSlug),
+              eq(reviewSchedule.programSlug, program.slug),
               lte(reviewSchedule.nextReviewOn, today),
             ),
           )
           .orderBy(asc(reviewSchedule.nextReviewOn), asc(reviewSchedule.skill))
           .limit(MAX_DUE_SKILLS),
-        getDb()
-          .select({ activityId: attempt.activityId })
-          .from(attempt)
-          .where(
-            and(
-              eq(attempt.learnerId, learnerId),
-              eq(attempt.day, today),
-              eq(attempt.generated, false),
-            ),
-          )
-          .limit(5000),
+        programVersionId
+          ? db
+              .select({ activityId: attempt.activityId })
+              .from(attempt)
+              .where(
+                and(
+                  eq(attempt.learnerId, learnerId),
+                  eq(attempt.programSlug, program.slug),
+                  eq(attempt.programVersionId, programVersionId),
+                  eq(attempt.day, today),
+                  eq(attempt.generated, false),
+                ),
+              )
+              .limit(5000)
+          : Promise.resolve([]),
       ]);
       const completedIds = new Set(completedToday.map((row) => row.activityId));
       const seenActivityIds = new Set<string>();
@@ -816,15 +1282,18 @@ export async function getFluencyHistory(
       return rows
         .reverse()
         .flatMap(({ day, response }) => {
-          if (typeof response !== "object" || response === null) return [];
-          const wcpm = (response as { wcpm?: unknown }).wcpm;
-          // WCPM is client-echoed into the attempt (like every activity score —
-          // the platform's client-authoritative attempt model; see the Slice 1
-          // risk-accept). Bound it to the aligner's plausible 0..300 range so a
-          // forged/out-of-range value can't distort a household's own chart.
-          return typeof wcpm === "number" && Number.isFinite(wcpm) && wcpm >= 0 && wcpm <= 300
-            ? [{ day, wcpm }]
-            : [];
+          // Sentence WCPM reaches the attempt only through a claimed server
+          // witness. Re-parse the complete stored response defensively so
+          // malformed/legacy partial JSON cannot enter the household chart.
+          const parsed = oralReadingResponseSchema.safeParse(response);
+          if (
+            !parsed.success ||
+            parsed.data.status !== "verified" ||
+            parsed.data.wcpm === undefined
+          ) {
+            return [];
+          }
+          return [{ day, wcpm: parsed.data.wcpm }];
         });
     },
     [],
@@ -972,6 +1441,39 @@ export async function getCompletedActivityIds(
   );
 }
 
+/** Authored completion witness for generation only. Unlike the learner-state
+ * progress read above, this is deliberately pinned to one exact content
+ * version so stable ids completed on an older tree cannot unlock fresh AI work
+ * for a newly assigned tree. */
+export async function getCompletedActivityIdsForVersion(
+  accountId: string,
+  learnerId: string,
+  programSlug: string,
+  programVersionId: string,
+): Promise<CompletedActivity[]> {
+  return withOwnedLearner<CompletedActivity[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select({ activityId: attempt.activityId, score: attempt.score })
+        .from(attempt)
+        .where(
+          and(
+            eq(attempt.learnerId, learnerId),
+            eq(attempt.generated, false),
+            eq(attempt.programSlug, programSlug),
+            eq(attempt.programVersionId, programVersionId),
+          ),
+        )
+        .orderBy(desc(attempt.createdAt))
+        .limit(5000);
+      return foldBestStars(rows);
+    },
+    [],
+  );
+}
+
 /**
  * Best stars (0..3) per GENERATED attempt (generated=true), folded like
  * {@link getCompletedActivityIds}. A generated SHELF item is a durable, one-time
@@ -1044,29 +1546,101 @@ export interface GeneratedActivityRow {
   lessonId: string;
   unitKey: string;
   programSlug: string;
+  programVersionId: string;
   kind: ActivityKind;
   title: string;
   config: unknown;
   skillTags: string[];
+  /** Server-stored generation provenance; never accepted from the browser. */
+  gen: { model: string; route: string; at: string } | null;
 }
 
 /**
- * A shelf item resolved for PLAY by account + program (Task 4). Carries the
- * playable `config`/`kind` PLUS the stored generation provenance as an ISO
- * string (`gen`), so the client host can relay it onto the recorded attempt
- * exactly like ActivityHost's practice path (P6 / §8). Client-safe: no learner
- * id, no Date objects — everything crosses the server→client boundary cleanly.
+ * A shelf item resolved for play by account + selected learner + program.
+ * Carries the playable `config`/`kind` plus stored generation provenance for
+ * display; attempt recording reloads the authoritative row server-side.
+ * Client-safe: no Date objects cross the server→client boundary.
  */
 export interface PlayableShelfItem {
   id: string;
+  /** Owning learner identity, used by the client as a render-boundary witness. */
+  learnerId: string;
   lessonId: string;
   unitKey: string;
   programSlug: string;
+  programVersionId: string;
   kind: ActivityKind;
   title: string;
   config: unknown;
   skillTags: string[];
   gen: { model: string; route: string; at: string };
+}
+
+/**
+ * One shelf item resolved for play through account + selected learner + program.
+ * The owning learner is repeated in the bounded DTO so the client can fail
+ * closed across a learner switch before mounting a Player. The store boundary
+ * remains authoritative: tenancy is checked first, then every row dimension is
+ * constrained in the generated_activity query.
+ */
+export async function getPlayableGeneratedActivity(
+  accountId: string,
+  learnerId: string,
+  programSlug: string,
+  programVersionId: string,
+  id: string,
+): Promise<PlayableShelfItem | null> {
+  return withOwnedLearner<PlayableShelfItem | null>(
+    accountId,
+    learnerId,
+    async () => {
+      const db = getDb();
+      const rows = await db
+        .select()
+        .from(generatedActivity)
+        .where(
+          and(
+            eq(generatedActivity.id, id),
+            eq(generatedActivity.learnerId, learnerId),
+            eq(generatedActivity.programSlug, programSlug),
+            eq(generatedActivity.programVersionId, programVersionId),
+          ),
+        )
+        .limit(1);
+      const row = rows[0];
+      if (!row) return null;
+      const spent = await db
+        .select({ completionId: attempt.completionId })
+        .from(attempt)
+        .where(
+          and(
+            eq(attempt.learnerId, learnerId),
+            eq(attempt.activityId, row.id),
+            eq(attempt.generated, true),
+          ),
+        )
+        .limit(1);
+      if (spent[0]) return null;
+      return {
+        id: row.id,
+        learnerId: row.learnerId,
+        lessonId: row.lessonId,
+        unitKey: row.unitKey,
+        programSlug: row.programSlug,
+        programVersionId,
+        kind: row.kind as ActivityKind,
+        title: row.title,
+        config: row.config,
+        skillTags: row.skillTags,
+        gen: {
+          model: row.genModel,
+          route: row.genRoute,
+          at: row.genAt.toISOString(),
+        },
+      };
+    },
+    null,
+  );
 }
 
 /** Project a generated_activity row into the client-safe {@link ShelfItem}. */
@@ -1084,8 +1658,8 @@ function toShelfItem(r: typeof generatedActivity.$inferSelect): ShelfItem {
 
 /**
  * Serialize a lesson's recount → generate → insert critical section behind a
- * per-(learner, lesson) transaction-scoped advisory lock, so the LLM spend is
- * claimed BEFORE the model call (final review Fix 2). Without this, N concurrent
+ * per-(learner, program, unit, lesson) transaction-scoped advisory lock, so the
+ * LLM spend is claimed BEFORE the model call (final review Fix 2). Without this, N concurrent
  * completions each pass a pre-lock cap check and each burn an LLM batch; the rows
  * stay capped (the in-tx recount + slice below does that), but the SPEND does
  * not. Here the lock is taken first, then the shelf is re-read INSIDE it: the
@@ -1102,27 +1676,54 @@ function toShelfItem(r: typeof generatedActivity.$inferSelect): ShelfItem {
  * freshly inserted), oldest-first.
  * @throws when the learner is not owned by the account (tenancy).
  */
+export interface LessonGenerationScope {
+  programSlug: string;
+  programVersionId: string;
+  unitKey: string;
+  lessonId: string;
+}
+
 export async function withLessonGenerationLock(
   accountId: string,
   learnerId: string,
-  lessonId: string,
+  scope: LessonGenerationScope,
   more: boolean,
   generate: (room: number) => Promise<NewGeneratedActivity[]>,
 ): Promise<ShelfItem[]> {
   return getDb().transaction(async (tx) => {
-    // Serialize per (learner, lesson): concurrent completions for the SAME lesson
-    // wait here until the holder's tx commits (the lock auto-releases at commit).
-    // hashtextextended folds the composite key to the bigint pg_advisory takes.
-    const key = `${learnerId}:${lessonId}`;
+    // Lesson keys are unique only within their unit, and unit keys are scoped to
+    // a program. Include every dimension so unrelated shelves never contend or
+    // share a cap. The lock auto-releases at commit.
+    const key = `${learnerId}:${scope.programSlug}:${scope.unitKey}:${scope.lessonId}`;
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 
     // Tenancy boundary, re-checked inside the tx (same pattern as recordAttempt).
     const owned = await tx
-      .select({ id: learner.id })
+      .select({ id: learner.id, settings: learner.settings })
       .from(learner)
       .where(and(eq(learner.id, learnerId), eq(learner.accountId, accountId)))
-      .limit(1);
+      .limit(1)
+      .for("update");
     if (!owned[0]) throw new Error("learner not found for account");
+
+    const settings = learnerSettingsSchema.safeParse(owned[0].settings ?? {});
+    const activeEnrollment = await lockActiveEnrollment(
+      tx,
+      learnerId,
+      scope.programSlug,
+      scope.unitKey,
+    );
+    if (
+      !settings.success ||
+      settings.data.aiPractice === false ||
+      !activeEnrollment ||
+      activeEnrollment.config.aiPractice === false
+    ) {
+      return [];
+    }
+    if (activeEnrollment.programVersionId !== scope.programVersionId) {
+      throw new EnrollmentVersionChangedError(learnerId, scope.programSlug);
+    }
 
     // Re-read this lesson's shelf INSIDE the lock so the idempotency + cap
     // decisions (and the room passed to generate) race against the SAME snapshot
@@ -1130,7 +1731,15 @@ export async function withLessonGenerationLock(
     const existingRows = await tx
       .select()
       .from(generatedActivity)
-      .where(and(eq(generatedActivity.learnerId, learnerId), eq(generatedActivity.lessonId, lessonId)))
+      .where(
+        and(
+          eq(generatedActivity.learnerId, learnerId),
+          eq(generatedActivity.programSlug, scope.programSlug),
+          eq(generatedActivity.programVersionId, scope.programVersionId),
+          eq(generatedActivity.unitKey, scope.unitKey),
+          eq(generatedActivity.lessonId, scope.lessonId),
+        ),
+      )
       .orderBy(asc(generatedActivity.createdAt));
     const existing = existingRows.map(toShelfItem);
 
@@ -1151,9 +1760,10 @@ export async function withLessonGenerationLock(
       .values(
         newRows.slice(0, room).map((r) => ({
           learnerId,
-          programSlug: r.programSlug,
-          unitKey: r.unitKey,
-          lessonId: r.lessonId,
+          programSlug: scope.programSlug,
+          programVersionId: scope.programVersionId,
+          unitKey: scope.unitKey,
+          lessonId: scope.lessonId,
           kind: r.kind,
           title: r.title,
           config: r.config,
@@ -1177,6 +1787,7 @@ export async function listGeneratedShelf(
   accountId: string,
   learnerId: string,
   programSlug: string,
+  programVersionId: string,
 ): Promise<ShelfItem[]> {
   return withOwnedLearner<ShelfItem[]>(
     accountId,
@@ -1189,6 +1800,7 @@ export async function listGeneratedShelf(
           and(
             eq(generatedActivity.learnerId, learnerId),
             eq(generatedActivity.programSlug, programSlug),
+            eq(generatedActivity.programVersionId, programVersionId),
           ),
         )
         .orderBy(asc(generatedActivity.createdAt));
@@ -1207,6 +1819,8 @@ export async function listGeneratedShelf(
 export async function getGeneratedActivity(
   accountId: string,
   learnerId: string,
+  programSlug: string,
+  programVersionId: string,
   id: string,
 ): Promise<GeneratedActivityRow | null> {
   return withOwnedLearner<GeneratedActivityRow | null>(
@@ -1216,7 +1830,14 @@ export async function getGeneratedActivity(
       const rows = await getDb()
         .select()
         .from(generatedActivity)
-        .where(and(eq(generatedActivity.id, id), eq(generatedActivity.learnerId, learnerId)))
+        .where(
+          and(
+            eq(generatedActivity.id, id),
+            eq(generatedActivity.learnerId, learnerId),
+            eq(generatedActivity.programSlug, programSlug),
+            eq(generatedActivity.programVersionId, programVersionId),
+          ),
+        )
         .limit(1);
       const r = rows[0];
       if (!r) return null;
@@ -1225,67 +1846,19 @@ export async function getGeneratedActivity(
         lessonId: r.lessonId,
         unitKey: r.unitKey,
         programSlug: r.programSlug,
+        programVersionId,
         kind: r.kind as ActivityKind,
         title: r.title,
         config: r.config,
         skillTags: r.skillTags,
+        gen:
+          r.genModel && r.genRoute && r.genAt
+            ? { model: r.genModel, route: r.genRoute, at: r.genAt.toISOString() }
+            : null,
       };
     },
     null,
   );
-}
-
-/**
- * One shelf item resolved for PLAY, scoped by ACCOUNT + PROGRAM (Task 4). Unlike
- * {@link getGeneratedActivity} (which needs a known learnerId), the play route
- * only has the account (session) + programSlug + the shelf id, so ownership is
- * resolved through the JOIN to the owning learner: the row is returned only when
- * its learner belongs to `accountId` AND its programSlug matches. A
- * foreign/mismatched/unknown id → null (the host renders the calm "moved" state).
- * Carries the generation provenance as an ISO string for the client relay.
- */
-export async function getGeneratedActivityForAccount(
-  accountId: string,
-  programSlug: string,
-  id: string,
-): Promise<PlayableShelfItem | null> {
-  const rows = await getDb()
-    .select({
-      id: generatedActivity.id,
-      lessonId: generatedActivity.lessonId,
-      unitKey: generatedActivity.unitKey,
-      programSlug: generatedActivity.programSlug,
-      kind: generatedActivity.kind,
-      title: generatedActivity.title,
-      config: generatedActivity.config,
-      skillTags: generatedActivity.skillTags,
-      genModel: generatedActivity.genModel,
-      genRoute: generatedActivity.genRoute,
-      genAt: generatedActivity.genAt,
-    })
-    .from(generatedActivity)
-    .innerJoin(learner, eq(generatedActivity.learnerId, learner.id))
-    .where(
-      and(
-        eq(generatedActivity.id, id),
-        eq(generatedActivity.programSlug, programSlug),
-        eq(learner.accountId, accountId),
-      ),
-    )
-    .limit(1);
-  const r = rows[0];
-  if (!r) return null;
-  return {
-    id: r.id,
-    lessonId: r.lessonId,
-    unitKey: r.unitKey,
-    programSlug: r.programSlug,
-    kind: r.kind as ActivityKind,
-    title: r.title,
-    config: r.config,
-    skillTags: r.skillTags,
-    gen: { model: r.genModel, route: r.genRoute, at: r.genAt.toISOString() },
-  };
 }
 
 /** Outcome tally across a learner's skills (for the dashboard summary). */
@@ -1539,24 +2112,41 @@ export async function getEnrollmentForGate(
   accountId: string,
   learnerId: string,
   slug: string,
-): Promise<{ status: EnrollmentStatus; config: EnrollmentConfig } | null> {
-  return withOwnedLearner<{ status: EnrollmentStatus; config: EnrollmentConfig } | null>(
+): Promise<{
+  status: EnrollmentStatus;
+  config: EnrollmentConfig;
+  configValid: boolean;
+  programVersionId: string | null;
+} | null> {
+  return withOwnedLearner<{
+    status: EnrollmentStatus;
+    config: EnrollmentConfig;
+    configValid: boolean;
+    programVersionId: string | null;
+  } | null>(
     accountId,
     learnerId,
     async () => {
       const rows = await getDb()
-        .select({ status: enrollment.status, config: enrollment.config })
+        .select({
+          status: enrollment.status,
+          config: enrollment.config,
+          programVersionId: enrollment.programVersionId,
+        })
         .from(enrollment)
         .where(enrollmentKey(learnerId, slug))
         .limit(1);
       if (!rows[0]) return null;
+      const parsed = parseJsonbFailClosedWithValidity(
+        enrollmentConfigSchema,
+        rows[0].config,
+        `enrollment config (gate learner=${learnerId} slug=${slug})`,
+      );
       return {
         status: rows[0].status as EnrollmentStatus,
-        config: parseJsonbFailClosed(
-          enrollmentConfigSchema,
-          rows[0].config,
-          `enrollment config (gate learner=${learnerId} slug=${slug})`,
-        ),
+        config: parsed.data,
+        configValid: parsed.valid,
+        programVersionId: rows[0].programVersionId,
       };
     },
     null,
@@ -1753,9 +2343,12 @@ async function gatherLearnerExport(
     attempts: attemptRows.map((a) => ({
       activityId: a.activityId,
       kind: a.kind,
+      programSlug: a.programSlug,
+      unitKey: a.unitKey,
+      programVersionId: a.programVersionId,
       score: a.score as { stars: number; correct: number; total: number; skillEvidence: unknown[] },
-      // The child's own response (journal text, drawings, answers) — exported in
-      // full for COPPA "export … all its data" (shaped in export.ts).
+      // Export the complete bounded response that was persisted for this kind.
+      // Journal responses are privacy-safe summaries, never text or drawing data.
       response: a.response,
       day: a.day,
       createdAt: a.createdAt,
@@ -1790,6 +2383,7 @@ async function gatherLearnerExport(
       createdAt: r.createdAt.toISOString(),
     })),
     generatedActivities: generatedActivityRows.map((g) => ({
+      programVersionId: g.programVersionId,
       unitKey: g.unitKey,
       lessonId: g.lessonId,
       kind: g.kind,

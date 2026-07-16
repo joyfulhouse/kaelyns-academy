@@ -29,6 +29,9 @@ const skillStateUpdates: Record<string, unknown>[] = [];
 // full next state through insert(...).onConflictDoUpdate(...), so this captures
 // both first schedules and later review folds.
 const reviewScheduleInserts: Record<string, unknown>[] = [];
+// Privacy-safe oral-reading witnesses are inserted and then deleted on claim.
+const oralVerificationInserts: Record<string, unknown>[] = [];
+const oralVerificationUpdates: Record<string, unknown>[] = [];
 // Mutable canned rows the fake `tx` returns for each select target.
 const learnerRows = { value: [{ id: "L1" }] as Record<string, unknown>[] };
 const skillRows = { value: [] as Record<string, unknown>[] };
@@ -36,10 +39,15 @@ const reviewScheduleRows = { value: [] as Record<string, unknown>[] };
 // The in-tx active-enrollment gate read (Fix-F A4): default ACTIVE so the
 // happy-path tests persist; the gate tests override to removed/paused/none.
 const enrollmentRows = {
-  value: [{ id: "E1", status: "active", programSlug: "kaelyn-adaptive" }] as Record<
-    string,
-    unknown
-  >[],
+  value: [
+    {
+      id: "E1",
+      status: "active",
+      programSlug: "kaelyn-adaptive",
+      programVersionId: "PV1",
+      config: {},
+    },
+  ] as Record<string, unknown>[],
 };
 // The in-tx checkpoint_result upsert read (C1): default a single pending row so
 // a checkpointPhase attempt's fold has a row to update; unused by non-checkpoint
@@ -51,7 +59,17 @@ const checkpointResultRows = {
 // row (only the just-inserted attempt) so the happy path is a first completion;
 // the repeat-completion test overrides to two rows (prior + just-inserted).
 const attemptRows = { value: [{ id: "new" }] as Record<string, unknown>[] };
+// INSERT ... ON CONFLICT ... RETURNING rows. Empty simulates a duplicate
+// completion id whose original attempt must be replayed without any folds.
+const attemptInsertResultRows = { value: [{ id: "new" }] as Record<string, unknown>[] };
+const attemptReplayRows = { value: [] as Record<string, unknown>[] };
+const generatedCompletionRows = { value: [] as Record<string, unknown>[] };
 const completedTodayRows = { value: [] as Record<string, unknown>[] };
+const generatedActivityRows = { value: [] as Record<string, unknown>[] };
+const oralVerificationRows = { value: [] as Record<string, unknown>[] };
+const oralVerificationInsertResultRows = {
+  value: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }] as Record<string, unknown>[],
+};
 // The day's learner_quest rows (Adventure 2.0 fold); applyAttemptToQuests only
 // SELECTs status="active" rows (mirroring the real query's WHERE clause) — the
 // fake filters here so "offered leaves untouched" is actually observable.
@@ -122,6 +140,9 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
       if (chain.op === "update" && chain.table === "skill_state" && v) {
         skillStateUpdates.push(v);
       }
+      if (chain.op === "update" && chain.table === "oral_reading_verification" && v) {
+        oralVerificationUpdates.push(v);
+      }
       return chain;
     },
     values(v?: Record<string, unknown>) {
@@ -137,6 +158,9 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
       if (chain.op === "insert" && chain.table === "review_schedule" && v) {
         reviewScheduleInserts.push(v);
       }
+      if (chain.op === "insert" && chain.table === "oral_reading_verification" && v) {
+        oralVerificationInserts.push(v);
+      }
       return chain;
     },
     onConflictDoNothing() {
@@ -145,6 +169,9 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
     },
     onConflictDoUpdate() {
       ops.push({ op: "onConflictDoUpdate", table: chain.table });
+      return chain;
+    },
+    returning() {
       return chain;
     },
     limit(value?: number) {
@@ -162,16 +189,50 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
     then<T>(resolve: (rows: unknown[]) => T) {
       ops.push({ op: chain.op, table: chain.table });
       const rows =
-        chain.op === "select" && chain.table === "learner"
-          ? learnerRows.value
+        chain.op === "insert" && chain.table === "attempt"
+          ? attemptInsertResultRows.value
+          : chain.op === "insert" && chain.table === "oral_reading_verification"
+            ? oralVerificationInsertResultRows.value
+          : chain.op === "select" && chain.table === "learner"
+          ? applyQueryShape(
+              learnerRows.value.map((row) => ({ accountId: "acct-1", ...row })),
+              chain.predicate,
+              chain.ordering,
+              chain.limitValue,
+            )
           : chain.op === "select" && chain.table === "skill_state"
             ? skillRows.value
             : chain.op === "select" && chain.table === "review_schedule"
               ? reviewScheduleRows.value.filter((row) => matches(row, chain.predicate))
             : chain.op === "select" && chain.table === "enrollment"
-              ? enrollmentRows.value
+              ? applyQueryShape(
+                  enrollmentRows.value.map((row) => ({
+                    learnerId: "L1",
+                    programSlug: "kaelyn-adaptive",
+                    programVersionId: "PV1",
+                    ...row,
+                  })),
+                  chain.predicate,
+                  chain.ordering,
+                  chain.limitValue,
+                )
             : chain.op === "select" && chain.table === "attempt"
-                ? projection && "activityId" in projection
+                ? projection && "kind" in projection
+                  ? attemptReplayRows.value.map((row) => ({
+                      programSlug: "kaelyn-adaptive",
+                      unitKey: "unit-1",
+                      programVersionId: "PV1",
+                      ...row,
+                    }))
+                  : projection && "score" in projection
+                    ? completedTodayRows.value.filter((row) =>
+                        matches(row, chain.predicate),
+                      )
+                  : projection && Object.keys(projection).length === 1 && "completionId" in projection
+                    ? generatedCompletionRows.value.filter((row) =>
+                        matches(row, chain.predicate),
+                      )
+                  : projection && "activityId" in projection
                   ? completedTodayRows.value.filter((row) => matches(row, chain.predicate))
                   : projection && "response" in projection
                     ? applyQueryShape(
@@ -183,6 +244,20 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
                     : attemptRows.value
                 : chain.op === "select" && chain.table === "checkpoint_result"
                   ? checkpointResultRows.value
+                  : chain.op === "select" && chain.table === "generated_activity"
+                    ? applyQueryShape(
+                        generatedActivityRows.value,
+                        chain.predicate,
+                        chain.ordering,
+                        chain.limitValue,
+                      )
+                  : chain.op === "select" && chain.table === "oral_reading_verification"
+                    ? applyQueryShape(
+                        oralVerificationRows.value,
+                        chain.predicate,
+                        chain.ordering,
+                        chain.limitValue,
+                      )
                   : chain.op === "select" && chain.table === "learner_quest"
                     ? // Mirrors applyAttemptToQuests's WHERE: status="active" AND
                       // programSlug=<the recorded attempt's program> (Finding 1: cross-
@@ -230,7 +305,12 @@ const db = { ...connection(), transaction };
 
 vi.mock("@/lib/db", () => ({ getDb: () => db }));
 vi.mock("@/lib/db/schema", () => ({
-  learner: { _name: "learner", id: { name: "id" }, accountId: { name: "accountId" } },
+  learner: {
+    _name: "learner",
+    id: { name: "id" },
+    accountId: { name: "accountId" },
+    settings: { name: "settings" },
+  },
   attempt: {
     _name: "attempt",
     id: { name: "id" },
@@ -238,6 +318,11 @@ vi.mock("@/lib/db/schema", () => ({
     activityId: { name: "activityId" },
     kind: { name: "kind" },
     generated: { name: "generated" },
+    programSlug: { name: "programSlug" },
+    unitKey: { name: "unitKey" },
+    programVersionId: { name: "programVersionId" },
+    completionId: { name: "completionId" },
+    score: { name: "score" },
     response: { name: "response" },
     day: { name: "day" },
     createdAt: { name: "createdAt" },
@@ -248,6 +333,8 @@ vi.mock("@/lib/db/schema", () => ({
     learnerId: { name: "learnerId" },
     programSlug: { name: "programSlug" },
     status: { name: "status" },
+    config: { name: "config" },
+    programVersionId: { name: "programVersionId" },
   },
   skillState: {
     _name: "skill_state",
@@ -286,6 +373,39 @@ vi.mock("@/lib/db/schema", () => ({
     phase: {},
     createdAt: {},
   },
+  generatedActivity: {
+    _name: "generated_activity",
+    id: { name: "id" },
+    learnerId: { name: "learnerId" },
+    programSlug: { name: "programSlug" },
+    programVersionId: { name: "programVersionId" },
+    unitKey: { name: "unitKey" },
+    lessonId: { name: "lessonId" },
+    kind: { name: "kind" },
+    title: { name: "title" },
+    config: { name: "config" },
+    skillTags: { name: "skillTags" },
+    genModel: { name: "genModel" },
+    genRoute: { name: "genRoute" },
+    genAt: { name: "genAt" },
+    createdAt: { name: "createdAt" },
+  },
+  oralReadingVerification: {
+    _name: "oral_reading_verification",
+    id: { name: "id" },
+    learnerId: { name: "learnerId" },
+    programSlug: { name: "programSlug" },
+    unitKey: { name: "unitKey" },
+    activityId: { name: "activityId" },
+    mode: { name: "mode" },
+    result: { name: "result" },
+    perWord: { name: "perWord" },
+    correctCount: { name: "correctCount" },
+    totalWords: { name: "totalWords" },
+    wcpm: { name: "wcpm" },
+    expiresAt: { name: "expiresAt" },
+    consumedCompletionId: { name: "consumedCompletionId" },
+  },
 }));
 // drizzle-orm operators are used only to build opaque predicate objects here.
 vi.mock("drizzle-orm", () => ({
@@ -298,25 +418,34 @@ vi.mock("drizzle-orm", () => ({
 }));
 
 vi.mock("@/lib/content/repository", () => ({
-  resolveLearnerProgram: vi.fn(),
+  resolveAccountLearnerProgram: vi.fn(),
 }));
 
 import {
   applyPlacement,
+  CompletionReplayMismatchError,
   EnrollmentNotActiveError,
+  GeneratedActivityAlreadyCompletedError,
   getDueReviews,
+  getCompletedActivityIdsForVersion,
   getFluencyHistory,
+  getPlayableGeneratedActivity,
   getPendingCheckpointResults,
   nextSkillRecord,
+  createOralReadingVerification,
   recordAttempt,
+  recordOralReadingAttempt,
   redoCheckpoint,
 } from "./store";
-import { resolveLearnerProgram } from "@/lib/content/repository";
-import type { Program } from "@/content";
+import { resolveAccountLearnerProgram } from "@/lib/content/repository";
+import type { ActivityScore, Program } from "@/content";
 
 const input = {
   learnerId: "L1",
   programSlug: "kaelyn-adaptive",
+  expectedProgramVersionId: "PV1",
+  unitId: "unit-1",
+  completionId: "11111111-1111-4111-8111-111111111111",
   activityId: "act-1",
   kind: "math",
   score: {
@@ -336,6 +465,564 @@ function baseInput(): typeof input {
   return input;
 }
 
+describe("getCompletedActivityIdsForVersion (generation witness)", () => {
+  beforeEach(() => {
+    learnerRows.value = [{ id: "L1" }];
+    completedTodayRows.value = [
+      {
+        learnerId: "L1",
+        activityId: "same-stable-id",
+        generated: false,
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV0",
+        score: { stars: 3 },
+        createdAt: new Date("2026-07-01T00:00:00.000Z"),
+      },
+      {
+        learnerId: "L1",
+        activityId: "current-id",
+        generated: false,
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV1",
+        score: { stars: 2 },
+        createdAt: new Date("2026-07-02T00:00:00.000Z"),
+      },
+    ];
+  });
+
+  it("includes only authored completions from the exact program version", async () => {
+    await expect(
+      getCompletedActivityIdsForVersion(
+        "acct-1",
+        "L1",
+        "kaelyn-adaptive",
+        "PV1",
+      ),
+    ).resolves.toEqual([{ activityId: "current-id", stars: 2 }]);
+  });
+});
+
+describe("getPlayableGeneratedActivity (selected learner boundary)", () => {
+  const generatedRow = {
+    id: "gen-1",
+    learnerId: "L1",
+    programSlug: "kaelyn-adaptive",
+    programVersionId: "PV1",
+    unitKey: "unit-1",
+    lessonId: "lesson-1",
+    kind: "math-tenframe",
+    title: "Made for you",
+    config: { target: 5 },
+    skillTags: ["math.add"],
+    genModel: "ha-assist",
+    genRoute: "ready",
+    genAt: new Date("2026-07-15T12:00:00.000Z"),
+    createdAt: new Date("2026-07-15T12:00:00.000Z"),
+  };
+
+  beforeEach(() => {
+    ops.length = 0;
+    learnerRows.value = [{ id: "L1" }];
+    generatedActivityRows.value = [generatedRow];
+    generatedCompletionRows.value = [];
+  });
+
+  it("returns a bounded playable DTO including its owning learner", async () => {
+    await expect(
+      getPlayableGeneratedActivity(
+        "acct-1",
+        "L1",
+        "kaelyn-adaptive",
+        "PV1",
+        "gen-1",
+      ),
+    ).resolves.toEqual({
+      id: "gen-1",
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      programVersionId: "PV1",
+      unitKey: "unit-1",
+      lessonId: "lesson-1",
+      kind: "math-tenframe",
+      title: "Made for you",
+      config: { target: 5 },
+      skillTags: ["math.add"],
+      gen: {
+        model: "ha-assist",
+        route: "ready",
+        at: "2026-07-15T12:00:00.000Z",
+      },
+    });
+  });
+
+  it("returns null for another learner under the same account", async () => {
+    await expect(
+      getPlayableGeneratedActivity(
+        "acct-1",
+        "L2",
+        "kaelyn-adaptive",
+        "PV1",
+        "gen-1",
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("returns null when the selected learner's row belongs to another program", async () => {
+    await expect(
+      getPlayableGeneratedActivity(
+        "acct-1",
+        "L1",
+        "world-languages",
+        "PV1",
+        "gen-1",
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("returns null when the shelf row belongs to another pinned version", async () => {
+    await expect(
+      getPlayableGeneratedActivity(
+        "acct-1",
+        "L1",
+        "kaelyn-adaptive",
+        "PV2",
+        "gen-1",
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("returns null for a spent one-shot shelf id", async () => {
+    generatedCompletionRows.value = [
+      {
+        learnerId: "L1",
+        activityId: "gen-1",
+        generated: true,
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV1",
+        completionId: "already-completed",
+      },
+    ];
+
+    await expect(
+      getPlayableGeneratedActivity(
+        "acct-1",
+        "L1",
+        "kaelyn-adaptive",
+        "PV1",
+        "gen-1",
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("treats a legacy generated attempt with nullable identity as spent", async () => {
+    generatedCompletionRows.value = [
+      {
+        learnerId: "L1",
+        activityId: "gen-1",
+        generated: true,
+        programSlug: null,
+        programVersionId: null,
+        completionId: "legacy-completion",
+      },
+    ];
+
+    await expect(
+      getPlayableGeneratedActivity(
+        "acct-1",
+        "L1",
+        "kaelyn-adaptive",
+        "PV1",
+        "gen-1",
+      ),
+    ).resolves.toBeNull();
+  });
+});
+
+describe("oral-reading verification witness store", () => {
+  const completionId = "33333333-3333-4333-8333-333333333333";
+  const verificationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const score = {
+    correct: 1,
+    total: 1,
+    stars: 3 as const,
+    skillEvidence: [{ skill: "word.sight", outcome: "solid" as const }],
+  };
+  const response = { attempts: 1, results: ["matched"], fallbackUsed: false };
+  const witness = {
+    id: verificationId,
+    learnerId: "L1",
+    programSlug: "kaelyn-adaptive",
+    programVersionId: "PV1",
+    unitKey: "unit-1",
+    activityId: "oral-1",
+    mode: "word",
+    result: "matched",
+    perWord: null,
+    correctCount: 1,
+    totalWords: 1,
+    wcpm: null,
+    expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+    consumedCompletionId: null,
+  };
+
+  const canonicalize = vi.fn(
+    (_facts: unknown): { response: unknown; score: ActivityScore } | null => ({
+      response,
+      score,
+    }),
+  );
+  const oralInput = () => ({
+    learnerId: "L1",
+    programSlug: "kaelyn-adaptive",
+    expectedProgramVersionId: "PV1",
+    completionId,
+    unitKey: "unit-1",
+    activityId: "oral-1",
+    verificationId,
+    day: "2026-07-15" as const,
+    checkpointPhase: null,
+    canonicalize,
+  });
+
+  beforeEach(() => {
+    ops.length = 0;
+    attemptInserts.length = 0;
+    ledgerInserts.length = 0;
+    lockedSkills.length = 0;
+    oralVerificationInserts.length = 0;
+    oralVerificationUpdates.length = 0;
+    transaction.mockClear();
+    learnerRows.value = [{ id: "L1", settings: { oralReading: true } }];
+    enrollmentRows.value = [
+      {
+        id: "E1",
+        status: "active",
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV1",
+        config: {},
+      },
+    ];
+    skillRows.value = [{ id: "S1", evidence: [] }];
+    attemptRows.value = [{ id: "new" }];
+    attemptInsertResultRows.value = [{ id: "new" }];
+    attemptReplayRows.value = [];
+    generatedCompletionRows.value = [];
+    oralVerificationRows.value = [{ ...witness }];
+    questRows.value = [];
+    reviewScheduleRows.value = [];
+    canonicalize.mockReset();
+    canonicalize.mockImplementation((_facts: unknown) => ({ response, score }));
+  });
+
+  it("locks, records, and deletes the claimed witness in one transaction", async () => {
+    await expect(recordOralReadingAttempt("acct-1", oralInput())).resolves.toEqual(score);
+
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(canonicalize).toHaveBeenCalledWith({
+      mode: "word",
+      result: "matched",
+      perWord: null,
+      correctCount: 1,
+      totalWords: 1,
+      wcpm: null,
+    });
+    expect(attemptInserts[0]).toMatchObject({
+      learnerId: "L1",
+      activityId: "oral-1",
+      kind: "oral-reading",
+      completionId,
+      programSlug: "kaelyn-adaptive",
+      unitKey: "unit-1",
+      programVersionId: "PV1",
+      response,
+      score,
+    });
+    expect(oralVerificationUpdates).toEqual([]);
+    const lockIndex = ops.findIndex(
+      (operation) =>
+        operation.op === "select.for" && operation.table === "oral_reading_verification",
+    );
+    const attemptIndex = ops.findIndex(
+      (operation) => operation.op === "insert" && operation.table === "attempt",
+    );
+    const claimIndex = ops
+      .map(
+        (operation) =>
+          operation.op === "delete" && operation.table === "oral_reading_verification",
+      )
+      .lastIndexOf(true);
+    expect(lockIndex).toBeLessThan(attemptIndex);
+    expect(attemptIndex).toBeLessThan(claimIndex);
+  });
+
+  it.each([
+    ["learner", { learnerId: "L2" }],
+    ["unit", { unitKey: "unit-2" }],
+    ["activity", { activityId: "oral-2" }],
+  ])("rejects a cross-%s witness without writing an attempt", async (_label, mismatch) => {
+    await expect(
+      recordOralReadingAttempt("acct-1", { ...oralInput(), ...mismatch }),
+    ).resolves.toBeNull();
+    expect(attemptInserts).toEqual([]);
+    expect(oralVerificationUpdates).toEqual([]);
+  });
+
+  it("rejects a cross-program claim at the locked enrollment boundary", async () => {
+    await expect(
+      recordOralReadingAttempt("acct-1", {
+        ...oralInput(),
+        programSlug: "world-languages",
+      }),
+    ).rejects.toBeInstanceOf(EnrollmentNotActiveError);
+    expect(attemptInserts).toEqual([]);
+  });
+
+  it("rejects a learner not owned by the account before reading the witness", async () => {
+    learnerRows.value = [
+      { id: "L1", accountId: "acct-1", settings: { oralReading: true } },
+    ];
+    await expect(recordOralReadingAttempt("other-account", oralInput())).resolves.toBeNull();
+    expect(ops.some((operation) => operation.table === "oral_reading_verification")).toBe(false);
+    expect(attemptInserts).toEqual([]);
+  });
+
+  it("rejects a witness when only a different program enrollment exists", async () => {
+    enrollmentRows.value = [
+      {
+        id: "E2",
+        learnerId: "L1",
+        programSlug: "world-languages",
+        status: "active",
+        config: {},
+      },
+    ];
+
+    await expect(recordOralReadingAttempt("acct-1", oralInput())).rejects.toBeInstanceOf(
+      EnrollmentNotActiveError,
+    );
+    expect(attemptInserts).toEqual([]);
+  });
+
+  it("rejects an expired unconsumed witness", async () => {
+    oralVerificationRows.value = [
+      { ...witness, expiresAt: new Date("2000-01-01T00:00:00.000Z") },
+    ];
+    await expect(recordOralReadingAttempt("acct-1", oralInput())).resolves.toBeNull();
+    expect(attemptInserts).toEqual([]);
+  });
+
+  it("rejects a witness consumed by another completion", async () => {
+    oralVerificationRows.value = [
+      {
+        ...witness,
+        consumedCompletionId: "44444444-4444-4444-8444-444444444444",
+      },
+    ];
+    await expect(recordOralReadingAttempt("acct-1", oralInput())).resolves.toBeNull();
+    expect(attemptInserts).toEqual([]);
+  });
+
+  it("replays the original completion after its consumed witness has been deleted", async () => {
+    const originalScore = { ...score, stars: 2 as const };
+    oralVerificationRows.value = [];
+    attemptReplayRows.value = [
+      { activityId: "oral-1", kind: "oral-reading", generated: false, score: originalScore },
+    ];
+    canonicalize.mockImplementationOnce(() => null);
+
+    await expect(recordOralReadingAttempt("acct-1", oralInput())).resolves.toEqual(
+      originalScore,
+    );
+    expect(canonicalize).not.toHaveBeenCalled();
+    expect(oralVerificationUpdates).toEqual([]);
+    expect(lockedSkills).toEqual([]);
+  });
+
+  it.each([
+    ["program", { programSlug: "world-languages" }],
+    ["unit", { unitKey: "unit-2" }],
+    ["version", { programVersionId: "PV2" }],
+    ["legacy null program", { programSlug: null }],
+    ["legacy null unit", { unitKey: null }],
+  ])("rejects an oral replay with a different %s identity", async (_label, mismatch) => {
+    oralVerificationRows.value = [];
+    attemptReplayRows.value = [
+      {
+        activityId: "oral-1",
+        kind: "oral-reading",
+        generated: false,
+        score,
+        ...mismatch,
+      },
+    ];
+
+    await expect(recordOralReadingAttempt("acct-1", oralInput())).resolves.toBeNull();
+    expect(attemptInserts).toEqual([]);
+  });
+
+  it("rejects a witness issued for a previous enrollment version", async () => {
+    oralVerificationRows.value = [{ ...witness, programVersionId: "PV0" }];
+
+    await expect(recordOralReadingAttempt("acct-1", oralInput())).resolves.toBeNull();
+    expect(attemptInserts).toEqual([]);
+  });
+
+  it("rejects a replay whose stored activity identity does not match", async () => {
+    oralVerificationRows.value = [];
+    attemptReplayRows.value = [
+      { activityId: "oral-2", kind: "oral-reading", generated: false, score },
+    ];
+    await expect(recordOralReadingAttempt("acct-1", oralInput())).resolves.toBeNull();
+    expect(attemptInserts).toEqual([]);
+  });
+
+  it("rejects a first witness claim when microphone consent was revoked", async () => {
+    learnerRows.value = [{ id: "L1", settings: { oralReading: false } }];
+
+    await expect(recordOralReadingAttempt("acct-1", oralInput())).resolves.toBeNull();
+
+    expect(canonicalize).not.toHaveBeenCalled();
+    expect(attemptInserts).toEqual([]);
+    expect(oralVerificationRows.value).toHaveLength(1);
+  });
+
+  it("records no-witness completion as server-canonical participation only", async () => {
+    canonicalize.mockImplementationOnce((facts) => {
+      expect(facts).toBeNull();
+      return {
+        response: { attempts: 0, results: [], fallbackUsed: true },
+        score: { correct: 0, total: 0, stars: 1, skillEvidence: [] },
+      };
+    });
+    await expect(
+      recordOralReadingAttempt("acct-1", { ...oralInput(), verificationId: undefined }),
+    ).resolves.toMatchObject({ total: 0, skillEvidence: [] });
+    expect(
+      ops.some(
+        (operation) =>
+          operation.op === "select" && operation.table === "oral_reading_verification",
+      ),
+    ).toBe(false);
+  });
+
+  it("rechecks microphone consent and active-unit curation in the witness transaction", async () => {
+    learnerRows.value = [{ id: "L1", settings: { oralReading: true } }];
+    enrollmentRows.value = [
+      {
+        id: "E1",
+        status: "active",
+        programSlug: "kaelyn-adaptive",
+        config: { activeUnitKeys: ["unit-1"] },
+      },
+    ];
+
+    await expect(
+      createOralReadingVerification("acct-1", {
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+        expectedProgramVersionId: "PV1",
+        unitKey: "unit-1",
+        activityId: "oral-1",
+        mode: "word",
+        result: "matched",
+        perWord: null,
+        correctCount: 1,
+        totalWords: 1,
+        wcpm: null,
+      }),
+    ).resolves.toBe(verificationId);
+
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(oralVerificationInserts).toHaveLength(1);
+    expect(oralVerificationInserts[0]).toMatchObject({
+      learnerId: "L1",
+      programVersionId: "PV1",
+      unitKey: "unit-1",
+      activityId: "oral-1",
+    });
+  });
+
+  it("refuses a witness when consent is off, the unit is curated out, or config is malformed", async () => {
+    const input = {
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      expectedProgramVersionId: "PV1",
+      unitKey: "unit-1",
+      activityId: "oral-1",
+      mode: "word" as const,
+      result: "matched" as const,
+      perWord: null,
+      correctCount: 1,
+      totalWords: 1 as const,
+      wcpm: null,
+    };
+
+    learnerRows.value = [{ id: "L1", settings: { oralReading: false } }];
+    await expect(createOralReadingVerification("acct-1", input)).resolves.toBeNull();
+
+    learnerRows.value = [{ id: "L1", settings: { oralReading: true } }];
+    enrollmentRows.value = [
+      { id: "E1", status: "active", config: { activeUnitKeys: ["unit-2"] } },
+    ];
+    await expect(createOralReadingVerification("acct-1", input)).resolves.toBeNull();
+
+    enrollmentRows.value = [
+      { id: "E1", status: "active", config: { activeUnitKeys: "unit-1" } },
+    ];
+    await expect(createOralReadingVerification("acct-1", input)).resolves.toBeNull();
+
+    expect(oralVerificationInserts).toEqual([]);
+  });
+
+  it("refuses witness creation after the enrollment is repinned", async () => {
+    enrollmentRows.value = [
+      {
+        id: "E1",
+        status: "active",
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV2",
+        config: {},
+      },
+    ];
+
+    await expect(
+      createOralReadingVerification("acct-1", {
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+        expectedProgramVersionId: "PV1",
+        unitKey: "unit-1",
+        activityId: "oral-1",
+        mode: "word",
+        result: "matched",
+        perWord: null,
+        correctCount: 1,
+        totalWords: 1,
+        wcpm: null,
+      }),
+    ).resolves.toBeNull();
+    expect(oralVerificationInserts).toEqual([]);
+  });
+
+  it("rejects inconsistent word facts before any database read", async () => {
+    await expect(
+      createOralReadingVerification("acct-1", {
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+        expectedProgramVersionId: "PV1",
+        unitKey: "unit-1",
+        activityId: "oral-1",
+        mode: "word",
+        result: "unclear",
+        perWord: null,
+        correctCount: 1,
+        totalWords: 1,
+        wcpm: null,
+      }),
+    ).rejects.toThrow(/result mismatch/i);
+    expect(ops).toEqual([]);
+  });
+});
+
 describe("recordAttempt (atomic persistence)", () => {
   beforeEach(() => {
     ops.length = 0;
@@ -349,8 +1036,13 @@ describe("recordAttempt (atomic persistence)", () => {
     transaction.mockClear();
     learnerRows.value = [{ id: "L1" }];
     skillRows.value = [];
-    enrollmentRows.value = [{ id: "E1", status: "active", programSlug: "kaelyn-adaptive" }];
+    enrollmentRows.value = [
+      { id: "E1", status: "active", programSlug: "kaelyn-adaptive", config: {} },
+    ];
     attemptRows.value = [{ id: "new" }];
+    attemptInsertResultRows.value = [{ id: "new" }];
+    attemptReplayRows.value = [];
+    generatedCompletionRows.value = [];
     questRows.value = [];
     checkpointResultRows.value = [{ id: "CR1", scores: {} }];
     reviewScheduleRows.value = [];
@@ -377,6 +1069,158 @@ describe("recordAttempt (atomic persistence)", () => {
     const learnerIdx = ops.findIndex((o) => o.op === "select" && o.table === "learner");
     expect(learnerIdx).toBeGreaterThanOrEqual(0);
     expect(learnerIdx).toBeLessThan(attemptIdx);
+  });
+
+  it("persists the completion id and returns the stored canonical score", async () => {
+    skillRows.value = [{ id: "S1", evidence: [] }];
+
+    await expect(recordAttempt("acct-1", input)).resolves.toEqual(input.score);
+    expect(attemptInserts[0]).toMatchObject({
+      completionId: input.completionId,
+      programSlug: input.programSlug,
+      unitKey: input.unitId,
+      programVersionId: input.expectedProgramVersionId,
+    });
+    expect(ops).toContainEqual({ op: "onConflictDoNothing", table: "attempt" });
+  });
+
+  it("replays the original score and skips every non-checkpoint fold", async () => {
+    const storedScore = {
+      correct: 1,
+      total: 3,
+      stars: 1 as const,
+      skillEvidence: [{ skill: "math.add", outcome: "emerging" as const }],
+    };
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [
+      {
+        activityId: input.activityId,
+        kind: input.kind,
+        generated: false,
+        score: storedScore,
+      },
+    ];
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+
+    await expect(
+      recordAttempt("acct-1", {
+        ...input,
+        score: { ...input.score, stars: 3 },
+      }),
+    ).resolves.toEqual(storedScore);
+
+    expect(ledgerInserts).toEqual([]);
+    expect(lockedSkills).toEqual([]);
+    expect(reviewScheduleInserts).toEqual([]);
+    expect(questUpdates).toEqual([]);
+    expect(checkpointUpdates).toEqual([]);
+  });
+
+  it("aborts before every fold when the DB privacy trigger suppresses an unsafe insert", async () => {
+    const rawSentinel = "private child journal sentinel";
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [];
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+
+    const error = await recordAttempt("acct-1", {
+      ...input,
+      kind: "journal-prompt",
+      response: { text: rawSentinel },
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("completion id conflict could not be replayed");
+    expect((error as Error).message).not.toContain(rawSentinel);
+    expect(skillStateUpdates).toEqual([]);
+    expect(reviewScheduleInserts).toEqual([]);
+    expect(questUpdates).toEqual([]);
+    expect(ledgerInserts).toEqual([]);
+    expect(checkpointUpdates).toEqual([]);
+  });
+
+  it("skips the checkpoint fold when replaying a checkpoint completion", async () => {
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [
+      {
+        activityId: input.activityId,
+        kind: input.kind,
+        generated: false,
+        score: input.score,
+      },
+    ];
+
+    await recordAttempt("acct-1", { ...input, checkpointPhase: "baseline" });
+
+    expect(checkpointUpdates).toEqual([]);
+    expect(ops.some((operation) => operation.table === "checkpoint_result")).toBe(false);
+  });
+
+  it.each([
+    ["activity id", { activityId: "act-other" }],
+    ["kind", { kind: "reading" }],
+    ["generated identity", { generated: true }],
+  ])("rejects a completion replay with a different %s", async (_label, identity) => {
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [
+      {
+        activityId: input.activityId,
+        kind: input.kind,
+        generated: false,
+        score: input.score,
+      },
+    ];
+
+    await expect(recordAttempt("acct-1", { ...input, ...identity })).rejects.toThrow(
+      /completion id/i,
+    );
+    expect(ledgerInserts).toEqual([]);
+    expect(lockedSkills).toEqual([]);
+    expect(reviewScheduleInserts).toEqual([]);
+    expect(questUpdates).toEqual([]);
+    expect(checkpointUpdates).toEqual([]);
+  });
+
+  it.each([
+    ["program", { programSlug: "world-languages" }],
+    ["unit", { unitKey: "unit-2" }],
+    ["version", { programVersionId: "PV2" }],
+    ["legacy null program", { programSlug: null }],
+    ["legacy null unit", { unitKey: null }],
+  ])("rejects a completion replay with a different stored %s", async (_label, mismatch) => {
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [
+      {
+        activityId: input.activityId,
+        kind: input.kind,
+        generated: false,
+        score: input.score,
+        ...mismatch,
+      },
+    ];
+
+    await expect(recordAttempt("acct-1", input)).rejects.toBeInstanceOf(
+      CompletionReplayMismatchError,
+    );
+    expect(ledgerInserts).toEqual([]);
+    expect(lockedSkills).toEqual([]);
   });
 
   it("takes the lock-then-update path on an existing skill row (upsert)", async () => {
@@ -451,7 +1295,7 @@ describe("recordAttempt (atomic persistence)", () => {
   // ── Fix-F A4: server-authoritative curation gate (active enrollment required) ──
 
   it("persists when an ACTIVE enrollment exists for the program", async () => {
-    enrollmentRows.value = [{ status: "active" }];
+    enrollmentRows.value = [{ id: "E1", status: "active", config: {} }];
     skillRows.value = [{ id: "S1", evidence: [] }];
     await recordAttempt("acct-1", input);
     // The active-enrollment read happens inside the tx, AFTER the tenancy check
@@ -462,6 +1306,76 @@ describe("recordAttempt (atomic persistence)", () => {
     expect(learnerIdx).toBeLessThan(enrollIdx);
     expect(enrollIdx).toBeGreaterThanOrEqual(0);
     expect(enrollIdx).toBeLessThan(attemptIdx);
+  });
+
+  it("treats an empty activeUnitKeys list as all units active", async () => {
+    enrollmentRows.value = [
+      { id: "E1", status: "active", config: { activeUnitKeys: [] } },
+    ];
+    skillRows.value = [{ id: "S1", evidence: [] }];
+
+    await expect(
+      recordAttempt("acct-1", { ...input, unitId: "unit-not-listed" }),
+    ).resolves.toEqual(input.score);
+    expect(attemptInserts).toHaveLength(1);
+  });
+
+  it.each([
+    ["authored", { generated: false, creditEligible: true, shelfEligible: false }],
+    ["generated shelf", { generated: true, creditEligible: false, shelfEligible: true }],
+  ])(
+    "rejects a %s attempt when activeUnitKeys excludes its unit before any write",
+    async (_label, attemptIdentity) => {
+      enrollmentRows.value = [
+        {
+          id: "E1",
+          status: "active",
+          config: { activeUnitKeys: ["unit-2"] },
+        },
+      ];
+
+      await expect(
+        recordAttempt("acct-1", {
+          ...input,
+          ...attemptIdentity,
+          unitId: "unit-1",
+        }),
+      ).rejects.toBeInstanceOf(EnrollmentNotActiveError);
+
+      expect(ops).toContainEqual({ op: "select.for", table: "enrollment" });
+      expect(ops.some((operation) => operation.table === "attempt")).toBe(false);
+      expect(ledgerInserts).toEqual([]);
+    },
+  );
+
+  it("rejects a blank attempt unit when activeUnitKeys is nonempty", async () => {
+    enrollmentRows.value = [
+      {
+        id: "E1",
+        status: "active",
+        config: { activeUnitKeys: ["unit-1"] },
+      },
+    ];
+
+    await expect(
+      recordAttempt("acct-1", { ...input, unitId: "" }),
+    ).rejects.toBeInstanceOf(EnrollmentNotActiveError);
+    expect(ops.some((operation) => operation.table === "attempt")).toBe(false);
+  });
+
+  it("fails closed on malformed locked enrollment config before any write", async () => {
+    enrollmentRows.value = [
+      {
+        id: "E1",
+        status: "active",
+        config: { activeUnitKeys: "unit-1" },
+      },
+    ];
+
+    await expect(
+      recordAttempt("acct-1", { ...input, unitId: "unit-1" }),
+    ).rejects.toBeInstanceOf(EnrollmentNotActiveError);
+    expect(ops.some((operation) => operation.table === "attempt")).toBe(false);
   });
 
   it("throws EnrollmentNotActiveError and writes nothing when no enrollment exists", async () => {
@@ -656,17 +1570,121 @@ describe("recordAttempt (atomic persistence)", () => {
     ]);
   });
 
-  it("writes no ledger row on a REPEAT generated shelf completion (earns exactly once)", async () => {
-    // The dedupe counts prior GENERATED attempts for the same id: a prior row +
-    // the just-inserted one → alreadyCompleted → no second earn.
-    attemptRows.value = [{ id: "prev" }, { id: "new" }];
-    await recordAttempt("acct-1", {
+  it("rejects a second completion id for a one-shot generated shelf item before any fold", async () => {
+    generatedCompletionRows.value = [
+      {
+        learnerId: "L1",
+        activityId: input.activityId,
+        generated: true,
+        completionId: "prior-completion",
+      },
+    ];
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+
+    await expect(
+      recordAttempt("acct-1", {
+        ...input,
+        generated: true,
+        creditEligible: false,
+        shelfEligible: true,
+      }),
+    ).rejects.toBeInstanceOf(GeneratedActivityAlreadyCompletedError);
+
+    expect(attemptInserts).toEqual([]);
+    expect(skillStateUpdates).toEqual([]);
+    expect(reviewScheduleInserts).toEqual([]);
+    expect(questUpdates).toEqual([]);
+    expect(ledgerInserts).toEqual([]);
+    const enrollmentLock = ops.findIndex(
+      (operation) => operation.op === "select.for" && operation.table === "enrollment",
+    );
+    const completionRead = ops.findIndex(
+      (operation) => operation.op === "select" && operation.table === "attempt",
+    );
+    expect(enrollmentLock).toBeGreaterThanOrEqual(0);
+    expect(completionRead).toBeGreaterThan(enrollmentLock);
+  });
+
+  it("fails closed before every fold when the DB one-shot guard suppresses a raced shelf insert", async () => {
+    // The app precheck saw no prior completion, but the permanent DB trigger
+    // suppressed the INSERT after a serialized winner committed.
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [];
+    questRows.value = [
+      {
+        id: "Q1",
+        kind: "complete_n",
+        target: { count: 1 },
+        progress: { done: 0 },
+        rewardStars: 2,
+        status: "active",
+      },
+    ];
+
+    const error = await recordAttempt("acct-1", {
       ...input,
       generated: true,
       creditEligible: false,
       shelfEligible: true,
-    });
-    expect(ledgerInserts).toHaveLength(0);
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("completion id conflict could not be replayed");
+    expect(attemptInserts).toHaveLength(1);
+    expect(skillStateUpdates).toEqual([]);
+    expect(reviewScheduleInserts).toEqual([]);
+    expect(questUpdates).toEqual([]);
+    expect(ledgerInserts).toEqual([]);
+    expect(checkpointUpdates).toEqual([]);
+  });
+
+  it("still replays the same completion id for a one-shot generated shelf item", async () => {
+    const storedScore = {
+      correct: 0,
+      total: 1,
+      stars: 1 as const,
+      skillEvidence: [{ skill: "math.add", outcome: "emerging" as const }],
+    };
+    generatedCompletionRows.value = [
+      {
+        learnerId: "L1",
+        activityId: input.activityId,
+        generated: true,
+        completionId: input.completionId,
+      },
+    ];
+    attemptInsertResultRows.value = [];
+    attemptReplayRows.value = [
+      {
+        activityId: input.activityId,
+        kind: input.kind,
+        generated: true,
+        score: storedScore,
+      },
+    ];
+
+    await expect(
+      recordAttempt("acct-1", {
+        ...input,
+        generated: true,
+        creditEligible: false,
+        shelfEligible: true,
+      }),
+    ).resolves.toEqual(storedScore);
+
+    expect(skillStateUpdates).toEqual([]);
+    expect(reviewScheduleInserts).toEqual([]);
+    expect(questUpdates).toEqual([]);
+    expect(ledgerInserts).toEqual([]);
   });
 
   it("a generated NON-shelf attempt still earns nothing (shelfEligible absent)", async () => {
@@ -927,7 +1945,7 @@ describe("getFluencyHistory (owned oral-reading history)", () => {
     attemptRows.value = [];
   });
 
-  it("extracts only finite numeric WCPM values from response JSON", async () => {
+  it("extracts WCPM only from a complete server-canonical oral response", async () => {
     attemptRows.value = [
       {
         learnerId: "L1",
@@ -958,7 +1976,7 @@ describe("getFluencyHistory (owned oral-reading history)", () => {
         createdAt: new Date("2026-07-11T10:00:00Z"),
       },
       {
-        // A forged out-of-plausible-range WCPM is dropped (client-echo guard).
+        // Corrupt/legacy out-of-plausible-range data is dropped defensively.
         learnerId: "L1",
         kind: "oral-reading",
         day: "2026-07-11",
@@ -966,10 +1984,23 @@ describe("getFluencyHistory (owned oral-reading history)", () => {
         createdAt: new Date("2026-07-11T11:00:00Z"),
       },
       {
+        // A bare browser-like fact is not the canonical stored response shape.
+        learnerId: "L1",
+        kind: "oral-reading",
+        day: "2026-07-11",
+        response: { wcpm: 21 },
+        createdAt: new Date("2026-07-11T12:00:00Z"),
+      },
+      {
         learnerId: "L1",
         kind: "oral-reading",
         day: "2026-07-12",
-        response: { wcpm: 22 },
+        response: {
+          attempts: 1,
+          results: ["matched"],
+          fallbackUsed: false,
+          wcpm: 22,
+        },
         createdAt: new Date("2026-07-12T10:00:00Z"),
       },
     ];
@@ -999,21 +2030,21 @@ describe("getFluencyHistory (owned oral-reading history)", () => {
         learnerId: "L1",
         kind: "oral-reading",
         day: "2026-07-12",
-        response: { wcpm: 22 },
+        response: { attempts: 1, results: ["matched"], fallbackUsed: false, wcpm: 22 },
         createdAt: new Date("2026-07-12T10:00:00Z"),
       },
       {
         learnerId: "L1",
         kind: "oral-reading",
         day: "2026-07-10",
-        response: { wcpm: 12 },
+        response: { attempts: 1, results: ["matched"], fallbackUsed: false, wcpm: 12 },
         createdAt: new Date("2026-07-10T10:00:00Z"),
       },
       {
         learnerId: "L1",
         kind: "oral-reading",
         day: "2026-07-11",
-        response: { wcpm: 18 },
+        response: { attempts: 1, results: ["matched"], fallbackUsed: false, wcpm: 18 },
         createdAt: new Date("2026-07-11T10:00:00Z"),
       },
     ];
@@ -1089,7 +2120,9 @@ describe("applyPlacement (parent-gated baseline seed)", () => {
     learnerRows.value = [{ id: "L1" }];
     skillRows.value = [];
     reviewScheduleRows.value = [];
-    enrollmentRows.value = [{ id: "E1", status: "active", programSlug: "kaelyn-adaptive" }];
+    enrollmentRows.value = [
+      { id: "E1", status: "active", programSlug: "kaelyn-adaptive", config: {} },
+    ];
     checkpointResultRows.value = [
       {
         id: "CR1",
@@ -1217,8 +2250,7 @@ describe("getDueReviews (owned authored review read)", () => {
   beforeEach(() => {
     ops.length = 0;
     learnerRows.value = [{ id: "L1" }];
-    vi.mocked(resolveLearnerProgram).mockReset();
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(DUE_PROGRAM);
+    vi.mocked(resolveAccountLearnerProgram).mockReset();
     reviewScheduleRows.value = [
       { id: "R1", learnerId: "L1", skill: "math.add", programSlug: "kaelyn-adaptive", intervalIndex: 1, nextReviewOn: "2026-07-10", lastReviewedOn: null, lastOutcome: "solid" },
       { id: "R2", learnerId: "L1", skill: "reading.fluency", programSlug: "kaelyn-adaptive", intervalIndex: 0, nextReviewOn: "2026-07-12", lastReviewedOn: null, lastOutcome: "solid" },
@@ -1226,16 +2258,26 @@ describe("getDueReviews (owned authored review read)", () => {
       { id: "R4", learnerId: "L1", skill: "math.other", programSlug: "another-program", intervalIndex: 0, nextReviewOn: "2026-07-09", lastReviewedOn: null, lastOutcome: "solid" },
     ];
     completedTodayRows.value = [
-      { learnerId: "L1", activityId: "a-today", generated: false, day: "2026-07-13" },
+      { learnerId: "L1", activityId: "a-today", programSlug: "kaelyn-adaptive", programVersionId: "PV1", generated: false, day: "2026-07-13" },
       // Yesterday's completion remains reviewable today.
-      { learnerId: "L1", activityId: "a-review", generated: false, day: "2026-07-12" },
+      { learnerId: "L1", activityId: "a-review", programSlug: "kaelyn-adaptive", programVersionId: "PV1", generated: false, day: "2026-07-12" },
+      // Same id today on an old pin cannot suppress this exact PV1 review.
+      { learnerId: "L1", activityId: "a-review", programSlug: "kaelyn-adaptive", programVersionId: "PV0", generated: false, day: "2026-07-13" },
+      // Same id in another program cannot suppress this program's review.
+      { learnerId: "L1", activityId: "a-reading", programSlug: "another-program", programVersionId: "PV1", generated: false, day: "2026-07-13" },
       // Generated attempts never suppress an authored review.
-      { learnerId: "L1", activityId: "a-reading", generated: true, day: "2026-07-13" },
+      { learnerId: "L1", activityId: "a-reading", programSlug: "kaelyn-adaptive", programVersionId: "PV1", generated: true, day: "2026-07-13" },
     ];
   });
 
-  it("filters by due day and program, excludes authored completions today, and orders most overdue first", async () => {
-    const reviews = await getDueReviews("acct-1", "L1", "kaelyn-adaptive", "2026-07-13");
+  it("filters by due day and exact version, excludes exact authored completions, and orders most overdue first", async () => {
+    const reviews = await getDueReviews(
+      "acct-1",
+      "L1",
+      DUE_PROGRAM,
+      "PV1",
+      "2026-07-13",
+    );
 
     expect(reviews.map((review) => [review.activity.id, review.skill, review.nextReviewOn])).toEqual([
       ["a-review", "math.add", "2026-07-10"],
@@ -1251,7 +2293,13 @@ describe("getDueReviews (owned authored review read)", () => {
       { id: "R1", learnerId: "L1", skill: "math.add", programSlug: "kaelyn-adaptive", intervalIndex: 1, nextReviewOn: "2026-07-10", lastReviewedOn: null, lastOutcome: "solid" },
     ];
 
-    const reviews = await getDueReviews("acct-1", "L1", "kaelyn-adaptive", "2026-07-13");
+    const reviews = await getDueReviews(
+      "acct-1",
+      "L1",
+      DUE_PROGRAM,
+      "PV1",
+      "2026-07-13",
+    );
 
     expect(reviews.filter((review) => review.skill === "math.add")).toHaveLength(1);
     expect(reviews[0].activity.id).toBe("a-today");
@@ -1265,14 +2313,20 @@ describe("getDueReviews (owned authored review read)", () => {
     reviewScheduleRows.value = [
       { id: "R1", learnerId: "L1", skill: "math.add", programSlug: "kaelyn-adaptive", intervalIndex: 1, nextReviewOn: "2026-07-10", lastReviewedOn: null, lastOutcome: "solid" },
     ];
-    vi.mocked(resolveLearnerProgram).mockResolvedValue({
+    const checkpointProgram = {
       ...DUE_PROGRAM,
       units: DUE_PROGRAM.units.map((unit) =>
         unit.id === "numbers" ? { ...unit, checkpoint: "baseline" } : unit,
       ),
-    } as unknown as Program);
+    } as unknown as Program;
 
-    const reviews = await getDueReviews("acct-1", "L1", "kaelyn-adaptive", "2026-07-13");
+    const reviews = await getDueReviews(
+      "acct-1",
+      "L1",
+      checkpointProgram,
+      "PV1",
+      "2026-07-13",
+    );
 
     expect(reviews.filter((review) => review.skill === "math.add")).toEqual([]);
   });
@@ -1281,10 +2335,25 @@ describe("getDueReviews (owned authored review read)", () => {
     learnerRows.value = [];
 
     await expect(
-      getDueReviews("acct-2", "L1", "kaelyn-adaptive", "2026-07-13"),
+      getDueReviews("acct-2", "L1", DUE_PROGRAM, "PV1", "2026-07-13"),
     ).resolves.toEqual([]);
-    expect(resolveLearnerProgram).not.toHaveBeenCalled();
+    expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
     expect(ops.some((op) => op.table === "review_schedule")).toBe(false);
+  });
+
+  it("lets reviews remain visible when the captured enrollment has no exact version pin", async () => {
+    const reviews = await getDueReviews(
+      "acct-1",
+      "L1",
+      DUE_PROGRAM,
+      null,
+      "2026-07-13",
+    );
+
+    expect(reviews.map((review) => review.activity.id)).toEqual([
+      "a-today",
+      "a-reading",
+    ]);
   });
 });
 

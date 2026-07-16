@@ -1,17 +1,19 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { MapTrifoldIcon } from "@phosphor-icons/react/dist/ssr";
-import type { Activity, ActivityScore, World } from "@/content";
+import type { Activity, World } from "@/content";
 import { getProgram, getUnit } from "@/content";
 import "@/activities"; // side-effect: registers every available activity-type plugin
 import { getActivityType } from "@/activities";
 import type { PlayableShelfItem } from "@/lib/tutor/store";
+import { getGeneratedPracticeAction } from "@/app/(learner)/actions";
 import { Mascot } from "@/components/art/Mascot";
 import { Button } from "@/components/ui/Button";
+import { KidLoadingShell } from "@/components/boundaries/KidLoadingShell";
 import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner } from "./learners";
 import { useLearnerState } from "./useLearnerState";
@@ -21,6 +23,20 @@ import { shouldAutoRead } from "@/lib/content/config";
 import { accountLearnerSelectionRequired } from "./learnerAccess";
 import { AccountLearnerPicker } from "./AccountLearnerPicker";
 import { AccountSessionError } from "./AccountSessionError";
+import { NotAssigned } from "./UnitView";
+import {
+  generatedPracticeRequestKey,
+  playerIdentityKey,
+  resolveGeneratedPractice,
+  safeParsePlayerConfig,
+  type LoadedGeneratedPractice,
+} from "./activityResolution";
+import {
+  claimPlayerCompletion,
+  settlePlayerCompletion,
+  type CompletionClaim,
+} from "./completionClaim";
+import { CompletionHeading } from "./CompletionHeading";
 
 /**
  * The play host for a generated SHELF item (Adventure 2.0 B3). A minimal mirror
@@ -40,24 +56,76 @@ import { AccountSessionError } from "./AccountSessionError";
  */
 export function GeneratedPracticeHost({
   programSlug,
-  row,
+  generatedId,
 }: {
   programSlug: string;
-  row: PlayableShelfItem | null;
+  generatedId: string;
 }) {
   const router = useRouter();
   const { learner } = useActiveLearner();
   // One state seam (DB-backed in account mode); the shelf route requires a
   // session, so `record` always takes the account path here.
   const learnerState = useLearnerState(learner.id, programSlug);
-  const { record, config, mode, ready, selectedLearnerId } = learnerState;
+  const {
+    record,
+    config,
+    mode,
+    ready,
+    selectedLearnerId,
+    available,
+    programVersionId,
+  } = learnerState;
   const [phase, setPhase] = useState<Phase>({ kind: "playing" });
+  const [loaded, setLoaded] = useState<LoadedGeneratedPractice<PlayableShelfItem> | null>(null);
+  const completionClaimRef = useRef<CompletionClaim | null>(null);
+
+  const requestKey =
+    mode === "account" && ready && available && selectedLearnerId && programVersionId
+      ? generatedPracticeRequestKey(
+          selectedLearnerId,
+          programSlug,
+          generatedId,
+          programVersionId,
+        )
+      : null;
+
+  // Resolve the row only after session + selected learner + pinned program state
+  // are ready. The request key is stored with the result, so an older sibling's
+  // response can remain in state without ever being eligible to render.
+  useEffect(() => {
+    if (!requestKey || !selectedLearnerId) return;
+    let active = true;
+    void (async () => {
+      const row = await getGeneratedPracticeAction({
+        learnerId: selectedLearnerId,
+        programSlug,
+        generatedId,
+      });
+      if (active) setLoaded({ requestKey, row });
+    })();
+    return () => {
+      active = false;
+    };
+  }, [requestKey, selectedLearnerId, programSlug, generatedId, programVersionId]);
+
+  const resolution = resolveGeneratedPractice({
+    mode,
+    ready,
+    available,
+    selectedLearnerId,
+    programSlug,
+    programVersionId,
+    generatedId,
+    activeUnitKeys: config.activeUnitKeys,
+    loaded,
+  });
+  const row = resolution.status === "ready" ? resolution.row : null;
 
   // Resolve the plugin + re-validate the stored config at the render boundary
   // (defense-in-depth: the config was schema+kind-validated before persistence,
   // but a plugin could have changed since). A miss on either → the moved state.
   const activityType = row ? getActivityType(row.kind) : undefined;
-  const parsed = activityType && row ? activityType.schema.safeParse(row.config) : undefined;
+  const parsed = activityType && row ? safeParsePlayerConfig(activityType.schema, row.config) : null;
 
   // back = this shelf item's unit map (its stable authored key); the program map
   // is the safe floor when there is no row to key off.
@@ -69,38 +137,68 @@ export function GeneratedPracticeHost({
   const world: World =
     (row && program ? getUnit(program, row.unitKey)?.world : undefined) ?? "sunshine";
 
-  // Record the completed shelf item as GENERATED. `shelfItemId` drives the
-  // optimistic completed/stars credit keyed by the generated id; `gen` relays the
-  // stored provenance (the server re-derives the authoritative shelf witness). An
-  // Activity-shaped object is synthesized from the row (record reads only
-  // id/kind; config is unused there) — cast because the runtime kind can't be
-  // correlated to the union member at compile time.
-  const handleComplete = useCallback(
-    (response: unknown, score: ActivityScore) => {
-      if (!row) return;
-      stopSpeaking();
-      const activity = {
-        id: row.id,
-        title: row.title,
-        skillTags: row.skillTags,
-        band: "ready",
-        kind: row.kind,
-        config: row.config,
-      } as Activity;
-      record(activity, response, score, {
-        generated: true,
-        gen: row.gen,
-        shelfItemId: row.id,
-      });
-      setPhase({ kind: "reward", stars: score.stars });
-    },
-    [row, record],
-  );
+  useEffect(() => {
+    if (phase.kind === "completed" && phase.requestKey === requestKey) {
+      router.replace(backHref);
+    }
+  }, [backHref, phase, requestKey, router]);
 
-  const handleExit = useCallback(() => {
+  // Record identifiers + response facts only. The server re-loads this same
+  // learner-owned row and returns the canonical score before reward. Phase keys
+  // prevent an older sibling's in-flight save from rendering after a switch.
+  const persistCompletion = async (response: unknown, completionId: string) => {
+    if (!row || !requestKey) return;
+    stopSpeaking();
+    setPhase({ kind: "saving", requestKey, response, completionId });
+    const settle = (settled: Phase) => {
+      setPhase((current) =>
+        settlePlayerCompletion(current, { requestKey, completionId }, settled),
+      );
+    };
+    const activity = {
+      id: row.id,
+      title: row.title,
+      skillTags: row.skillTags,
+      band: "ready",
+      kind: row.kind,
+      config: row.config,
+    } as Activity;
+    let result;
+    try {
+      result = await record(
+        activity,
+        response,
+        { generatedActivityId: row.id },
+        completionId,
+      );
+    } catch {
+      settle({ kind: "save-failed", requestKey, response, completionId });
+      return;
+    }
+    if (!result.ok && result.reason === "completed") {
+      // Another tab/device completed this one-shot after this page loaded. Move
+      // calmly back to its unit instead of offering a retry that can never win.
+      settle({ kind: "completed", requestKey, completionId });
+      return;
+    }
+    settle(
+      result.ok
+        ? { kind: "reward", requestKey, stars: result.score.stars }
+        : { kind: "save-failed", requestKey, response, completionId },
+    );
+  };
+
+  const handleComplete = (response: unknown) => {
+    const claim = claimPlayerCompletion(completionClaimRef.current, requestKey);
+    if (!claim) return;
+    completionClaimRef.current = claim;
+    void persistCompletion(response, claim.completionId);
+  };
+
+  const handleExit = () => {
     stopSpeaking();
     router.push(backHref);
-  }, [router, backHref]);
+  };
 
   if (mode === "error") {
     return <AccountSessionError backHref={backHref} retry={learnerState.retrySession} />;
@@ -110,24 +208,80 @@ export function GeneratedPracticeHost({
     return <AccountLearnerPicker state={learnerState} />;
   }
 
+  if (resolution.status === "loading") {
+    return <GeneratedReadyLoading />;
+  }
+
+  if (resolution.status === "blocked") {
+    return <NotAssigned programSlug={programSlug} />;
+  }
+
   // Declared AFTER every hook above so hook order stays stable: a missing row,
   // an unregistered kind, or a config that fails its schema → the calm moved
   // state, never a crash.
-  if (!row || !activityType || !parsed || !parsed.success) {
+  if (
+    resolution.status === "moved" ||
+    !row ||
+    !activityType ||
+    !parsed ||
+    parsed.status === "malformed"
+  ) {
     return <ShelfItemMoved programSlug={programSlug} backHref={backHref} />;
   }
+
+  const playerKey = playerIdentityKey({
+    learnerId: row.learnerId,
+    programSlug,
+    unitKey: row.unitKey,
+    activityKey: row.id,
+    kind: row.kind,
+    variant: "generated-shelf",
+    sequence: 0,
+    content: {
+      id: row.id,
+      title: row.title,
+      skillTags: row.skillTags,
+      gen: row.gen,
+      programVersionId: row.programVersionId,
+    },
+    config: parsed.config,
+  });
+  const showReward = phase.kind === "reward" && phase.requestKey === requestKey;
+  const showSaving =
+    (phase.kind === "saving" || phase.kind === "completed") &&
+    phase.requestKey === requestKey;
+  const showSaveFailed = phase.kind === "save-failed" && phase.requestKey === requestKey;
 
   return (
     <div data-world={world}>
       <AppShellKid backHref={backHref} readAloud={row.title}>
         <ReadAloudDefaultProvider enabled={shouldAutoRead(mode, ready, config.readAloud)}>
           <AnimatePresence mode="wait">
-          {phase.kind === "reward" ? (
+          {showReward && phase.kind === "reward" ? (
             <ShelfReward key="reward" stars={phase.stars} backHref={backHref} />
+          ) : showSaving ? (
+            <ShelfSaving key="saving" />
+          ) : showSaveFailed && phase.kind === "save-failed" ? (
+            <ShelfSaveFailed
+              key="save-failed"
+              onRetry={() => {
+                void persistCompletion(phase.response, phase.completionId);
+              }}
+              onExit={handleExit}
+            />
           ) : (
-            <PlayerFrame key="play">
+            <PlayerFrame key={playerKey}>
               <activityType.Player
-                config={parsed.data}
+                config={parsed.config}
+                learnerContext={
+                  selectedLearnerId
+                    ? {
+                        learnerId: selectedLearnerId,
+                        programSlug,
+                        oralReading: config.oralReading === true,
+                      }
+                    : undefined
+                }
                 onComplete={handleComplete}
                 onExit={handleExit}
               />
@@ -140,7 +294,68 @@ export function GeneratedPracticeHost({
   );
 }
 
-type Phase = { kind: "playing" } | { kind: "reward"; stars: 0 | 1 | 2 | 3 };
+type Phase =
+  | { kind: "playing" }
+  | { kind: "saving"; requestKey: string; response: unknown; completionId: string }
+  | { kind: "completed"; requestKey: string; completionId: string }
+  | { kind: "save-failed"; requestKey: string; response: unknown; completionId: string }
+  | { kind: "reward"; requestKey: string; stars: 0 | 1 | 2 | 3 };
+
+function GeneratedReadyLoading() {
+  return (
+    <KidLoadingShell ariaLabel="Getting this ready" message="Getting this ready..." mood="think">
+      <div
+        aria-hidden
+        className="mt-9 h-72 w-full rounded-2xl border-[3px] border-ink bg-accent/8 shadow-pop motion-safe:animate-pulse"
+      />
+    </KidLoadingShell>
+  );
+}
+
+function ShelfSaving() {
+  const reduce = useReducedMotion();
+  return (
+    <motion.div
+      initial={reduce ? false : { opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+      className="mx-auto flex max-w-md flex-col items-center pt-12 text-center"
+    >
+      <p className="sr-only" role="status" aria-live="polite">
+        Saving your work.
+      </p>
+      <Mascot mood="think" size={120} className={reduce ? undefined : "motion-safe:animate-float"} />
+      <CompletionHeading className="mt-4 font-display text-3xl font-semibold tracking-tight">
+        Saving your work...
+      </CompletionHeading>
+      <p className="mt-3 text-lg text-ink-soft">Almost there!</p>
+    </motion.div>
+  );
+}
+
+function ShelfSaveFailed({ onRetry, onExit }: { onRetry: () => void; onExit: () => void }) {
+  return (
+    <div className="mx-auto flex max-w-md flex-col items-center pt-10 text-center">
+      <Mascot mood="think" size={120} />
+      <CompletionHeading className="mt-5 font-display text-3xl font-semibold tracking-tight">
+        Your work is still here
+      </CompletionHeading>
+      <p className="mt-3 text-lg text-ink-soft" role="status">
+        Let&rsquo;s try saving it one more time.
+      </p>
+      <div className="mt-9 flex w-full flex-col gap-3">
+        <Button type="button" onClick={onRetry} variant="primary" size="kid">
+          Try again
+        </Button>
+        <Button type="button" onClick={onExit} variant="soft" size="kid">
+          <MapTrifoldIcon weight="duotone" className="size-6" />
+          Back to the map
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /* ── Player frame (soft cross-fade + rise per DESIGN.md page transition) ──── */
 
@@ -190,9 +405,9 @@ function ShelfReward({
 
       <Mascot mood="cheer" size={132} className={reduce ? undefined : "motion-safe:animate-float"} />
 
-      <h1 className="mt-5 font-display text-3xl font-semibold tracking-tight sm:text-4xl">
+      <CompletionHeading className="mt-5 font-display text-3xl font-semibold tracking-tight sm:text-4xl">
         {headline}
-      </h1>
+      </CompletionHeading>
 
       <div className="mt-5 flex items-center justify-center gap-3" aria-hidden>
         {[0, 1, 2].map((i) => (

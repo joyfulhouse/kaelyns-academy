@@ -92,7 +92,8 @@ export default defineConfig({
     { name: "setup", testMatch: /.*\.setup\.ts/, use: { ...credSafeArtifacts } },
     {
       name: "public",
-      testMatch: /specs\/(smoke|auth|learner|life-skills-math|science|baseline-placement|adaptive-generation|oral-reading)\.spec\.ts/,
+      testMatch:
+        /specs\/(smoke|auth|learner|life-skills-math|meaningful-(clock|money|measure|array|tenframe|fraction|order|journal|phonics|sightword|comprehension|language)|science|baseline-placement|adaptive-generation|oral-reading)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
     {

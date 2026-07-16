@@ -1,10 +1,80 @@
 import { describe, expect, it } from "vitest";
 import {
+  ACTIVITY_CONFIG_SCHEMAS,
   mathClockConfig,
   mathMoneyConfig,
   mathMeasureConfig,
   oralReadingConfig,
+  type ActivityKind,
 } from "./activity-configs";
+import { journalPromptConfig as journalPromptModuleConfig } from "./activity-configs/journal-prompt";
+import { langListenMatchConfig as langListenMatchModuleConfig } from "./activity-configs/lang-listen-match";
+import { langSymbolIntroConfig as langSymbolIntroModuleConfig } from "./activity-configs/lang-symbol-intro";
+import { mathArrayConfig as mathArrayModuleConfig } from "./activity-configs/math-array";
+import { mathClockConfig as mathClockModuleConfig } from "./activity-configs/math-clock";
+import { mathFractionBarConfig as mathFractionBarModuleConfig } from "./activity-configs/math-fraction-bar";
+import { mathMeasureConfig as mathMeasureModuleConfig } from "./activity-configs/math-measure";
+import { mathMoneyConfig as mathMoneyModuleConfig } from "./activity-configs/math-money";
+import { mathTenframeConfig as mathTenframeModuleConfig } from "./activity-configs/math-tenframe";
+import { oralReadingConfig as oralReadingModuleConfig } from "./activity-configs/oral-reading";
+import { phonicsWordbuildConfig as phonicsWordbuildModuleConfig } from "./activity-configs/phonics-wordbuild";
+import { readingComprehensionConfig as readingComprehensionModuleConfig } from "./activity-configs/reading-comprehension";
+import { seqOrderConfig as seqOrderModuleConfig } from "./activity-configs/seq-order";
+import { sightwordGameConfig as sightwordGameModuleConfig } from "./activity-configs/sightword-game";
+import { sortCategoriesConfig as sortCategoriesModuleConfig } from "./activity-configs/sort-categories";
+
+const PER_KIND_SCHEMAS = {
+  "phonics-wordbuild": phonicsWordbuildModuleConfig,
+  "sightword-game": sightwordGameModuleConfig,
+  "math-tenframe": mathTenframeModuleConfig,
+  "journal-prompt": journalPromptModuleConfig,
+  "reading-comprehension": readingComprehensionModuleConfig,
+  "math-array": mathArrayModuleConfig,
+  "math-fraction-bar": mathFractionBarModuleConfig,
+  "lang-symbol-intro": langSymbolIntroModuleConfig,
+  "lang-listen-match": langListenMatchModuleConfig,
+  "math-clock": mathClockModuleConfig,
+  "math-money": mathMoneyModuleConfig,
+  "math-measure": mathMeasureModuleConfig,
+  "sort-categories": sortCategoriesModuleConfig,
+  "seq-order": seqOrderModuleConfig,
+  "oral-reading": oralReadingModuleConfig,
+} satisfies Record<ActivityKind, (typeof ACTIVITY_CONFIG_SCHEMAS)[ActivityKind]>;
+
+describe("activity config module registry", () => {
+  it("maps every activity kind to its one per-kind schema", () => {
+    expect(Object.keys(ACTIVITY_CONFIG_SCHEMAS)).toEqual(Object.keys(PER_KIND_SCHEMAS));
+
+    for (const kind of Object.keys(PER_KIND_SCHEMAS) as ActivityKind[]) {
+      expect(ACTIVITY_CONFIG_SCHEMAS[kind], kind).toBe(PER_KIND_SCHEMAS[kind]);
+    }
+  });
+});
+
+describe("phonics-wordbuild config", () => {
+  const base = {
+    focus: "short a CVC words",
+    instruction: "Build the word.",
+    tiles: ["c", "a", "t"],
+    words: [{ word: "cat" }],
+  };
+
+  it("accepts only bounded current phonics decode evidence routes", () => {
+    expect(
+      phonicsWordbuildModuleConfig.safeParse({
+        ...base,
+        skillTag: "phonics.decode.short-a-cvc",
+      }).success,
+    ).toBe(true);
+    expect(
+      phonicsWordbuildModuleConfig.safeParse({ ...base, skillTag: "phonics.digraphs" }).success,
+    ).toBe(false);
+    expect(
+      phonicsWordbuildModuleConfig.safeParse({ ...base, skillTag: "word.syllables.division" })
+        .success,
+    ).toBe(false);
+  });
+});
 
 describe("math-clock config", () => {
   it("accepts a read item to the half-hour", () => {
@@ -108,15 +178,14 @@ describe("math-measure config", () => {
     expect(
       mathMeasureConfig.safeParse({
         mode: "units",
-        instruction: "How many cubes?",
+        instruction: "Measure the pencil with cubes.",
+        objectLabel: "pencil",
         unit: "cube",
         length: 5,
-        choices: [4, 5, 6],
-        answerIndex: 1,
       }).success,
     ).toBe(true);
   });
-  it("rejects an unknown attribute", () => {
+  it("rejects an unknown attribute and legacy unit-choice fields", () => {
     expect(
       mathMeasureConfig.safeParse({
         mode: "compare",
@@ -130,35 +199,77 @@ describe("math-measure config", () => {
         answerIndex: 0,
       }).success,
     ).toBe(false);
+    expect(
+      mathMeasureConfig.safeParse({
+        mode: "units",
+        instruction: "How many cubes?",
+        unit: "cube",
+        length: 5,
+        choices: [4, 5, 6],
+        answerIndex: 1,
+      }).success,
+    ).toBe(false);
   });
 });
 
 describe("oral-reading config", () => {
-  it("defaults an unchanged v1 config to word mode", () => {
+  it("keeps word/sentence mode orthogonal to cold/listen-repeat presentation", () => {
     const authored = {
+      presentation: "listen-repeat" as const,
       instruction: "Listen, then read this word aloud.",
       target: "the",
-      skillTag: "reading.fluency.phrasing",
     };
 
     expect(oralReadingConfig.parse(authored)).toEqual({ mode: "word", ...authored });
+    for (const presentation of ["cold", "listen-repeat"] as const) {
+      const sentence = {
+        mode: "sentence" as const,
+        presentation,
+        instruction: "Read the sentence.",
+        passage: "We can see the cat.",
+      };
+      expect(oralReadingConfig.parse(sentence)).toEqual(sentence);
+    }
   });
 
-  it("accepts a bounded sentence passage without an authored scoring pace", () => {
-    const authored = {
-      mode: "sentence" as const,
-      instruction: "Listen, then read the sentence.",
-      passage: "We can see the cat.",
-      skillTag: "reading.fluency.phrasing",
-    };
+  it("requires authors to choose a presentation instead of silently modeling a cold read", () => {
+    expect(
+      oralReadingConfig.safeParse({ instruction: "Read.", target: "cat" }).success,
+    ).toBe(false);
+    expect(
+      oralReadingConfig.safeParse({
+        mode: "sentence",
+        instruction: "Read.",
+        passage: "The cat sat.",
+      }).success,
+    ).toBe(false);
+  });
 
-    expect(oralReadingConfig.parse(authored)).toEqual(authored);
+  it("rejects unknown fields on both exact oral-reading branches", () => {
+    expect(
+      oralReadingConfig.safeParse({
+        presentation: "listen-repeat",
+        instruction: "Read.",
+        target: "cat",
+        rawModelField: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      oralReadingConfig.safeParse({
+        mode: "sentence",
+        presentation: "cold",
+        instruction: "Read.",
+        passage: "The cat sat.",
+        rawModelField: true,
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects sentence passages above the character or word caps", () => {
     expect(
       oralReadingConfig.safeParse({
         mode: "sentence",
+        presentation: "cold",
         instruction: "Read.",
         passage: "a".repeat(201),
       }).success,
@@ -166,6 +277,7 @@ describe("oral-reading config", () => {
     expect(
       oralReadingConfig.safeParse({
         mode: "sentence",
+        presentation: "cold",
         instruction: "Read.",
         passage: Array.from({ length: 41 }, () => "cat").join(" "),
       }).success,

@@ -6,6 +6,20 @@ export const enrollmentConfigSchema = z.object({
   dailyGoal: z.number().int().min(0).max(50).optional(),
 });
 export type EnrollmentConfig = z.infer<typeof enrollmentConfigSchema>;
+
+/**
+ * Parent curation semantics shared by learner rendering and server write gates.
+ * An omitted or empty list means the whole enrolled program is active; once a
+ * parent chooses a non-empty list, the exact route unit must be present.
+ */
+export function isEnrollmentUnitActive(
+  config: EnrollmentConfig,
+  unitKey: string | undefined,
+): boolean {
+  const active = config.activeUnitKeys;
+  return !active || active.length === 0 ? true : unitKey !== undefined && active.includes(unitKey);
+}
+
 export const learnerSettingsSchema = z.object({
   dailyGoal: z.number().int().min(0).max(50).optional(),
   aiPractice: z.boolean().optional(),

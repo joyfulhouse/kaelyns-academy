@@ -23,19 +23,21 @@ learning account:
 |---|---|---|
 | Parent (account) | email, password **hash** (Better Auth), timestamps, role | no name required, no phone, no address, no payment |
 | Child (learner) | display name, **birth month only** (never a full DOB), avatar, per-learner settings | no full birth date, no photos, no contact info, no free-text profile |
-| Learning data | enrollments, attempts (score + response), derived skill_state | — |
+| Learning data | enrollments, attempts (score + bounded per-kind response), derived skill_state | journal responses retain only counts/mode flags — **never text, transcript, strokes, or image data** |
 | AI provenance | per generated attempt: model route, path tag, generated-at (**metadata only**) | **never the raw prompt** (a prompt can embed the child's display name → PII) |
+| Oral-reading verification | a five-minute opaque witness with activity identity and derived tri-state/per-word/count/WCPM facts | **never audio, transcript, target text, or passage text** |
 | Audio | shared, **content-addressed** narration clips keyed by `sha256(text|voice|speed)` | clips reference **no** learner/account (no PII); see §5 |
 
 There is **no open-ended child↔LLM chat**. All child-facing AI is bounded and
-schema-validated server-side (`/api/practice`), gated by the §8 controls below.
+schema-validated server-side by the durable shelf generator
+(`ensureLessonPractice`), gated by the §8 controls below.
 
 ---
 
 ## 2. The §8 AI controls (parent kill-switches)
 
 AI practice generation is **fail-closed** and gated at two independent levels,
-both server-enforced in `/api/practice`:
+both server-enforced by the durable shelf-generation server action:
 
 - **Per-learner** `settings.aiPractice` — the all-programs kill-switch. Editable
   per child at `/parent/learners/[id]/settings` (and the primary child at
@@ -69,7 +71,7 @@ The **manifest** is the self-describing data inventory (`schemaVersion`,
 | `enrollments` | `enrollment` | program slug, status, config |
 | `skillState` | `skill_state` | derived outcomes + per-day evidence |
 | `reviewSchedules` | `review_schedule` | spaced-repetition skill ids, ladder position, and review dates |
-| `attempts` | `attempt` | score (stars/correct/total), **the child's full `response`** (answers, journal text, drawing data), day, createdAt |
+| `attempts` | `attempt` | activity kind plus nullable program/unit/version identity, score (stars/correct/total), bounded kind-specific response, day, createdAt. Journal responses contain only `markCount`, `textLength`, `usedDictation`, `mode`, and `didDraw` — never text, transcript, strokes, or an image/data URL. |
 | `aiProvenance` | `attempt` (generated rows) | model, route, generatedAt — metadata only |
 
 **Deliberately not exported** (`manifest.notExported`), and why:
@@ -77,6 +79,9 @@ The **manifest** is the self-describing data inventory (`schemaVersion`,
 - **narration audio** — shared, content-addressed, references no one; not the
   parent's to export and carries no PII.
 - **raw AI prompts** — not stored at all (only the bound metadata is); see §1.
+- **short-lived oral-reading witnesses** — operational claim rows, not learner
+  artifacts. Once consumed, the canonical child-safe result is already exported
+  in `attempts`; audio and transcripts are never stored at all.
 - **passwords / auth tokens** — security-sensitive; never leave the system.
 
 **Inventory guard.** A reviewer can diff `manifest.contents` against the DB tables
@@ -94,8 +99,8 @@ is no soft-delete / undo window — a 30-day grace would mean child data persist
 request at once.
 
 - **Delete one child** — `deleteLearnerAction` → `deleteLearner`. A single
-  `DELETE FROM learner` cascades `enrollment`, `attempt`, `skill_state` via FK
-  `ON DELETE CASCADE`.
+  `DELETE FROM learner` cascades `enrollment`, `attempt`, `skill_state`, and
+  `oral_reading_verification` via FK `ON DELETE CASCADE`.
 - **Delete the whole account** — `deleteAccountAction` → `deleteAccount`. A single
   `DELETE FROM "user"` cascades the entire child-data graph **plus** the Better
   Auth `session` and `account` (credential/oauth) rows. The Better Auth
@@ -147,13 +152,10 @@ server-side at generation and surfaced to the parent at
 (it can embed the child's display name). Old generated rows (pre-P6) show "model
 not recorded" rather than fabricating provenance.
 
-**Trust level (v1).** This metadata is computed server-side when the item is
-generated, but in v1 it is relayed through the client back onto the attempt record.
-So it is a *transparency record*, not a tamper-evident audit: a parent could forge
-the label on their **own** child's attempts via a direct call. It never feeds a
-security decision — the §8 "is AI allowed?" gate (`/api/practice`) is separately
-server-authoritative and unforgeable. A tamper-evident, server-owned generation
-record (an `ai_generation` table) is deferred future work.
+**Trust level (v1).** This metadata is computed server-side and stored on the
+learner-owned generated shelf row. Attempt recording reloads that row and derives
+the provenance server-side; the browser cannot supply or alter it. It remains a
+transparency record rather than a cryptographically tamper-evident audit.
 
 ---
 

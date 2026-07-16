@@ -3,10 +3,12 @@ import type { ActivityType } from "@/content/types";
 import { MathArrayPlayer } from "./Player";
 import {
   expectedFor,
+  responseSchema,
   schema,
   score,
   skillsAffected,
   totalFor,
+  validateGenerated,
   type MathArrayResponse,
 } from "./logic";
 
@@ -16,8 +18,10 @@ export const mathArray: ActivityType<MathArrayConfig, MathArrayResponse> = {
   kind: "math-array",
   label: "Array builder",
   schema,
+  responseSchema,
   Player: MathArrayPlayer,
   score,
   skillsAffected,
+  validateGenerated,
 };
 export type { MathArrayResponse };

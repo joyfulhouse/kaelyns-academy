@@ -1,11 +1,16 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SpeechController } from "../_shared/useSpeech";
 import {
+  KaraokePassage,
   LISTEN_WORD_DWELL_MS,
   SENTENCE_WORD_CLASSES,
   SETTLE_WORD_STAGGER_MS,
   parseSentenceRouteResult,
   sentenceWordVisualState,
   splitPassageWords,
+  startLatestListenWordSweep,
   startListenWordSweep,
   startSettleWordReveal,
 } from "./SentenceReader";
@@ -28,6 +33,7 @@ describe("sentence oral-reading feedback", () => {
           result: "matched",
           words: [{ state: "correct" }, { state: "correct" }],
           wcpm: 42,
+          verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
           transcript: "must not cross the boundary",
         },
         2,
@@ -36,17 +42,32 @@ describe("sentence oral-reading feedback", () => {
       result: "matched",
       words: [{ state: "correct" }, { state: "correct" }],
       wcpm: 42,
+      verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     });
 
     expect(
       parseSentenceRouteResult(
-        { result: "matched", words: [{ state: "correct" }] },
+        {
+          result: "matched",
+          words: [{ state: "correct" }],
+          verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        },
         2,
       ),
     ).toBe("unavailable");
     expect(
       parseSentenceRouteResult(
-        { result: "matched", words: [{ state: "incorrect" }, { state: "correct" }] },
+        {
+          result: "matched",
+          words: [{ state: "incorrect" }, { state: "correct" }],
+          verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        },
+        2,
+      ),
+    ).toBe("unavailable");
+    expect(
+      parseSentenceRouteResult(
+        { result: "matched", words: [{ state: "correct" }, { state: "correct" }] },
         2,
       ),
     ).toBe("unavailable");
@@ -61,9 +82,32 @@ describe("sentence oral-reading feedback", () => {
       expect(classes).not.toMatch(/(?:^|\s)(?:bg|text|border)-(?:danger|red|rose)(?:-|\s|$)/);
     }
   });
+
+  it("disables unclear-word replay while the microphone owns audio", () => {
+    const speech: SpeechController = {
+      supported: true,
+      hasVoice: true,
+      speak: vi.fn<SpeechController["speak"]>(() => Promise.resolve("completed")),
+      cancel: vi.fn(),
+    };
+    const markup = renderToStaticMarkup(
+      createElement(KaraokePassage, {
+        passage: "Try me",
+        settled: [{ state: "unclear" }, { state: "correct" }],
+        revealedWordCount: 2,
+        speech,
+        playbackDisabled: true,
+      }),
+    );
+
+    expect(markup).toContain('aria-label="Hear Try"');
+    expect(markup).toMatch(
+      /<button(?=[^>]*aria-label="Hear Try")(?=[^>]*disabled="")[^>]*>/,
+    );
+  });
 });
 
-describe("sentence listen-first karaoke timeline", () => {
+describe("sentence modeled-read karaoke timeline", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
@@ -98,6 +142,24 @@ describe("sentence listen-first karaoke timeline", () => {
     expect(unmounted).toEqual([0, null]);
   });
 
+  it("lets a rapid replay keep ownership of its own active-word sweep", () => {
+    const states: (number | null)[] = [];
+    const slot = { current: null as (() => void) | null };
+    const first = startLatestListenWordSweep(slot, 3, false, (activeWord) =>
+      states.push(activeWord),
+    );
+
+    startLatestListenWordSweep(slot, 3, false, (activeWord) => states.push(activeWord));
+    expect(states).toEqual([0, null, 0]);
+
+    // The first speech promise settles as cancelled after replay has begun. Its
+    // cleanup must not clear or cancel the second request's sweep.
+    first();
+    expect(states).toEqual([0, null, 0]);
+    vi.advanceTimersByTime(LISTEN_WORD_DWELL_MS);
+    expect(states).toEqual([0, null, 0, 1]);
+  });
+
   it("disables the active cursor for reduced-motion users", () => {
     const states: (number | null)[] = [];
     startListenWordSweep(3, true, (activeWord) => states.push(activeWord));
@@ -121,7 +183,7 @@ describe("sentence listen-first karaoke timeline", () => {
     };
 
     const complete = vi.fn();
-    startSettleWordReveal(settled.length, record, complete);
+    startSettleWordReveal(settled.length, false, record, complete);
     expect(reveals).toEqual([["correct", "neutral", "neutral"]]);
     vi.advanceTimersByTime(SETTLE_WORD_STAGGER_MS);
     expect(reveals.at(-1)).toEqual(["correct", "unclear", "neutral"]);
@@ -136,5 +198,16 @@ describe("sentence listen-first karaoke timeline", () => {
         );
       }
     }
+  });
+
+  it("reveals every settled word immediately when reduced motion is requested", () => {
+    const reveal = vi.fn();
+    const complete = vi.fn();
+
+    startSettleWordReveal(4, true, reveal, complete);
+
+    expect(reveal).toHaveBeenCalledExactlyOnceWith(4);
+    expect(complete).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

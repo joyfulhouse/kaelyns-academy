@@ -29,26 +29,27 @@ test("the Science & Nature world tile renders on the map", async ({ page }) => {
   await expect(page.getByText("Science & Nature", { exact: true })).toBeVisible({ timeout: 20_000 });
 });
 
-test("a sort-categories activity renders and places an item correctly", async ({ page }) => {
+test("a sort-categories activity renders and freely places an item", async ({ page }) => {
   await page.goto(SORT_ACTIVITY);
   // "Living or not living?" — tap an item, then its correct bin, and
   // confirm the placement registers (no AI involved).
-  const dog = page.getByRole("button", { name: "Dog" });
+  const dog = page.getByRole("button", { name: "Dog, in the sorting tray" });
   await expect(dog).toBeVisible({ timeout: 25_000 });
   await dog.click();
 
-  const livingBin = page.getByRole("button", { name: "Put in Living bin" });
+  const livingBin = page.getByRole("button", { name: "Put Dog in Living" });
   await livingBin.click();
   await expect(page.getByText("1 of 8 sorted")).toBeVisible();
 });
 
-test("a seq-order activity renders and places a card correctly", async ({ page }) => {
+test("a seq-order activity renders and freely places a card", async ({ page }) => {
   await page.goto(SEQ_ACTIVITY);
   // "Frog life cycle" — tap the first card in the true sequence ("Egg") and
   // confirm the order registers.
-  const egg = page.getByRole("button", { name: "Egg, tap to place next" });
+  const egg = page.getByRole("button", { name: "Egg, in the card tray" });
   await expect(egg).toBeVisible({ timeout: 25_000 });
   await egg.click();
+  await page.getByRole("button", { name: "Put Egg in 3rd" }).click();
 
-  await expect(page.getByText("1 of 4 in order")).toBeVisible();
+  await expect(page.getByText("1 of 4 placed")).toBeVisible();
 });

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isCorrect, score, skillsAffected, validateGenerated } from "./logic";
 import type { SeqOrderConfig } from "@/content/activity-configs";
+import { isCorrect, responseSchema, score, skillsAffected, validateGenerated } from "./logic";
 
-const cfg: SeqOrderConfig = {
+const config: SeqOrderConfig = {
   instruction: "Put the life cycle in order.",
   cards: [
     { label: "Egg", emoji: "🥚" },
@@ -12,47 +12,69 @@ const cfg: SeqOrderConfig = {
   ],
 };
 
-describe("isCorrect", () => {
-  it("is true when the tapped order equals the array (config) order", () => {
-    expect(isCorrect(cfg, { attempts: 1, order: [0, 1, 2, 3] })).toBe(true);
+describe("seq-order response", () => {
+  it("accepts a bounded, strict card permutation", () => {
+    expect(responseSchema.parse({ attempts: 1, order: [0, 1, 2, 3] })).toEqual({
+      attempts: 1,
+      order: [0, 1, 2, 3],
+    });
+    expect(
+      responseSchema.safeParse({ attempts: 1, order: [0, 1, 2, 3], correct: true }).success,
+    ).toBe(false);
   });
-  it("is false on a wrong order or an incomplete sequence", () => {
-    expect(isCorrect(cfg, { attempts: 1, order: [0, 2, 1, 3] })).toBe(false);
-    expect(isCorrect(cfg, { attempts: 1, order: [0, 1, 2] })).toBe(false);
+
+  it("rejects duplicate, out-of-range, incomplete, and over-bounded data", () => {
+    expect(responseSchema.safeParse({ attempts: 1, order: [0, 1, 1, 3] }).success).toBe(false);
+    expect(responseSchema.safeParse({ attempts: 1, order: [0, 1, 2] }).success).toBe(true);
+    expect(responseSchema.safeParse({ attempts: 1, order: [0, 1, 6] }).success).toBe(false);
+    expect(responseSchema.safeParse({ attempts: 21, order: [0, 1, 2] }).success).toBe(false);
   });
 });
 
-describe("score", () => {
-  it("first-try correct → 3 stars solid on science.sequence", () => {
-    expect(score(cfg, { attempts: 1, order: [0, 1, 2, 3] })).toEqual({
+describe("seq-order correctness", () => {
+  it("scores only the exact authored array order", () => {
+    expect(isCorrect(config, { attempts: 1, order: [0, 1, 2, 3] })).toBe(true);
+  });
+
+  it("rejects any wrong or incomplete order without mutating it", () => {
+    const wrong = [3, 1, 0, 2];
+    const snapshot = [...wrong];
+    expect(isCorrect(config, { attempts: 1, order: wrong })).toBe(false);
+    expect(wrong).toEqual(snapshot);
+    expect(isCorrect(config, { attempts: 1, order: [0, 1, 2] })).toBe(false);
+  });
+});
+
+describe("seq-order score", () => {
+  it("awards solid sequence evidence for a correct first check", () => {
+    expect(score(config, { attempts: 1, order: [0, 1, 2, 3] })).toEqual({
       correct: 1,
       total: 1,
       stars: 3,
       skillEvidence: [{ skill: "science.sequence", outcome: "solid" }],
     });
   });
-  it("second attempt → 2 stars emerging", () => {
-    const s = score(cfg, { attempts: 2, order: [0, 1, 2, 3] });
-    expect(s.stars).toBe(2);
-    expect(s.skillEvidence[0].outcome).toBe("emerging");
+
+  it("uses explicit check attempts for retry evidence", () => {
+    expect(score(config, { attempts: 2, order: [0, 1, 2, 3] })).toMatchObject({
+      stars: 2,
+      skillEvidence: [{ skill: "science.sequence", outcome: "emerging" }],
+    });
+  });
+
+  it("reports only the observed sequencing skill", () => {
+    expect(skillsAffected(config)).toEqual(["science.sequence"]);
   });
 });
 
-describe("skillsAffected", () => {
-  it("is always science.sequence", () => {
-    expect(skillsAffected(cfg)).toEqual(["science.sequence"]);
-  });
-});
-
-describe("validateGenerated (B3 answer-key net)", () => {
-  it("accepts unique card labels", () => {
-    expect(validateGenerated(cfg)).toBeNull();
-  });
-  it("rejects duplicate card labels (case/space-insensitive)", () => {
-    const dupe: SeqOrderConfig = {
-      instruction: "Put them in order.",
-      cards: [{ label: "Egg" }, { label: " egg " }, { label: "Butterfly" }],
-    };
-    expect(validateGenerated(dupe)).not.toBeNull();
+describe("seq-order generated config validation", () => {
+  it("accepts unique labels and rejects duplicate labels", () => {
+    expect(validateGenerated(config)).toBeNull();
+    expect(
+      validateGenerated({
+        instruction: "Put them in order.",
+        cards: [{ label: "Egg" }, { label: " egg " }, { label: "Butterfly" }],
+      }),
+    ).not.toBeNull();
   });
 });

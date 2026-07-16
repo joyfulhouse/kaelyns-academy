@@ -363,6 +363,7 @@ describe("generated_activity COPPA round-trip (buildLearnerExport + deleteLearne
     rows.learner = [owned];
     rows.generated_activity = [
       {
+        programVersionId: "version-1",
         unitKey: "unit-life-skills-math",
         lessonId: "lesson-counting-coins",
         kind: "math-tenframe",
@@ -379,6 +380,7 @@ describe("generated_activity COPPA round-trip (buildLearnerExport + deleteLearne
     expect(result).not.toBeNull();
     expect(result!.generatedActivities).toEqual([
       {
+        programVersionId: "version-1",
         unitKey: "unit-life-skills-math",
         lessonId: "lesson-counting-coins",
         kind: "math-tenframe",

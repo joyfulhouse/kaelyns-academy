@@ -9,7 +9,9 @@ import {
   enrollment,
   generatedActivity,
   learner,
+  oralReadingVerification,
   parentPin,
+  programVersion,
   publisher,
   reviewSchedule,
   session,
@@ -60,6 +62,10 @@ describe("account-delete cascade map (FK ON DELETE)", () => {
     expect(fkOnDelete(reviewSchedule, "learner_id")).toBe("cascade");
   });
 
+  it("cascades short-lived oral-reading witnesses off learner", () => {
+    expect(fkOnDelete(oralReadingVerification, "learner_id")).toBe("cascade");
+  });
+
   it("cascades the Better Auth session + account credential rows off user", () => {
     expect(fkOnDelete(session, "user_id")).toBe("cascade");
     expect(fkOnDelete(account, "user_id")).toBe("cascade");
@@ -99,6 +105,78 @@ describe("parent_pin schema", () => {
   });
 });
 
+describe("attempt completion idempotency schema", () => {
+  it("stores a nullable completion id with one unique key per learner", () => {
+    expect(attempt.completionId.notNull).toBe(false);
+
+    const completionIndex = getTableConfig(attempt).indexes.find(
+      (index) => index.config.name === "attempt_learner_completion_uq",
+    );
+    expect(completionIndex?.config.unique).toBe(true);
+    expect(
+      completionIndex?.config.columns.map((column) =>
+        "name" in column ? column.name : undefined,
+      ),
+    ).toEqual(["learner_id", "completion_id"]);
+  });
+});
+
+describe("attempt durable content identity schema", () => {
+  it("stores nullable program, unit, and version identity for legacy-safe replay", () => {
+    expect(attempt.programSlug.notNull).toBe(false);
+    expect(attempt.unitKey.notNull).toBe(false);
+    expect(attempt.programVersionId.notNull).toBe(false);
+    expect(fkOnDelete(attempt, "program_version_id")).toBe("set null");
+    expect(
+      getTableConfig(attempt).foreignKeys.some(
+        (foreignKey) =>
+          getTableName(foreignKey.reference().foreignTable) === getTableName(programVersion),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("oral_reading_verification schema", () => {
+  it("stores only bounded canonical facts and an atomic completion claim", () => {
+    expect(Object.keys(oralReadingVerification)).toEqual(
+      expect.arrayContaining([
+        "id",
+        "learnerId",
+        "programSlug",
+        "programVersionId",
+        "unitKey",
+        "activityId",
+        "mode",
+        "result",
+        "perWord",
+        "correctCount",
+        "totalWords",
+        "wcpm",
+        "expiresAt",
+        "consumedCompletionId",
+        "createdAt",
+      ]),
+    );
+    expect(Object.keys(oralReadingVerification)).not.toEqual(
+      expect.arrayContaining(["audio", "transcript", "target", "passage"]),
+    );
+    expect(oralReadingVerification.expiresAt.notNull).toBe(true);
+    expect(oralReadingVerification.programVersionId.notNull).toBe(false);
+    expect(oralReadingVerification.consumedCompletionId.notNull).toBe(false);
+    expect(fkOnDelete(oralReadingVerification, "program_version_id")).toBe("set null");
+
+    const completionIndex = getTableConfig(oralReadingVerification).indexes.find(
+      (index) => index.config.name === "oral_reading_verification_learner_completion_uq",
+    );
+    expect(completionIndex?.config.unique).toBe(true);
+    expect(
+      completionIndex?.config.columns.map((column) =>
+        "name" in column ? column.name : undefined,
+      ),
+    ).toEqual(["learner_id", "consumed_completion_id"]);
+  });
+});
+
 describe("checkpoint_result schema", () => {
   it("exposes the Phase C capture columns", () => {
     const cols = Object.keys(checkpointResult);
@@ -125,6 +203,7 @@ describe("generated_activity schema", () => {
       "id",
       "learnerId",
       "programSlug",
+      "programVersionId",
       "unitKey",
       "lessonId",
       "kind",
@@ -138,6 +217,7 @@ describe("generated_activity schema", () => {
     ]) {
       expect(cols).toContain(c);
     }
+    expect(fkOnDelete(generatedActivity, "program_version_id")).toBe("set null");
   });
 });
 

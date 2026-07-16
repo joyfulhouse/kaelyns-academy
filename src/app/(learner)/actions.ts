@@ -4,14 +4,18 @@ import { z } from "zod";
 import { captureNonCritical } from "@/lib/capture";
 import { UnauthenticatedError, requireAccount, withAccount } from "@/lib/tenancy";
 import {
+  CompletionReplayMismatchError,
   EnrollmentNotActiveError,
+  EnrollmentVersionChangedError,
+  GeneratedActivityAlreadyCompletedError,
   ensureDefaultLearner,
   ensureEnrollment,
   getCompletedActivityIds,
+  getCompletedActivityIdsForVersion,
   getDueReviews,
-  getEnrollmentConfig,
   getEnrollmentForGate,
   getGeneratedActivity,
+  getPlayableGeneratedActivity,
   getGeneratedCompletions,
   getLearner,
   getLearnerSettings,
@@ -23,23 +27,29 @@ import {
   type NewGeneratedActivity,
   type DueReview,
   type ShelfItem,
+  type PlayableShelfItem,
 } from "@/lib/tutor/store";
-import type { EnrollmentConfig, LearnerSurfaceConfig } from "@/lib/content/config";
+import {
+  isEnrollmentUnitActive,
+  type EnrollmentConfig,
+  type LearnerSurfaceConfig,
+} from "@/lib/content/config";
 import {
   activityIdsForProgram,
   findActivity,
   getUnit,
   skillTagsForProgram,
 } from "@/content";
-import type { Band, Lesson, Program, Unit } from "@/content";
+import type { ActivityScore, Band, Lesson, Program, Unit } from "@/content";
+import { parseAndScoreActivity } from "@/activities/server-verification";
+import { getServerAttemptVerifier } from "@/activities/server-attempt-verifiers";
 import { generatePracticeItems, provenanceForGeneration } from "@/lib/ai/practice";
 import {
   pickGenerationTargets,
   shelfCompletions,
   SHELF_LESSON_CAP,
 } from "@/lib/tutor/shelf";
-import { resolveLearnerProgram } from "@/lib/content/repository";
-import { findUnitIdOfActivity } from "@/lib/quests/logic";
+import { resolveProgramForEnrollmentVersion } from "@/lib/content/repository";
 import type { SkillState } from "@/lib/tutor";
 
 /**
@@ -163,173 +173,283 @@ export async function getEnrollmentsAction(learnerId: string): Promise<string[]>
   }
 }
 
-const skillEvidenceSchema = z.object({
-  skill: z.string().min(1).max(60),
-  outcome: z.enum(["not_yet", "emerging", "solid"]),
+const generatedPracticeLookupSchema = z.object({
+  learnerId: z.string().min(1).max(100),
+  programSlug: z.string().min(1).max(100),
+  generatedId: z.string().min(1).max(100),
 });
+
+export type GeneratedPracticeLookup = z.infer<typeof generatedPracticeLookupSchema>;
+
+/** A generated row remains playable only while its authored shelf location is
+ * present in the learner's resolved program tree. Lesson keys are unit-local. */
+function programContainsGeneratedLocation(
+  program: Program,
+  row: { unitKey: string; lessonId: string },
+): boolean {
+  return getUnit(program, row.unitKey)?.lessons.some((lesson) => lesson.id === row.lessonId) ?? false;
+}
 
 /**
- * AI provenance echoed back from /api/practice for a generated item (P6 / §8).
- * Bound metadata only (model/route names + a generation timestamp); the route
- * derives these server-side, the client just relays them onto the attempt. The
- * model/route are short audit tags (bounded like `kind`); `at` is an ISO string.
- * Only honored when `generated` is true (see below) — never persisted on authored
- * rows. Light bounds because this is non-authoritative display metadata, not a
- * gate; the §8 enforcement lives in /api/practice + the active-enrollment check.
+ * Resolve one generated shelf item only after the client has resolved its
+ * selected account learner. The store repeats both account tenancy and learner
+ * scoping, so siblings under one household cannot open each other's practice.
  */
-const provenanceSchema = z.object({
-  model: z.string().min(1).max(60),
-  route: z.string().min(1).max(60),
-  at: z.string().datetime(),
-});
+export async function getGeneratedPracticeAction(
+  input: GeneratedPracticeLookup,
+): Promise<PlayableShelfItem | null> {
+  const parsed = generatedPracticeLookupSchema.safeParse(input);
+  if (!parsed.success) return null;
 
-const recordAttemptSchema = z.object({
+  try {
+    return await withAccount(async ({ accountId }) => {
+      const gate = await getEnrollmentForGate(
+        accountId,
+        parsed.data.learnerId,
+        parsed.data.programSlug,
+      );
+      if (
+        gate?.status !== "active" ||
+        !gate.configValid ||
+        !gate.programVersionId
+      ) {
+        return null;
+      }
+      const program = await resolveProgramForEnrollmentVersion(
+        parsed.data.programSlug,
+        gate.programVersionId,
+      );
+      if (!program) return null;
+      const row = await getPlayableGeneratedActivity(
+        accountId,
+        parsed.data.learnerId,
+        parsed.data.programSlug,
+        gate.programVersionId,
+        parsed.data.generatedId,
+      );
+      return row && programContainsGeneratedLocation(program, row) ? row : null;
+    });
+  } catch (error) {
+    if (!(error instanceof UnauthenticatedError)) {
+      captureNonCritical("getGeneratedPracticeAction failed", error);
+    }
+    return null;
+  }
+}
+
+const recordAttemptIdentitySchema = z.object({
   learnerId: z.string().min(1),
   programSlug: z.string().min(1),
-  activityId: z.string().min(1),
-  kind: z.string().min(1).max(60),
-  generated: z.boolean().optional(),
-  response: z.unknown().optional(),
-  score: z.object({
-    correct: z.number().int().min(0),
-    total: z.number().int().min(0),
-    stars: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]),
-    skillEvidence: z.array(skillEvidenceSchema),
-  }),
-  /** Provenance for a generated attempt; ignored unless `generated` is true. */
-  gen: provenanceSchema.optional(),
+  completionId: z.string().uuid(),
+  response: z.unknown(),
+  /** Reserved for a kind-specific, server-stored verification result. Ordinary
+   * deterministic plugins reject it; oral reading is the first planned user. */
+  verificationId: z.string().uuid().optional(),
 });
+
+const recordAttemptSchema = z.union([
+  recordAttemptIdentitySchema.extend({
+    unitKey: z.string().min(1).max(100),
+    activityId: z.string().min(1).max(100),
+  }),
+  recordAttemptIdentitySchema.extend({
+    generatedActivityId: z.string().min(1).max(100),
+  }),
+]);
 
 export type RecordAttemptInput = z.infer<typeof recordAttemptSchema>;
 
 export type RecordResult =
-  | { ok: true }
-  | { ok: false; reason: "unauthenticated" | "invalid" | "inactive" | "error" };
+  | { ok: true; score: ActivityScore }
+  | {
+      ok: false;
+      reason:
+        | "unauthenticated"
+        | "invalid"
+        | "inactive"
+        | "unavailable"
+        | "completed"
+        | "error";
+    };
 
 /**
- * Persist one completed activity (authored or AI-generated practice) and fold
- * its skill evidence into the learner's skill_state. The day is stamped from
- * the server clock so the mastery gate's "distinct days" rule is consistent.
- *
- * Server-authoritative curation gate (Fix-F A4): `recordAttempt` verifies the
- * learner has an ACTIVE enrollment for `programSlug` inside the same transaction
- * (after the tenancy re-check). A removed/paused/missing enrollment throws
- * EnrollmentNotActiveError → no attempt or skill_state is written, and the
- * caller gets `reason: "inactive"`. This makes the kid-surface render-block (A3)
- * non-bypassable even via a direct API call with a stale/unassigned program.
- *
- * Star-economy membership witness (Codex critical): the client supplies
- * `activityId` and `score.stars`, so an authored attempt (`generated: false`)
- * MUST be verified against the learner's own pinned program tree before it can
- * earn ledger stars — otherwise a forged request with a fresh, never-authored
- * activityId would credit `activity_complete` stars unbounded (no prior attempt
- * exists to trip the "already completed" guard). `findUnitIdOfActivity` doubles
- * as that witness: a non-null `unitId` proves `activityId` belongs to the
- * resolved tree. A resolved tree with no match is rejected outright (`invalid`)
- * — a legitimate client only ever plays authored activities from that tree. An
- * UNRESOLVABLE tree (DB blip) stays forgiving: the attempt is still recorded
- * (mastery/skill folds are unaffected either way) but `creditEligible` is
- * false, so no star ledger row is written off an unverifiable claim.
+ * Persist one completed activity using identifiers plus bounded response facts.
+ * The browser is never authoritative for kind, config, score, evidence, unit,
+ * generated status, or generation provenance. Authored attempts resolve inside
+ * the exact route unit of the learner's pinned program; generated attempts
+ * resolve a shelf row owned by that learner. Config and response are parsed and
+ * scored through the server-only plugin registry before the store sees them.
  */
 export async function recordAttemptAction(input: RecordAttemptInput): Promise<RecordResult> {
   const parsed = recordAttemptSchema.safeParse(input);
   if (!parsed.success) return { ok: false, reason: "invalid" };
   const data = parsed.data;
 
-  const generated = data.generated ?? false;
-  // Provenance is honored only for a generated attempt: parse the echoed ISO
-  // timestamp into a Date here (the store column is timestamptz). recordAttempt
-  // additionally drops it for non-generated rows as defense-in-depth.
-  const provenance =
-    generated && data.gen
-      ? { model: data.gen.model, route: data.gen.route, at: new Date(data.gen.at) }
-      : undefined;
-
   try {
     return await withAccount(async ({ accountId }): Promise<RecordResult> => {
-      // Quest-fold context (Adventure 2.0) AND the star-earn membership witness:
-      // locate the containing unit on the learner's pinned tree, server-derived —
-      // never trusted from the client. Unresolvable (resolver failure/unknown
-      // program) degrades to complete_n-only quest matching and no star credit,
-      // rather than failing the attempt write.
-      let program: Program | null = null;
+      const gate = await getEnrollmentForGate(
+        accountId,
+        data.learnerId,
+        data.programSlug,
+      );
+      if (!gate || gate.status !== "active" || !gate.configValid) {
+        return { ok: false, reason: "inactive" };
+      }
+      if ("unitKey" in data && !isEnrollmentUnitActive(gate.config, data.unitKey)) {
+        return { ok: false, reason: "inactive" };
+      }
+      if ("generatedActivityId" in data && !gate.programVersionId) {
+        return { ok: false, reason: "unavailable" };
+      }
+
+      let program: Program | null;
       try {
-        program = (await resolveLearnerProgram(accountId, data.learnerId, data.programSlug)) ?? null;
-      } catch {
-        program = null;
+        program =
+          (await resolveProgramForEnrollmentVersion(
+            data.programSlug,
+            gate.programVersionId,
+          )) ?? null;
+      } catch (error) {
+        captureNonCritical("recordAttemptAction pinned program unavailable", error);
+        return { ok: false, reason: "unavailable" };
       }
-      const unitId: string | null = program ? findUnitIdOfActivity(program, data.activityId) : null;
-      const unit = program && unitId ? getUnit(program, unitId) : null;
-      const checkpointPhase = unit?.checkpoint ?? null;
+      if (!program) return { ok: false, reason: "unavailable" };
 
-      // Generated shelf witness (Adventure 2.0 B3): a GENERATED attempt whose
-      // activityId is a real shelf row OWNED BY THIS LEARNER is a legitimate
-      // one-time star earner. The ownership-checked read is the witness (scoped
-      // to accountId AND learnerId), exactly like `creditEligible` is for
-      // authored activities — a forged shelf id from another learner returns null
-      // and earns nothing. A found row also gives the containing unit (for
-      // unit-targeted quests). The in-session "More" practice path (generated but
-      // activityId = an AUTHORED id) finds no shelf row → shelfEligible stays
-      // false, unchanged. Only queried for generated attempts (authored ids are
-      // never on the shelf).
-      let shelfEligible = false;
-      let shelfUnitId: string | null = null;
-      if (generated) {
-        const shelfRow = await getGeneratedActivity(accountId, data.learnerId, data.activityId);
-        if (shelfRow) {
-          shelfEligible = true;
-          shelfUnitId = shelfRow.unitKey;
-        }
-      }
-
-      // An authored attempt whose activityId is NOT in the learner's resolved
-      // tree is a forgery attempt (a fresh/arbitrary id) — reject before any
-      // write. A generated (AI practice) attempt is exempt: synthetic practice
-      // ids are legitimate there and never earn ledger stars anyway.
-      if (!generated && program && unitId === null) {
-        return { ok: false, reason: "invalid" };
-      }
-
-      // Server-derived, never client-supplied: true only for an authored attempt
-      // verified against the learner's own pinned tree. Gates the star-ledger
-      // earn in recordAttempt; the attempt/skill_state folds are unaffected.
-      const creditEligible = !generated && unitId !== null;
-      if (!program) {
-        captureNonCritical(
-          "recordAttemptAction: program unresolvable; attempt recorded without star credit",
-          new Error(`learnerId=${data.learnerId} programSlug=${data.programSlug}`),
+      if ("generatedActivityId" in data) {
+        const programVersionId = gate.programVersionId;
+        if (!programVersionId) return { ok: false, reason: "unavailable" };
+        const row = await getGeneratedActivity(
+          accountId,
+          data.learnerId,
+          data.programSlug,
+          programVersionId,
+          data.generatedActivityId,
         );
+        if (
+          !row ||
+          row.programSlug !== data.programSlug ||
+          !programContainsGeneratedLocation(program, row)
+        ) {
+          return { ok: false, reason: "invalid" };
+        }
+        if (!isEnrollmentUnitActive(gate.config, row.unitKey)) {
+          return { ok: false, reason: "inactive" };
+        }
+        // Oral verification is bound to an exact pinned authored activity.
+        // Generated shelf rows never enter that trust path, and no generated
+        // kind may interpret a verification id.
+        if (row.kind === "oral-reading" || data.verificationId) {
+          return { ok: false, reason: "invalid" };
+        }
+        const canonical = parseAndScoreActivity(
+          row.kind,
+          row.config,
+          data.response,
+          row.skillTags,
+        );
+        if (!canonical.ok) return { ok: false, reason: "invalid" };
+
+        const provenance = row.gen
+          ? {
+              model: row.gen.model,
+              route: row.gen.route,
+              at: new Date(row.gen.at),
+            }
+          : undefined;
+        const score = await recordAttempt(accountId, {
+          learnerId: data.learnerId,
+          programSlug: data.programSlug,
+          expectedProgramVersionId: gate.programVersionId,
+          completionId: data.completionId,
+          activityId: row.id,
+          kind: row.kind,
+          generated: true,
+          response: canonical.response,
+          score: canonical.score,
+          day: new Date().toISOString().slice(0, 10),
+          provenance,
+          unitId: row.unitKey,
+          creditEligible: false,
+          shelfEligible: true,
+          checkpointPhase: null,
+        });
+        return { ok: true, score };
       }
 
-      await recordAttempt(accountId, {
+      const unit = getUnit(program, data.unitKey);
+      const activity = unit?.lessons
+        .flatMap((lesson) => lesson.activities)
+        .find((candidate) => candidate.id === data.activityId);
+      if (!unit || !activity) return { ok: false, reason: "invalid" };
+
+      const verifier = getServerAttemptVerifier(activity.kind);
+      if (verifier) {
+        const score = await verifier({
+          accountId,
+          learnerId: data.learnerId,
+          programSlug: data.programSlug,
+          expectedProgramVersionId: gate.programVersionId,
+          completionId: data.completionId,
+          unitKey: unit.id,
+          activityId: activity.id,
+          verificationId: data.verificationId,
+          rawConfig: activity.config,
+          allowedSkillTags: activity.skillTags,
+          day: new Date().toISOString().slice(0, 10),
+          checkpointPhase: unit.checkpoint ?? null,
+        });
+        return score ? { ok: true, score } : { ok: false, reason: "invalid" };
+      }
+      // Opaque witnesses have no generic meaning. Ordinary deterministic kinds
+      // reject them instead of silently ignoring them.
+      if (data.verificationId) return { ok: false, reason: "invalid" };
+
+      const canonical = parseAndScoreActivity(
+        activity.kind,
+        activity.config,
+        data.response,
+        activity.skillTags,
+      );
+      if (!canonical.ok) return { ok: false, reason: "invalid" };
+
+      const score = await recordAttempt(accountId, {
         learnerId: data.learnerId,
         programSlug: data.programSlug,
-        activityId: data.activityId,
-        kind: data.kind,
-        generated,
-        response: data.response,
-        score: data.score,
+        expectedProgramVersionId: gate.programVersionId,
+        completionId: data.completionId,
+        activityId: activity.id,
+        kind: activity.kind,
+        generated: false,
+        response: canonical.response,
+        score: canonical.score,
         day: new Date().toISOString().slice(0, 10),
-        provenance,
-        // A verified shelf item carries its own unit (for unit-targeted quests);
-        // otherwise the authored-tree unit (null when unresolvable / generated
-        // in-session practice keeps its authored unit).
-        unitId: shelfEligible ? shelfUnitId : unitId,
-        creditEligible,
-        shelfEligible,
-        checkpointPhase,
+        unitId: unit.id,
+        creditEligible: true,
+        shelfEligible: false,
+        checkpointPhase: unit.checkpoint ?? null,
       });
-      return { ok: true };
+      return { ok: true, score };
     });
   } catch (error) {
     if (error instanceof UnauthenticatedError) return { ok: false, reason: "unauthenticated" };
+    if (error instanceof CompletionReplayMismatchError) {
+      return { ok: false, reason: "invalid" };
+    }
     if (error instanceof EnrollmentNotActiveError) return { ok: false, reason: "inactive" };
+    if (error instanceof EnrollmentVersionChangedError) {
+      return { ok: false, reason: "unavailable" };
+    }
+    if (error instanceof GeneratedActivityAlreadyCompletedError) {
+      return { ok: false, reason: "completed" };
+    }
     captureNonCritical("recordAttemptAction failed", error);
     return { ok: false, reason: "error" };
   }
 }
 
 export interface LearnerStateResult {
+  /** Operational failures are non-publishable; legitimate empty states are ok. */
+  status: "ok" | "error";
   skillState: SkillState;
   /**
    * Distinct activity ids the learner has completed: authored activity ids PLUS
@@ -361,6 +481,8 @@ export interface LearnerStateResult {
    * in one round-trip (C#5 consistency).
    */
   program: Program | null;
+  /** Exact enrollment version captured for this state snapshot. */
+  programVersionId: string | null;
   /**
    * Whether the account learner may play this program (Fix-F A2): true ONLY when
    * the learner has an ACTIVE enrollment for `slug`. False for removed/paused/no
@@ -373,6 +495,7 @@ export interface LearnerStateResult {
 }
 
 const EMPTY_STATE: LearnerStateResult = {
+  status: "ok",
   skillState: {},
   completedActivityIds: [],
   starsByActivity: {},
@@ -380,8 +503,11 @@ const EMPTY_STATE: LearnerStateResult = {
   dueReviews: [],
   config: {},
   program: null,
+  programVersionId: null,
   available: false,
 };
+
+const ERROR_STATE: LearnerStateResult = { ...EMPTY_STATE, status: "error" };
 
 /**
  * Read a learner's mastery state + completed authored activities for ONE program
@@ -411,13 +537,15 @@ export async function getLearnerStateAction(
       // so legitimate play is unaffected. getEnrollmentForGate already enforces
       // tenancy (owned-by-account) and never resurrects a soft-removed row.
       const gate = await getEnrollmentForGate(accountId, learnerId, programSlug);
-      if (gate?.status !== "active") return EMPTY_STATE;
+      if (gate?.status !== "active" || !gate.configValid) return EMPTY_STATE;
 
       // Resolve the learner's PINNED program version (C#5). State scoping AND the
       // rendered tree both derive from this same resolved tree, so they always
-      // agree on the version — and they match the /api/practice gate, which also
-      // resolves via resolveLearnerProgram.
-      const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
+      // agree on the version — and they match the durable shelf-generation gate.
+      const program = await resolveProgramForEnrollmentVersion(
+        programSlug,
+        gate.programVersionId,
+      );
       if (!program) return EMPTY_STATE;
       const activityIds = new Set(activityIdsForProgram(program));
       const skillTags = new Set(skillTagsForProgram(program));
@@ -426,7 +554,6 @@ export async function getLearnerStateAction(
       const [
         fullSkillState,
         completed,
-        config,
         settings,
         generatedShelf,
         generatedCompletions,
@@ -435,11 +562,18 @@ export async function getLearnerStateAction(
         await Promise.all([
           getSkillState(accountId, learnerId),
           getCompletedActivityIds(accountId, learnerId),
-          getEnrollmentConfig(accountId, learnerId, programSlug),
           getLearnerSettings(accountId, learnerId),
-          listGeneratedShelf(accountId, learnerId, programSlug),
+          gate.programVersionId
+            ? listGeneratedShelf(accountId, learnerId, programSlug, gate.programVersionId)
+            : Promise.resolve([]),
           getGeneratedCompletions(accountId, learnerId),
-          getDueReviews(accountId, learnerId, programSlug, today),
+          getDueReviews(
+            accountId,
+            learnerId,
+            program,
+            gate.programVersionId,
+            today,
+          ),
         ]);
 
       // Scope skill_state to this program's skills.
@@ -473,7 +607,7 @@ export async function getLearnerStateAction(
       // me" whenever EITHER level disables AI — matching the server gate, which
       // remains the authoritative enforcement.
       const effectiveConfig: LearnerSurfaceConfig = {
-        ...config,
+        ...gate.config,
         ...(settings?.readAloud !== undefined ? { readAloud: settings.readAloud } : undefined),
         ...(settings?.oralReading !== undefined
           ? { oralReading: settings.oralReading }
@@ -482,6 +616,7 @@ export async function getLearnerStateAction(
       };
 
       return {
+        status: "ok",
         skillState,
         completedActivityIds,
         starsByActivity,
@@ -489,6 +624,7 @@ export async function getLearnerStateAction(
         dueReviews,
         config: effectiveConfig,
         program,
+        programVersionId: gate.programVersionId,
         available: true,
       };
     });
@@ -496,7 +632,7 @@ export async function getLearnerStateAction(
     if (!(error instanceof UnauthenticatedError)) {
       captureNonCritical("getLearnerStateAction failed", error);
     }
-    return EMPTY_STATE;
+    return ERROR_STATE;
   }
 }
 
@@ -539,7 +675,7 @@ function locateLesson(
  * Everything the model is steered by is SERVER-derived (§8): the band, focus, and
  * skill hints come from the resolved authored tree + the parent's enrollment
  * config — never from the client, which supplies only identifiers. The §8 gate
- * mirrors /api/practice exactly (owned learner, ACTIVE enrollment, and NEITHER
+ * requires an owned learner, ACTIVE enrollment, and NEITHER
  * aiPractice kill-switch off), and generation is bounded (SHELF_BATCH per call,
  * SHELF_LESSON_CAP per lesson). A lesson only generates once its authored
  * activities are all complete (the completion witness), and re-calls are no-ops
@@ -562,30 +698,37 @@ export async function ensureLessonPractice(
 
   try {
     return await withAccount(async ({ accountId }): Promise<{ ok: boolean; items: ShelfItem[] }> => {
-      // 1. §8 gate — mirrors /api/practice (fail-closed). Ownership first, then
+      // 1. §8 gate (fail-closed). Ownership first, then
       //    the resolved tree, then ACTIVE enrollment + BOTH aiPractice flags.
       const owned = await getLearner(accountId, learnerId);
       if (!owned) return { ok: false, items: [] };
-
-      const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
-      if (!program) return { ok: false, items: [] };
 
       const [settings, gate] = await Promise.all([
         getLearnerSettings(accountId, learnerId),
         getEnrollmentForGate(accountId, learnerId, programSlug),
       ]);
-      const aiOff =
+      if (
         settings?.aiPractice === false ||
         !gate ||
         gate.status !== "active" ||
-        gate.config.aiPractice === false;
-      if (aiOff) return { ok: false, items: [] };
+        !gate.configValid ||
+        gate.config.aiPractice === false ||
+        !gate.programVersionId
+      ) {
+        return { ok: false, items: [] };
+      }
+      const programVersionId = gate.programVersionId;
+      const program = await resolveProgramForEnrollmentVersion(programSlug, programVersionId);
+      if (!program) return { ok: false, items: [] };
 
       // 2. Locate the lesson on the pinned tree (by lessonId, else the lesson
       //    containing activityId). Unknown → calm no-op.
       const located = locateLesson(program, { lessonId, activityId });
       if (!located) return { ok: false, items: [] };
       const { unit, lesson } = located;
+      if (!isEnrollmentUnitActive(gate.config, unit.id)) {
+        return { ok: false, items: [] };
+      }
 
       // 2a. Placement-integrity guard (final review Critical): a baseline/mid/final
       //    check-in unit must NEVER grow a shelf. Its authored attempts insert
@@ -600,13 +743,25 @@ export async function ensureLessonPractice(
 
       // The existing shelf for this lesson (needed by both the incomplete no-op
       // and the idempotency/cap returns below).
-      const shelf = await listGeneratedShelf(accountId, learnerId, programSlug);
-      const existing = shelf.filter((s) => s.lessonId === lesson.id);
+      const shelf = await listGeneratedShelf(
+        accountId,
+        learnerId,
+        programSlug,
+        programVersionId,
+      );
+      const existing = shelf.filter(
+        (s) => s.unitKey === unit.id && s.lessonId === lesson.id,
+      );
 
       // 3. Completion witness: every AUTHORED activity in the lesson must be a
       //    (non-generated) completion. Incomplete → calm no-op returning existing
       //    (the client calls this after each completion, before the lesson is done).
-      const completed = await getCompletedActivityIds(accountId, learnerId);
+      const completed = await getCompletedActivityIdsForVersion(
+        accountId,
+        learnerId,
+        programSlug,
+        programVersionId,
+      );
       const completedIds = new Set(completed.map((c) => c.activityId));
       const allComplete = lesson.activities.every((a) => completedIds.has(a.id));
       if (!allComplete) return { ok: true, items: existing };
@@ -632,7 +787,7 @@ export async function ensureLessonPractice(
       const items = await withLessonGenerationLock(
         accountId,
         learnerId,
-        lesson.id,
+        { programSlug, programVersionId, unitKey: unit.id, lessonId: lesson.id },
         more ?? false,
         async (room): Promise<NewGeneratedActivity[]> => {
           const targets = pickGenerationTargets(lesson, room);

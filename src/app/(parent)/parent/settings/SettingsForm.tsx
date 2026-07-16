@@ -189,8 +189,8 @@ export function SettingsForm({
             <Switch
               checked={settings.oralReading}
               onChange={(value) => update("oralReading", value)}
-              label="Oral reading check"
-              description="Lets the microphone check a word your child reads aloud. Recordings are used only for that check and are never saved."
+              label="Microphone activities"
+              description="Allows oral reading checks and talk-to-write. Audio and recognized words are never saved by the app."
               disabled={pending}
               className="flex-1"
             />

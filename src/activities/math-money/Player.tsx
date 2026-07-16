@@ -1,28 +1,38 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { motion } from "motion/react";
 import { ArrowCounterClockwiseIcon } from "@phosphor-icons/react/dist/ssr";
 import type { MathMoneyConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
-import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
+import { cn } from "@/lib/cn";
 import { PlayerControls, Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
-import { coinsTotal, schema, score, type Coin, type MathMoneyResponse } from "./logic";
+import {
+  COIN_FACTS,
+  hasCoinCapacity,
+  reduceCoinTray,
+  sumCoins,
+  type Coin,
+  type CoinToken,
+} from "./coin-model";
+import { schema, type MathMoneyResponse } from "./logic";
 
-/** Per-coin display: a static map (JIT-safe, no dynamic class construction). */
-const COIN_META: Record<Coin, { label: string; cents: string; emoji: string }> = {
-  penny: { label: "Penny", cents: "1¢", emoji: "🟤" },
-  nickel: { label: "Nickel", cents: "5¢", emoji: "⚪" },
-  dime: { label: "Dime", cents: "10¢", emoji: "🔘" },
-  quarter: { label: "Quarter", cents: "25¢", emoji: "🪙" },
+const COIN_FILL: Record<Coin, string> = {
+  penny: "#c9825f",
+  nickel: "#d8d5ca",
+  dime: "#ece9df",
+  quarter: "#c8c8c1",
 };
+
+function spokenCents(cents: number): string {
+  return `${cents} ${cents === 1 ? "cent" : "cents"}`;
+}
 
 export function MathMoneyPlayer({
   config,
@@ -34,66 +44,160 @@ export function MathMoneyPlayer({
   const shake = useWrongShake();
 
   const [attempts, setAttempts] = useState(0);
-  const [tray, setTray] = useState<Coin[]>([]); // count mode only: coins dropped so far
-  const [done, setDone] = useState<MathMoneyResponse | null>(null);
+  const [tray, setTray] = useState<CoinToken[]>([]);
+  const [selectedCoin, setSelectedCoin] = useState<Coin | null>(null);
+  const [draggingCoin, setDraggingCoin] = useState<Coin | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const nextToken = useRef(1);
+  const trayDropRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{
+    coin: Coin;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null>(null);
+  const suppressPaletteClick = useRef(false);
 
-  // Read the instruction aloud once when the activity opens.
   useSpeakOnce(speech.speak, parsed.instruction);
-
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message={parsed.mode === "identify" ? "You found the right coin." : "You made the right amount."}
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
 
   function tapIdentify(coin: Coin) {
     if (parsed.mode !== "identify" || shake.wrong) return;
-    const attemptCount = attempts + 1;
+    const attemptCount = Math.min(attempts + 1, 20);
     if (coin === parsed.targetCoin) {
-      setDone({ attempts: attemptCount, tappedCoin: coin });
-    } else {
-      setAttempts(attemptCount);
-      shake.trigger({ speak: () => speech.speak("Try another coin.") });
+      const response: MathMoneyResponse = { attempts: attemptCount, tappedCoin: coin };
+      onComplete(response);
+      return;
     }
+    const message = "That is a different coin. Look at the name and value, then try again.";
+    setAttempts(attemptCount);
+    setFeedback(message);
+    shake.trigger({ speak: () => speech.speak("Try another coin.") });
   }
 
-  function addCoin(coin: Coin) {
-    if (parsed.mode !== "count" || shake.wrong) return;
-    setTray((prev) => [...prev, coin]);
+  function canAddAnotherCoin(): boolean {
+    return parsed.mode === "count" && hasCoinCapacity(tray);
   }
 
-  function removeCoin(index: number) {
+  function placeCoin(coin: Coin) {
+    if (parsed.mode !== "count" || shake.wrong || !canAddAnotherCoin()) return;
+    const token: CoinToken = { id: `coin-${nextToken.current}`, type: coin };
+    const nextTray = reduceCoinTray(tray, { type: "place", token });
+    if (nextTray === tray) return;
+    nextToken.current += 1;
+    setTray(nextTray);
+    setSelectedCoin(null);
+    setFeedback(null);
+    setAnnouncement(
+      `Added ${COIN_FACTS[coin].name}. Tray total ${spokenCents(sumCoins(nextTray))}.`,
+    );
+  }
+
+  function removeCoin(tokenId: string) {
     if (parsed.mode !== "count" || shake.wrong) return;
-    setTray((prev) => prev.filter((_, i) => i !== index));
+    const token = tray.find((candidate) => candidate.id === tokenId);
+    if (!token) return;
+    const nextTray = reduceCoinTray(tray, { type: "remove", tokenId });
+    if (nextTray === tray) return;
+    setTray(nextTray);
+    setFeedback(null);
+    setAnnouncement(
+      `Removed ${COIN_FACTS[token.type].name}. Tray total ${spokenCents(sumCoins(nextTray))}.`,
+    );
   }
 
   function clearTray() {
-    setTray([]);
+    setTray((current) => reduceCoinTray(current, { type: "clear" }));
+    setSelectedCoin(null);
+    setFeedback(null);
+    setAnnouncement("Cleared the tray. Tray total zero cents.");
+  }
+
+  function selectCoin(coin: Coin) {
+    if (parsed.mode !== "count" || shake.wrong || !canAddAnotherCoin()) return;
+    setSelectedCoin(coin);
+    setFeedback(null);
+    setAnnouncement(`${COIN_FACTS[coin].name} selected. Tap the tray to place it.`);
+  }
+
+  function beginCoinDrag(event: PointerEvent<HTMLButtonElement>, coin: Coin) {
+    if (parsed.mode !== "count" || shake.wrong || !canAddAnotherCoin()) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    dragRef.current = {
+      coin,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveCoinDrag(event: PointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 6) {
+      drag.moved = true;
+      setDraggingCoin(drag.coin);
+      event.preventDefault();
+    }
+  }
+
+  function endCoinDrag(event: PointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.moved) {
+      const bounds = trayDropRef.current?.getBoundingClientRect();
+      const isInside =
+        bounds !== undefined &&
+        event.clientX >= bounds.left &&
+        event.clientX <= bounds.right &&
+        event.clientY >= bounds.top &&
+        event.clientY <= bounds.bottom;
+      suppressPaletteClick.current = true;
+      window.setTimeout(() => {
+        suppressPaletteClick.current = false;
+      }, 0);
+      if (isInside) placeCoin(drag.coin);
+    }
+    dragRef.current = null;
+    setDraggingCoin(null);
+  }
+
+  function cancelCoinDrag(event: PointerEvent<HTMLButtonElement>) {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    setDraggingCoin(null);
+  }
+
+  function selectCoinAfterPointer(coin: Coin) {
+    if (suppressPaletteClick.current) {
+      suppressPaletteClick.current = false;
+      return;
+    }
+    selectCoin(coin);
   }
 
   function check() {
-    if (parsed.mode !== "count") return;
-    const attemptCount = attempts + 1;
+    if (parsed.mode !== "count" || shake.wrong) return;
+    const attemptCount = Math.min(attempts + 1, 20);
+    const total = sumCoins(tray);
     setAttempts(attemptCount);
-    const total = coinsTotal(tray);
     if (total === parsed.targetCents) {
-      setDone({ attempts: attemptCount, tappedCoins: tray });
-    } else {
-      shake.trigger({
-        speak: () =>
-          speech.speak(
-            total > parsed.targetCents
-              ? "That's a little too much. Try again."
-              : "A little more. Try again.",
-          ),
-      });
+      const response: MathMoneyResponse = { attempts: attemptCount, tokens: [...tray] };
+      onComplete(response);
+      return;
     }
+    const message =
+      total > parsed.targetCents
+        ? "That is a little too much. Keep your coins and try again."
+        : "You need a little more. Keep your coins and try again.";
+    setFeedback(message);
+    shake.trigger({ speak: () => speech.speak(message) });
   }
+
+  const trayTotal = sumCoins(tray);
 
   return (
     <div className="grid gap-8">
@@ -101,37 +205,88 @@ export function MathMoneyPlayer({
 
       {parsed.mode === "identify" ? (
         <motion.div
-          className="mx-auto grid max-w-2xl grid-cols-2 gap-4 sm:grid-cols-3"
+          role="group"
+          aria-label="Coin choices"
+          className="mx-auto grid max-w-2xl grid-cols-2 items-end gap-4 sm:grid-cols-3"
           {...shake.shakeProps(reduced)}
         >
-          {parsed.coins.map((coin, i) => (
-            <CoinTile
-              key={`${coin}-${i}`}
+          {parsed.coins.map((coin, index) => (
+            <CoinButton
+              key={`${coin}-${index}`}
               coin={coin}
-              onTap={() => tapIdentify(coin)}
+              action="Choose"
+              onClick={() => tapIdentify(coin)}
               disabled={shake.wrong}
             />
           ))}
         </motion.div>
       ) : (
-        <>
-          <motion.div className="grid justify-items-center gap-6" {...shake.shakeProps(reduced)}>
-            <Tray coins={tray} onRemove={removeCoin} disabled={shake.wrong} />
-            <div className="mx-auto grid max-w-xl grid-cols-2 gap-4 sm:grid-cols-4">
-              {parsed.palette.map((coin) => (
-                <CoinTile key={coin} coin={coin} onTap={() => addCoin(coin)} disabled={shake.wrong} />
-              ))}
-            </div>
-          </motion.div>
+        <motion.div className="grid justify-items-center gap-6" {...shake.shakeProps(reduced)}>
+          <div ref={trayDropRef} className="w-full max-w-2xl" data-testid="coin-tray-drop-zone">
+            <CoinTray
+              tokens={tray}
+              selectedCoin={selectedCoin}
+              onPlaceSelected={() => {
+                if (selectedCoin) placeCoin(selectedCoin);
+              }}
+              onRemove={removeCoin}
+              disabled={shake.wrong}
+              dragging={draggingCoin !== null}
+            />
+          </div>
 
-          <ProgressHint>
-            {tray.length === 0 ? "Tap coins to add them to the tray" : `${coinsTotal(tray)}¢ so far`}
-          </ProgressHint>
-        </>
+          <div
+            role="group"
+            aria-label="Coin palette"
+            className="mx-auto grid max-w-2xl grid-cols-2 items-end gap-4 sm:grid-cols-4"
+          >
+            {parsed.palette.map((coin, index) => (
+              <CoinButton
+                key={`${coin}-${index}`}
+                coin={coin}
+                action="Select"
+                onClick={() => selectCoinAfterPointer(coin)}
+                onKeyboardPlace={() => placeCoin(coin)}
+                onPointerDown={(event) => beginCoinDrag(event, coin)}
+                onPointerMove={moveCoinDrag}
+                onPointerUp={endCoinDrag}
+                onPointerCancel={cancelCoinDrag}
+                onLostPointerCapture={cancelCoinDrag}
+                pressed={selectedCoin === coin}
+                dragging={draggingCoin === coin}
+                disabled={shake.wrong || !canAddAnotherCoin()}
+              />
+            ))}
+          </div>
+        </motion.div>
       )}
 
+      {parsed.mode === "count" ? (
+        <ProgressHint>
+          <span className="block font-display text-lg text-ink">
+            Tray total: {spokenCents(trayTotal)}
+          </span>
+          {tray.length > 0 ? (
+            <span className="block">
+              {tray.map((token) => COIN_FACTS[token.type].cents).join(" + ")} = {trayTotal}¢
+            </span>
+          ) : (
+            <span className="block">
+              Select a coin, then tap the tray—or drag the coin into it. Tray coins can be removed.
+            </span>
+          )}
+          {feedback ? <span className="mt-2 block font-semibold text-ink">{feedback}</span> : null}
+        </ProgressHint>
+      ) : feedback ? (
+        <ProgressHint className="font-semibold text-ink">{feedback}</ProgressHint>
+      ) : null}
+
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </p>
+
       <PlayerControls>
-        {parsed.mode === "count" && (
+        {parsed.mode === "count" ? (
           <Button
             variant="soft"
             size="md"
@@ -141,92 +296,199 @@ export function MathMoneyPlayer({
             <ArrowCounterClockwiseIcon weight="bold" aria-hidden="true" />
             Clear
           </Button>
-        )}
+        ) : null}
         <SpeakerButton speech={speech} text={parsed.instruction} label="Hear what to do again" />
-        {parsed.mode === "count" && (
+        {parsed.mode === "count" ? (
           <Button variant="primary" size="kid" onClick={check} disabled={shake.wrong}>
             Check it
           </Button>
-        )}
+        ) : null}
       </PlayerControls>
     </div>
   );
 }
 
-/** A big, tappable coin: the emoji glyph plus its cents label. Shared by the
- *  identify grid (tap the target coin) and the count palette (add to the tray). */
-function CoinTile({
+function CoinButton({
   coin,
-  onTap,
+  action,
+  onClick,
+  onKeyboardPlace,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
+  onLostPointerCapture,
+  pressed = false,
+  dragging = false,
   disabled,
 }: {
   coin: Coin;
-  onTap: () => void;
+  action: "Select" | "Choose";
+  onClick: () => void;
+  onKeyboardPlace?: () => void;
+  onPointerDown?: (event: PointerEvent<HTMLButtonElement>) => void;
+  onPointerMove?: (event: PointerEvent<HTMLButtonElement>) => void;
+  onPointerUp?: (event: PointerEvent<HTMLButtonElement>) => void;
+  onPointerCancel?: (event: PointerEvent<HTMLButtonElement>) => void;
+  onLostPointerCapture?: (event: PointerEvent<HTMLButtonElement>) => void;
+  pressed?: boolean;
+  dragging?: boolean;
   disabled: boolean;
 }) {
-  const meta = COIN_META[coin];
+  const fact = COIN_FACTS[coin];
+
+  function placeWithKeyboard(event: KeyboardEvent<HTMLButtonElement>) {
+    if (!onKeyboardPlace || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    onKeyboardPlace();
+  }
+
+  const label =
+    action === "Select"
+      ? `Select ${fact.name}, ${spokenCents(fact.cents)}. Keyboard Enter places it directly in the tray.`
+      : `Choose ${fact.name}, ${spokenCents(fact.cents)}`;
   return (
     <button
       type="button"
-      onClick={onTap}
+      onClick={onClick}
+      onKeyDown={placeWithKeyboard}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onLostPointerCapture={onLostPointerCapture}
       disabled={disabled}
-      aria-label={`${meta.label}, ${meta.cents}`}
+      aria-label={label}
+      aria-pressed={action === "Select" ? pressed : undefined}
+      data-dragging={dragging ? "true" : "false"}
       className={cn(
-        "grid min-h-24 place-items-center gap-1 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-5 text-ink shadow-pop transition duration-200 ease-out",
+        "grid min-h-28 min-w-24 touch-none place-items-center gap-2 rounded-2xl border-[3px] border-ink bg-paper-raised px-3 py-4 text-ink shadow-pop transition duration-200 ease-out",
         "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
-        "disabled:pointer-events-none disabled:opacity-50",
+        "disabled:pointer-events-none disabled:opacity-40",
+        pressed && "bg-honey ring-4 ring-accent-deep ring-offset-2",
+        dragging && "-translate-y-2 scale-105 opacity-70",
       )}
     >
-      <span className="text-4xl" role="img" aria-hidden="true">
-        {meta.emoji}
+      <CoinFace coin={coin} />
+      <span className="font-display text-base">
+        {fact.name} · {fact.cents}¢
       </span>
-      <span className="font-display text-lg">{meta.cents}</span>
     </button>
   );
 }
 
-/** The count-mode tray: dropped coins with the running total always visible
- *  (no dark pattern), removable by tapping them back out. */
-function Tray({
-  coins,
+function CoinTray({
+  tokens,
+  selectedCoin,
+  onPlaceSelected,
   onRemove,
   disabled,
+  dragging,
 }: {
-  coins: Coin[];
-  onRemove: (index: number) => void;
+  tokens: CoinToken[];
+  selectedCoin: Coin | null;
+  onPlaceSelected: () => void;
+  onRemove: (tokenId: string) => void;
   disabled: boolean;
+  dragging: boolean;
 }) {
+  function removeWithKeyboard(event: KeyboardEvent<HTMLButtonElement>, tokenId: string) {
+    if (event.key !== "Delete" && event.key !== "Backspace") return;
+    event.preventDefault();
+    onRemove(tokenId);
+  }
+
   return (
     <div
-      role="list"
-      aria-label="Coins in the tray"
-      className="flex min-h-20 w-full max-w-md flex-wrap items-center justify-center gap-2 rounded-2xl border-[3px] border-dashed border-ink/25 bg-paper-sunk p-3"
-    >
-      {coins.length === 0 ? (
-        <span className="text-sm text-ink-soft">Empty tray</span>
-      ) : (
-        coins.map((coin, i) => {
-          const meta = COIN_META[coin];
-          return (
-            <button
-              key={i}
-              type="button"
-              onClick={() => onRemove(i)}
-              disabled={disabled}
-              aria-label={`Remove ${meta.label} from the tray`}
-              className={cn(
-                "grid min-h-24 min-w-24 place-items-center rounded-full border-2 border-ink bg-paper-raised text-3xl shadow-pop transition duration-200 ease-out",
-                "hover:-translate-y-0.5 active:translate-y-0.5",
-                "disabled:pointer-events-none disabled:opacity-50",
-              )}
-            >
-              <span role="img" aria-hidden="true">
-                {meta.emoji}
-              </span>
-            </button>
-          );
-        })
+      role="group"
+      aria-label="Coin tray"
+      className={cn(
+        "grid min-h-40 w-full gap-3 rounded-3xl border-[3px] border-dashed border-ink/30 bg-paper-sunk p-4 transition",
+        dragging && "border-accent-deep bg-honey/30 ring-4 ring-accent/40",
       )}
+    >
+      <button
+        type="button"
+        aria-label={
+          selectedCoin
+            ? `Place selected ${COIN_FACTS[selectedCoin].name} in tray`
+            : "Coin tray placement target. Select a coin first."
+        }
+        disabled={disabled || selectedCoin === null}
+        onClick={onPlaceSelected}
+        className="min-h-12 rounded-2xl border-2 border-dashed border-ink/25 bg-paper-raised px-4 py-2 font-semibold text-ink transition hover:border-accent-deep hover:bg-honey/35 focus-visible:outline-4 focus-visible:outline-accent-deep disabled:opacity-60"
+      >
+        {selectedCoin
+          ? `Place ${COIN_FACTS[selectedCoin].name} here`
+          : "Select a coin, then tap here—or drag it into the tray."}
+      </button>
+
+      <div
+        role="list"
+        aria-label="Coins in the tray"
+        className="flex min-h-24 flex-wrap items-end justify-center gap-3"
+      >
+        {tokens.length === 0 ? (
+          <span className="self-center text-sm text-ink-soft">The tray is empty.</span>
+        ) : (
+          tokens.map((token) => {
+            const fact = COIN_FACTS[token.type];
+            return (
+              <div key={token.id} role="listitem">
+                <button
+                  type="button"
+                  onClick={() => onRemove(token.id)}
+                  onKeyDown={(event) => removeWithKeyboard(event, token.id)}
+                  disabled={disabled}
+                  aria-label={`Remove ${fact.name}, ${spokenCents(fact.cents)}`}
+                  className="grid min-h-24 min-w-24 place-items-center rounded-2xl border-2 border-transparent transition hover:border-ink focus-visible:border-ink focus-visible:outline-none active:translate-y-0.5 disabled:pointer-events-none disabled:opacity-50"
+                >
+                  <CoinFace coin={token.type} />
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
+  );
+}
+
+function CoinFace({ coin }: { coin: Coin }) {
+  const fact = COIN_FACTS[coin];
+  const displayDiameter = fact.diameter * 3;
+  const shortName = coin === "quarter" ? "25¢" : `${fact.cents}¢`;
+  return (
+    <svg
+      viewBox="0 0 72 72"
+      width={displayDiameter}
+      height={displayDiameter}
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="36" cy="36" r="32" fill={COIN_FILL[coin]} stroke="var(--color-ink)" strokeWidth="3" />
+      <circle cx="36" cy="36" r="26" fill="none" stroke="var(--color-ink)" strokeWidth="1.5" />
+      <path d="M18 25 Q36 14 54 25" fill="none" stroke="var(--color-ink)" strokeWidth="1.5" />
+      <text
+        x="36"
+        y="34"
+        textAnchor="middle"
+        fill="var(--color-ink)"
+        fontSize="9"
+        fontWeight="700"
+      >
+        {fact.name.toUpperCase()}
+      </text>
+      <text
+        x="36"
+        y="49"
+        textAnchor="middle"
+        fill="var(--color-ink)"
+        fontSize="15"
+        fontWeight="800"
+      >
+        {shortName}
+      </text>
+    </svg>
   );
 }

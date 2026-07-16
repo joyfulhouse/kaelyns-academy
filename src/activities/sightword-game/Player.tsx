@@ -1,23 +1,26 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { motion } from "motion/react";
-import { CheckCircleIcon } from "@phosphor-icons/react/dist/ssr";
+import { EarIcon } from "@phosphor-icons/react/dist/ssr";
 import type { SightwordGameConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { cn } from "@/lib/cn";
 import { Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { shuffle } from "../_shared/shuffle";
 import { useActivity } from "../_shared/useActivity";
-import { useReducedMotion } from "../_shared/useReducedMotion";
-import { useSpeakOnce } from "../_shared/useSpeakOnce";
+import { useEffectOncePerKey } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
-import { schema, score, type SightwordGameResponse } from "./logic";
+import { useTargetSpeech } from "../_shared/useTargetSpeech";
+import { schema, type SightwordGameResponse } from "./logic";
+import {
+  chooseSightword,
+  createSightwordRoundState,
+  revealSightword,
+} from "./model";
 
-interface Card {
-  word: string;
-  isTarget: boolean;
+interface ChoiceCard {
+  choiceIndex: number;
+  text: string;
 }
 
 export function SightwordGamePlayer({
@@ -25,50 +28,54 @@ export function SightwordGamePlayer({
   onComplete,
 }: ActivityPlayerProps<SightwordGameConfig, SightwordGameResponse>) {
   const parsed = useActivity(schema, config);
+  const rounds = parsed.rounds;
   const speech = useSpeech();
-  const reduced = useReducedMotion();
+  const targetSpeech = useTargetSpeech(speech);
+  const [roundIndex, setRoundIndex] = useState(0);
+  const [roundState, setRoundState] = useState(createSightwordRoundState);
+  const [completedRounds, setCompletedRounds] = useState<SightwordGameResponse["rounds"]>([]);
 
-  const cards = useMemo<Card[]>(() => {
-    const targets: Card[] = parsed.words.map((word) => ({ word, isTarget: true }));
-    const decoys: Card[] = parsed.decoys.map((word) => ({ word, isTarget: false }));
-    return shuffle([...targets, ...decoys], parsed.words.join("").length + parsed.decoys.length);
-  }, [parsed.words, parsed.decoys]);
+  const round = rounds[roundIndex];
+  const cards = useMemo<ChoiceCard[]>(() => {
+    if (!round) return [];
+    const indexed = round.choices.map((text, choiceIndex) => ({ text, choiceIndex }));
+    const seed = [...round.target].reduce((sum, character) => sum + character.charCodeAt(0), 0);
+    return shuffle(indexed, seed + roundIndex * 17);
+  }, [round, roundIndex]);
+  const spokenCue = round?.spokenPrompt ?? round?.target ?? "";
 
-  const [found, setFound] = useState<string[]>([]);
-  const [nudge, setNudge] = useState<string | null>(null);
-  const [decoyTaps, setDecoyTaps] = useState(0);
-  const [done, setDone] = useState<SightwordGameResponse | null>(null);
+  useEffectOncePerKey(
+    () => {
+      if (spokenCue) void targetSpeech.speakTarget(spokenCue);
+    },
+    roundIndex,
+  );
 
-  // Read the instruction aloud once when the activity opens.
-  useSpeakOnce(speech.speak, parsed.instruction);
+  if (!round) return null;
+  const choicesLocked =
+    (!speech.supported || targetSpeech.unavailable) && !roundState.helpVisible;
 
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message="You found every word you can read."
-        onContinue={() => onComplete(done, result)}
-      />
-    );
-  }
-
-  function tap(card: Card) {
-    speech.speak(card.word);
-    if (card.isTarget) {
-      if (found.includes(card.word)) return;
-      const next = [...found, card.word];
-      setFound(next);
-      setNudge(null);
-      if (next.length === parsed.words.length) {
-        setDone({ found: next, decoyTaps });
-      }
-    } else {
-      // Forgiving: a decoy is a gentle "not that one", never a failure.
-      setDecoyTaps((n) => n + 1);
-      setNudge(card.word);
-      speech.speak("Hmm, keep looking.");
+  function choose(choiceIndex: number): void {
+    const choice = round.choices[choiceIndex];
+    if (choice === undefined) return;
+    const correct = choice.toLocaleLowerCase() === round.target.toLocaleLowerCase();
+    const transition = chooseSightword(roundState, choiceIndex, correct, roundIndex);
+    if (!transition.result) {
+      setRoundState(transition.state);
+      speech.speak("Listen once more and try again.");
+      return;
     }
+
+    const nextCompleted = [...completedRounds, transition.result];
+    const isLast = roundIndex === rounds.length - 1;
+    if (isLast) {
+      onComplete({ rounds: nextCompleted });
+      return;
+    }
+    setCompletedRounds(nextCompleted);
+    targetSpeech.reset();
+    setRoundIndex((index) => index + 1);
+    setRoundState(createSightwordRoundState());
   }
 
   return (
@@ -76,48 +83,79 @@ export function SightwordGamePlayer({
       <Prompt speech={speech} instruction={parsed.instruction} />
 
       <ProgressHint>
-        Found {found.length} of {parsed.words.length}
+        Word {roundIndex + 1} of {rounds.length}
       </ProgressHint>
 
-      <div className="mx-auto grid max-w-2xl grid-cols-2 gap-4 sm:grid-cols-3">
-        {cards.map((card) => {
-          const isFound = card.isTarget && found.includes(card.word);
-          const isNudging = nudge === card.word;
-          return (
-            <motion.button
-              key={card.word}
-              type="button"
-              onClick={() => tap(card)}
-              disabled={isFound}
-              aria-label={isFound ? `${card.word}, found` : card.word}
-              aria-pressed={isFound}
-              animate={isNudging && !reduced ? { x: [0, -6, 6, -4, 4, 0] } : { x: 0 }}
-              transition={{ duration: 0.4, ease: [0.25, 1, 0.5, 1] }}
-              className={cn(
-                "relative grid min-h-24 place-items-center rounded-2xl border-[3px] border-ink px-4 py-5",
-                "font-display text-2xl shadow-pop transition duration-200 ease-out",
-                "hover:-translate-y-0.5 active:translate-y-1 active:shadow-none",
-                isFound
-                  ? "bg-success/25 text-ink opacity-75 cursor-not-allowed"
-                  : "bg-paper-raised text-ink",
-              )}
-            >
-              {card.word}
-              {isFound && (
-                <CheckCircleIcon
-                  size={26}
-                  weight="fill"
-                  aria-hidden="true"
-                  className="absolute right-2 top-2 text-success"
-                />
-              )}
-            </motion.button>
-          );
-        })}
-      </div>
+      <section className="mx-auto grid w-full max-w-2xl gap-5 rounded-[2rem] border-[3px] border-ink bg-paper-sunk p-5 shadow-pop sm:p-7">
+        <div className="grid justify-items-center gap-3 text-center">
+          <span className="grid size-14 place-items-center rounded-full border-[3px] border-ink bg-honey shadow-pop">
+            <EarIcon size={30} weight="bold" aria-hidden="true" />
+          </span>
+          <p className="text-sm font-bold uppercase tracking-[0.14em] text-ink-soft">Listen, then find</p>
+          {round.context && (
+            <p className="max-w-xl rounded-xl bg-paper-raised px-4 py-3 text-lg text-ink">
+              {round.context}
+            </p>
+          )}
+          {speech.supported ? (
+            <SpeakerButton
+              onSpeak={() => {
+                void targetSpeech.speakTarget(spokenCue);
+              }}
+              label="Hear the word again"
+            />
+          ) : null}
+          {(!speech.supported || targetSpeech.unavailable) &&
+          !roundState.helpVisible ? (
+            <p role="status" className="max-w-md text-sm text-ink-soft">
+              Audio isn’t available here. Show the word to keep going.
+            </p>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setRoundState(revealSightword)}
+            aria-pressed={roundState.helpVisible}
+            disabled={roundState.helpVisible}
+            className="min-h-11 rounded-full border-2 border-ink bg-honey/20 px-5 py-2 font-display text-ink transition active:translate-y-0.5 disabled:cursor-default disabled:bg-paper-raised"
+          >
+            {roundState.helpVisible ? "Word shown" : "Show the word"}
+          </button>
+          {roundState.helpVisible ? (
+            <p className="font-display text-4xl text-ink" aria-live="polite">
+              Word to find: {round.target}
+            </p>
+          ) : null}
+        </div>
 
-      <div className="flex justify-center">
-        <SpeakerButton speech={speech} text={parsed.instruction} label="Hear what to do again" />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3" aria-label="Word choices">
+          {cards.map((card) => {
+            const tried = roundState.wrongChoiceIndexes.includes(card.choiceIndex);
+            return (
+              <button
+                key={card.choiceIndex}
+                type="button"
+                onClick={() => choose(card.choiceIndex)}
+                aria-pressed={tried}
+                disabled={choicesLocked}
+                className={cn(
+                  "min-h-24 rounded-2xl border-[3px] border-ink px-4 py-5 font-display text-2xl text-ink shadow-pop",
+                  "transition duration-150 hover:-translate-y-0.5 focus-visible:ring-4 focus-visible:ring-honey/60 active:translate-y-1 active:shadow-none disabled:cursor-not-allowed disabled:opacity-60",
+                  tried ? "bg-honey" : "bg-paper-raised",
+                )}
+              >
+                {card.text}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <div className="min-h-7 text-center" aria-live="polite" aria-atomic="true">
+        {roundState.feedback === "try-again" ? (
+          <p className="font-display text-lg text-ink">
+            Keep that card here. Listen once more and try again.
+          </p>
+        ) : null}
       </div>
     </div>
   );

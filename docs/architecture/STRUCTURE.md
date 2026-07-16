@@ -166,9 +166,10 @@ kaelyns-academy/
 2. `components/learner/ActivityHost.tsx` mounts the matching player from the
    `src/activities/` registry; progress writes go through `src/lib/tutor/store.ts`
    (tenancy- and enrollment-gated, fail-closed).
-3. AI practice (optional, parent-gated) calls `POST /api/practice`, which enforces the §8
-   gate server-side and derives all generation inputs from the authored activity, then calls
-   the LiteLLM gateway via `src/lib/ai/practice.ts` with schema-validated output.
+3. After an authored lesson completes, the optional parent-gated shelf action
+   (`ensureLessonPractice`) derives generation inputs from the learner's pinned
+   authored tree, calls LiteLLM through `src/lib/ai/practice.ts`, validates the
+   output, and stores bounded learner-owned practice rows for later play.
 4. Read-aloud audio resolves through `src/lib/audio/*` (Kokoro) and the
    `/api/tts` + `/audio/[...path]` routes, cached in object storage.
 

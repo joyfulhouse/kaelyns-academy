@@ -33,7 +33,7 @@ vi.mock("@/lib/tutor/store", () => ({
 
 // The resolver for the learner's pinned tree.
 vi.mock("@/lib/content/repository", () => ({
-  resolveLearnerProgram: vi.fn(),
+  resolveProgramForEnrollmentVersion: vi.fn(),
   listProgramsAsync: vi.fn(),
 }));
 
@@ -44,7 +44,7 @@ vi.mock("@/content", () => ({
 }));
 
 import type { Program } from "@/content";
-import { resolveLearnerProgram } from "@/lib/content/repository";
+import { resolveProgramForEnrollmentVersion } from "@/lib/content/repository";
 import {
   ensureEnrollment,
   getCompletedActivityIds,
@@ -66,11 +66,16 @@ beforeEach(() => {
   vi.mocked(getDueReviews).mockResolvedValue([]);
   vi.mocked(getEnrollmentConfig).mockResolvedValue({});
   vi.mocked(getLearnerSettings).mockResolvedValue({});
-  vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+  vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(PROGRAM);
   vi.mocked(listGeneratedShelf).mockResolvedValue([]);
   vi.mocked(getGeneratedCompletions).mockResolvedValue([]);
   // Default: an active enrollment → playable.
-  vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
+  vi.mocked(getEnrollmentForGate).mockResolvedValue({
+    status: "active",
+    config: {},
+    configValid: true,
+    programVersionId: "PV1",
+  });
 });
 afterEach(() => vi.resetAllMocks());
 
@@ -78,31 +83,64 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
   it("returns available:false (no program) when there is no enrollment", async () => {
     vi.mocked(getEnrollmentForGate).mockResolvedValue(null);
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
+    expect(res.status).toBe("ok");
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();
+    expect(res.programVersionId).toBeNull();
     // The pinned tree is never resolved when the gate is closed.
-    expect(resolveLearnerProgram).not.toHaveBeenCalled();
+    expect(resolveProgramForEnrollmentVersion).not.toHaveBeenCalled();
   });
 
   it("returns available:false (no program) when the enrollment is removed", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "removed", config: {} });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "removed",
+      config: {},
+      configValid: true,
+      programVersionId: "PV1",
+    });
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();
   });
 
   it("returns available:false (no program) when the enrollment is paused", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "paused", config: {} });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "paused",
+      config: {},
+      configValid: true,
+      programVersionId: "PV1",
+    });
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();
   });
 
+  it("fails closed when an active enrollment has malformed stored config", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { aiPractice: false },
+      configValid: false,
+      programVersionId: "PV1",
+    });
+
+    const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
+
+    expect(res.available).toBe(false);
+    expect(res.program).toBeNull();
+    expect(resolveProgramForEnrollmentVersion).not.toHaveBeenCalled();
+  });
+
   it("returns available:true + the pinned program for an ACTIVE enrollment", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: {},
+      configValid: true,
+      programVersionId: "PV1",
+    });
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
     expect(res.available).toBe(true);
     expect(res.program).toBe(PROGRAM);
+    expect(res.programVersionId).toBe("PV1");
   });
 
   it("surfaces due authored reviews for an active enrollment", async () => {
@@ -121,7 +159,8 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
     expect(getDueReviews).toHaveBeenCalledWith(
       "acc-1",
       "L1",
-      "kaelyn-adaptive",
+      PROGRAM,
+      "PV1",
       expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
     );
   });
@@ -139,9 +178,24 @@ describe("getLearnerStateAction (Fix-F A2 availability gate)", () => {
   });
 
   it("returns available:false when active but the program no longer resolves", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(undefined);
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: {},
+      configValid: true,
+      programVersionId: "PV1",
+    });
+    vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(undefined);
     const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
+    expect(res.available).toBe(false);
+    expect(res.program).toBeNull();
+  });
+
+  it("distinguishes an operational read failure from a legitimate unavailable state", async () => {
+    vi.mocked(getEnrollmentForGate).mockRejectedValue(new Error("database unavailable"));
+
+    const res = await getLearnerStateAction("L1", "kaelyn-adaptive");
+
+    expect(res.status).toBe("error");
     expect(res.available).toBe(false);
     expect(res.program).toBeNull();
   });

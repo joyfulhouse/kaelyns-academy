@@ -4,7 +4,25 @@ import { applyEvidence, deriveOutcome, outcomeOf, tallyOutcomes, type SkillState
 import { nextBest, strandProgress, unitSkills } from "./recommend";
 
 function act(id: string, skillTags: SkillTag[]): Activity {
-  return { id, kind: "journal-prompt", title: id, band: "ready", skillTags, config: { prompt: "x" } };
+  return {
+    id,
+    kind: "math-tenframe",
+    title: id,
+    band: "ready",
+    skillTags,
+    config: { instruction: "Show one.", mode: "represent", target: 1, frames: 1 },
+  };
+}
+
+function journal(id: string, skillTags: SkillTag[] = []): Activity {
+  return {
+    id,
+    kind: "journal-prompt",
+    title: id,
+    band: "ready",
+    skillTags,
+    config: { prompt: "Tell one idea.", drawing: false, mode: "compose" },
+  };
 }
 
 const program: Program = {
@@ -114,4 +132,98 @@ describe("recommender", () => {
     const recs = nextBest(program, s, new Set(["u2l1a1"]));
     expect(recs.some((r) => r.unit.id === "u2")).toBe(false);
   });
+
+  it("keeps an incomplete journal rung current without changing skill state", () => {
+    const state: SkillState = {};
+    const journalProgram = programWithLessons([
+      { id: "journal-1", order: 1, title: "First idea", activities: [journal("journal-a1", ["writing.compose.sentence"])] },
+      { id: "journal-2", order: 2, title: "Next idea", activities: [journal("journal-a2", ["writing.compose.paragraph"])] },
+    ]);
+
+    const [progress] = strandProgress(journalProgram, state);
+
+    expect(progress.currentLesson?.id).toBe("journal-1");
+    expect(progress.ratio).toBe(0);
+    expect(state).toEqual({});
+  });
+
+  it("advances a journal-only strand by completion while mastery stays unchanged", () => {
+    const state: SkillState = {};
+    const journalProgram = programWithLessons([
+      { id: "journal-1", order: 1, title: "First idea", activities: [journal("journal-a1", ["writing.compose.sentence"])] },
+      { id: "journal-2", order: 2, title: "Next idea", activities: [journal("journal-a2", ["writing.compose.paragraph"])] },
+    ]);
+
+    const [progress] = strandProgress(journalProgram, state, new Set(["journal-a1"]));
+    const recommendations = nextBest(journalProgram, state, new Set(["journal-a1"]));
+
+    expect(progress.currentLesson?.id).toBe("journal-2");
+    expect(progress.currentLessonIndex).toBe(2);
+    expect(progress.solidSkills).toBe(0);
+    expect(progress.totalSkills).toBe(0);
+    expect(progress.ratio).toBe(0.5);
+    expect(recommendations[0]?.activity.id).toBe("journal-a2");
+    expect(state).toEqual({});
+  });
+
+  it("reports a completed journal-only strand as complete", () => {
+    const journalProgram = programWithLessons([
+      { id: "journal-1", order: 1, title: "First idea", activities: [journal("journal-a1")] },
+      { id: "journal-2", order: 2, title: "Next idea", activities: [journal("journal-a2")] },
+    ]);
+
+    const [progress] = strandProgress(
+      journalProgram,
+      {},
+      new Set(["journal-a1", "journal-a2"]),
+    );
+
+    expect(progress.currentLesson).toBeNull();
+    expect(progress.ratio).toBe(1);
+  });
+
+  it("requires both assessed mastery and journal completion in a mixed lesson", () => {
+    const mixedProgram = programWithLessons([
+      {
+        id: "mixed",
+        order: 1,
+        title: "Learn and reflect",
+        activities: [act("math-a1", ["math.count"]), journal("journal-a1")],
+      },
+    ]);
+    let solid: SkillState = {};
+    for (const day of ["d1", "d2"]) {
+      solid = applyEvidence(solid, [{ skill: "math.count", outcome: "solid" }], day);
+    }
+
+    expect(strandProgress(mixedProgram, {}, new Set(["journal-a1"]))[0].currentLesson?.id).toBe("mixed");
+    expect(strandProgress(mixedProgram, solid, new Set())[0].currentLesson?.id).toBe("mixed");
+    expect(strandProgress(mixedProgram, solid, new Set(["journal-a1"]))[0].currentLesson).toBeNull();
+  });
 });
+
+function programWithLessons(
+  lessons: Program["units"][number]["lessons"],
+): Program {
+  return {
+    slug: "journals",
+    title: "Journals",
+    subtitle: "",
+    ageBand: "",
+    summary: "",
+    units: [
+      {
+        id: "writing",
+        order: 1,
+        title: "Writing",
+        emoji: "✏️",
+        world: "space",
+        bigIdea: "",
+        phonicsFocus: "",
+        mathFocus: "",
+        project: "",
+        lessons,
+      },
+    ],
+  };
+}

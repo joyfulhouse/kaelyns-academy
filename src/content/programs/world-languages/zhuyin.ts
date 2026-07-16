@@ -1,4 +1,5 @@
 import type { Unit } from "../../types";
+import { spokenVerifications } from "./spoken-verifications";
 
 /**
  * Zhuyin / Bopomofo — script-mapping for the Mandarin the learner already
@@ -122,11 +123,11 @@ export const zhuyinUnit: Unit = {
                 meaning: "old",
               },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which one says “b”, like in bà (dad)?", choices: ["ㄅ", "ㄆ", "ㄇ", "ㄈ"], answerIndex: 0 },
               { prompt: "Which one says “m”, like in mā (mom)?", choices: ["ㄈ", "ㄉ", "ㄇ", "ㄊ"], answerIndex: 2 },
               { prompt: "Which one says “l”, like in lǎo (old)?", choices: ["ㄋ", "ㄌ", "ㄉ", "ㄊ"], answerIndex: 1 },
-            ],
+            ]),
           },
         },
         {
@@ -286,11 +287,11 @@ export const zhuyinUnit: Unit = {
                 meaning: "mouse",
               },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which one says “g”, like in gǒu (dog)?", choices: ["ㄍ", "ㄎ", "ㄏ", "ㄐ"], answerIndex: 0 },
               { prompt: "Which one says “j”, like in jī (chicken)?", choices: ["ㄑ", "ㄒ", "ㄐ", "ㄏ"], answerIndex: 2 },
               { prompt: "Which one says “sh”, like in shǔ (mouse)?", choices: ["ㄓ", "ㄕ", "ㄑ", "ㄒ"], answerIndex: 1 },
-            ],
+            ]),
           },
         },
         {
@@ -457,11 +458,11 @@ export const zhuyinUnit: Unit = {
                 meaning: "cat",
               },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which one says “a”, like in mā (mom)?", choices: ["ㄚ", "ㄛ", "ㄜ", "ㄞ"], answerIndex: 0 },
               { prompt: "Which one says “ao”, like in māo (cat)?", choices: ["ㄚ", "ㄞ", "ㄠ", "ㄛ"], answerIndex: 2 },
               { prompt: "Which one says “ü”, like in yú (fish)?", choices: ["ㄧ", "ㄨ", "ㄩ"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {
@@ -588,10 +589,10 @@ export const zhuyinUnit: Unit = {
                 meaning: "scold (罵)",
               },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which tone mark makes the flat, high “mā” (mom)?", choices: ["ˉ", "ˊ", "ˇ", "ˋ"], answerIndex: 0 },
               { prompt: "Which tone mark makes the dipping “mǎ” (horse)?", choices: ["ˉ", "ˊ", "ˇ", "ˋ"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {
@@ -611,28 +612,28 @@ export const zhuyinUnit: Unit = {
                 spoken: "mā",
                 audioKey: "zhuyin-tone1",
                 choices: ["ˉ", "ˊ", "ˇ", "ˋ"],
-                choiceLabels: ["mā", "má", "mǎ", "mà"],
+                choiceLabels: ["mā (1)", "má (2)", "mǎ (3)", "mà (4)"],
                 answerIndex: 0,
               },
               {
                 spoken: "má",
                 audioKey: "zhuyin-tone2",
                 choices: ["ˉ", "ˊ", "ˇ", "ˋ"],
-                choiceLabels: ["mā", "má", "mǎ", "mà"],
+                choiceLabels: ["mā (1)", "má (2)", "mǎ (3)", "mà (4)"],
                 answerIndex: 1,
               },
               {
                 spoken: "mǎ",
                 audioKey: "zhuyin-tone3",
                 choices: ["ˉ", "ˊ", "ˇ", "ˋ"],
-                choiceLabels: ["mā", "má", "mǎ", "mà"],
+                choiceLabels: ["mā (1)", "má (2)", "mǎ (3)", "mà (4)"],
                 answerIndex: 2,
               },
               {
                 spoken: "mà",
                 audioKey: "zhuyin-tone4",
                 choices: ["ˉ", "ˊ", "ˇ", "ˋ"],
-                choiceLabels: ["mā", "má", "mǎ", "mà"],
+                choiceLabels: ["mā (1)", "má (2)", "mǎ (3)", "mà (4)"],
                 answerIndex: 3,
               },
             ],
@@ -704,10 +705,10 @@ export const zhuyinUnit: Unit = {
                 meaning: "dog",
               },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which one says “māo” (cat)?", choices: ["ㄇㄚ", "ㄇㄠ", "ㄅㄚˋ", "ㄍㄡˇ"], answerIndex: 1 },
               { prompt: "ㄍ (g) + ㄡ (ou) blends into…", choices: ["ㄇㄚ", "ㄇㄠ", "ㄍㄡˇ", "ㄅㄚˋ"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {
@@ -820,11 +821,11 @@ export const zhuyinUnit: Unit = {
                 meaning: "thank you",
               },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which word says “shuǐ” (water)?", choices: ["ㄕㄨㄟˇ", "ㄏㄨㄛˇ", "ㄕㄢ"], answerIndex: 0 },
               { prompt: "Which word says “shān” (mountain)?", choices: ["ㄏㄨㄛˇ", "ㄕㄢ", "ㄕㄨㄟˇ"], answerIndex: 1 },
               { prompt: "Which one means “thank you”?", choices: ["ㄕㄢ", "ㄏㄨㄛˇ", "ㄒㄧㄝˋ ㄒㄧㄝ˙"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {

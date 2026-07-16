@@ -1,4 +1,5 @@
 import type { Unit } from "../../types";
+import { spokenVerifications } from "./spoken-verifications";
 
 /**
  * Spanish — a new language on the familiar Latin alphabet. Listening- and
@@ -37,16 +38,16 @@ export const spanishUnit: Unit = {
             instruction: "Here are your first Spanish words. Tap each one to hear it.",
             skillTags: ["spanish.greetings"],
             symbols: [
-              { id: "es-hola", symbol: "Hola", romanization: "OH-lah", spoken: "Hola", audioKey: "es-hola", meaning: "Hello" },
-              { id: "es-adios", symbol: "Adiós", romanization: "ah-DYOHS", spoken: "Adiós", audioKey: "es-adios", meaning: "Goodbye" },
-              { id: "es-gracias", symbol: "Gracias", romanization: "GRAH-syahs", spoken: "Gracias", audioKey: "es-gracias", meaning: "Thank you" },
-              { id: "es-por-favor", symbol: "Por favor", romanization: "por fah-VOR", spoken: "Por favor", audioKey: "es-por-favor", meaning: "Please" },
+              { id: "es-hola", symbol: "Hola", romanization: "OH-lah", spoken: "Hola", audioKey: "es-hola", example: "¡Hola, amigo!", exampleSpoken: "¡Hola, amigo!", meaning: "Hello" },
+              { id: "es-adios", symbol: "Adiós", romanization: "ah-DYOHS", spoken: "Adiós", audioKey: "es-adios", example: "¡Adiós, hasta mañana!", exampleSpoken: "¡Adiós, hasta mañana!", meaning: "Goodbye" },
+              { id: "es-gracias", symbol: "Gracias", romanization: "GRAH-syahs", spoken: "Gracias", audioKey: "es-gracias", example: "¡Muchas gracias!", exampleSpoken: "¡Muchas gracias!", meaning: "Thank you" },
+              { id: "es-por-favor", symbol: "Por favor", romanization: "por fah-VOR", spoken: "Por favor", audioKey: "es-por-favor", example: "Agua, por favor.", exampleSpoken: "Agua, por favor.", meaning: "Please" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which word means “Hello”?", choices: ["Hola", "Adiós", "Gracias"], answerIndex: 0 },
               { prompt: "Which word means “Thank you”?", choices: ["Por favor", "Adiós", "Gracias"], answerIndex: 2 },
               { prompt: "Which word means “Goodbye”?", choices: ["Hola", "Adiós", "Por favor"], answerIndex: 1 },
-            ],
+            ]),
           },
         },
         {
@@ -89,17 +90,17 @@ export const spanishUnit: Unit = {
             instruction: "Let's count in Spanish. Tap each number to hear it.",
             skillTags: ["spanish.numbers"],
             symbols: [
-              { id: "es-uno", symbol: "uno", romanization: "OO-noh", spoken: "uno", audioKey: "es-uno", meaning: "one" },
-              { id: "es-dos", symbol: "dos", romanization: "DOHS", spoken: "dos", audioKey: "es-dos", meaning: "two" },
-              { id: "es-tres", symbol: "tres", romanization: "TREHS", spoken: "tres", audioKey: "es-tres", meaning: "three" },
-              { id: "es-cuatro", symbol: "cuatro", romanization: "KWAH-troh", spoken: "cuatro", audioKey: "es-cuatro", meaning: "four" },
-              { id: "es-cinco", symbol: "cinco", romanization: "SEEN-koh", spoken: "cinco", audioKey: "es-cinco", meaning: "five" },
+              { id: "es-uno", symbol: "uno", romanization: "OO-noh", spoken: "uno", audioKey: "es-uno", example: "uno, dos, tres", exampleSpoken: "uno, dos, tres", meaning: "one" },
+              { id: "es-dos", symbol: "dos", romanization: "DOHS", spoken: "dos", audioKey: "es-dos", example: "Tengo dos gatos.", exampleSpoken: "Tengo dos gatos.", meaning: "two" },
+              { id: "es-tres", symbol: "tres", romanization: "TREHS", spoken: "tres", audioKey: "es-tres", example: "tres perros", exampleSpoken: "tres perros", meaning: "three" },
+              { id: "es-cuatro", symbol: "cuatro", romanization: "KWAH-troh", spoken: "cuatro", audioKey: "es-cuatro", example: "cuatro libros", exampleSpoken: "cuatro libros", meaning: "four" },
+              { id: "es-cinco", symbol: "cinco", romanization: "SEEN-koh", spoken: "cinco", audioKey: "es-cinco", example: "cinco dedos", exampleSpoken: "cinco dedos", meaning: "five" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which word means “one”?", choices: ["uno", "tres", "cinco"], answerIndex: 0 },
               { prompt: "Which word means “three”?", choices: ["dos", "tres", "cuatro"], answerIndex: 1 },
               { prompt: "Which word means “five”?", choices: ["cuatro", "uno", "cinco"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {
@@ -143,16 +144,16 @@ export const spanishUnit: Unit = {
             instruction: "Here are some colors in Spanish. Tap each one to hear it.",
             skillTags: ["spanish.colors"],
             symbols: [
-              { id: "es-rojo", symbol: "rojo", romanization: "ROH-hoh", spoken: "rojo", audioKey: "es-rojo", meaning: "red" },
-              { id: "es-azul", symbol: "azul", romanization: "ah-SOOL", spoken: "azul", audioKey: "es-azul", meaning: "blue" },
-              { id: "es-verde", symbol: "verde", romanization: "VEHR-deh", spoken: "verde", audioKey: "es-verde", meaning: "green" },
-              { id: "es-amarillo", symbol: "amarillo", romanization: "ah-mah-REE-yoh", spoken: "amarillo", audioKey: "es-amarillo", meaning: "yellow" },
+              { id: "es-rojo", symbol: "rojo", romanization: "ROH-hoh", spoken: "rojo", audioKey: "es-rojo", example: "El sol es rojo.", exampleSpoken: "El sol es rojo.", meaning: "red" },
+              { id: "es-azul", symbol: "azul", romanization: "ah-SOOL", spoken: "azul", audioKey: "es-azul", example: "El agua es azul.", exampleSpoken: "El agua es azul.", meaning: "blue" },
+              { id: "es-verde", symbol: "verde", romanization: "VEHR-deh", spoken: "verde", audioKey: "es-verde", example: "La rana es verde.", exampleSpoken: "La rana es verde.", meaning: "green" },
+              { id: "es-amarillo", symbol: "amarillo", romanization: "ah-mah-REE-yoh", spoken: "amarillo", audioKey: "es-amarillo", example: "El sol es amarillo.", exampleSpoken: "El sol es amarillo.", meaning: "yellow" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which word means “red”?", choices: ["rojo", "azul", "verde"], answerIndex: 0 },
               { prompt: "Which word means “blue”?", choices: ["verde", "azul", "amarillo"], answerIndex: 1 },
               { prompt: "Which word means “yellow”?", choices: ["rojo", "verde", "amarillo"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {
@@ -195,16 +196,16 @@ export const spanishUnit: Unit = {
             instruction: "Here are family words in Spanish. Tap each one to hear it.",
             skillTags: ["spanish.family"],
             symbols: [
-              { id: "es-mama", symbol: "mamá", romanization: "mah-MAH", spoken: "mamá", audioKey: "es-mama", meaning: "mom" },
-              { id: "es-papa", symbol: "papá", romanization: "pah-PAH", spoken: "papá", audioKey: "es-papa", meaning: "dad" },
-              { id: "es-hermano", symbol: "hermano", romanization: "ehr-MAH-noh", spoken: "hermano", audioKey: "es-hermano", meaning: "brother" },
-              { id: "es-hermana", symbol: "hermana", romanization: "ehr-MAH-nah", spoken: "hermana", audioKey: "es-hermana", meaning: "sister" },
+              { id: "es-mama", symbol: "mamá", romanization: "mah-MAH", spoken: "mamá", audioKey: "es-mama", example: "Te quiero, mamá.", exampleSpoken: "Te quiero, mamá.", meaning: "mom" },
+              { id: "es-papa", symbol: "papá", romanization: "pah-PAH", spoken: "papá", audioKey: "es-papa", example: "Hola, papá.", exampleSpoken: "Hola, papá.", meaning: "dad" },
+              { id: "es-hermano", symbol: "hermano", romanization: "ehr-MAH-noh", spoken: "hermano", audioKey: "es-hermano", example: "Mi hermano es alto.", exampleSpoken: "Mi hermano es alto.", meaning: "brother" },
+              { id: "es-hermana", symbol: "hermana", romanization: "ehr-MAH-nah", spoken: "hermana", audioKey: "es-hermana", example: "Mi hermana es pequeña.", exampleSpoken: "Mi hermana es pequeña.", meaning: "sister" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which word means “mom”?", choices: ["mamá", "papá", "hermano"], answerIndex: 0 },
               { prompt: "Which word means “dad”?", choices: ["hermana", "papá", "mamá"], answerIndex: 1 },
               { prompt: "Which word means “sister”?", choices: ["hermano", "papá", "hermana"], answerIndex: 2 },
-            ],
+            ]),
           },
         },
         {
@@ -249,12 +250,12 @@ export const spanishUnit: Unit = {
             symbols: [
               { id: "es-frase-me-llamo", symbol: "Me llamo ___", romanization: "meh YAH-moh ___", spoken: "Me llamo", audioKey: "es-frase-me-llamo", example: "Me llamo Ana.", exampleSpoken: "Me llamo Ana.", meaning: "My name is ___" },
               { id: "es-frase-tengo-seis-anos", symbol: "Tengo seis años", romanization: "TEHN-goh SAYSS AH-nyohs", spoken: "Tengo seis años", audioKey: "es-frase-tengo-seis-anos", example: "Hola, tengo seis años.", exampleSpoken: "Hola, tengo seis años.", meaning: "I am six years old" },
-              { id: "es-hola", symbol: "Hola", romanization: "OH-lah", spoken: "Hola", audioKey: "es-hola", meaning: "Hello" },
+              { id: "es-hola", symbol: "Hola", romanization: "OH-lah", spoken: "Hola", audioKey: "es-hola", example: "¡Hola, amigo!", exampleSpoken: "¡Hola, amigo!", meaning: "Hello" },
             ],
-            verify: [
+            verify: spokenVerifications([
               { prompt: "Which one means “My name is ___”?", choices: ["Me llamo ___", "Tengo seis años", "Hola"], answerIndex: 0 },
               { prompt: "Which one means “I am six years old”?", choices: ["Hola", "Tengo seis años", "Me llamo ___"], answerIndex: 1 },
-            ],
+            ]),
           },
         },
         {

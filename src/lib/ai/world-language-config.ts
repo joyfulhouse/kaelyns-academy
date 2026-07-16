@@ -78,6 +78,14 @@ export function languageForSkillHints(skillHints: SkillTag[]): LanguageDef | und
   return undefined;
 }
 
+/** Keep only server-owned skills belonging to the resolved language. */
+export function skillHintsForLanguage(
+  lang: LanguageDef,
+  skillHints: readonly SkillTag[],
+): SkillTag[] {
+  return skillHints.filter((tag) => getSkill(tag)?.domain === lang.id);
+}
+
 /** Lowercased keyword tokens (length ≥ 2) drawn from a focus/hint string. */
 function keywords(text: string): string[] {
   return text
@@ -125,14 +133,14 @@ export function inventorySlice(
   return pool.slice(0, INVENTORY_SLICE_CAP);
 }
 
-/** Set of Unicode-exact symbols allowed for a language (the whole inventory). */
-function allowedSymbols(lang: LanguageDef): Set<string> {
-  return new Set(lang.inventory.map((e) => e.symbol));
+/** Set of Unicode-exact symbols allowed for this one generated request. */
+function allowedSymbols(slice: readonly ScriptEntry[]): Set<string> {
+  return new Set(slice.map((entry) => entry.symbol));
 }
 
-/** Look up the inventory entry whose glyph is exactly `symbol`. */
-function entryBySymbol(lang: LanguageDef, symbol: string): ScriptEntry | undefined {
-  return lang.inventory.find((e) => e.symbol === symbol);
+/** Look up the supplied-slice entry whose glyph is exactly `symbol`. */
+function entryBySymbol(slice: readonly ScriptEntry[], symbol: string): ScriptEntry | undefined {
+  return slice.find((entry) => entry.symbol === symbol);
 }
 
 // The two config item shapes, derived from the canonical Zod schemas so this
@@ -181,18 +189,25 @@ function keepListenMatch(item: ListenMatchItem, allowed: Set<string>): boolean {
  * This is what stops a real glyph paired with a wrong pronunciation or label from
  * reaching the child.
  */
-function canonicalizeSymbolIntro(item: SymbolIntroItem, lang: LanguageDef): void {
+function canonicalizeSymbolIntro(
+  item: SymbolIntroItem,
+  lang: LanguageDef,
+  slice: readonly ScriptEntry[],
+): void {
   item.locale = lang.locale;
   for (const s of item.symbols) {
-    const entry = entryBySymbol(lang, s.symbol);
+    const entry = entryBySymbol(slice, s.symbol);
     if (!entry) continue; // unreachable after keepSymbolIntro; stay safe
     s.id = entry.id;
     s.romanization = entry.romanization;
     s.spoken = entry.spoken;
     s.audioKey = entry.id;
-    if (entry.example !== undefined) s.example = entry.example;
-    if (entry.exampleSpoken !== undefined) s.exampleSpoken = entry.exampleSpoken;
-    if (entry.meaning !== undefined) s.meaning = entry.meaning;
+    if (entry.example === undefined) delete s.example;
+    else s.example = entry.example;
+    if (entry.exampleSpoken === undefined) delete s.exampleSpoken;
+    else s.exampleSpoken = entry.exampleSpoken;
+    if (entry.meaning === undefined) delete s.meaning;
+    else s.meaning = entry.meaning;
   }
 }
 
@@ -202,15 +217,19 @@ function canonicalizeSymbolIntro(item: SymbolIntroItem, lang: LanguageDef): void
  * hears what the answer actually is), and each choice's label is the inventory
  * romanization. None of the heard/labelled content is left to the model.
  */
-function canonicalizeListenMatch(item: ListenMatchItem, lang: LanguageDef): void {
+function canonicalizeListenMatch(
+  item: ListenMatchItem,
+  lang: LanguageDef,
+  slice: readonly ScriptEntry[],
+): void {
   item.locale = lang.locale;
   for (const sub of item.items) {
-    const answer = entryBySymbol(lang, sub.choices[sub.answerIndex]);
+    const answer = entryBySymbol(slice, sub.choices[sub.answerIndex]);
     if (answer) {
       sub.spoken = answer.spoken;
       sub.audioKey = answer.id;
     }
-    sub.choiceLabels = sub.choices.map((c) => entryBySymbol(lang, c)?.romanization ?? "");
+    sub.choiceLabels = sub.choices.map((choice) => entryBySymbol(slice, choice)?.romanization ?? "");
   }
 }
 
@@ -233,17 +252,17 @@ export function validateLangItems<T>(
   kind: LangActivityKind,
   items: T[],
   lang: LanguageDef,
-  _slice: ScriptEntry[],
+  slice: ScriptEntry[],
 ): T[] {
-  const allowed = allowedSymbols(lang);
+  const allowed = allowedSymbols(slice);
   const kept: T[] = [];
   for (const item of items) {
     if (kind === "lang-symbol-intro") {
       if (!keepSymbolIntro(item as SymbolIntroItem, allowed)) continue;
-      canonicalizeSymbolIntro(item as SymbolIntroItem, lang);
+      canonicalizeSymbolIntro(item as SymbolIntroItem, lang, slice);
     } else {
       if (!keepListenMatch(item as ListenMatchItem, allowed)) continue;
-      canonicalizeListenMatch(item as ListenMatchItem, lang);
+      canonicalizeListenMatch(item as ListenMatchItem, lang, slice);
     }
     kept.push(item);
   }

@@ -1,4 +1,4 @@
-import { type Page, expect } from "@playwright/test";
+import { type Locator, type Page, expect } from "@playwright/test";
 
 /**
  * Shared E2E helpers. Credentials come from env (Bun auto-loads .env.local):
@@ -51,6 +51,88 @@ export const E2E_THROWAWAY_EMAIL_PREFIX = "e2e-throwaway+";
  * suite on the next cleanup run.
  */
 export const E2E_PERSISTENT_LEARNER_NAME = "E2E Learner";
+
+/**
+ * Player completion must resolve to one host-owned reward. ActivityHost renders
+ * link CTAs; a same-named button would reveal a stale Player reward phase.
+ */
+export async function expectSingleHostReward(page: Page): Promise<void> {
+  const heading = page.getByRole("heading", {
+    name: /Wow! Three stars!|You did it!|Great trying!/,
+  });
+  await expect(heading).toHaveCount(1, { timeout: 20_000 });
+  await expect(heading).toBeFocused();
+  await expect(page.getByRole("button", { name: "Keep going" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Keep going|Map/ }).first()).toBeVisible();
+}
+
+/**
+ * Keep the neural route unavailable while making unrelated browser speech
+ * succeed. This catches activity UIs that accidentally treat one shared
+ * controller outcome as the status of a specific target-audio request.
+ */
+export async function installSelectiveBrowserSpeech(
+  page: Page,
+  unavailableTextPattern: string,
+): Promise<void> {
+  await page.addInitScript(({ pattern }) => {
+    class SelectiveUtterance {
+      lang = "";
+      onend: ((event: SpeechSynthesisEvent) => void) | null = null;
+      onerror: ((event: SpeechSynthesisErrorEvent) => void) | null = null;
+      pitch = 1;
+      rate = 1;
+      voice: SpeechSynthesisVoice | null = null;
+
+      constructor(readonly text: string) {}
+    }
+
+    const unavailable = new RegExp(pattern);
+    const voice = {
+      default: true,
+      lang: "en-US",
+      localService: true,
+      name: "Selective English",
+      voiceURI: "selective-english",
+    } as SpeechSynthesisVoice;
+    Object.defineProperty(window, "SpeechSynthesisUtterance", {
+      configurable: true,
+      value: SelectiveUtterance,
+    });
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: {
+        addEventListener: () => {},
+        cancel: () => {},
+        getVoices: () => [voice],
+        removeEventListener: () => {},
+        speak: (utterance: SelectiveUtterance) => {
+          queueMicrotask(() => {
+            if (unavailable.test(utterance.text)) {
+              utterance.onerror?.(new Event("error") as SpeechSynthesisErrorEvent);
+            } else {
+              utterance.onend?.(new Event("end") as SpeechSynthesisEvent);
+            }
+          });
+        },
+      },
+    });
+  }, { pattern: unavailableTextPattern });
+}
+
+/** Exercise Pointer Events directly; native dragTo dispatches HTML drag events instead. */
+export async function dragPointer(page: Page, source: Locator, target: Locator): Promise<void> {
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  if (!sourceBox || !targetBox) throw new Error("Pointer drag endpoints are not rendered");
+
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
+    steps: 8,
+  });
+  await page.mouse.up();
+}
 
 /**
  * Find-or-create the persistent motivation-suite learner on `/parent/learners`.

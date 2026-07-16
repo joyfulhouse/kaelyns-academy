@@ -6,12 +6,13 @@ import type { Program } from "@/content";
 const testState = vi.hoisted(() => ({
   dueReviews: [] as unknown[],
   selectedLearnerId: "L1" as string | null,
+  completed: new Set<string>(),
 }));
 
 vi.mock("./useLearnerState", () => ({
   useLearnerState: () => ({
     skillState: {},
-    completed: new Set<string>(),
+    completed: testState.completed,
     getStars: () => 0,
     ready: true,
     mode: "account",
@@ -101,6 +102,7 @@ const PROGRAM = {
 beforeEach(() => {
   testState.dueReviews = [];
   testState.selectedLearnerId = "L1";
+  testState.completed = new Set<string>();
 });
 
 describe("StudioHome Warm up row", () => {
@@ -142,6 +144,60 @@ describe("StudioHome Warm up row", () => {
 
     expect(html).toContain("Continue today&#x27;s adventure");
     expect(html).not.toContain("Warm up");
+  });
+});
+
+describe("StudioHome journal progression", () => {
+  it("uses completed journal ids for both the next rung and map level", () => {
+    testState.completed = new Set(["journal-a1"]);
+    const journalProgram = {
+      ...PROGRAM,
+      units: [
+        {
+          ...UNIT,
+          id: "writing",
+          title: "Writing",
+          lessons: [
+            {
+              id: "journal-1",
+              order: 1,
+              title: "First idea",
+              activities: [
+                {
+                  id: "journal-a1",
+                  kind: "journal-prompt",
+                  title: "First journal",
+                  band: "ready",
+                  skillTags: ["writing.compose.sentence"],
+                  config: { prompt: "Tell one idea.", drawing: false, mode: "compose" },
+                },
+              ],
+            },
+            {
+              id: "journal-2",
+              order: 2,
+              title: "Next idea",
+              activities: [
+                {
+                  id: "journal-a2",
+                  kind: "journal-prompt",
+                  title: "Next journal",
+                  band: "ready",
+                  skillTags: ["writing.compose.paragraph"],
+                  config: { prompt: "Tell another idea.", drawing: false, mode: "compose" },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as unknown as Program;
+
+    const html = renderToStaticMarkup(<StudioHome program={journalProgram} />);
+
+    expect(html).toContain("Next journal");
+    expect(html).not.toContain("First journal");
+    expect(html).toContain("Level 2 of 2");
   });
 });
 

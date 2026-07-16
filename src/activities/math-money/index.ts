@@ -2,6 +2,7 @@ import type { MathMoneyConfig } from "@/content/activity-configs";
 import type { ActivityType } from "@/content/types";
 import { MathMoneyPlayer } from "./Player";
 import {
+  responseSchema,
   schema,
   score,
   skillsAffected,
@@ -14,6 +15,7 @@ export const mathMoney: ActivityType<MathMoneyConfig, MathMoneyResponse> = {
   kind: "math-money",
   label: "Money",
   schema,
+  responseSchema,
   Player: MathMoneyPlayer,
   score,
   skillsAffected,

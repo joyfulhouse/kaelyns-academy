@@ -460,19 +460,24 @@ function WorldMap({
 
   const overall = computeProgramRatio(program, progressMap);
 
+  // Canonicalize the completed set once so every tutor view (map ratio, rung,
+  // hero, and generated shelf) advances from the same durable activity ids.
+  const completedKey = [...completed].sort().join("|");
+  const completedIds = useMemo(
+    () => new Set(completedKey ? completedKey.split("|") : []),
+    [completedKey],
+  );
+
   // The tutor's per-strand state + ranked next-best. Both derive purely from the
   // engine, so they only become meaningful once state is read (ready).
   const strands = useMemo(
-    () => (ready ? strandProgress(program, skillState) : []),
-    [program, skillState, ready],
+    () => (ready ? strandProgress(program, skillState, completedIds) : []),
+    [completedIds, program, skillState, ready],
   );
   const strandByUnitId = useMemo(
     () => new Map(strands.map((s) => [s.unit.id, s])),
     [strands],
   );
-  // A stable key over the completed set so the next-best memo recomputes only
-  // when the set actually changes (not on every render that rebuilds the Set).
-  const completedKey = [...completed].sort().join("|");
   // activeUnitKeys curation applies to every playable surface: path tiles,
   // hero picks, generated fallbacks, and quest destinations.
   const activeUnitKeys = useMemo(
@@ -487,11 +492,8 @@ function WorldMap({
     : program.units;
 
   const globalRecommendations = useMemo(
-    () =>
-      ready
-        ? nextBest(program, skillState, new Set(completedKey ? completedKey.split("|") : []))
-        : [],
-    [program, skillState, ready, completedKey],
+    () => (ready ? nextBest(program, skillState, completedIds) : []),
+    [completedIds, program, skillState, ready],
   );
   const {
     recommendations,
@@ -520,7 +522,7 @@ function WorldMap({
   // so there's always a warm next thing. `completed` already includes played
   // shelf ids (durable credit), so a done generated item is never re-offered.
   // Empty in guest mode (generatedShelf is always []), so guests see no card here.
-  const questGeneratedPick = nextGeneratedPick(curatedGeneratedShelf, completed);
+  const questGeneratedPick = nextGeneratedPick(curatedGeneratedShelf, completedIds);
   const generatedPick = topPick ? undefined : questGeneratedPick;
   const authoredQuestCandidates = useMemo(
     () => buildAuthoredQuestCandidates(program, activeUnitKeys),
@@ -539,7 +541,6 @@ function WorldMap({
     const rankedAuthoredHrefs = new Set(
       rankedAuthoredQuestCandidates.map((candidate) => candidate.href),
     );
-    const completedIds = new Set(completedKey ? completedKey.split("|") : []);
     return [
       ...rankedAuthoredQuestCandidates,
       ...curatedGeneratedShelf
@@ -554,7 +555,7 @@ function WorldMap({
         (candidate) => !rankedAuthoredHrefs.has(candidate.href),
       ),
     ];
-  }, [authoredQuestCandidates, completedKey, curatedGeneratedShelf, program.slug, rankedAuthoredQuestCandidates]);
+  }, [authoredQuestCandidates, completedIds, curatedGeneratedShelf, program.slug, rankedAuthoredQuestCandidates]);
 
   // Fork-aware unlock (spec §4.4): a unit is "started" once it has any
   // completion, same "forgiving" posture as the old prevDone gate — but routed

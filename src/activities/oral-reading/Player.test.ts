@@ -1,13 +1,101 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   MAX_RECORDING_MS,
   canRecordAnother,
   canSubmitRecording,
+  createOralReadingRequestForm,
+  canExposeModelAudio,
+  canStartOralAttempt,
+  parseWordRouteResult,
+  needsAdultModelFallback,
+  isModelPlaybackLocked,
   phaseAfterUnmatched,
   sentenceRecordingMs,
+  shouldCompleteAfterObservation,
+  stopModelAudioBeforeRecording,
 } from "./recording";
 
 describe("oral-reading recording lifecycle", () => {
+  it("gates modeled attempts and keeps cold assessments unmodeled", () => {
+    expect(canStartOralAttempt("listen-repeat", false)).toBe(false);
+    expect(canStartOralAttempt("listen-repeat", true)).toBe(true);
+    expect(canStartOralAttempt("cold", false)).toBe(true);
+
+    expect(canExposeModelAudio("cold")).toBe(false);
+    expect(canExposeModelAudio("listen-repeat")).toBe(true);
+    expect(needsAdultModelFallback("listen-repeat", false)).toBe(true);
+    expect(needsAdultModelFallback("listen-repeat", true)).toBe(false);
+    expect(needsAdultModelFallback("cold", false)).toBe(false);
+  });
+
+  it("locks model replay for every microphone-owned phase", () => {
+    expect(isModelPlaybackLocked("ready")).toBe(false);
+    expect(isModelPlaybackLocked("unclear")).toBe(false);
+    expect(isModelPlaybackLocked("fallback")).toBe(false);
+    expect(isModelPlaybackLocked("requesting")).toBe(true);
+    expect(isModelPlaybackLocked("listening")).toBe(true);
+    expect(isModelPlaybackLocked("checking")).toBe(true);
+  });
+
+  it("stops model audio and its visual sweep before requesting the microphone", () => {
+    const cancelSpeech = vi.fn();
+    const cancelVisualSweep = vi.fn();
+
+    stopModelAudioBeforeRecording(cancelSpeech, cancelVisualSweep);
+
+    expect(cancelVisualSweep).toHaveBeenCalledOnce();
+    expect(cancelSpeech).toHaveBeenCalledOnce();
+  });
+
+  it("settles a cold assessment on its first observation", () => {
+    expect(shouldCompleteAfterObservation("cold", "matched")).toBe(true);
+    expect(shouldCompleteAfterObservation("cold", "unclear")).toBe(true);
+    expect(shouldCompleteAfterObservation("cold", "no-speech")).toBe(true);
+    expect(shouldCompleteAfterObservation("listen-repeat", "matched")).toBe(true);
+    expect(shouldCompleteAfterObservation("listen-repeat", "unclear")).toBe(false);
+    expect(shouldCompleteAfterObservation("listen-repeat", "no-speech")).toBe(false);
+  });
+
+  it("uploads audio with exact authored identity and no client target or passage", () => {
+    const form = createOralReadingRequestForm(new Blob(["audio"]), {
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      unitKey: "unit-1",
+      activityId: "oral-1",
+    });
+    expect(form && [...form.keys()].sort()).toEqual([
+      "activityId",
+      "file",
+      "learnerId",
+      "programSlug",
+      "unitKey",
+    ]);
+    expect(form?.has("target")).toBe(false);
+    expect(form?.has("passage")).toBe(false);
+    expect(
+      createOralReadingRequestForm(new Blob(["audio"]), {
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+      }),
+    ).toBeNull();
+  });
+
+  it("accepts a verified word result only with a bounded opaque witness", () => {
+    expect(
+      parseWordRouteResult({
+        result: "matched",
+        verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }),
+    ).toEqual({
+      result: "matched",
+      verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    expect(parseWordRouteResult({ result: "matched" })).toBe("unavailable");
+    expect(
+      parseWordRouteResult({ result: "matched", verificationId: "forged" }),
+    ).toBe("unavailable");
+  });
+
   it("never submits an empty recording or a recorder stopped during unmount", () => {
     expect(canSubmitRecording(true, 8)).toBe(true);
     expect(canSubmitRecording(true, 0)).toBe(false);

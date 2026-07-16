@@ -3,76 +3,139 @@
 import { useCallback, useState } from "react";
 import type { LangSymbolIntroConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
+import { cn } from "@/lib/cn";
+import { AudioUnavailableNotice } from "../_shared/AudioUnavailableNotice";
 import { ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
 import { ChoiceGrid } from "../_shared/ChoiceGrid";
-import { RewardOverlay } from "../_shared/RewardOverlay";
 import { localeForRole } from "../_shared/speechRouting";
 import { useActivity } from "../_shared/useActivity";
 import { useAudio } from "../_shared/useAudio";
-import { useMultipleChoice } from "../_shared/useMultipleChoice";
 import { useEffectOncePerKey } from "../_shared/useSpeakOnce";
-import { schema, score, type LangSymbolIntroResponse } from "./logic";
+import { schema, type LangSymbolIntroResponse } from "./logic";
+import {
+  activateExample,
+  activateSymbol,
+  advanceSymbolBatch,
+  advanceSymbolCheck,
+  chooseSymbolAnswer,
+  createSymbolIntroState,
+  currentBatchReady,
+  toggleSymbolHelp,
+} from "./model";
 
-/**
- * Meet a small set of symbols (see the glyph, tap to hear it), then a short,
- * forgiving check. Audio is hybrid + locale-aware via useAudio: a pre-recorded
- * clip plays when one exists for the symbol's id, otherwise the browser speaks
- * the `spoken` text in the right language.
- */
+/** Guided symbol exposure in small batches, followed by forgiving spoken checks. */
 export function LangSymbolIntroPlayer({
   config,
   onComplete,
 }: ActivityPlayerProps<LangSymbolIntroConfig, LangSymbolIntroResponse>) {
   const parsed = useActivity(schema, config);
-  // Two voices: the target language for content (symbols, choices) and the
-  // learner's base language for instructions — which are authored in English and
-  // would be mangled if read with the target-language TTS voice.
   const target = useAudio(localeForRole(parsed.locale, "content"));
   const base = useAudio(localeForRole(parsed.locale, "instruction"));
+  const [state, setState] = useState(() =>
+    createSymbolIntroState(parsed.symbols.map((symbol) => symbol.id)),
+  );
+  const [pendingSymbolId, setPendingSymbolId] = useState<string | null>(null);
 
-  const [phase, setPhase] = useState<"learn" | "quiz">("learn");
-  const [done, setDone] = useState<LangSymbolIntroResponse | null>(null);
-
-  // Each helper cancels the other engine first so the two voices never overlap.
   const sayInstruction = useCallback(() => {
-    target.cancel();
+    target.stop();
     base.play({ text: parsed.instruction });
-  }, [target, base, parsed.instruction]);
-  const playContent = useCallback(
-    (opts: { audioKey?: string; text: string }) => {
-      base.cancel();
-      target.play(opts);
+  }, [base, parsed.instruction, target]);
+
+  const playTarget = useCallback(
+    (
+      request: { audioKey?: string; text: string },
+      handlers?: { onComplete?: () => void; onUnavailable?: () => void },
+    ) => {
+      base.stop();
+      return target.play(request, handlers);
     },
     [base, target],
   );
-  const stopAll = useCallback(() => {
-    base.cancel();
-    target.cancel();
-  }, [base, target]);
 
-  // Say the (base-language) instruction once when the activity opens.
+  const verification = parsed.verify[state.verifyStep];
+  const speakVerification = useCallback(() => {
+    if (state.phase !== "verify" || !verification) return;
+    target.stop();
+    base.play({ text: verification.spokenPrompt ?? verification.prompt });
+  }, [base, state.phase, target, verification]);
+
   useEffectOncePerKey(sayInstruction);
-
-  const { step, picked, choose } = useMultipleChoice({
-    count: parsed.verify.length,
-    voiceChoice: (i, itemIndex) => playContent({ text: parsed.verify[itemIndex].choices[i] }),
-    onFinish: (answers) => setDone({ verifyAnswers: answers }),
+  useEffectOncePerKey(speakVerification, `${state.phase}-${state.verifyStep}`, {
+    essentialContentAudio: true,
   });
 
-  if (done) {
-    const result = score(parsed, done);
-    return (
-      <RewardOverlay
-        stars={result.stars}
-        message="You met some new symbols!"
-        onContinue={() => onComplete(done, result)}
-      />
+  const playSymbol = (symbolId: string, audioKey: string | undefined, spoken: string): void => {
+    setPendingSymbolId(symbolId);
+    playTarget(
+      { audioKey: audioKey ?? symbolId, text: spoken },
+      {
+        onComplete: () => {
+          setState((current) => activateSymbol(current, symbolId));
+          setPendingSymbolId((current) => (current === symbolId ? null : current));
+        },
+        onUnavailable: () =>
+          setPendingSymbolId((current) => (current === symbolId ? null : current)),
+      },
     );
-  }
+  };
 
-  if (phase === "learn") {
+  const playExample = (symbolId: string, spoken: string): void => {
+    setPendingSymbolId(symbolId);
+    playTarget(
+      { text: spoken },
+      {
+        onComplete: () => {
+          setState((current) => activateExample(current, symbolId));
+          setPendingSymbolId((current) => (current === symbolId ? null : current));
+        },
+        onUnavailable: () =>
+          setPendingSymbolId((current) => (current === symbolId ? null : current)),
+      },
+    );
+  };
+
+  const advanceBatch = (): void => {
+    const next = advanceSymbolBatch(state);
+    if (next === state) return;
+    target.stop();
+    base.stop();
+    setPendingSymbolId(null);
+    setState(next);
+  };
+
+  const choose = (choiceIndex: number): void => {
+    if (!verification) return;
+    setState((current) =>
+      chooseSymbolAnswer(current, choiceIndex, verification.answerIndex),
+    );
+  };
+
+  const advanceCheck = (): void => {
+    const next = advanceSymbolCheck(state, parsed.verify.length);
+    if (next === state) return;
+    base.stop();
+    if (next.completed) {
+      const response: LangSymbolIntroResponse = {
+        exposures: next.exposures,
+        checks: next.checks,
+      };
+      onComplete(response);
+      return;
+    }
+    setState(next);
+  };
+
+  if (state.phase === "learn") {
+    const currentIds = state.batches[state.batchIndex] ?? [];
+    const currentSymbols = parsed.symbols.filter((symbol) => currentIds.includes(symbol.id));
+    const firstSymbolNumber = state.batches
+      .slice(0, state.batchIndex)
+      .reduce((total, batch) => total + batch.length, 1);
+    const lastSymbolNumber = firstSymbolNumber + currentSymbols.length - 1;
+    const ready = currentBatchReady(state);
+
     return (
-      <div className="grid gap-8">
+      <div className="grid gap-7">
         <div className="flex items-center justify-center gap-3">
           <SpeakerButton
             onSpeak={sayInstruction}
@@ -82,49 +145,170 @@ export function LangSymbolIntroPlayer({
             tone="honeySoft"
             press="soft"
           />
-          <p className="text-center text-lg text-ink-soft">{parsed.instruction}</p>
+          <p className="max-w-2xl text-balance text-center text-lg text-ink-soft">
+            {parsed.instruction}
+          </p>
         </div>
 
-        <div className="mx-auto grid max-w-2xl grid-cols-2 gap-4 sm:grid-cols-3">
-          {parsed.symbols.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => playContent({ audioKey: s.audioKey ?? s.id, text: s.spoken })}
-              aria-label={`${s.symbol}, says ${s.romanization}`}
-              className="grid min-h-32 place-items-center gap-1 rounded-2xl border-[3px] border-ink bg-paper-raised px-4 py-5 shadow-pop transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none"
-            >
-              <span className="font-display text-5xl text-ink">{s.symbol}</span>
-              <span className="text-base text-ink-soft">{s.romanization}</span>
-              {s.example ? <span className="text-sm text-ink-soft">{s.example}</span> : null}
-            </button>
-          ))}
-        </div>
+        {target.status === "unavailable" ? (
+          <AudioUnavailableNotice onRetry={target.retry} />
+        ) : null}
 
-        <div className="flex justify-center">
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <p className="font-display text-lg text-ink">
+            Meet these {currentSymbols.length} {state.batchIndex === 0 ? "sounds" : "next sounds"}
+          </p>
           <button
             type="button"
-            onClick={() => {
-              stopAll();
-              setPhase("quiz");
-            }}
-            className="min-h-24 rounded-full border-[3px] border-ink bg-success/25 px-8 py-4 font-display text-xl text-ink shadow-pop transition duration-200 ease-out hover:-translate-y-0.5 active:translate-y-1 active:shadow-none"
+            onClick={() => setState(toggleSymbolHelp)}
+            aria-pressed={state.helpVisible}
+            className="min-h-11 rounded-full border-2 border-ink bg-honey/20 px-5 py-2 font-display text-ink transition active:translate-y-0.5"
           >
-            I&apos;m ready
+            {state.helpVisible ? "Hide sound help" : "Show sound help"}
           </button>
         </div>
+
+        <div className="mx-auto grid w-full max-w-3xl grid-cols-2 gap-4 sm:grid-cols-4">
+          {currentSymbols.map((symbol) => {
+            const exposure = state.exposures.find((entry) => entry.symbolId === symbol.id);
+            const activated = exposure?.activated ?? false;
+            const waiting = pendingSymbolId === symbol.id;
+            const labelParts = [symbol.symbol, symbol.meaning];
+            if (state.helpVisible) labelParts.push(symbol.romanization);
+
+            return (
+              <article
+                key={symbol.id}
+                className={cn(
+                  "grid min-h-52 content-between gap-3 rounded-3xl border-[3px] border-ink bg-paper-raised p-3 shadow-pop transition",
+                  activated && "bg-success/15 ring-4 ring-success/25",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => playSymbol(symbol.id, symbol.audioKey, symbol.spoken)}
+                  aria-pressed={activated}
+                  aria-busy={waiting && target.status === "playing"}
+                  aria-label={`${labelParts.filter(Boolean).join(", ")}. Hear this sound`}
+                  className="grid min-h-28 place-items-center gap-1 rounded-2xl px-2 py-3 text-ink transition hover:bg-honey/15 focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-honey-deep active:scale-[0.98]"
+                >
+                  <span className="font-display text-4xl leading-tight sm:text-5xl">
+                    {symbol.symbol}
+                  </span>
+                  {symbol.meaning ? (
+                    <span className="text-sm font-semibold text-ink-soft">{symbol.meaning}</span>
+                  ) : null}
+                  {state.helpVisible ? (
+                    <span className="rounded-full bg-honey/25 px-3 py-1 text-sm text-ink-soft">
+                      {symbol.romanization}
+                    </span>
+                  ) : null}
+                </button>
+
+                <p className="text-center text-sm font-semibold text-ink-soft" aria-live="polite">
+                  {activated
+                    ? exposure?.heardExample
+                      ? "Example heard"
+                      : "Sound heard"
+                    : waiting && target.status === "playing"
+                      ? "Listening…"
+                      : "Tap to hear"}
+                </p>
+
+                {symbol.example ? (
+                  <div className="grid gap-1 border-t-2 border-ink/10 pt-2 text-center">
+                    <span className="text-sm text-ink-soft">
+                      Example: <span className="font-semibold text-ink">{symbol.example}</span>
+                    </span>
+                    {symbol.exampleSpoken ? (
+                      <button
+                        type="button"
+                        onClick={() => playExample(symbol.id, symbol.exampleSpoken ?? symbol.spoken)}
+                        className="min-h-11 rounded-full bg-honey/20 px-3 py-1 text-sm font-semibold text-ink transition hover:bg-honey/35 active:translate-y-0.5"
+                        aria-label={`Hear example ${symbol.example}`}
+                      >
+                        Hear example
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+
+        <div className="grid place-items-center gap-3" aria-live="polite">
+          <p className="text-center text-ink-soft">
+            {ready ? "Every sound in this group is ready." : "Tap each card to hear its sound."}
+          </p>
+          <button
+            type="button"
+            onClick={advanceBatch}
+            disabled={!ready}
+            className="min-h-14 rounded-full border-[3px] border-ink bg-success/25 px-8 py-3 font-display text-xl text-ink shadow-pop transition enabled:hover:-translate-y-0.5 enabled:active:translate-y-1 enabled:active:shadow-none disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            {state.batchIndex + 1 === state.batches.length ? "I’m ready" : "Meet next sounds"}
+          </button>
+        </div>
+
+        <ProgressHint>
+          Symbols {firstSymbolNumber}–{lastSymbolNumber} of {parsed.symbols.length}
+        </ProgressHint>
       </div>
     );
   }
 
-  const q = parsed.verify[step];
+  if (!verification) return null;
 
   return (
-    <div className="grid gap-8">
-      <p className="text-center font-display text-2xl text-ink">{q.prompt}</p>
-      <ChoiceGrid choices={q.choices} answerIndex={q.answerIndex} picked={picked} onChoose={choose} />
+    <div className="grid gap-7">
+      <div className="flex items-center justify-center gap-4">
+        <SpeakerButton
+          onSpeak={speakVerification}
+          label="Hear the question again"
+          size="sm"
+          shape="round"
+          tone="honeySoft"
+          press="soft"
+        />
+        <p className="max-w-2xl text-balance text-center font-display text-2xl text-ink">
+          {verification.prompt}
+        </p>
+      </div>
+
+      {base.status === "unavailable" ? (
+        <AudioUnavailableNotice onRetry={base.retry} />
+      ) : null}
+
+      <ChoiceGrid
+        choices={verification.choices}
+        answerIndex={verification.answerIndex}
+        picked={state.picked}
+        onChoose={choose}
+        revealAnswer={state.feedback === "correct"}
+        disabled={state.feedback === "correct"}
+      />
+
+      <div className="grid min-h-20 place-items-center gap-3 text-center" aria-live="polite">
+        {state.feedback === "try-again" ? (
+          <p className="text-lg text-ink">Look and listen once more, then choose again.</p>
+        ) : null}
+        {state.feedback === "correct" ? (
+          <>
+            <p className="font-display text-xl text-ink">That’s the one!</p>
+            <button
+              type="button"
+              onClick={advanceCheck}
+              className="min-h-12 rounded-full border-[3px] border-ink bg-success/30 px-6 py-2 font-display text-lg text-ink shadow-pop transition active:translate-y-1 active:shadow-none"
+            >
+              {state.verifyStep + 1 === parsed.verify.length ? "Finish" : "Next question"}
+            </button>
+          </>
+        ) : null}
+      </div>
+
       <ProgressHint>
-        {step + 1} of {parsed.verify.length}
+        Check {state.verifyStep + 1} of {parsed.verify.length}
       </ProgressHint>
     </div>
   );

@@ -7,6 +7,7 @@ import type {
   LangSymbolIntroConfig,
   MathArrayConfig,
   MathClockConfig,
+  MathFractionBarConfig,
   MathMeasureConfig,
   MathMoneyConfig,
   MathTenframeConfig,
@@ -36,7 +37,7 @@ export type SkillDomain =
   | "spanish"
   | "japanese"
   | "korean";
-export type SkillTag = string; // "phonics.digraphs"
+export type SkillTag = string; // "phonics.decode.digraph-sh"
 type StandardTag = string; // "CCSS.RF.1.3"
 
 /** Per-program visual world (sets --accent over the stable shell). */
@@ -70,6 +71,7 @@ export type Activity =
   | ActivityOf<"journal-prompt", JournalPromptConfig>
   | ActivityOf<"reading-comprehension", ReadingComprehensionConfig>
   | ActivityOf<"math-array", MathArrayConfig>
+  | ActivityOf<"math-fraction-bar", MathFractionBarConfig>
   | ActivityOf<"lang-symbol-intro", LangSymbolIntroConfig>
   | ActivityOf<"lang-listen-match", LangListenMatchConfig>
   | ActivityOf<"math-clock", MathClockConfig>
@@ -130,7 +132,7 @@ export interface ActivityScore {
 
 export interface ActivityPlayerProps<Config, Response> {
   config: Config;
-  onComplete: (response: Response, score: ActivityScore) => void;
+  onComplete: (response: Response) => void;
   onExit?: () => void;
   /** Account-only learner context. Guests receive no context and Players must
    * degrade without calling gated learner APIs. */
@@ -139,6 +141,10 @@ export interface ActivityPlayerProps<Config, Response> {
     /** Program the activity is being played under — gated learner APIs verify
      * the enrollment is ACTIVE for this slug (§8 two-control convention). */
     programSlug: string;
+    /** Exact authored route identity. Present in ActivityHost; generated shelf
+     * hosts omit it, so oral verification remains authored-only. */
+    unitKey?: string;
+    activityId?: string;
     oralReading: boolean;
   };
 }
@@ -147,14 +153,14 @@ export interface ActivityType<Config = unknown, Response = unknown> {
   kind: ActivityKind;
   label: string;
   schema: ZodType<Config>;
+  responseSchema: ZodType<Response>;
   Player: ComponentType<ActivityPlayerProps<Config, Response>>;
   score: (config: Config, response: Response) => ActivityScore;
   skillsAffected: (config: Config) => SkillTag[];
   /**
-   * Optional deterministic answer-key check for AI-GENERATED configs (B3 §6):
-   * returns null when internally consistent, else a short reason. Run
-   * server-side after zod parse, before an item is persisted or returned.
-   * Authored content is validated by review + content tests, not this.
+   * Optional deterministic playability check (legacy name): returns null when
+   * internally consistent, else a short reason. Run server-side after schema
+   * parsing for both authored and AI-generated configs.
    */
   validateGenerated?: (config: Config) => string | null;
 }

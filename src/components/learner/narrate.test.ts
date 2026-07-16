@@ -48,6 +48,20 @@ describe("narrate", () => {
     expect(onUnavailable).not.toHaveBeenCalled();
   });
 
+  it("reports completion only after the clip actually ends", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Uint8Array([1]), { status: 200 })),
+    );
+    const onComplete = vi.fn();
+    narrate("Finish the whole model", { onUnavailable: vi.fn(), onComplete });
+    await vi.waitFor(() => expect(FakeAudio.last?.paused).toBe(false));
+
+    expect(onComplete).not.toHaveBeenCalled();
+    FakeAudio.last?.onended?.();
+    expect(onComplete).toHaveBeenCalledOnce();
+  });
+
   it("falls back when the route responds non-OK", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 503 })));
     const onUnavailable = vi.fn();
@@ -90,5 +104,21 @@ describe("narrate", () => {
     await vi.waitFor(() => expect(FakeAudio.last?.paused).toBe(false));
     handle.cancel();
     expect(FakeAudio.last?.paused).toBe(true);
+  });
+
+  it("does not report a cancelled clip as completed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Uint8Array([1]), { status: 200 })),
+    );
+    const onComplete = vi.fn();
+    const handle = narrate("hello again", { onUnavailable: vi.fn(), onComplete });
+    await vi.waitFor(() => expect(FakeAudio.last?.paused).toBe(false));
+
+    const cancelledAudio = FakeAudio.last;
+    handle.cancel();
+    cancelledAudio?.onended?.();
+
+    expect(onComplete).not.toHaveBeenCalled();
   });
 });

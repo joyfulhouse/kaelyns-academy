@@ -1,8 +1,19 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { ACTIVITY_CONFIG_SCHEMAS } from "./activity-configs";
 import { PROGRAMS, getSkill } from "./index";
 import { getLanguage } from "./languages";
 import { kaelynAdaptive } from "./programs/kaelyn-adaptive";
+import { decodableReadersUnit } from "./programs/kaelyn-adaptive/decodable-readers";
+import { lifeSkillsMathUnit } from "./programs/kaelyn-adaptive/life-skills-math";
+import { mathUnit } from "./programs/kaelyn-adaptive/math";
+import { mathBaselineUnit } from "./programs/kaelyn-adaptive/math-baseline";
+import { readingUnit } from "./programs/kaelyn-adaptive/reading";
+import { readingBaselineUnit } from "./programs/kaelyn-adaptive/reading-baseline";
+import { scienceNatureUnit } from "./programs/kaelyn-adaptive/science-nature";
+import { wordStudyUnit } from "./programs/kaelyn-adaptive/word-study";
+import { writingUnit } from "./programs/kaelyn-adaptive/writing";
+import { summerKToGrade1 } from "./programs/summer-k-to-grade1";
 import { getActivityType, isActivityKindRegistered } from "@/activities";
 import { SKILLS } from "./skills";
 
@@ -23,6 +34,23 @@ function everyActivity() {
 }
 
 describe("authored program content", () => {
+  it("assembles Kaelyn's adaptive units without changing serialized content or order", () => {
+    expect(kaelynAdaptive.units).toEqual([
+      readingUnit,
+      wordStudyUnit,
+      writingUnit,
+      mathUnit,
+      lifeSkillsMathUnit,
+      scienceNatureUnit,
+      decodableReadersUnit,
+      readingBaselineUnit,
+      mathBaselineUnit,
+    ]);
+    expect(
+      createHash("sha256").update(JSON.stringify(kaelynAdaptive)).digest("hex"),
+    ).toBe("d42e59f9730e187d0d7ba764deda2f3765377d30b1cca9ef7c021527ab580f49");
+  });
+
   it("every activity config parses against its kind's schema", () => {
     for (const { program, activity } of everyActivity()) {
       const schema = ACTIVITY_CONFIG_SCHEMAS[activity.kind] as {
@@ -32,6 +60,57 @@ describe("authored program content", () => {
         () => schema.parse(activity.config),
         `${program.slug}/${activity.id} (${activity.kind})`,
       ).not.toThrow();
+    }
+  });
+
+  it("keeps grouping and regrouping on the mathematical model that performs them", () => {
+    const equalGroups = everyActivity().find(
+      ({ activity }) => activity.id === "math-r2-a2",
+    )?.activity;
+    expect(equalGroups?.kind).toBe("math-array");
+    if (equalGroups?.kind === "math-array") {
+      expect(equalGroups.config.mode).toBe("multiply");
+    }
+
+    const regrouping = everyActivity().find(
+      ({ activity }) => activity.id === "math-r7-a1",
+    )?.activity;
+    expect(regrouping?.kind).toBe("math-tenframe");
+    if (regrouping?.kind === "math-tenframe") {
+      expect(regrouping.config.mode).toBe("make-ten");
+    }
+  });
+
+  it("keeps fraction work on the equal-parts model and behind stretch or placement gates", () => {
+    const area = everyActivity().find(({ activity }) => activity.id === "math-r8-a1")?.activity;
+    expect(area?.kind).toBe("math-array");
+    expect(area?.skillTags).not.toContain("math.fractions.unit");
+
+    const partition = everyActivity().find(
+      ({ activity }) => activity.id === "math-r8-a2",
+    )?.activity;
+    expect(partition?.kind).toBe("math-fraction-bar");
+    expect(partition?.band).toBe("stretch");
+    if (partition?.kind === "math-fraction-bar") {
+      expect(partition.config).toMatchObject({
+        mode: "partition",
+        numerator: 1,
+        denominator: 4,
+      });
+    }
+
+    const identify = everyActivity().find(
+      ({ activity }) => activity.id === "math-baseline-a5",
+    );
+    expect(identify?.unit.checkpoint).toBe("baseline");
+    expect(identify?.activity.kind).toBe("math-fraction-bar");
+    expect(identify?.activity.band).toBe("stretch");
+    if (identify?.activity.kind === "math-fraction-bar") {
+      expect(identify.activity.config).toMatchObject({
+        mode: "identify",
+        numerator: 2,
+        denominator: 4,
+      });
     }
   });
 
@@ -92,11 +171,9 @@ describe("authored program content", () => {
   it("has a baseline check-in unit per placement-enabled academic strand", () => {
     const program = PROGRAMS.find((p) => p.slug === "kaelyn-adaptive")!;
     const baselines = program.units.filter((u) => u.checkpoint === "baseline");
-    // C1 ships Reading + Math baselines only. Word Study is still deferred: B3
-    // fixed the phonics-wordbuild/sightword-game evidence (see the invariant test
-    // below), but the strand's reading-comprehension activities still emit the
-    // reading.* rubric skills — disjoint from their authored word.*/vocab.* tags —
-    // so a Word Study baseline would seed the wrong skills and fail to place.
+    // C1 ships Reading + Math baselines only. Word Study placement remains a
+    // separate curriculum decision; the invariant below ensures its current
+    // literacy interactions cannot emit evidence outside their authored skills.
     expect(baselines.map((u) => u.id).sort()).toEqual(["math-baseline", "reading-baseline"]);
     for (const u of baselines) {
       const acts = u.lessons.flatMap((l) => l.activities);
@@ -108,14 +185,10 @@ describe("authored program content", () => {
     }
   });
 
-  it("Word Study wordbuild/sightword runtime skill evidence targets their authored skillTags", () => {
+  it("Word Study literacy runtime evidence stays inside authored skillTags", () => {
     const program = PROGRAMS.find((p) => p.slug === "kaelyn-adaptive")!;
     const unit = program.units.find((u) => u.id === "word-study")!;
-    // B3 fixed these two kinds so their evidence lands on the authored word.*/
-    // vocab.* skills the recommender gates on. reading-comprehension is excluded:
-    // it emits the reading.* rubric skills by design (a separate, out-of-scope
-    // mismatch tracked for its own fix — see the baseline check-in test above).
-    const scoped = new Set(["phonics-wordbuild", "sightword-game"]);
+    const scoped = new Set(["phonics-wordbuild", "sightword-game", "reading-comprehension"]);
     let checked = 0;
     for (const lesson of unit.lessons) {
       for (const a of lesson.activities) {
@@ -129,7 +202,25 @@ describe("authored program content", () => {
       }
     }
     // Guard against the loop silently matching nothing (unit re-id, kind rename).
-    expect(checked).toBeGreaterThanOrEqual(6);
+    expect(checked).toBeGreaterThanOrEqual(10);
+  });
+
+  it("all authored sight-word games use explicit static target rounds", () => {
+    const authoredActivities = [kaelynAdaptive, summerKToGrade1].flatMap((program) =>
+      program.units.flatMap((unit) =>
+        unit.lessons.flatMap((lesson) => lesson.activities),
+      ),
+    );
+    let checked = 0;
+    for (const activity of authoredActivities) {
+      if (activity.kind !== "sightword-game") continue;
+      expect(activity.config).toHaveProperty("rounds");
+      expect(activity.config).not.toHaveProperty("words");
+      expect(activity.config).not.toHaveProperty("decoys");
+      expect(() => ACTIVITY_CONFIG_SCHEMAS["sightword-game"].parse(activity.config)).not.toThrow();
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThanOrEqual(5);
   });
 
   it("oral-reading runtime skill evidence stays inside authored skillTags", () => {
@@ -145,7 +236,7 @@ describe("authored program content", () => {
     expect(checked).toBeGreaterThanOrEqual(3);
   });
 
-  it("Decodable Readers contains ready-band sentence fluency activities", () => {
+  it("Decodable Readers contains ready-band cold sentence-decoding activities", () => {
     const unit = kaelynAdaptive.units.find((u) => u.id === "decodable-readers");
     expect(unit).toBeDefined();
     expect(unit!.world).toBe("ocean");
@@ -164,6 +255,7 @@ describe("authored program content", () => {
       expect(activity.config.mode).toBe("sentence");
       if (activity.config.mode !== "sentence") continue;
 
+      expect(activity.config.presentation).toBe("cold");
       expect(activity.config.skillTag).toBe(activity.skillTags[0]);
       expect(activity.config.passage.split(/\s+/).length).toBeLessThanOrEqual(7);
     }
@@ -178,74 +270,20 @@ describe("authored program content", () => {
     expect(distinct.size).toBe(unit!.lessons.length);
   });
 
-  it("authors sentence fluency beside the unchanged v1 word-reading block", () => {
+  it("keeps modeled Word Study oral practice mastery-neutral", () => {
     const unit = kaelynAdaptive.units.find((u) => u.id === "word-study")!;
     const activities = unit.lessons.flatMap((lesson) => lesson.activities);
     const oralReadingActivities = activities.filter(
       (activity) => activity.kind === "oral-reading",
     );
-    const sentences = oralReadingActivities.filter(
-      (activity) => activity.config.mode === "sentence",
-    );
-
-    expect(sentences.map(({ id }) => id)).toEqual([
-      "word-sentence-see-cat",
-      "word-sentence-run-play",
-    ]);
-    for (const activity of sentences) {
+    expect(oralReadingActivities).toHaveLength(7);
+    for (const activity of oralReadingActivities) {
       expect(activity.band).toBe("ready");
-      expect(activity.skillTags).toEqual(["reading.fluency.phrasing"]);
-      expect(activity.config.skillTag).toBe("reading.fluency.phrasing");
+      expect(activity.skillTags).toEqual([]);
+      expect(activity.config.presentation).toBe("listen-repeat");
+      expect(activity.config.skillTag).toBeUndefined();
+      expect(getActivityType("oral-reading")!.skillsAffected(activity.config)).toEqual([]);
     }
-
-    const originalWordConfigs = activities
-      .filter(
-        (activity) =>
-          activity.kind === "oral-reading" && activity.id.startsWith("word-oral-"),
-      )
-      .map(({ id, config }) => ({ id, config }));
-    expect(originalWordConfigs).toEqual([
-      {
-        id: "word-oral-the",
-        config: {
-          instruction: "Listen, then read this word aloud.",
-          target: "the",
-          skillTag: "reading.fluency.phrasing",
-        },
-      },
-      {
-        id: "word-oral-and",
-        config: {
-          instruction: "Listen, then read this word aloud.",
-          target: "and",
-          skillTag: "reading.fluency.phrasing",
-        },
-      },
-      {
-        id: "word-oral-to",
-        config: {
-          instruction: "Listen, then read this word aloud.",
-          target: "to",
-          skillTag: "reading.fluency.phrasing",
-        },
-      },
-      {
-        id: "word-oral-see",
-        config: {
-          instruction: "Listen, then read this word aloud.",
-          target: "see",
-          skillTag: "reading.fluency.phrasing",
-        },
-      },
-      {
-        id: "word-oral-we-can",
-        config: {
-          instruction: "Listen, then read these words aloud.",
-          target: "we can",
-          skillTag: "reading.fluency.phrasing",
-        },
-      },
-    ]);
   });
 });
 

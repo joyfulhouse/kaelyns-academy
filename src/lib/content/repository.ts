@@ -120,6 +120,17 @@ export const getProgramVersionAsync: (versionId: string) => Promise<Program | un
   },
 );
 
+/** Resolve an exact version and verify its durable parent program identity.
+ * Program-version ids are globally addressable, so a slug supplied by a route
+ * or enrollment must never relabel a version owned by another program. */
+async function getProgramVersionForSlug(
+  versionId: string,
+  expectedSlug: string,
+): Promise<Program | undefined> {
+  const resolved = await getProgramVersionAsync(versionId);
+  return resolved?.slug === expectedSlug ? resolved : undefined;
+}
+
 /**
  * List all published programs.
  * DB-preferred: assembles each program from its published version.
@@ -217,6 +228,23 @@ export async function resolveProgramByVersionPin(
 }
 
 /**
+ * Resolve content from a version identity already read at an authorization
+ * boundary. Callers pair this with a later locked enrollment comparison, so a
+ * concurrent repin cannot relabel results derived from another content tree.
+ */
+export const resolveProgramForEnrollmentVersion: (
+  slug: string,
+  programVersionId: string | null,
+) => Promise<Program | undefined> = cache(
+  async (slug: string, programVersionId: string | null): Promise<Program | undefined> =>
+    resolveProgramByVersionPin(
+      { programVersionId },
+      (versionId) => getProgramVersionForSlug(versionId, slug),
+      () => getProgramAsync(slug),
+    ),
+);
+
+/**
  * Resolve the program a specific learner should see for `slug`, honoring the
  * enrollment's version pin (C#5). The single seam both the learner state action
  * (tree + progress scoping) and the §8 AI gate go through, so all three agree on
@@ -227,34 +255,25 @@ export async function resolveProgramByVersionPin(
  * CLOSED if that version can't be resolved (`undefined` → the calm "unavailable"
  * state, never a silent swap to current published content); a null pin / no
  * enrollment / unowned learner falls back to the current published (or static)
- * tree by slug — the guest-equivalent the picker + gate handle separately. Note
- * the try/catch below is on the pin READ only: a DB error reading the enrollment
- * row degrades to the null-pin/`bySlug` path; a SET pin whose version doesn't
- * resolve still fails closed.
+ * tree by slug — the guest-equivalent the picker + gate handle separately. An
+ * enrollment-pin read error is deliberately allowed to throw so account learner
+ * callers can fail closed instead of silently switching to the slug tree.
  *
  * Build-safe: the tutor store is imported lazily (per-request), never at module
  * top level. `cache()`-wrapped for per-request memoization like the other
  * resolvers.
  */
-export const resolveLearnerProgram: (
+export const resolveAccountLearnerProgram: (
   accountId: string,
   learnerId: string,
   slug: string,
 ) => Promise<Program | undefined> = cache(
   async (accountId: string, learnerId: string, slug: string): Promise<Program | undefined> => {
-    let pin: { programVersionId: string | null } | null = null;
-    try {
-      const { getEnrollmentVersionId } = await import("@/lib/tutor/store");
-      pin = await getEnrollmentVersionId(accountId, learnerId, slug);
-    } catch (err) {
-      // A DB blip reading the pin must not break the learner surface — degrade to
-      // the current published/static tree (the null-pin path) rather than crash.
-      captureNonCritical("resolveLearnerProgram enrollment-pin read failed", err);
-      pin = null;
-    }
+    const { getEnrollmentVersionId } = await import("@/lib/tutor/store");
+    const pin = await getEnrollmentVersionId(accountId, learnerId, slug);
     return resolveProgramByVersionPin(
       pin,
-      (versionId) => getProgramVersionAsync(versionId),
+      (versionId) => getProgramVersionForSlug(versionId, slug),
       () => getProgramAsync(slug),
     );
   },

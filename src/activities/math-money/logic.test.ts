@@ -4,6 +4,7 @@ import {
   COIN_CENTS,
   coinsTotal,
   isCorrect,
+  responseSchema,
   score,
   skillsAffected,
   validateGenerated,
@@ -38,10 +39,63 @@ describe("isCorrect", () => {
     expect(
       isCorrect(c, {
         attempts: 1,
-        tappedCoins: ["nickel", "nickel", "penny", "penny"],
+        tokens: [
+          { id: "coin-1", type: "nickel" },
+          { id: "coin-2", type: "nickel" },
+          { id: "coin-3", type: "penny" },
+          { id: "coin-4", type: "penny" },
+        ],
       }),
     ).toBe(true);
-    expect(isCorrect(c, { attempts: 1, tappedCoins: ["nickel"] })).toBe(false);
+    expect(isCorrect(c, { attempts: 1, tokens: [{ id: "coin-1", type: "nickel" }] })).toBe(
+      false,
+    );
+  });
+
+  it("count rejects a coin the authored palette did not offer", () => {
+    const c: MathMoneyConfig = {
+      mode: "count",
+      instruction: "",
+      palette: ["nickel"],
+      targetCents: 10,
+    };
+    expect(isCorrect(c, { attempts: 1, tokens: [{ id: "coin-1", type: "dime" }] })).toBe(false);
+  });
+});
+
+describe("responseSchema", () => {
+  it("accepts stable coin tokens and rejects duplicate IDs or over-bounded trays", () => {
+    expect(
+      responseSchema.safeParse({
+        attempts: 1,
+        tokens: [
+          { id: "coin-1", type: "penny" },
+          { id: "coin-2", type: "penny" },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      responseSchema.safeParse({
+        attempts: 1,
+        tokens: [
+          { id: "coin-1", type: "penny" },
+          { id: "coin-1", type: "nickel" },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      responseSchema.safeParse({
+        attempts: 1,
+        tokens: Array.from({ length: 21 }, (_, index) => ({
+          id: `coin-${index}`,
+          type: "penny",
+        })),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("does not accept a forged client total", () => {
+    expect(responseSchema.safeParse({ attempts: 1, totalCents: 25 }).success).toBe(false);
   });
 });
 
@@ -55,7 +109,11 @@ describe("score", () => {
   it("first-try correct → 3 stars solid on math.money", () => {
     const s = score(c, {
       attempts: 1,
-      tappedCoins: ["penny", "penny", "penny"],
+      tokens: [
+        { id: "coin-1", type: "penny" },
+        { id: "coin-2", type: "penny" },
+        { id: "coin-3", type: "penny" },
+      ],
     });
     expect(s).toEqual({
       correct: 1,
@@ -67,7 +125,11 @@ describe("score", () => {
   it("finished after retries still earns a star (never 0)", () => {
     const s = score(c, {
       attempts: 3,
-      tappedCoins: ["penny", "penny", "penny"],
+      tokens: [
+        { id: "coin-1", type: "penny" },
+        { id: "coin-2", type: "penny" },
+        { id: "coin-3", type: "penny" },
+      ],
     });
     expect(s.correct).toBe(1);
     expect(s.stars).toBe(1);
@@ -97,6 +159,31 @@ describe("validateGenerated (B3 answer-key net)", () => {
   it("rejects an identify target that is not among the offered coins", () => {
     expect(
       validateGenerated({ mode: "identify", instruction: "", coins: ["penny"], targetCoin: "dime" }),
+    ).not.toBeNull();
+  });
+
+  it("rejects duplicate palettes and targets needing too many tokens", () => {
+    expect(
+      validateGenerated({
+        mode: "count",
+        instruction: "",
+        palette: ["penny", "penny"],
+        targetCents: 2,
+      }),
+    ).not.toBeNull();
+    expect(
+      validateGenerated({ mode: "count", instruction: "", palette: ["penny"], targetCents: 21 }),
+    ).not.toBeNull();
+  });
+
+  it("rejects duplicate identify choices", () => {
+    expect(
+      validateGenerated({
+        mode: "identify",
+        instruction: "",
+        coins: ["penny", "penny"],
+        targetCoin: "penny",
+      }),
     ).not.toBeNull();
   });
 });

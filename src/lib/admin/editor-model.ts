@@ -68,36 +68,51 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
     case "phonics-wordbuild":
       return { focus: "", instruction: "", tiles: ["a", "b"], words: [{ word: "ab" }] };
     case "sightword-game":
-      return { instruction: "", words: ["the", "and"] };
+      return {
+        instruction: "Find the target word.",
+        rounds: [{ target: "the", choices: ["the", "and"] }],
+      };
     case "math-tenframe":
       return { instruction: "", mode: "represent", target: 5 };
     case "journal-prompt":
       return { prompt: "" };
     case "reading-comprehension":
       return {
-        instruction: "",
-        passage: "",
+        instruction: "Read the passage, then answer.",
+        passage: "A cat sat.",
         questions: [
           { prompt: "Question?", choices: ["A", "B"], answerIndex: 0 },
         ],
       };
     case "math-array":
       return { instruction: "", mode: "build", rows: 2, cols: 3 };
+    case "math-fraction-bar":
+      return { instruction: "", mode: "partition", numerator: 1, denominator: 2 };
     case "lang-symbol-intro":
       return {
         locale: "zh-TW",
-        instruction: "",
+        instruction: "Tap each symbol to hear it.",
         skillTags: ["zhuyin.symbols.initials"],
-        symbols: [{ id: "b", symbol: "ㄅ", romanization: "b", spoken: "ㄅ" }],
-        verify: [{ prompt: "What is ㄅ?", choices: ["b", "p"], answerIndex: 0 }],
+        symbols: [
+          { id: "zhuyin-b", symbol: "ㄅ", romanization: "b", spoken: "ㄅㄛ", audioKey: "zhuyin-b", example: "ㄅㄚˋ", exampleSpoken: "bà", meaning: "dad" },
+          { id: "zhuyin-p", symbol: "ㄆ", romanization: "p", spoken: "ㄆㄛ", audioKey: "zhuyin-p", example: "ㄆㄛˊ", exampleSpoken: "pó", meaning: "grandma" },
+          { id: "zhuyin-m", symbol: "ㄇ", romanization: "m", spoken: "ㄇㄛ", audioKey: "zhuyin-m", example: "ㄇㄚ", exampleSpoken: "mā", meaning: "mom" },
+        ],
+        verify: [{ prompt: "Which one says b?", spokenPrompt: "Which one says b?", choices: ["ㄅ", "ㄆ", "ㄇ"], answerIndex: 0 }],
       };
     case "lang-listen-match":
       return {
         locale: "zh-TW",
-        instruction: "",
+        instruction: "Listen, then tap the symbol you heard.",
         skillTags: ["zhuyin.symbols.initials"],
         items: [
-          { spoken: "ㄅ", choices: ["ㄅ", "ㄆ"], answerIndex: 0 },
+          {
+            spoken: "ㄅㄛ",
+            audioKey: "zhuyin-b",
+            choices: ["ㄅ", "ㄆ"],
+            choiceLabels: ["b", "p"],
+            answerIndex: 0,
+          },
         ],
       };
     case "math-clock":
@@ -136,6 +151,7 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
       };
     case "oral-reading":
       return {
+        presentation: "listen-repeat",
         instruction: "Listen, then read this word aloud.",
         target: "the",
       };

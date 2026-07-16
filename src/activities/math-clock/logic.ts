@@ -1,28 +1,49 @@
 import { mathClockConfig, type MathClockConfig } from "@/content/activity-configs";
 import type { ActivityScore, SkillTag } from "@/content/types";
+import { z } from "zod";
 import {
   evenSkillEvidence,
   firstTryRateFromAttempts,
   outcomeFromAccuracy,
   starsFromAccuracy,
 } from "../_shared/scoring";
+import { normalizeHalfHour } from "./clock-model";
 
 /** Server-safe schema + scoring for math-clock. No "use client". */
 export const schema = mathClockConfig;
 
 /** The child's final action + how many checks it took (≥1). */
-export interface MathClockResponse {
-  attempts: number;
-  /** read mode: the digital-time choice index the child tapped. */
-  selectedIndex?: number;
-  /** set mode: the clock the child made. */
-  setHour?: number;
-  setMinute?: number;
-}
+const clockAttempts = z.number().int().min(1).max(20);
+const totalMinutes = z
+  .number()
+  .int()
+  .min(0)
+  .max(690)
+  .refine((value) => value % 30 === 0, "totalMinutes must be a half-hour position");
+export const responseSchema = z.union([
+  z
+    .object({
+      attempts: clockAttempts,
+      /** read mode: the digital-time choice index the child tapped. */
+      selectedIndex: z.number().int().min(0).max(3),
+    })
+    .strict(),
+  z
+    .object({
+      attempts: clockAttempts,
+      /** set mode: one coupled half-hour position after twelve. */
+      totalMinutes,
+    })
+    .strict(),
+]);
+export type MathClockResponse = z.infer<typeof responseSchema>;
 
 export function isCorrect(config: MathClockConfig, response: MathClockResponse): boolean {
-  if (config.mode === "read") return response.selectedIndex === config.answerIndex;
-  return response.setHour === config.targetHour && response.setMinute === config.targetMinute;
+  if (config.mode === "read") {
+    return "selectedIndex" in response && response.selectedIndex === config.answerIndex;
+  }
+  const targetMinutes = normalizeHalfHour((config.targetHour % 12) * 60 + config.targetMinute);
+  return "totalMinutes" in response && response.totalMinutes === targetMinutes;
 }
 
 export function score(config: MathClockConfig, response: MathClockResponse): ActivityScore {

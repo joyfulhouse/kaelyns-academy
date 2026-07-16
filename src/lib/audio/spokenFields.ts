@@ -26,11 +26,16 @@ export function spokenEnglishStrings(item: unknown): string[] {
     }
   }
   push(r.retellPrompt);
+  if (Array.isArray(r.rounds)) {
+    for (const round of r.rounds) {
+      if (!round || typeof round !== "object") continue;
+      const fields = round as Record<string, unknown>;
+      push(fields.spokenPrompt ?? fields.target);
+    }
+  }
   if (Array.isArray(r.words)) {
     for (const w of r.words) {
-      if (typeof w === "string") {
-        push(w); // sightword-game targets
-      } else if (w && typeof w === "object") {
+      if (w && typeof w === "object") {
         // phonics-wordbuild words: spoken whole, with an optional IPA override.
         const wo = w as Record<string, unknown>;
         const word = typeof wo.word === "string" ? wo.word : "";
@@ -63,7 +68,7 @@ export function spokenEnglishStrings(item: unknown): string[] {
 const PREWARM_MAX = 128;
 
 /** The deduped, hard-capped list of strings to pre-warm for a batch of generated
- *  activity configs. Bounds fan-out so one /api/practice response can't enqueue an
+ *  activity configs. Bounds fan-out so one generated batch can't enqueue an
  *  unbounded burst of durable Kokoro/MinIO synths. */
 export function prewarmTexts(items: readonly unknown[], cap: number = PREWARM_MAX): string[] {
   const out: string[] = [];

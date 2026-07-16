@@ -1,14 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// recordAttemptAction's star-economy membership witness (Codex critical, see the
-// doc comment above recordAttemptAction in ./actions.ts): for a non-generated
-// (authored) attempt, the action resolves the learner's pinned program and
-// verifies `activityId` belongs to that tree via findUnitIdOfActivity BEFORE
-// calling recordAttempt. A resolved tree with no match is a forgery attempt and
-// must be rejected outright (`invalid`) with recordAttempt never called — that
-// is the boundary that closes the star-mint exploit. There is no live test DB;
-// the store + resolver + witness are mocked and we assert the derivation
-// (reject-without-write vs. creditEligible) rather than any store internals.
+// recordAttemptAction is the trust boundary for progress. The browser sends
+// identifiers plus bounded response facts only; the action resolves the exact
+// pinned activity (including route unit), validates config/response through the
+// server-safe plugin contract, computes the canonical score/evidence, and only
+// then calls recordAttempt. There is no live test DB here, so the store and
+// pinned-program resolver are mocked while real plugin scoring stays exercised.
 
 vi.mock("@/lib/tenancy", async (importActual) => ({
   ...(await importActual<typeof import("@/lib/tenancy")>()),
@@ -19,11 +16,17 @@ vi.mock("@/lib/tenancy", async (importActual) => ({
 }));
 
 vi.mock("@/lib/tutor/store", () => ({
+  CompletionReplayMismatchError: class CompletionReplayMismatchError extends Error {},
+  EnrollmentNotActiveError: class EnrollmentNotActiveError extends Error {},
+  EnrollmentVersionChangedError: class EnrollmentVersionChangedError extends Error {},
+  GeneratedActivityAlreadyCompletedError: class GeneratedActivityAlreadyCompletedError extends Error {},
   recordAttempt: vi.fn(),
+  recordOralReadingAttempt: vi.fn(),
   listLearners: vi.fn(),
   // The generated-shelf star witness (B3): recordAttemptAction reads this for a
   // generated attempt to decide shelfEligible + the shelf unit.
   getGeneratedActivity: vi.fn(),
+  getPlayableGeneratedActivity: vi.fn(),
   // ensureLessonPractice gate + shelf reads/writes (all account-scoped store fns).
   getLearner: vi.fn(),
   getLearnerSettings: vi.fn(),
@@ -31,6 +34,7 @@ vi.mock("@/lib/tutor/store", () => ({
   getEnrollmentConfig: vi.fn(),
   getSkillState: vi.fn(),
   getCompletedActivityIds: vi.fn(),
+  getCompletedActivityIdsForVersion: vi.fn(),
   getDueReviews: vi.fn(),
   getGeneratedCompletions: vi.fn(),
   listGeneratedShelf: vi.fn(),
@@ -40,11 +44,8 @@ vi.mock("@/lib/tutor/store", () => ({
 }));
 
 vi.mock("@/lib/content/repository", () => ({
-  resolveLearnerProgram: vi.fn(),
-}));
-
-vi.mock("@/lib/quests/logic", () => ({
-  findUnitIdOfActivity: vi.fn(),
+  resolveAccountLearnerProgram: vi.fn(),
+  resolveProgramForEnrollmentVersion: vi.fn(),
 }));
 
 // The heavy AI + shelf modules are mocked so the action tests stay pure: we
@@ -66,15 +67,22 @@ vi.mock("@/lib/tutor/shelf", () => ({
 }));
 
 import {
+  CompletionReplayMismatchError,
+  EnrollmentNotActiveError,
+  EnrollmentVersionChangedError,
+  GeneratedActivityAlreadyCompletedError,
   recordAttempt,
+  recordOralReadingAttempt,
   listLearners,
   getGeneratedActivity,
+  getPlayableGeneratedActivity,
   getLearner,
   getLearnerSettings,
   getEnrollmentForGate,
   getEnrollmentConfig,
   getSkillState,
   getCompletedActivityIds,
+  getCompletedActivityIdsForVersion,
   getDueReviews,
   getGeneratedCompletions,
   listGeneratedShelf,
@@ -83,12 +91,15 @@ import {
   type NewGeneratedActivity,
 } from "@/lib/tutor/store";
 import { requireAccount, UnauthenticatedError } from "@/lib/tenancy";
-import { resolveLearnerProgram } from "@/lib/content/repository";
-import { findUnitIdOfActivity } from "@/lib/quests/logic";
+import {
+  resolveAccountLearnerProgram,
+  resolveProgramForEnrollmentVersion,
+} from "@/lib/content/repository";
 import { generatePracticeItems } from "@/lib/ai/practice";
 import { pickGenerationTargets, type GenerationTarget } from "@/lib/tutor/shelf";
 import {
   recordAttemptAction,
+  getGeneratedPracticeAction,
   ensureLessonPractice,
   getLearnerStateAction,
   getTutorSession,
@@ -96,15 +107,171 @@ import {
 } from "./actions";
 import type { Program } from "@/content";
 
-const PROGRAM = { slug: "kaelyn-adaptive", title: "T", subtitle: "", ageBand: "", summary: "", units: [] } as unknown as Program;
+const PROGRAM = {
+  slug: "kaelyn-adaptive",
+  title: "T",
+  subtitle: "",
+  ageBand: "",
+  summary: "",
+  units: [
+    {
+      id: "unit-1",
+      order: 1,
+      title: "Time",
+      emoji: "🕐",
+      world: "sunshine",
+      bigIdea: "",
+      phonicsFocus: "",
+      mathFocus: "",
+      project: "",
+      lessons: [
+        {
+          id: "lesson-1",
+          order: 1,
+          title: "Clock",
+          activities: [
+            {
+              id: "act-1",
+              kind: "math-clock",
+              title: "Set the clock",
+              band: "ready",
+              skillTags: ["math.time"],
+              config: {
+                mode: "set",
+                instruction: "Make six o'clock.",
+                targetHour: 6,
+                targetMinute: 0,
+              },
+            },
+            {
+              id: "oral-1",
+              kind: "oral-reading",
+              title: "Read there",
+              band: "ready",
+              skillTags: ["phonics.decode.short-a-cvc"],
+              config: {
+                presentation: "cold",
+                instruction: "Read the word.",
+                target: "there",
+                skillTag: "phonics.decode.short-a-cvc",
+              },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "unit-2",
+      order: 2,
+      title: "Other",
+      emoji: "🌱",
+      world: "garden",
+      bigIdea: "",
+      phonicsFocus: "",
+      mathFocus: "",
+      project: "",
+      lessons: [],
+    },
+  ],
+} satisfies Program;
+
+describe("getGeneratedPracticeAction", () => {
+  beforeEach(() => {
+    vi.mocked(getPlayableGeneratedActivity).mockReset();
+    vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(PROGRAM);
+  });
+
+  it("resolves a shelf row through the selected learner-scoped store boundary", async () => {
+    const row = {
+      id: "gen-1",
+      learnerId: "L1",
+      lessonId: "lesson-1",
+      unitKey: "unit-1",
+      programSlug: "kaelyn-adaptive",
+      programVersionId: "PV1",
+      kind: "math-tenframe" as const,
+      title: "Made for you",
+      config: { target: 5 },
+      skillTags: ["math.add"],
+      gen: { model: "ha-assist", route: "ready", at: "2026-07-15T12:00:00.000Z" },
+    };
+    vi.mocked(getPlayableGeneratedActivity).mockResolvedValue(row);
+
+    await expect(
+      getGeneratedPracticeAction({
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+        generatedId: "gen-1",
+      }),
+    ).resolves.toEqual(row);
+    expect(getPlayableGeneratedActivity).toHaveBeenCalledWith(
+      "acc-1",
+      "L1",
+      "kaelyn-adaptive",
+      "PV1",
+      "gen-1",
+    );
+  });
+
+  it("rejects malformed lookup identifiers before reading the store", async () => {
+    await expect(
+      getGeneratedPracticeAction({
+        learnerId: "",
+        programSlug: "kaelyn-adaptive",
+        generatedId: "gen-1",
+      }),
+    ).resolves.toBeNull();
+    expect(getPlayableGeneratedActivity).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before reading a shelf row when the enrollment pin read fails", async () => {
+    vi.mocked(resolveProgramForEnrollmentVersion).mockRejectedValue(
+      new Error("pin read failed"),
+    );
+    vi.mocked(getPlayableGeneratedActivity).mockResolvedValue({} as never);
+
+    await expect(
+      getGeneratedPracticeAction({
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+        generatedId: "gen-1",
+      }),
+    ).resolves.toBeNull();
+    expect(getPlayableGeneratedActivity).not.toHaveBeenCalled();
+  });
+
+  it("rejects a shelf row whose unit-local lesson is absent from the pinned tree", async () => {
+    vi.mocked(getPlayableGeneratedActivity).mockResolvedValue({
+      id: "gen-1",
+      learnerId: "L1",
+      lessonId: "lesson-1",
+      unitKey: "unit-2",
+      programSlug: "kaelyn-adaptive",
+      programVersionId: "PV1",
+      kind: "math-clock",
+      title: "Stale generated item",
+      config: { mode: "set", instruction: "Make six o'clock.", targetHour: 6, targetMinute: 0 },
+      skillTags: ["math.time"],
+      gen: { model: "ds4-fast", route: "shelf", at: "2026-07-01T00:00:00.000Z" },
+    });
+
+    await expect(
+      getGeneratedPracticeAction({
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+        generatedId: "gen-1",
+      }),
+    ).resolves.toBeNull();
+  });
+});
 
 const BASE_INPUT: RecordAttemptInput = {
   learnerId: "L1",
   programSlug: "kaelyn-adaptive",
+  completionId: "11111111-1111-4111-8111-111111111111",
+  unitKey: "unit-1",
   activityId: "act-1",
-  kind: "quiz",
-  generated: false,
-  score: { correct: 1, total: 1, stars: 3, skillEvidence: [] },
+  response: { attempts: 1, totalMinutes: 360 },
 };
 
 describe("getTutorSession", () => {
@@ -126,8 +293,10 @@ describe("getLearnerStateAction learner defaults", () => {
     vi.mocked(getEnrollmentForGate).mockResolvedValue({
       status: "active",
       config: { band: "ready", aiPractice: true },
+      configValid: true,
+      programVersionId: "PV1",
     });
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(PROGRAM);
     vi.mocked(getSkillState).mockResolvedValue({});
     vi.mocked(getCompletedActivityIds).mockResolvedValue([]);
     vi.mocked(getDueReviews).mockResolvedValue([]);
@@ -148,97 +317,488 @@ describe("getLearnerStateAction learner defaults", () => {
       readAloud: false,
       oralReading: true,
     });
+    expect(resolveProgramForEnrollmentVersion).toHaveBeenCalledWith(
+      "kaelyn-adaptive",
+      "PV1",
+    );
+    expect(resolveAccountLearnerProgram).not.toHaveBeenCalled();
+    expect(listGeneratedShelf).toHaveBeenCalledWith(
+      "acc-1",
+      "L1",
+      "kaelyn-adaptive",
+      "PV1",
+    );
+    expect(getEnrollmentConfig).not.toHaveBeenCalled();
+    expect(getDueReviews).toHaveBeenCalledWith(
+      "acc-1",
+      "L1",
+      PROGRAM,
+      "PV1",
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    );
   });
 });
 
 beforeEach(() => {
-  vi.mocked(recordAttempt).mockResolvedValue(undefined);
+  vi.mocked(getEnrollmentForGate).mockResolvedValue({
+    status: "active",
+    config: {},
+    configValid: true,
+    programVersionId: "PV1",
+  });
+  vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(PROGRAM);
+  vi.mocked(recordAttempt).mockResolvedValue({
+    correct: 1,
+    total: 1,
+    stars: 3,
+    skillEvidence: [{ skill: "math.time", outcome: "solid" }],
+  });
 });
 afterEach(() => vi.resetAllMocks());
 
-describe("recordAttemptAction membership witness (star-mint exploit boundary)", () => {
-  it("rejects a forged authored activityId (invalid) and never calls recordAttempt", async () => {
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
-    vi.mocked(findUnitIdOfActivity).mockReturnValue(null);
+describe("recordAttemptAction canonical authored scoring", () => {
+  it("requires a UUID completion id before resolving content", async () => {
+    const result = await recordAttemptAction({
+      ...BASE_INPUT,
+      completionId: "not-a-uuid",
+    });
 
-    const result = await recordAttemptAction(BASE_INPUT);
+    expect(result).toEqual({ ok: false, reason: "invalid" });
+    expect(resolveProgramForEnrollmentVersion).not.toHaveBeenCalled();
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("rejects an activity that is not inside the claimed route unit", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+
+    const result = await recordAttemptAction({ ...BASE_INPUT, unitKey: "unit-2" });
 
     expect(result).toEqual({ ok: false, reason: "invalid" });
     expect(recordAttempt).not.toHaveBeenCalled();
   });
 
-  it("records a legit authored activityId with creditEligible: true", async () => {
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
-    vi.mocked(findUnitIdOfActivity).mockReturnValue("unit-1");
+  it("rejects malformed response facts before persistence", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+
+    const result = await recordAttemptAction({ ...BASE_INPUT, response: { attempts: 0 } });
+
+    expect(result).toEqual({ ok: false, reason: "invalid" });
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("rejects a schema-valid wrong completion before persistence", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+
+    const result = await recordAttemptAction({
+      ...BASE_INPUT,
+      response: { attempts: 1, totalMinutes: 390 },
+    });
+
+    expect(result).toEqual({ ok: false, reason: "invalid" });
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the pinned program cannot be resolved", async () => {
+    vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(undefined);
 
     const result = await recordAttemptAction(BASE_INPUT);
 
-    expect(result).toEqual({ ok: true });
-    expect(recordAttempt).toHaveBeenCalledOnce();
+    expect(result).toEqual({ ok: false, reason: "unavailable" });
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("ignores a forged browser score and persists the canonical plugin score", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+    const forged = {
+      ...BASE_INPUT,
+      score: {
+        correct: 999,
+        total: 1,
+        stars: 3,
+        skillEvidence: [{ skill: "admin.superpowers", outcome: "solid" }],
+      },
+    } as unknown as RecordAttemptInput;
+
+    const result = await recordAttemptAction(forged);
+
+    const score = {
+      correct: 1,
+      total: 1,
+      stars: 3,
+      skillEvidence: [{ skill: "math.time", outcome: "solid" }],
+    } as const;
+    expect(result).toEqual({ ok: true, score });
     expect(recordAttempt).toHaveBeenCalledWith(
       "acc-1",
-      expect.objectContaining({ unitId: "unit-1", creditEligible: true }),
+      expect.objectContaining({
+        activityId: "act-1",
+        completionId: BASE_INPUT.completionId,
+        kind: "math-clock",
+        generated: false,
+        unitId: "unit-1",
+        expectedProgramVersionId: "PV1",
+        creditEligible: true,
+        response: BASE_INPUT.response,
+        score,
+      }),
     );
   });
 
-  it("records forgivingly (creditEligible: false, still recorded) when the program is unresolvable", async () => {
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(undefined);
+  it("returns the original stored score when the store replays a completion", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+    const originalScore = {
+      correct: 0,
+      total: 1,
+      stars: 1 as const,
+      skillEvidence: [{ skill: "math.time", outcome: "emerging" as const }],
+    };
+    vi.mocked(recordAttempt).mockResolvedValue(originalScore);
 
-    const result = await recordAttemptAction(BASE_INPUT);
+    await expect(recordAttemptAction(BASE_INPUT)).resolves.toEqual({
+      ok: true,
+      score: originalScore,
+    });
+  });
 
-    expect(result).toEqual({ ok: true });
-    // findUnitIdOfActivity is never reached — there's no tree to check membership against.
-    expect(findUnitIdOfActivity).not.toHaveBeenCalled();
-    expect(recordAttempt).toHaveBeenCalledOnce();
-    expect(recordAttempt).toHaveBeenCalledWith(
-      "acc-1",
-      expect.objectContaining({ unitId: null, creditEligible: false }),
+  it("maps a completion identity conflict to an invalid result", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(recordAttempt).mockRejectedValue(new CompletionReplayMismatchError());
+
+    await expect(recordAttemptAction(BASE_INPUT)).resolves.toEqual({
+      ok: false,
+      reason: "invalid",
+    });
+  });
+
+  it("maps the store's locked enrollment curation rejection to inactive", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(recordAttempt).mockRejectedValue(
+      new EnrollmentNotActiveError("L1", "kaelyn-adaptive"),
     );
+
+    await expect(recordAttemptAction(BASE_INPUT)).resolves.toEqual({
+      ok: false,
+      reason: "inactive",
+    });
+  });
+
+  it("maps a concurrent enrollment repin to unavailable", async () => {
+    vi.mocked(recordAttempt).mockRejectedValue(
+      new EnrollmentVersionChangedError("L1", "kaelyn-adaptive"),
+    );
+
+    await expect(recordAttemptAction(BASE_INPUT)).resolves.toEqual({
+      ok: false,
+      reason: "unavailable",
+    });
+  });
+});
+
+describe("recordAttemptAction oral-reading witness boundary", () => {
+  const ORAL_INPUT: RecordAttemptInput = {
+    learnerId: "L1",
+    programSlug: "kaelyn-adaptive",
+    completionId: "33333333-3333-4333-8333-333333333333",
+    unitKey: "unit-1",
+    activityId: "oral-1",
+    response: {
+      attempts: 2,
+      results: ["unclear", "matched"],
+      status: "verified",
+      correctCount: 999,
+      wcpm: 300,
+    },
+  };
+
+  beforeEach(() => {
+    vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(PROGRAM);
+    vi.mocked(recordOralReadingAttempt).mockReset();
+  });
+
+  it("ignores all browser verified facts and records only the claimed witness", async () => {
+    vi.mocked(recordOralReadingAttempt).mockImplementation(async (_accountId, input) => {
+      expect(Object.hasOwn(input, "response")).toBe(false);
+      const canonical = input.canonicalize({
+        mode: "word",
+        result: "matched",
+        perWord: null,
+        correctCount: 1,
+        totalWords: 1,
+        wcpm: null,
+      });
+      expect(canonical).toEqual({
+        response: { attempts: 1, results: ["matched"], status: "verified" },
+        score: {
+          correct: 1,
+          total: 1,
+          stars: 3,
+          skillEvidence: [{ skill: "phonics.decode.short-a-cvc", outcome: "solid" }],
+        },
+      });
+      return canonical?.score ?? null;
+    });
+
+    const result = await recordAttemptAction({
+      ...ORAL_INPUT,
+      verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      score: {
+        correct: 1,
+        total: 1,
+        stars: 3,
+        skillEvidence: [{ skill: "phonics.decode.short-a-cvc", outcome: "solid" }],
+      },
+    });
+    expect(recordOralReadingAttempt).toHaveBeenCalledWith(
+      "acc-1",
+      expect.objectContaining({
+        verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        learnerId: "L1",
+        expectedProgramVersionId: "PV1",
+        unitKey: "unit-1",
+        activityId: "oral-1",
+      }),
+    );
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("canonicalizes an omitted witness to participation with zero evidence", async () => {
+    vi.mocked(recordOralReadingAttempt).mockImplementation(async (_accountId, input) => {
+      const canonical = input.canonicalize(null);
+      expect(canonical).toEqual({
+        response: { attempts: 0, results: [], status: "participated-unverified" },
+        score: { correct: 0, total: 0, stars: 1, skillEvidence: [] },
+      });
+      return canonical?.score ?? null;
+    });
+
+    await expect(recordAttemptAction(ORAL_INPUT)).resolves.toEqual({
+      ok: true,
+      score: { correct: 0, total: 0, stars: 1, skillEvidence: [] },
+    });
+  });
+
+  it("rejects an invalid, mismatched, expired, or reused witness result from the store", async () => {
+    vi.mocked(recordOralReadingAttempt).mockResolvedValue(null);
+    await expect(
+      recordAttemptAction({
+        ...ORAL_INPUT,
+        verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }),
+    ).resolves.toEqual({ ok: false, reason: "invalid" });
+  });
+
+  it("rejects a malformed opaque id before resolving pinned content", async () => {
+    vi.mocked(resolveProgramForEnrollmentVersion).mockClear();
+    await expect(
+      recordAttemptAction({ ...ORAL_INPUT, verificationId: "not-a-uuid" }),
+    ).resolves.toEqual({ ok: false, reason: "invalid" });
+    expect(resolveProgramForEnrollmentVersion).not.toHaveBeenCalled();
+    expect(recordOralReadingAttempt).not.toHaveBeenCalled();
+  });
+
+  it("rejects verification ids for ordinary deterministic activities", async () => {
+    await expect(
+      recordAttemptAction({
+        ...BASE_INPUT,
+        verificationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }),
+    ).resolves.toEqual({ ok: false, reason: "invalid" });
+    expect(recordAttempt).not.toHaveBeenCalled();
+    expect(recordOralReadingAttempt).not.toHaveBeenCalled();
+  });
+
+  it("rejects generated oral-reading even when the shelf row is learner-owned", async () => {
+    vi.mocked(getGeneratedActivity).mockResolvedValue({
+      id: "gen-oral",
+      lessonId: "lesson-1",
+      unitKey: "unit-1",
+      programSlug: "kaelyn-adaptive",
+      programVersionId: "PV1",
+      kind: "oral-reading",
+      title: "Generated oral",
+      config: { instruction: "Read.", target: "there", skillTag: "word.sight" },
+      skillTags: ["word.sight"],
+      gen: { model: "ha-assist", route: "ready", at: "2026-07-15T00:00:00.000Z" },
+    });
+
+    await expect(
+      recordAttemptAction({
+        learnerId: "L1",
+        programSlug: "kaelyn-adaptive",
+        completionId: "44444444-4444-4444-8444-444444444444",
+        generatedActivityId: "gen-oral",
+        response: { attempts: 1, results: ["matched"], fallbackUsed: false },
+      }),
+    ).resolves.toEqual({ ok: false, reason: "invalid" });
+    expect(recordAttempt).not.toHaveBeenCalled();
+    expect(recordOralReadingAttempt).not.toHaveBeenCalled();
   });
 });
 
 // ── Adventure 2.0 B3: the generated-shelf star witness ───────────────────────
 
 describe("recordAttemptAction generated-shelf witness (earn-once boundary)", () => {
-  it("does NOT set shelfEligible for a generated id owned by another learner (records, earns nothing)", async () => {
-    // A forged shelf id: the account/learner-scoped read misses, so shelfEligible
-    // stays false. The attempt still records (generated practice is forgiving),
-    // but recordAttempt is told not to grant the one-time earn.
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
-    vi.mocked(findUnitIdOfActivity).mockReturnValue(null);
+  const generatedInput = {
+    learnerId: "L1",
+    programSlug: "kaelyn-adaptive",
+    completionId: "22222222-2222-4222-8222-222222222222",
+    generatedActivityId: "gen-1",
+    response: { attempts: 1, totalMinutes: 360 },
+  } as RecordAttemptInput;
+
+  it("rejects a generated id not owned by the selected learner", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
     vi.mocked(getGeneratedActivity).mockResolvedValue(null);
 
-    const result = await recordAttemptAction({ ...BASE_INPUT, generated: true, activityId: "gen-foreign" });
+    const result = await recordAttemptAction(generatedInput);
 
-    expect(result).toEqual({ ok: true });
-    expect(getGeneratedActivity).toHaveBeenCalledWith("acc-1", "L1", "gen-foreign");
+    expect(result).toEqual({ ok: false, reason: "invalid" });
+    expect(getGeneratedActivity).toHaveBeenCalledWith(
+      "acc-1",
+      "L1",
+      "kaelyn-adaptive",
+      "PV1",
+      "gen-1",
+    );
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("derives kind, score, unit, tags, and provenance from the owned shelf row", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(getGeneratedActivity).mockResolvedValue({
+      id: "gen-1",
+      lessonId: "lesson-1",
+      unitKey: "unit-1",
+      programSlug: "kaelyn-adaptive",
+      programVersionId: "PV1",
+      kind: "math-clock",
+      title: "Fresh: clocks",
+      config: {
+        mode: "set",
+        instruction: "Make six o'clock.",
+        targetHour: 6,
+        targetMinute: 0,
+      },
+      skillTags: ["math.time"],
+      gen: { model: "ds4-fast", route: "shelf", at: "2026-07-01T00:00:00.000Z" },
+    });
+
+    const result = await recordAttemptAction(generatedInput);
+
+    expect(result).toEqual({
+      ok: true,
+      score: {
+        correct: 1,
+        total: 1,
+        stars: 3,
+        skillEvidence: [{ skill: "math.time", outcome: "solid" }],
+      },
+    });
     expect(recordAttempt).toHaveBeenCalledWith(
       "acc-1",
-      expect.objectContaining({ generated: true, shelfEligible: false, creditEligible: false }),
+      expect.objectContaining({
+        activityId: "gen-1",
+        completionId: generatedInput.completionId,
+        kind: "math-clock",
+        generated: true,
+        shelfEligible: true,
+        creditEligible: false,
+        unitId: "unit-1",
+        expectedProgramVersionId: "PV1",
+        provenance: {
+          model: "ds4-fast",
+          route: "shelf",
+          at: new Date("2026-07-01T00:00:00.000Z"),
+        },
+      }),
     );
   });
 
-  it("sets shelfEligible + the shelf's unit for a generated id owned by this learner", async () => {
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(PROGRAM);
-    vi.mocked(findUnitIdOfActivity).mockReturnValue(null);
-    vi.mocked(getGeneratedActivity).mockResolvedValue({
-      id: "gen-1",
-      lessonId: "u1-l1",
-      unitKey: "u1",
-      programSlug: "kaelyn-adaptive",
-      kind: "phonics-wordbuild",
-      title: "Fresh: X",
+  it("returns unavailable before reading a generated row when the enrollment pin read fails", async () => {
+    vi.mocked(resolveProgramForEnrollmentVersion).mockRejectedValue(
+      new Error("pin read failed"),
+    );
+
+    const result = await recordAttemptAction(generatedInput);
+
+    expect(result).toEqual({ ok: false, reason: "unavailable" });
+    expect(getGeneratedActivity).not.toHaveBeenCalled();
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("returns unavailable for generated play when the enrollment has no exact version pin", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
       config: {},
-      skillTags: [],
+      configValid: true,
+      programVersionId: null,
     });
 
-    const result = await recordAttemptAction({ ...BASE_INPUT, generated: true, activityId: "gen-1" });
+    await expect(recordAttemptAction(generatedInput)).resolves.toEqual({
+      ok: false,
+      reason: "unavailable",
+    });
+    expect(resolveProgramForEnrollmentVersion).not.toHaveBeenCalled();
+    expect(getGeneratedActivity).not.toHaveBeenCalled();
+    expect(recordAttempt).not.toHaveBeenCalled();
+  });
 
-    expect(result).toEqual({ ok: true });
-    expect(recordAttempt).toHaveBeenCalledWith(
-      "acc-1",
-      expect.objectContaining({ generated: true, shelfEligible: true, unitId: "u1" }),
+  it("maps a completed one-shot shelf item to a calm completed result", async () => {
+    vi.mocked(getGeneratedActivity).mockResolvedValue({
+      id: "gen-1",
+      lessonId: "lesson-1",
+      unitKey: "unit-1",
+      programSlug: "kaelyn-adaptive",
+      programVersionId: "PV1",
+      kind: "math-clock",
+      title: "Fresh: clocks",
+      config: {
+        mode: "set",
+        instruction: "Make six o'clock.",
+        targetHour: 6,
+        targetMinute: 0,
+      },
+      skillTags: ["math.time"],
+      gen: { model: "ds4-fast", route: "shelf", at: "2026-07-01T00:00:00.000Z" },
+    });
+    vi.mocked(recordAttempt).mockRejectedValue(
+      new GeneratedActivityAlreadyCompletedError("gen-1"),
     );
+
+    await expect(recordAttemptAction(generatedInput)).resolves.toEqual({
+      ok: false,
+      reason: "completed",
+    });
+  });
+
+  it("rejects a generated row whose unit-local lesson is absent from the pinned tree", async () => {
+    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(PROGRAM);
+    vi.mocked(getGeneratedActivity).mockResolvedValue({
+      id: "gen-1",
+      lessonId: "lesson-1",
+      unitKey: "unit-2",
+      programSlug: "kaelyn-adaptive",
+      programVersionId: "PV1",
+      kind: "math-clock",
+      title: "Stale generated item",
+      config: {
+        mode: "set",
+        instruction: "Make six o'clock.",
+        targetHour: 6,
+        targetMinute: 0,
+      },
+      skillTags: ["math.time"],
+      gen: { model: "ds4-fast", route: "shelf", at: "2026-07-01T00:00:00.000Z" },
+    });
+
+    const result = await recordAttemptAction(generatedInput);
+
+    expect(result).toEqual({ ok: false, reason: "invalid" });
+    expect(recordAttempt).not.toHaveBeenCalled();
   });
 });
 
@@ -329,10 +889,19 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
       avatar: null,
       birthMonth: null,
     });
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(makeProgram(["a1", "a2"]));
+    vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(makeProgram(["a1", "a2"]));
     vi.mocked(getLearnerSettings).mockResolvedValue({});
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: {} });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: {},
+      configValid: true,
+      programVersionId: "PV1",
+    });
     vi.mocked(getCompletedActivityIds).mockResolvedValue([
+      { activityId: "a1", stars: 3 },
+      { activityId: "a2", stars: 2 },
+    ]);
+    vi.mocked(getCompletedActivityIdsForVersion).mockResolvedValue([
       { activityId: "a1", stars: 3 },
       { activityId: "a2", stars: 2 },
     ]);
@@ -345,7 +914,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     // room mirrors the real helper's empty-shelf case (min(SHELF_BATCH, cap)).
     lastGeneratedRows = null;
     vi.mocked(withLessonGenerationLock).mockImplementation(
-      async (_accountId, _learnerId, _lessonId, _more, generate) => {
+      async (_accountId, _learnerId, _scope, _more, generate) => {
         lastGeneratedRows = await generate(4);
         return lastGeneratedRows.map((_r, i) => shelfItem(`new${i}`));
       },
@@ -377,7 +946,12 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
   });
 
   it("uses the parent's band preference to route the model (stretch → ds4)", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: { band: "stretch" } });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { band: "stretch" },
+      configValid: true,
+      programVersionId: "PV1",
+    });
 
     await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
 
@@ -396,7 +970,12 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     // A World-Languages kind routes on MODEL_FOR_LANGUAGE (ds4-fast) regardless
     // of band, so the shelf provenance must record ds4-fast even at stretch band —
     // NOT the band model (ds4). Guards against re-introducing a flat band stamp.
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: { band: "stretch" } });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { band: "stretch" },
+      configValid: true,
+      programVersionId: "PV1",
+    });
     vi.mocked(pickGenerationTargets).mockReturnValue([
       {
         kind: "lang-symbol-intro",
@@ -433,7 +1012,12 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
   });
 
   it("fails closed when the enrollment's aiPractice flag is off", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "active", config: { aiPractice: false } });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { aiPractice: false },
+      configValid: true,
+      programVersionId: "PV1",
+    });
 
     const result = await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
 
@@ -441,18 +1025,81 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     expect(generatePracticeItems).not.toHaveBeenCalled();
   });
 
+  it("fails closed when the active enrollment config is malformed", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { aiPractice: false },
+      configValid: false,
+      programVersionId: "PV1",
+    });
+
+    const result = await ensureLessonPractice({
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      lessonId: LESSON_ID,
+    });
+
+    expect(result).toEqual({ ok: false, items: [] });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("does not generate practice for a unit curated out by the parent", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: { activeUnitKeys: ["another-unit"] },
+      configValid: true,
+      programVersionId: "PV1",
+    });
+
+    const result = await ensureLessonPractice({
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      lessonId: LESSON_ID,
+    });
+
+    expect(result).toEqual({ ok: false, items: [] });
+    expect(listGeneratedShelf).not.toHaveBeenCalled();
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
   it("fails closed when the enrollment is not active", async () => {
-    vi.mocked(getEnrollmentForGate).mockResolvedValue({ status: "paused", config: {} });
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "paused",
+      config: {},
+      configValid: true,
+      programVersionId: "PV1",
+    });
 
     const result = await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
 
     expect(result).toEqual({ ok: false, items: [] });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a legacy enrollment has no exact program version pin", async () => {
+    vi.mocked(getEnrollmentForGate).mockResolvedValue({
+      status: "active",
+      config: {},
+      configValid: true,
+      programVersionId: null,
+    });
+
+    const result = await ensureLessonPractice({
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      lessonId: LESSON_ID,
+    });
+
+    expect(result).toEqual({ ok: false, items: [] });
+    expect(resolveProgramForEnrollmentVersion).not.toHaveBeenCalled();
     expect(generatePracticeItems).not.toHaveBeenCalled();
   });
 
   it("does NOT generate while the lesson's authored activities are incomplete", async () => {
     // a2 is missing from the completed set → witness fails.
-    vi.mocked(getCompletedActivityIds).mockResolvedValue([{ activityId: "a1", stars: 3 }]);
+    vi.mocked(getCompletedActivityIdsForVersion).mockResolvedValue([
+      { activityId: "a1", stars: 3 },
+    ]);
     vi.mocked(listGeneratedShelf).mockResolvedValue([shelfItem("existing")]);
 
     const result = await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
@@ -460,6 +1107,32 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     expect(result).toEqual({ ok: true, items: [shelfItem("existing")] });
     expect(generatePracticeItems).not.toHaveBeenCalled();
     expect(withLessonGenerationLock).not.toHaveBeenCalled();
+  });
+
+  it("does not let completions from a prior program version satisfy the generation witness", async () => {
+    // The broad state read may intentionally carry stable activity progress
+    // across repins; generation is stricter and requires exact-version attempts.
+    vi.mocked(getCompletedActivityIds).mockResolvedValue([
+      { activityId: "a1", stars: 3 },
+      { activityId: "a2", stars: 3 },
+    ]);
+    vi.mocked(getCompletedActivityIdsForVersion).mockResolvedValue([]);
+
+    const result = await ensureLessonPractice({
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      lessonId: LESSON_ID,
+    });
+
+    expect(result).toEqual({ ok: true, items: [] });
+    expect(generatePracticeItems).not.toHaveBeenCalled();
+    expect(withLessonGenerationLock).not.toHaveBeenCalled();
+    expect(getCompletedActivityIdsForVersion).toHaveBeenCalledWith(
+      "acc-1",
+      "L1",
+      "kaelyn-adaptive",
+      "PV1",
+    );
   });
 
   it("is idempotent: a filled shelf without `more` returns as-is, no new generation", async () => {
@@ -470,6 +1143,32 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     expect(result.items).toEqual([shelfItem("e1"), shelfItem("e2")]);
     expect(generatePracticeItems).not.toHaveBeenCalled();
     expect(withLessonGenerationLock).not.toHaveBeenCalled();
+  });
+
+  it("does not let the same unit-local lesson key in another unit satisfy this shelf", async () => {
+    vi.mocked(listGeneratedShelf).mockResolvedValue([
+      { ...shelfItem("other-unit"), unitKey: "u2" },
+    ]);
+
+    const result = await ensureLessonPractice({
+      learnerId: "L1",
+      programSlug: "kaelyn-adaptive",
+      lessonId: LESSON_ID,
+    });
+
+    expect(result.items).toHaveLength(4);
+    expect(withLessonGenerationLock).toHaveBeenCalledWith(
+      "acc-1",
+      "L1",
+      {
+        programSlug: "kaelyn-adaptive",
+        programVersionId: "PV1",
+        unitKey: UNIT_ID,
+        lessonId: LESSON_ID,
+      },
+      false,
+      expect.any(Function),
+    );
   });
 
   it("honors the per-lesson cap: a full shelf never grows, even with `more`", async () => {
@@ -548,7 +1247,7 @@ describe("ensureLessonPractice (eager, bounded, idempotent shelf)", () => {
     // or written.
     const program = makeProgram(["a1", "a2"]);
     (program.units[0] as unknown as { checkpoint: string }).checkpoint = "baseline";
-    vi.mocked(resolveLearnerProgram).mockResolvedValue(program);
+    vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(program);
 
     const result = await ensureLessonPractice({ learnerId: "L1", programSlug: "kaelyn-adaptive", lessonId: LESSON_ID });
 

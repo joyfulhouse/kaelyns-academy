@@ -16,23 +16,29 @@ import {
 } from "@phosphor-icons/react/dist/ssr";
 import type { OralReadingSentenceConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
-import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
-import { PlayerControls, SpeakerButton } from "../_shared/ActivityChrome";
 import { useReducedMotion } from "../_shared/useReducedMotion";
-import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech, type SpeechController } from "../_shared/useSpeech";
-import { score, type OralReadingResponse } from "./logic";
+import type { OralReadingResponse } from "./logic";
+import { ModeledAudioFallback, OralModelStep } from "./ModelStep";
+import { OralSupportPanel } from "./OralSupportPanel";
 import {
   MIC_CLASSES,
   VERIFY_TIMEOUT_MS,
   browserHasMicrophone,
   canRecordAnother,
+  canStartOralAttempt,
   canSubmitRecording,
+  createOralReadingRequestForm,
+  isOpaqueVerificationId,
+  isModelPlaybackLocked,
+  needsAdultModelFallback,
   phaseAfterUnmatched,
   sentenceRecordingMs,
+  shouldCompleteAfterObservation,
   subscribeStatic,
   supportedMimeType,
+  stopModelAudioBeforeRecording,
   type OralReadingPhase,
   type VerificationResult,
 } from "./recording";
@@ -44,6 +50,7 @@ interface SentenceRouteResult {
   result: "matched" | "unclear";
   words: SettledWord[];
   wcpm?: number;
+  verificationId: string;
 }
 
 const WORD_BASE_CLASSES =
@@ -64,7 +71,7 @@ export const LISTEN_WORD_DWELL_MS = 380;
 export const SETTLE_WORD_STAGGER_MS = 120;
 
 /**
- * Even-paced listen-first cursor. It models authored narration only; it is
+ * Even-paced modeled-read cursor. It models authored narration only; it is
  * deliberately not driven by the child's microphone input.
  */
 export function startListenWordSweep(
@@ -105,15 +112,47 @@ export function startListenWordSweep(
   };
 }
 
+/**
+ * Replace the current karaoke sweep and return cleanup owned by this request.
+ * A superseded speech promise may settle after its replacement has started; its
+ * cleanup is deliberately unable to clear the replacement's active word.
+ */
+export function startLatestListenWordSweep(
+  slot: { current: (() => void) | null },
+  wordCount: number,
+  reducedMotion: boolean,
+  onActiveWord: (activeWord: number | null) => void,
+): () => void {
+  slot.current?.();
+
+  let stopSweep = (): void => {};
+  const stopOwnedSweep = (): void => {
+    stopSweep();
+    if (slot.current === stopOwnedSweep) slot.current = null;
+  };
+  slot.current = stopOwnedSweep;
+  stopSweep = startListenWordSweep(wordCount, reducedMotion, (activeWord) => {
+    if (slot.current === stopOwnedSweep) onActiveWord(activeWord);
+  });
+  return stopOwnedSweep;
+}
+
 /** Reveal derived word states in authored order, never as a red/error state. */
 export function startSettleWordReveal(
   wordCount: number,
+  reducedMotion: boolean,
   onRevealCount: (revealedWordCount: number) => void,
   onComplete: () => void,
 ): () => void {
   const totalWords = Math.max(0, Math.floor(wordCount));
   if (totalWords === 0) {
     onRevealCount(0);
+    onComplete();
+    return () => {};
+  }
+
+  if (reducedMotion) {
+    onRevealCount(totalWords);
     onComplete();
     return () => {};
   }
@@ -170,8 +209,14 @@ export function parseSentenceRouteResult(
   expectedWords: number,
 ): SentenceRouteResult | "unavailable" {
   if (!value || typeof value !== "object") return "unavailable";
-  const candidate = value as { result?: unknown; words?: unknown; wcpm?: unknown };
+  const candidate = value as {
+    result?: unknown;
+    words?: unknown;
+    wcpm?: unknown;
+    verificationId?: unknown;
+  };
   if (candidate.result !== "matched" && candidate.result !== "unclear") return "unavailable";
+  if (!isOpaqueVerificationId(candidate.verificationId)) return "unavailable";
   if (!Array.isArray(candidate.words) || candidate.words.length !== expectedWords) {
     return "unavailable";
   }
@@ -195,22 +240,29 @@ export function parseSentenceRouteResult(
     return "unavailable";
   }
   return candidate.wcpm === undefined
-    ? { result: candidate.result, words }
-    : { result: candidate.result, words, wcpm: candidate.wcpm };
+    ? { result: candidate.result, words, verificationId: candidate.verificationId }
+    : {
+        result: candidate.result,
+        words,
+        wcpm: candidate.wcpm,
+        verificationId: candidate.verificationId,
+      };
 }
 
-function KaraokePassage({
+export function KaraokePassage({
   passage,
   activeWord,
   settled,
   revealedWordCount = 0,
   speech,
+  playbackDisabled,
 }: {
   passage: string;
   activeWord?: number | null;
   settled?: SettledWord[];
   revealedWordCount?: number;
   speech: SpeechController;
+  playbackDisabled: boolean;
 }) {
   return (
     <div
@@ -231,8 +283,16 @@ function KaraokePassage({
               type="button"
               data-word-state={state}
               aria-label={`Hear ${word}`}
-              onClick={() => speech.speak(word)}
-              className={cn(WORD_BASE_CLASSES, SENTENCE_WORD_CLASSES[state])}
+              disabled={playbackDisabled}
+              onClick={() => {
+                if (playbackDisabled) return;
+                void speech.speak(word);
+              }}
+              className={cn(
+                WORD_BASE_CLASSES,
+                SENTENCE_WORD_CLASSES[state],
+                "disabled:pointer-events-none disabled:opacity-50",
+              )}
             >
               {word}
               <SpeakerHighIcon className="size-6" weight="fill" aria-hidden="true" />
@@ -275,9 +335,11 @@ export function SentenceReader({
   const micAllowed = learnerContext?.oralReading === true;
   const [phase, setPhase] = useState<OralReadingPhase>("ready");
   const [results, setResults] = useState<VerificationResult[]>([]);
+  const [modelStatus, setModelStatus] = useState<
+    "idle" | "playing" | "completed" | "unavailable"
+  >("idle");
   const [submitted, setSubmitted] = useState(0);
   const [feedback, setFeedback] = useState<SentenceRouteResult | null>(null);
-  const [done, setDone] = useState<OralReadingResponse | null>(null);
   const [activeWord, setActiveWord] = useState<number | null>(null);
   const [revealedWordCount, setRevealedWordCount] = useState(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -287,6 +349,7 @@ export function SentenceReader({
   const activeRef = useRef(true);
   const listenSweepCancelRef = useRef<(() => void) | null>(null);
   const settleCancelRef = useRef<(() => void) | null>(null);
+  const modelRequestRef = useRef(0);
 
   const cancelListenSweep = useCallback((): void => {
     listenSweepCancelRef.current?.();
@@ -295,26 +358,26 @@ export function SentenceReader({
 
   const speakPassage = useCallback<SpeechController["speak"]>(
     (text, options) => {
-      cancelListenSweep();
-      listenSweepCancelRef.current = startListenWordSweep(
+      const stopOwnSweep = startLatestListenWordSweep(
+        listenSweepCancelRef,
         passageWords.length,
         reducedMotion,
         (nextActiveWord) => {
           if (activeRef.current) setActiveWord(nextActiveWord);
         },
       );
-      speech.speak(text, options);
+      return speech.speak(text, options).then((outcome) => {
+        stopOwnSweep();
+        return outcome;
+      });
     },
-    [cancelListenSweep, passageWords.length, reducedMotion, speech],
+    [passageWords.length, reducedMotion, speech],
   );
   const karaokeSpeech = useMemo<SpeechController>(
     () => ({ ...speech, speak: speakPassage }),
     [speech, speakPassage],
   );
   const cancelSpeech = speech.cancel;
-
-  // Sentence fluency is listen-first: model the complete authored passage once.
-  useSpeakOnce(karaokeSpeech.speak, config.passage);
 
   useEffect(() => {
     activeRef.current = true;
@@ -337,15 +400,17 @@ export function SentenceReader({
 
   function response(
     resultValues: VerificationResult[],
-    fallbackUsed: boolean,
+    status: OralReadingResponse["status"],
     settled: SentenceRouteResult | null,
   ): OralReadingResponse {
-    if (!settled) return { attempts: resultValues.length, results: resultValues, fallbackUsed };
+    if (!settled || status === "participated-unverified") {
+      return { attempts: resultValues.length, results: resultValues, status };
+    }
     const correctCount = settled.words.filter(({ state }) => state === "correct").length;
     return {
       attempts: resultValues.length,
       results: resultValues,
-      fallbackUsed,
+      status,
       wcpm: settled.wcpm,
       perWord: settled.words,
       correctCount,
@@ -354,8 +419,8 @@ export function SentenceReader({
   }
 
   function completeFallback(): void {
-    const completed = response(results, true, feedback);
-    onComplete(completed, score(config, completed));
+    const completed = response(results, "participated-unverified", feedback);
+    onComplete(completed);
   }
 
   async function verify(blob: Blob, recordingFailed = false): Promise<void> {
@@ -364,14 +429,14 @@ export function SentenceReader({
       return;
     }
 
+    const form = createOralReadingRequestForm(blob, learnerContext);
+    if (!form) {
+      setPhase("fallback");
+      return;
+    }
+
     setPhase("checking");
     setSubmitted((count) => count + 1);
-    const form = new FormData();
-    form.append("file", blob, "reading.webm");
-    form.append("mode", "sentence");
-    form.append("passage", config.passage);
-    form.append("learnerId", learnerContext.learnerId);
-    form.append("programSlug", learnerContext.programSlug);
     const controller = new AbortController();
     abortRef.current = controller;
     const deadline = setTimeout(() => controller.abort(), VERIFY_TIMEOUT_MS);
@@ -401,21 +466,25 @@ export function SentenceReader({
 
     const nextResults = [...results, routeResult.result];
     setResults(nextResults);
-    const completed = response(nextResults, false, routeResult);
+    const completed = {
+      ...response(nextResults, "verified", routeResult),
+      verificationId: routeResult.verificationId,
+    };
     cancelListenSweep();
     settleCancelRef.current?.();
     setFeedback(routeResult);
     setRevealedWordCount(0);
     settleCancelRef.current = startSettleWordReveal(
       routeResult.words.length,
+      reducedMotion,
       (nextRevealCount) => {
         if (activeRef.current) setRevealedWordCount(nextRevealCount);
       },
       () => {
         settleCancelRef.current = null;
         if (!activeRef.current) return;
-        if (routeResult.result === "matched") {
-          setDone(completed);
+        if (shouldCompleteAfterObservation(config.presentation, routeResult.result)) {
+          onComplete(completed);
         } else {
           setPhase(phaseAfterUnmatched(submitted + 1));
         }
@@ -427,13 +496,13 @@ export function SentenceReader({
     if (
       !micAllowed ||
       !micSupported ||
+      !canStartOralAttempt(config.presentation, modelStatus === "completed") ||
       !canRecordAnother(submitted) ||
       (phase !== "ready" && phase !== "unclear" && phase !== "fallback")
     ) {
       return;
     }
-    cancelListenSweep();
-    speech.cancel();
+    stopModelAudioBeforeRecording(speech.cancel, cancelListenSweep);
     setPhase("requesting");
 
     try {
@@ -503,26 +572,26 @@ export function SentenceReader({
     if (recorder?.state === "recording") recorder.stop();
   }
 
-  if (done) {
-    const activityScore = score(config, done);
-    return (
-      <div className="mx-auto grid max-w-3xl gap-5 rounded-3xl border-[3px] border-ink bg-success/25 p-6 text-center shadow-pop sm:p-8">
-        <KaraokePassage
-          passage={config.passage}
-          settled={done.perWord}
-          revealedWordCount={done.perWord?.length}
-          speech={speech}
-        />
-        <p className="font-display text-3xl text-ink">You read it!</p>
-        <p className="text-lg text-ink-soft">Every word helped the sentence flow.</p>
-        <Button size="kid" variant="soft" onClick={() => onComplete(done, activityScore)}>
-          Keep going
-        </Button>
-      </div>
-    );
-  }
-
   const fallbackMode = !micAllowed || !micSupported || phase === "fallback";
+  const readyForAttempt = canStartOralAttempt(
+    config.presentation,
+    modelStatus === "completed",
+  );
+  const adultModelFallback =
+    needsAdultModelFallback(config.presentation, speech.supported) ||
+    (config.presentation === "listen-repeat" && modelStatus === "unavailable");
+
+  function playModel(): void {
+    if (isModelPlaybackLocked(phase)) return;
+    const requestId = modelRequestRef.current + 1;
+    modelRequestRef.current = requestId;
+    setModelStatus("playing");
+    void karaokeSpeech.speak(config.passage).then((outcome) => {
+      if (!activeRef.current || modelRequestRef.current !== requestId) return;
+      if (outcome === "completed") setModelStatus("completed");
+      else if (outcome === "unavailable") setModelStatus("unavailable");
+    });
+  }
 
   return (
     <div className="mx-auto grid max-w-3xl gap-7 text-center">
@@ -536,63 +605,45 @@ export function SentenceReader({
           settled={feedback?.words}
           revealedWordCount={revealedWordCount}
           speech={speech}
+          playbackDisabled={isModelPlaybackLocked(phase)}
         />
       </div>
 
-      <PlayerControls>
-        <SpeakerButton
-          speech={karaokeSpeech}
-          text={config.passage}
-          label="Hear the sentence again"
-          size="lg"
-          shape="round"
-        />
-      </PlayerControls>
+      <OralModelStep
+        presentation={config.presentation}
+        speechSupported={speech.supported && modelStatus !== "unavailable"}
+        modelStatus={modelStatus === "unavailable" ? "idle" : modelStatus}
+        disabled={isModelPlaybackLocked(phase)}
+        label="Listen to the sentence"
+        onPlay={playModel}
+      />
 
-      {fallbackMode ? (
-        <div className="grid gap-4 rounded-3xl border-[3px] border-ink bg-honey/30 p-6">
-          <p className="font-display text-2xl text-ink">Read it to a grown-up.</p>
-          <p className="text-ink-soft">The microphone is optional. You can still finish this one.</p>
-          <PlayerControls>
-            {micAllowed && micSupported && canRecordAnother(submitted) && (
-              <Button size="kid" variant="honey" onClick={() => void startListening()}>
-                <MicrophoneIcon size={34} weight="fill" aria-hidden="true" />
-                Try again
-              </Button>
-            )}
-            <Button size="kid" variant="honey" onClick={completeFallback}>
-              <CheckCircleIcon size={30} weight="fill" aria-hidden="true" />
-              A grown-up listened - I read it
-            </Button>
-            <Button size="kid" variant="soft" onClick={completeFallback}>
-              Keep going
-            </Button>
-          </PlayerControls>
-        </div>
+      {adultModelFallback ? (
+        <ModeledAudioFallback onComplete={completeFallback} />
+      ) : fallbackMode ? (
+        <OralSupportPanel
+          title="Read it to a grown-up."
+          description="The microphone is optional. You can still finish this one."
+          focusOnMount={phase === "fallback"}
+          canRetry={micAllowed && micSupported && readyForAttempt && canRecordAnother(submitted)}
+          onRetry={() => void startListening()}
+          onComplete={completeFallback}
+        />
       ) : phase === "unclear" ? (
-        <div className="grid gap-4 rounded-3xl border-[3px] border-ink bg-honey/35 p-6">
-          <p className="font-display text-2xl text-ink">Let&apos;s try the honey words once more</p>
-          <p className="text-ink-soft">Tap a honey word to hear it, then read the sentence again.</p>
-          <PlayerControls>
-            <Button size="kid" variant="honey" onClick={() => void startListening()}>
-              <MicrophoneIcon size={34} weight="fill" aria-hidden="true" />
-              Try again
-            </Button>
-            <Button size="kid" variant="honey" onClick={completeFallback}>
-              <CheckCircleIcon size={30} weight="fill" aria-hidden="true" />
-              A grown-up listened - I read it
-            </Button>
-            <Button size="kid" variant="soft" onClick={completeFallback}>
-              Keep going
-            </Button>
-          </PlayerControls>
-        </div>
+        <OralSupportPanel
+          title="Let's try the honey words once more"
+          description="Tap a honey word to hear it, then read the sentence again."
+          focusOnMount
+          canRetry
+          onRetry={() => void startListening()}
+          onComplete={completeFallback}
+        />
       ) : (
         <div className="grid place-items-center gap-4">
           <button
             type="button"
             onClick={phase === "listening" ? stopListening : () => void startListening()}
-            disabled={phase === "requesting" || phase === "checking"}
+            disabled={!readyForAttempt || phase === "requesting" || phase === "checking"}
             aria-label={phase === "listening" ? "Stop listening" : "Read it aloud"}
             className={cn(
               "grid size-40 place-items-center rounded-full border-[4px] border-ink shadow-pop transition duration-200 ease-out",
@@ -617,7 +668,11 @@ export function SentenceReader({
                 ? "Listening back…"
                 : phase === "requesting"
                   ? "Getting the microphone…"
-                  : "Tap the microphone, then read"}
+                  : !readyForAttempt
+                    ? "Listen to the model first"
+                    : config.presentation === "cold"
+                      ? "Cold read: tap the microphone, then read"
+                      : "Step 2: tap the microphone, then read"}
           </p>
         </div>
       )}

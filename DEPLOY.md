@@ -76,6 +76,50 @@ served until evicted, so:
 - Keep every migration expand-only across one deploy (add columns/tables; remove only in a later deploy after the code no longer references them).
 - Grow `REQUIRED_COLUMNS` in `src/lib/db/health.ts` whenever a newly-required column must gate the canary.
 
+### Journal-derived mastery cleanup (migration 0016 — IRREVERSIBLE)
+
+Migration **0016** is the first pass that removes mastery/review state wrongly
+derived from journal participation before journal scoring became participation-
+only: it `DELETE`s the journal-exclusive `review_schedule` and `skill_state`
+rows and scrubs journal-prompt `attempt` response artifacts. Migration 0017
+re-runs the same cleanup and installs the enforcing trigger. Every delete/scrub
+is gated by the fail-closed `journal_skill_state_is_exclusive` predicate — it
+only touches state that is provably an exact multiset of well-formed journal
+ledger emissions, and fails closed on any malformed/ambiguous shape — so it
+never removes non-journal mastery.
+
+These deletes are **irreversible** and run pre-traffic in the migrate step. The
+recovery story is PITR: **before promoting a deploy that first applies 0016,
+confirm the Barman → B2 base backup + WAL archive is current** (a restore point
+exists ahead of the migration). No app-level snapshot of the purged rows is
+kept; if you need one, snapshot `review_schedule`/`skill_state` to an audit
+table before applying. There is no forward "undo" migration.
+
+### Journal privacy guard compatibility (migration 0017)
+
+Migration 0017 installs a `BEFORE INSERT OR UPDATE` trigger ahead of the database
+CHECK. Safe bounded journal summaries with empty skill evidence proceed. An old
+or rolled-back pod that submits raw text/drawing/evidence gets a row-level no-op
+plus a fixed deferred abort signal. Its parameterized INSERT succeeds without a
+query error, any legacy mastery/review folds may run inside the transaction, and
+the parameter-free COMMIT then fails and rolls the entire transaction back. Raw
+child artifacts therefore persist in neither PostgreSQL storage nor database-
+error telemetry. Other lesson writes remain available.
+
+This compatibility guarantee relies on the known writers' explicit transactions
+and default deferred-constraint mode; neither writer issues `SET CONSTRAINTS`.
+The signal's `23505` is terminal when its constraint is
+`attempt_write_abort_signal_uq` and must never enter a generic unique-key retry.
+Drizzle's schema metadata cannot express `DEFERRABLE INITIALLY DEFERRED`, so the
+raw migration is authoritative (and tested through `pg_constraint`); do not use
+`drizzle-kit push` or schema recreation in place of the migration pipeline.
+
+The same migration re-cleans rows committed by transactions that were already
+in flight before the trigger lock, then validates the CHECK as an independent
+backstop. No two-phase application rollout is required. A rollback keeps both
+guards in place; raw legacy journal saves fail closed without persistence. Do
+not remove or weaken the trigger or constraint as part of rollback.
+
 ## Granting admin access (P4 role gate)
 
 Admin access is authorized by the user row's `role` column (`role = 'admin'`), **not**

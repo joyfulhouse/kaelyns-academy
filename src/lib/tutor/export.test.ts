@@ -39,6 +39,9 @@ function baseInput(overrides: Partial<ShapeInput> = {}): ShapeInput {
       {
         activityId: "u1l1a1",
         kind: "reading",
+        programSlug: "summer-k-to-grade1",
+        unitKey: "unit-1",
+        programVersionId: "version-7",
         score: { stars: 3, correct: 5, total: 5, skillEvidence: [{ skill: "rs.a", outcome: "solid" }] },
         response: { text: "the cat sat on the mat", picks: [1, 0] },
         day: "2026-06-20",
@@ -70,6 +73,7 @@ function baseInput(overrides: Partial<ShapeInput> = {}): ShapeInput {
     ],
     generatedActivities: [
       {
+        programVersionId: "version-1",
         unitKey: "unit-life-skills-math",
         lessonId: "lesson-counting-coins",
         kind: "math-tenframe",
@@ -148,23 +152,119 @@ describe("shapeLearnerExport (pure shaper)", () => {
     });
   });
 
-  it("includes attempts with activityId, kind, score (stars/correct/total only), response, day, createdAt", () => {
+  it("includes attempts with durable route identity and a minimized score", () => {
     const result = shapeLearnerExport(baseInput());
     expect(result.attempts).toHaveLength(1);
     const a = result.attempts[0];
-    expect(Object.keys(a)).toEqual(["activityId", "kind", "score", "response", "day", "createdAt"]);
+    expect(Object.keys(a)).toEqual([
+      "activityId",
+      "kind",
+      "programSlug",
+      "unitKey",
+      "programVersionId",
+      "score",
+      "response",
+      "day",
+      "createdAt",
+    ]);
     expect(a.activityId).toBe("u1l1a1");
     expect(a.kind).toBe("reading");
+    expect(a.programSlug).toBe("summer-k-to-grade1");
+    expect(a.unitKey).toBe("unit-1");
+    expect(a.programVersionId).toBe("version-7");
     expect(a.score).toEqual({ stars: 3, correct: 5, total: 5 });
     expect(a.day).toBe("2026-06-20");
     expect(a.createdAt).toBe("2026-06-20T10:00:00.000Z");
   });
 
-  it("exports the child's full response payload verbatim (COPPA 'all its data')", () => {
-    // The child's own work — journal text, answer picks, drawing data — must be in
-    // the export, not silently dropped. Stored verbatim from the attempt row.
+  it("exports null route identity for pre-migration attempts", () => {
+    const input = baseInput();
+    delete input.attempts[0].programSlug;
+    delete input.attempts[0].unitKey;
+    delete input.attempts[0].programVersionId;
+
+    expect(shapeLearnerExport(input).attempts[0]).toMatchObject({
+      programSlug: null,
+      unitKey: null,
+      programVersionId: null,
+    });
+  });
+
+  it("exports non-journal response payloads verbatim", () => {
     const result = shapeLearnerExport(baseInput());
     expect(result.attempts[0].response).toEqual({ text: "the cat sat on the mat", picks: [1, 0] });
+  });
+
+  it("reduces a legacy journal response to a bounded participation summary", () => {
+    const secretDataUrl = "data:image/png;base64,private-child-drawing";
+    const result = shapeLearnerExport(
+      baseInput({
+        attempts: [
+          {
+            activityId: "journal-legacy",
+            kind: "journal-prompt",
+            score: {
+              stars: 3,
+              correct: 1,
+              total: 1,
+              skillEvidence: [{ skill: "writing.sentence", outcome: "solid" }],
+            },
+            response: {
+              text: "A private sentence",
+              transcript: "private spoken words",
+              strokes: [{ x: 1, y: 2 }, { x: 3, y: 4 }],
+              drawingDataUrl: secretDataUrl,
+              didDraw: true,
+            },
+            day: "2026-06-20",
+            createdAt: "2026-06-20T10:00:00.000Z",
+          },
+        ],
+      }),
+    );
+
+    expect(result.attempts[0].response).toEqual({
+      markCount: 2,
+      textLength: 20,
+      usedDictation: true,
+      mode: "dictate",
+      didDraw: true,
+    });
+    expect(JSON.stringify(result)).not.toContain("private");
+    expect(JSON.stringify(result)).not.toContain("data:image");
+  });
+
+  it("conservatively clamps malformed journal counters and discards extra fields", () => {
+    const result = shapeLearnerExport(
+      baseInput({
+        attempts: [
+          {
+            activityId: "journal-current",
+            kind: "journal-prompt",
+            score: { stars: 2, correct: 1, total: 1, skillEvidence: [] },
+            response: {
+              markCount: 999,
+              textLength: 9_999,
+              usedDictation: false,
+              mode: "type",
+              didDraw: false,
+              text: "must be discarded",
+            },
+            day: "2026-06-20",
+            createdAt: "2026-06-20T10:00:00.000Z",
+          },
+        ],
+      }),
+    );
+
+    expect(result.attempts[0].response).toEqual({
+      markCount: 200,
+      textLength: 2_000,
+      usedDictation: false,
+      mode: "type",
+      didDraw: true,
+    });
+    expect(JSON.stringify(result)).not.toContain("must be discarded");
   });
 
   it("exports response as null when the attempt has none (authored/no-response rows)", () => {
@@ -417,6 +517,7 @@ describe("shapeLearnerExport — generatedActivities", () => {
     expect(result.generatedActivities).toHaveLength(1);
     const g = result.generatedActivities[0];
     expect(Object.keys(g)).toEqual([
+      "programVersionId",
       "unitKey",
       "lessonId",
       "kind",
@@ -428,6 +529,7 @@ describe("shapeLearnerExport — generatedActivities", () => {
       "genAt",
       "createdAt",
     ]);
+    expect(g.programVersionId).toBe("version-1");
     expect(g.unitKey).toBe("unit-life-skills-math");
     expect(g.lessonId).toBe("lesson-counting-coins");
     expect(g.kind).toBe("math-tenframe");

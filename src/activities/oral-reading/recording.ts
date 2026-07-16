@@ -1,3 +1,4 @@
+import type { OralReadingPresentation } from "@/content/activity-configs";
 import type { OralReadingResponse } from "./logic";
 
 export const MAX_RECORDING_MS = 8_000;
@@ -28,6 +29,10 @@ export function sentenceRecordingMs(wordCount: number): number {
 }
 
 export type VerificationResult = OralReadingResponse["results"][number];
+export interface VerifiedWordRouteResult {
+  result: VerificationResult;
+  verificationId: string;
+}
 export type OralReadingPhase =
   | "ready"
   | "requesting"
@@ -36,11 +41,53 @@ export type OralReadingPhase =
   | "unclear"
   | "fallback";
 
+/** Model playback and microphone capture never own the audio channel together. */
+export function isModelPlaybackLocked(phase: OralReadingPhase): boolean {
+  return phase === "requesting" || phase === "listening" || phase === "checking";
+}
+
+/** Stop modeled speech (and any matching visual sweep) before requesting the mic. */
+export function stopModelAudioBeforeRecording(
+  cancelSpeech: () => void,
+  cancelVisualSweep?: () => void,
+): void {
+  cancelVisualSweep?.();
+  cancelSpeech();
+}
+
 export const MIC_CLASSES: Record<"ready" | "busy" | "listening", string> = {
   ready: "bg-honey text-ink",
   busy: "bg-honey/55 text-ink",
   listening: "bg-accent-deep text-on-accent",
 };
+
+/** A modeled practice attempt starts only after its explicit listen step. */
+export function canStartOralAttempt(
+  presentation: OralReadingPresentation,
+  listenStepStarted: boolean,
+): boolean {
+  return presentation === "cold" || listenStepStarted;
+}
+
+/** Assessment targets remain unmodeled; listen-repeat is the separate practice path. */
+export function canExposeModelAudio(presentation: OralReadingPresentation): boolean {
+  return presentation === "listen-repeat";
+}
+
+/** Cold evidence is bound to its first observation; only modeled practice retries. */
+export function shouldCompleteAfterObservation(
+  presentation: OralReadingPresentation,
+  result: VerificationResult,
+): boolean {
+  return presentation === "cold" || result === "matched";
+}
+
+export function needsAdultModelFallback(
+  presentation: OralReadingPresentation,
+  speechSupported: boolean,
+): boolean {
+  return presentation === "listen-repeat" && !speechSupported;
+}
 
 export function subscribeStatic(): () => void {
   return () => {};
@@ -59,12 +106,43 @@ export function supportedMimeType(): string | undefined {
   return types.find((type) => MediaRecorder.isTypeSupported(type));
 }
 
-export function parseWordRouteResult(value: unknown): VerificationResult | "unavailable" {
+const OPAQUE_VERIFICATION_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isOpaqueVerificationId(value: unknown): value is string {
+  return typeof value === "string" && OPAQUE_VERIFICATION_ID.test(value);
+}
+
+export function createOralReadingRequestForm(
+  audio: Blob,
+  identity: {
+    learnerId: string;
+    programSlug: string;
+    unitKey?: string;
+    activityId?: string;
+  },
+): FormData | null {
+  if (!identity.unitKey || !identity.activityId) return null;
+  const form = new FormData();
+  form.append("file", audio, "reading.webm");
+  form.append("learnerId", identity.learnerId);
+  form.append("programSlug", identity.programSlug);
+  form.append("unitKey", identity.unitKey);
+  form.append("activityId", identity.activityId);
+  return form;
+}
+
+export function parseWordRouteResult(value: unknown): VerifiedWordRouteResult | "unavailable" {
   if (!value || typeof value !== "object") return "unavailable";
-  const result = (value as { result?: unknown }).result;
-  return result === "matched" || result === "unclear" || result === "no-speech"
-    ? result
-    : "unavailable";
+  const candidate = value as { result?: unknown; verificationId?: unknown };
+  const result = candidate.result;
+  if (
+    (result !== "matched" && result !== "unclear" && result !== "no-speech") ||
+    !isOpaqueVerificationId(candidate.verificationId)
+  ) {
+    return "unavailable";
+  }
+  return { result, verificationId: candidate.verificationId };
 }
 
 export function canSubmitRecording(

@@ -32,6 +32,7 @@ describe("decodable reader library", () => {
       expect(activity.config.mode).toBe("sentence");
       if (activity.config.mode !== "sentence") continue;
 
+      expect(activity.config.presentation).toBe("cold");
       expect(() => oralReadingSentenceConfig.parse(activity.config)).not.toThrow();
       for (const skill of oralReading!.skillsAffected(activity.config)) {
         expect(activity.skillTags, `${activity.id} emits ${skill}`).toContain(skill);

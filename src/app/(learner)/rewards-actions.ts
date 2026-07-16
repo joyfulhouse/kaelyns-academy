@@ -32,7 +32,7 @@ import {
   getEnrollmentForGate,
   getSkillState,
 } from "@/lib/tutor/store";
-import { resolveLearnerProgram } from "@/lib/content/repository";
+import { resolveAccountLearnerProgram } from "@/lib/content/repository";
 import { skillTagsForProgram } from "@/content";
 
 /**
@@ -110,13 +110,13 @@ export async function getDailyQuestsAction(
   try {
     return await withAccount(async ({ accountId }) => {
       const gate = await getEnrollmentForGate(accountId, learnerId, programSlug);
-      if (gate?.status !== "active") return [];
+      if (gate?.status !== "active" || !gate.configValid) return [];
       const day = today();
 
       const existing = await getDailyQuests(accountId, learnerId, programSlug, day);
       if (existing.length > 0) return existing;
 
-      const program = await resolveLearnerProgram(accountId, learnerId, programSlug);
+      const program = await resolveAccountLearnerProgram(accountId, learnerId, programSlug);
       if (!program) return [];
       const [state, completed, templates] = await Promise.all([
         getSkillState(accountId, learnerId),

@@ -14,7 +14,7 @@ import { prewarmTexts } from "@/lib/audio/spokenFields";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import type { LanguageDef, ScriptEntry } from "@/content/languages";
 import type { Band, SkillTag } from "@/content/types";
-import { validateGeneratedFor } from "./generated-validators";
+import { canonicalSkillHints, prepareGeneratedItems } from "./generated-validators";
 import { KIND_BRIEF, isGenerableKind } from "./generable";
 import { chatJSON, fenceUntrusted, TUTOR_FAST, TUTOR_RICH, type TutorModel } from "./models";
 import {
@@ -30,15 +30,17 @@ import {
   LANGUAGE_LEVELS,
   languageForSkillHints,
   MODEL_FOR_LANGUAGE,
+  skillHintsForLanguage,
   validateLangItems,
 } from "./world-language-config";
 
 /**
  * Bounded AI practice generation (spec §6/§8). The model proposes activity
  * *config* objects for an existing activity-type; we validate every item against
- * the canonical per-kind schema before returning. Anything that fails to parse
- * throws, and the caller falls back to authored content. We never return raw
- * model text, and there is no open-ended child↔LLM channel.
+ * the canonical per-kind schema before returning. Malformed siblings are
+ * discarded independently; an invalid envelope or a batch with no playable
+ * survivor throws so the caller falls back to authored content. We never return
+ * raw model text, and there is no open-ended child↔LLM channel.
  */
 
 /** Cap generation so a bad prompt can't ask for an unbounded batch. */
@@ -47,8 +49,8 @@ const MAX_ITEMS = 8;
 // KIND_BRIEF (the per-kind generation briefs) and isGenerableKind (the
 // authored-only gate) moved to the pure, client-safe `./generable` module so
 // the kid surface can share the gate without dragging this server-only
-// generator into the client bundle. Re-exported here so existing importers
-// (the /api/practice route, tests) keep resolving them from `@/lib/ai/practice`.
+// generator into the client bundle. Re-exported here for the server generator's
+// tests and existing server-side importers.
 export { KIND_BRIEF, isGenerableKind };
 
 /** Band → tutor route (B3 §3). */
@@ -338,7 +340,7 @@ export async function sanitizeGeneratedPhonics(
 }
 
 export interface GeneratePracticeOptions {
-  /** Optional canonical skill tags to steer generation (e.g. ["phonics.digraphs"]). */
+  /** Optional canonical skill tags to steer generation (e.g. ["phonics.decode.digraph-sh"]). */
   skillHints?: SkillTag[];
   /**
    * Optional child-picked interest labels (≤5, admin-authored preset text
@@ -390,8 +392,9 @@ export function provenanceForGeneration(
 }
 
 /**
- * Generate `n` validated config items for `kind`. The return type is the array
- * of validated configs for that kind. Throws on any validation failure.
+ * Generate up to `n` validated config items for `kind`. The return type is the
+ * array of surviving configs for that kind. Throws on an invalid envelope or
+ * when no sibling survives the exact-schema/playability boundary.
  */
 export async function generatePracticeItems<K extends ActivityKind>(
   kind: K,
@@ -401,10 +404,11 @@ export async function generatePracticeItems<K extends ActivityKind>(
   options: GeneratePracticeOptions = {},
 ): Promise<z.output<(typeof ACTIVITY_CONFIG_SCHEMAS)[K]>[]> {
   const count = Math.max(1, Math.min(MAX_ITEMS, Math.trunc(n)));
-  const skillHints = options.skillHints ?? [];
-  const itemSchema = ACTIVITY_CONFIG_SCHEMAS[kind];
-  // The model output is validated as a strict envelope of per-kind items.
-  const envelope = z.object({ items: z.array(itemSchema).min(1).max(MAX_ITEMS) });
+  const skillHints = canonicalSkillHints(kind, options.skillHints ?? []);
+  // Parse only the bounded envelope here. Each unknown sibling crosses the exact
+  // per-kind schema independently below, so one malformed sibling cannot discard
+  // a separate playable item from the same bounded response.
+  const envelope = z.object({ items: z.array(z.unknown()).min(1).max(MAX_ITEMS) }).strict();
 
   // World-Languages kinds MUST go through the language + inventory-constrained
   // path. The language is derived from the skill hints; if none names a language
@@ -418,19 +422,28 @@ export async function generatePracticeItems<K extends ActivityKind>(
         `generatePracticeItems: ${kind} needs a language skill hint (e.g. "zhuyin.symbols.initials"); none of [${skillHints.join(", ")}] names a language.`,
       );
     }
-    const slice = inventorySlice(lang, focus, skillHints);
+    const languageSkillHints = skillHintsForLanguage(lang, skillHints);
+    const slice = inventorySlice(lang, focus, languageSkillHints);
     const result = await chatJSON({
       model: MODEL_FOR_LANGUAGE[lang.id] ?? MODEL_FOR_BAND[band],
       system: buildLangSystemPrompt(lang),
-      user: buildLangUserPrompt(kind, lang, band, focus, count, skillHints, slice),
+      user: buildLangUserPrompt(kind, lang, band, focus, count, languageSkillHints, slice),
       schema: envelope,
       signal: options.signal,
     });
     // Shape is valid (Zod); now enforce + canonicalize linguistic correctness:
     // reject out-of-inventory glyphs, then rebuild child-facing fields from the
     // authored inventory. Throws if none survive.
-    const guarded = validateLangItems(kind, result.items, lang, slice);
-    return guarded as z.output<(typeof ACTIVITY_CONFIG_SCHEMAS)[K]>[];
+    return prepareGeneratedItems(kind, result.items, {
+      skillHints: languageSkillHints,
+      canonicalize: (parsed) => {
+        try {
+          return validateLangItems(kind, [parsed], lang, slice)[0] ?? null;
+        } catch {
+          return null;
+        }
+      },
+    });
   }
 
   // Authored-only kind (spec §9): no KIND_BRIEF entry means no vetted prompt
@@ -450,7 +463,7 @@ export async function generatePracticeItems<K extends ActivityKind>(
     signal: options.signal,
   });
 
-  const items = result.items as z.output<(typeof ACTIVITY_CONFIG_SCHEMAS)[K]>[];
+  const items = prepareGeneratedItems(kind, result.items, { skillHints });
 
   // Phonics tiles are spoken in isolation, so the model emits a per-tile IPA `say`
   // override (KIND_BRIEF). The model can hallucinate IPA, so validate each override
@@ -466,39 +479,11 @@ export async function generatePracticeItems<K extends ActivityKind>(
     await sanitizeGeneratedPhonics(phonics, phonemize);
   }
 
-  // B3 §6: deterministic answer-key filter. For a kind with a generated-config
-  // validator (math-clock/money/measure, sort-categories, seq-order), drop any
-  // item whose answer key is internally inconsistent — a wrong generated key would
-  // mark a capable child wrong. A kind with no validator passes through unchanged
-  // (validateGeneratedFor returns null for it), so already-generable kinds are
-  // untouched. Throw only when the WHOLE batch is invalid (a short surviving batch
-  // is fine → authored content covers the shortfall); the route turns the throw
-  // into a 502 -> authored-content fallback.
-  const validated = items.filter((item) => validateGeneratedFor(kind, item) === null);
-  if (validated.length === 0) {
-    throw new Error(`generatePracticeItems: all ${kind} items failed answer-key validation`);
-  }
-
-  // Server-derived skill attribution (final review Fix 3, §8): a generated
-  // sightword-game carries an optional `skillTag` that skillsAffected() returns
-  // verbatim — so the model could route mastery evidence to an ARBITRARY skill.
-  // Overwrite it with the server's first skill hint (derived from the authored
-  // tree, never the client), or strip it when there is no hint so the game falls
-  // back to the legacy reading.decodable. Central here → covers BOTH the shelf
-  // and the ephemeral "More" button paths. The model must not control routing.
-  if (kind === "sightword-game") {
-    const hint = skillHints[0];
-    for (const item of validated as unknown as { skillTag?: string }[]) {
-      if (hint) item.skillTag = hint;
-      else delete item.skillTag;
-    }
-  }
-
   // Fire-and-forget: warm the durable narration cache for everything the child will
   // hear, so the speaker button is an instant hit. Never blocks/breaks the response
   // (ensureNarration swallows its own errors). prewarmTexts dedupes + hard-caps the
   // set; mapWithConcurrency bounds in-flight synths to 4 so one response can't burst
   // many concurrent Kokoro/MinIO ops.
-  void mapWithConcurrency(prewarmTexts(validated), 4, (text) => ensureNarration(text));
-  return validated;
+  void mapWithConcurrency(prewarmTexts(items), 4, (text) => ensureNarration(text));
+  return items;
 }

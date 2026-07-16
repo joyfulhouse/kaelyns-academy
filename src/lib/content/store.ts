@@ -5,9 +5,11 @@
  * layer (repository.ts) is the public API for reads; the admin actions layer
  * calls the write mutations directly.
  */
-import { eq, max, and, desc } from "drizzle-orm";
+import { eq, max, and, desc, inArray } from "drizzle-orm";
+import { validatePlayableActivityConfig } from "@/activities/definitions";
+import { exactSkillRoutingIssue } from "@/activities/skill-routing";
 import type { Activity, Band, Program, SkillTag, Unit, Lesson, World } from "@/content/types";
-import { validateActivityConfig, firstConfigIssueMessage } from "@/content/validate";
+import { firstConfigIssueMessage } from "@/content/validate";
 import { captureNonCritical } from "@/lib/capture";
 import { getDb, schema } from "@/lib/db";
 
@@ -58,9 +60,9 @@ export function byOrderKey(a: { orderKey: string }, b: { orderKey: string }): nu
  * Build a `Program` (the @/content runtime shape) from flat DB rows.
  * - Units, lessons, and activities are ordered by `orderKey` ascending
  *   (locale-insensitive text sort; keys are authored as zero-padded strings).
- * - Each activity row is validated against its kind's config schema. A row
- *   with an unknown kind or failing schema is silently DROPPED and reported
- *   via `captureNonCritical` — a single bad row must never crash a learner.
+ * - Each activity row is validated against its kind's config schema and
+ *   deterministic playability invariant. A failing row is silently DROPPED
+ *   and reported via `captureNonCritical` — one bad row never crashes a learner.
  * PURE: no I/O, no side effects beyond the captureNonCritical call.
  */
 export function assembleProgram(rows: ProgramTreeRows): Program {
@@ -123,16 +125,27 @@ export function assembleProgram(rows: ProgramTreeRows): Program {
   };
 }
 
-/** Validate one activity row against its config schema; return null on failure. */
+/** Validate one activity row for schema + playability; return null on failure. */
 function assembleActivity(row: ActivityRow): Activity | null {
-  const result = validateActivityConfig(row.kind, row.config);
+  const result = validatePlayableActivityConfig(row.kind, row.config);
   if (!result.ok) {
     // A single bad row must never crash a learner: drop it and report.
     captureNonCritical(
       "activity config invalid",
       result.reason === "unknown-kind"
         ? new Error(`Unknown activity kind: ${row.kind} (id=${row.id})`)
-        : result.error,
+        : result.reason === "unplayable"
+          ? new Error(`Unplayable activity config: ${result.message} (id=${row.id})`)
+          : result.error,
+    );
+    return null;
+  }
+
+  const routingIssue = exactSkillRoutingIssue(row.kind, result.data, row.skillTags);
+  if (routingIssue) {
+    captureNonCritical(
+      "activity skill routing invalid",
+      new Error(`${routingIssue} (id=${row.id})`),
     );
     return null;
   }
@@ -223,16 +236,15 @@ export async function getProgramVersionTreeRows(
   });
   if (!versionRow) return null;
 
-  // Resolve slug: prefer the hint (already known from the program lookup) to
-  // avoid a second query; fall back to fetching the parent program row.
-  let programSlug = slugHint;
-  if (!programSlug) {
-    const programRow = await db.query.program.findFirst({
-      where: (p) => eq(p.id, versionRow.programId),
-    });
-    if (!programRow) return null;
-    programSlug = programRow.slug;
-  }
+  // A program's publishedVersionId is intentionally a loose reference to avoid
+  // a circular FK, and enrollment pins are globally-addressable version ids.
+  // Always resolve the real parent; a hint may optimize no authority and must
+  // never relabel a version owned by another program.
+  const programRow = await db.query.program.findFirst({
+    where: (p) => eq(p.id, versionRow.programId),
+  });
+  if (!programRow || (slugHint !== undefined && programRow.slug !== slugHint)) return null;
+  const programSlug = programRow.slug;
 
   const { units, lessons, activities } = await loadVersionTreeRows(versionId);
 
@@ -411,12 +423,36 @@ export class VersionNotDraftError extends Error {
   }
 }
 
-/** Thrown when activity config fails schema validation during saveVersionTree. */
+/** Thrown when an activity config fails schema or playability validation. */
 export class ActivityConfigValidationError extends Error {
   constructor(activityKey: string, message: string) {
     super(`Activity "${activityKey}" config validation failed: ${message}`);
     this.name = "ActivityConfigValidationError";
   }
+}
+
+/** One config trust boundary shared by draft save and publish. */
+function canonicalActivityConfig(
+  activityKey: string,
+  kind: string,
+  config: unknown,
+  skillTags: readonly string[],
+): unknown {
+  const result = validatePlayableActivityConfig(kind, config);
+  if (!result.ok) {
+    const message =
+      result.reason === "unknown-kind"
+        ? `Unknown activity kind: "${kind}"`
+        : result.reason === "unplayable"
+          ? result.message
+          : firstConfigIssueMessage(result.error, { fallback: "invalid config" });
+    throw new ActivityConfigValidationError(activityKey, message);
+  }
+  const routingIssue = exactSkillRoutingIssue(kind, result.data, skillTags);
+  if (routingIssue) {
+    throw new ActivityConfigValidationError(activityKey, routingIssue);
+  }
+  return result.data;
 }
 
 /**
@@ -677,11 +713,11 @@ export async function loadVersionForEdit(versionId: string): Promise<EditableVer
 }
 
 /**
- * Full-tree-replace for a draft version. Validates each activity config before
- * writing. Transaction: update version metadata → delete units (cascades
+ * Full-tree-replace for a draft version. Validates and canonicalizes every
+ * activity config before writing. Transaction: update metadata → delete units (cascades
  * lessons/activities) → reinsert from input.
  * @throws {VersionNotDraftError} when the version is not in `draft` status.
- * @throws {ActivityConfigValidationError} when any activity config fails its schema.
+ * @throws {ActivityConfigValidationError} when a config fails schema or playability validation.
  */
 export async function saveVersionTree(
   versionId: string,
@@ -705,24 +741,28 @@ export async function saveVersionTree(
     throw new DuplicateKeyError(`Duplicate ${dup.level} key: "${dup.key}"`);
   }
 
-  // Validate all activity configs BEFORE touching the DB.
-  for (const unit of input.units) {
-    for (const lesson of unit.lessons) {
-      for (const activity of lesson.activities) {
-        const result = validateActivityConfig(activity.kind, activity.config);
-        if (!result.ok) {
-          const msg =
-            result.reason === "unknown-kind"
-              ? `Unknown activity kind: "${activity.kind}"`
-              : firstConfigIssueMessage(result.error, { fallback: "invalid config" });
-          throw new ActivityConfigValidationError(activity.activityKey, msg);
-        }
-      }
-    }
-  }
+  // Validate and canonicalize all activity configs BEFORE opening the write
+  // transaction. Persist the parsed output, never the raw admin JSON: this
+  // applies schema defaults while exact schemas reject unknown keys at the
+  // trust boundary.
+  const canonicalUnits = input.units.map((unit) => ({
+    ...unit,
+    lessons: unit.lessons.map((lesson) => ({
+      ...lesson,
+      activities: lesson.activities.map((activity) => ({
+        ...activity,
+          config: canonicalActivityConfig(
+            activity.activityKey,
+            activity.kind,
+            activity.config,
+            activity.skillTags,
+          ),
+      })),
+    })),
+  }));
 
   const { units: unitRows, lessons: lessonRows, activities: activityRows } =
-    buildVersionTreeRows(versionId, input.units);
+    buildVersionTreeRows(versionId, canonicalUnits);
 
   await db.transaction(async (tx) => {
     // Re-check the draft status INSIDE the tx, locking the version row FOR UPDATE
@@ -760,6 +800,9 @@ export async function saveVersionTree(
  * Publish a draft version (transactional, race-hardened — Fix-F B1):
  * - Lock the program row FOR UPDATE so concurrent publishes of the same program
  *   serialize instead of interleaving.
+ * - Lock the target version and validate/canonicalize every stored activity
+ *   before any status changes, so old, cloned, or out-of-band drafts cannot
+ *   bypass the current schema and playability contract.
  * - Archive the currently-published version FIRST, then publish the target via a
  *   CONDITIONAL update (only if still `draft`); 0 affected rows → VersionNotDraftError
  *   (rolls back). Archive-old-before-publish-new keeps the ≤1-published-per-program
@@ -796,6 +839,65 @@ export async function publishVersion(versionId: string): Promise<void> {
       .from(schema.program)
       .where(eq(schema.program.id, versionRow.programId))
       .for("update");
+
+    // Serialize against saveVersionTree, then validate the actual stored tree.
+    // A draft can be old, cloned, or modified outside the current editor, so a
+    // successful save in some earlier request is not a publish-time guarantee.
+    const lockedTarget = await tx
+      .select({ status: schema.programVersion.status })
+      .from(schema.programVersion)
+      .where(eq(schema.programVersion.id, versionId))
+      .for("update");
+    if (lockedTarget[0]?.status !== "draft") {
+      throw new VersionNotDraftError(versionId, lockedTarget[0]?.status ?? "missing");
+    }
+
+    const versionUnits = await tx
+      .select({ id: schema.unit.id })
+      .from(schema.unit)
+      .where(eq(schema.unit.programVersionId, versionId));
+    const unitIds = versionUnits.map(({ id }) => id);
+    const versionLessons =
+      unitIds.length === 0
+        ? []
+        : await tx
+            .select({ id: schema.lesson.id })
+            .from(schema.lesson)
+            .where(inArray(schema.lesson.unitId, unitIds));
+    const lessonIds = versionLessons.map(({ id }) => id);
+    const versionActivities =
+      lessonIds.length === 0
+        ? []
+        : await tx
+            .select({
+              id: schema.activity.id,
+              activityKey: schema.activity.activityKey,
+              kind: schema.activity.kind,
+              config: schema.activity.config,
+              skillTags: schema.activity.skillTags,
+            })
+            .from(schema.activity)
+            .where(inArray(schema.activity.lessonId, lessonIds));
+
+    const activityKeys = new Set<string>();
+    for (const activityRow of versionActivities) {
+      if (activityKeys.has(activityRow.activityKey)) {
+        throw new DuplicateKeyError(
+          `Duplicate activity key: "${activityRow.activityKey}"`,
+        );
+      }
+      activityKeys.add(activityRow.activityKey);
+      const config = canonicalActivityConfig(
+        activityRow.activityKey,
+        activityRow.kind,
+        activityRow.config,
+        activityRow.skillTags,
+      );
+      await tx
+        .update(schema.activity)
+        .set({ config })
+        .where(eq(schema.activity.id, activityRow.id));
+    }
 
     // Archive the currently-published version of this program FIRST, then
     // publish the target — this order keeps the B3 partial unique index
@@ -964,12 +1066,18 @@ export async function cloneVersionToDraft(
 export async function archiveProgram(programId: string): Promise<void> {
   const db = getDb();
 
-  const programRow = await db.query.program.findFirst({
-    where: (p) => eq(p.id, programId),
-  });
-  if (!programRow) throw new Error(`Program not found: ${programId}`);
-
   await db.transaction(async (tx) => {
+    // Keep the same program→version lock order as publishVersion. Resolve the
+    // current pointer only after acquiring the program lock so a concurrent
+    // publish cannot archive one version and then install another behind us.
+    const lockedProgram = await tx
+      .select({ id: schema.program.id, publishedVersionId: schema.program.publishedVersionId })
+      .from(schema.program)
+      .where(eq(schema.program.id, programId))
+      .for("update");
+    const programRow = lockedProgram[0];
+    if (!programRow) throw new Error(`Program not found: ${programId}`);
+
     // Archive the published version (if any) so it also stops appearing in any
     // version-level published queries.
     if (programRow.publishedVersionId) {

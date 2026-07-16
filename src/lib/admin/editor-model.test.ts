@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { validatePlayableActivityConfig } from "@/activities/definitions";
 import {
   defaultConfigFor,
   editableToForm,
@@ -79,6 +80,12 @@ describe("defaultConfigFor", () => {
     const result = ACTIVITY_CONFIG_SCHEMAS[kind].safeParse(config);
     expect(result.success, `kind=${kind} errors: ${!result.success ? JSON.stringify(result.error.issues) : ""}`).toBe(true);
   });
+
+  it.each(kinds)("produces a canonically playable skeleton for %s", (kind) => {
+    expect(validatePlayableActivityConfig(kind, defaultConfigFor(kind))).toMatchObject({
+      ok: true,
+    });
+  });
 });
 
 describe("editableToForm + formToEditable round-trip", () => {
@@ -144,7 +151,10 @@ describe("editableToForm + formToEditable round-trip", () => {
                   band: "ready",
                   skillTags: [],
                   standardTags: [],
-                  config: { instruction: "Pick a word", words: ["the", "and"] },
+                  config: {
+                    instruction: "Find the word.",
+                    rounds: [{ target: "the", choices: ["the", "they"] }],
+                  },
                 },
               ],
             },

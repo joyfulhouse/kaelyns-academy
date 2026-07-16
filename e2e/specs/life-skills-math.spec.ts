@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { expectSingleHostReward } from "../helpers";
 
 /**
  * Life Skills Math (world "garden", order 5, unit id "life-skills-math") —
@@ -32,7 +33,8 @@ test("a Life Skills Math activity renders its interactive player", async ({ page
   const answer = page.getByRole("button", { name: "Digital time 3:00" });
   await expect(answer).toBeVisible();
 
-  // Advance the authored step and confirm the activity completes.
+  // Completion goes straight through ActivityHost. The one reward is the host
+  // screen (link CTAs), never a second Player-owned "Keep going" button.
   await answer.click();
-  await expect(page.getByRole("button", { name: "Keep going" })).toBeVisible();
+  await expectSingleHostReward(page);
 });

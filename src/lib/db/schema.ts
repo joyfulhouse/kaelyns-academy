@@ -1,7 +1,22 @@
-import { pgTable, serial, timestamp, text, jsonb, date, boolean, uniqueIndex, index, integer } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import {
+  boolean,
+  check,
+  date,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 import { user } from "./auth-schema";
 import type { EnrollmentConfig, LearnerSettings } from "@/lib/content/config";
 import type { QuestProgress, QuestTarget } from "@/lib/quests/config";
+import type { ActivityScore } from "@/content";
 
 const uuid = () => globalThis.crypto.randomUUID();
 
@@ -159,6 +174,22 @@ export const enrollment = pgTable(
   (t) => [uniqueIndex("enrollment_learner_program_uq").on(t.learnerId, t.programSlug)],
 );
 
+/**
+ * Fixed database-only signals used by migration 0017 to abort an old writer at
+ * COMMIT without echoing child response parameters through a query error. The
+ * migration makes this UNIQUE constraint deferred and seeds the allowed reasons;
+ * guarded writes insert a duplicate reason that can never commit. Drizzle does
+ * not model DEFERRABLE here, so the raw migration and its pg_constraint test are
+ * the source of truth; this schema must be applied through migrations, not push.
+ */
+export const attemptWriteAbortSignal = pgTable(
+  "attempt_write_abort_signal",
+  {
+    reason: text("reason").notNull(),
+  },
+  (t) => [unique("attempt_write_abort_signal_uq").on(t.reason)],
+);
+
 export const attempt = pgTable(
   "attempt",
   {
@@ -168,6 +199,14 @@ export const attempt = pgTable(
       .references(() => learner.id, { onDelete: "cascade" }),
     activityId: text("activity_id").notNull(),
     kind: text("kind").notNull(),
+    /** Durable authored identity. Nullable so pre-migration attempts remain readable. */
+    programSlug: text("program_slug"),
+    unitKey: text("unit_key"),
+    programVersionId: text("program_version_id").references(() => programVersion.id, {
+      onDelete: "set null",
+    }),
+    /** Browser-generated UUID that makes one completion safe to retry. */
+    completionId: text("completion_id"),
     /** true when the activity was AI-generated practice (not authored content). */
     generated: boolean("generated").notNull().default(false),
     // ── AI provenance (P6 / spec §8 "what the AI made" trail) ────────────────
@@ -181,14 +220,7 @@ export const attempt = pgTable(
     genRoute: text("gen_route"),
     /** When generation happened (may differ from createdAt, which is when the attempt was recorded). */
     genAt: timestamp("gen_at", { withTimezone: true }),
-    score: jsonb("score")
-      .$type<{
-        correct: number;
-        total: number;
-        stars: number;
-        skillEvidence: { skill: string; outcome: string }[];
-      }>()
-      .notNull(),
+    score: jsonb("score").$type<ActivityScore>().notNull(),
     response: jsonb("response").$type<unknown>(),
     /** Calendar day (YYYY-MM-DD) the attempt happened — the mastery gate keys on it. */
     day: date("day").notNull(),
@@ -200,6 +232,100 @@ export const attempt = pgTable(
     // this composite lets that authored-only scan use an index instead of
     // filtering every attempt row for the learner.
     index("attempt_learner_generated_idx").on(t.learnerId, t.generated),
+    uniqueIndex("attempt_learner_completion_uq").on(t.learnerId, t.completionId),
+    // Privacy must survive a pre-sync rolling deploy or application rollback.
+    // Migration 0017 suppresses unsafe old-pod DML and schedules a parameter-free
+    // COMMIT failure, then validates this CHECK as an independent backstop.
+    check(
+      "attempt_journal_summary_only_ck",
+	      sql`${t.kind} <> 'journal-prompt' OR COALESCE(
+	        jsonb_typeof(${t.response}) = 'object'
+	        AND CASE
+	          WHEN jsonb_typeof(${t.response}) = 'object'
+	            THEN ${t.response} ?& ARRAY['markCount', 'textLength', 'usedDictation', 'mode', 'didDraw']
+	          ELSE false
+	        END
+	        AND CASE
+	          WHEN jsonb_typeof(${t.response}) = 'object'
+	            THEN ${t.response} - ARRAY['markCount', 'textLength', 'usedDictation', 'mode', 'didDraw']::text[]
+	          ELSE NULL
+	        END IS NOT DISTINCT FROM '{}'::jsonb
+        AND CASE
+          WHEN jsonb_typeof(${t.response} -> 'markCount') = 'number'
+            THEN (${t.response} ->> 'markCount')::numeric BETWEEN 0 AND 200
+              AND trunc((${t.response} ->> 'markCount')::numeric) = (${t.response} ->> 'markCount')::numeric
+          ELSE false
+        END
+        AND CASE
+          WHEN jsonb_typeof(${t.response} -> 'textLength') = 'number'
+            THEN (${t.response} ->> 'textLength')::numeric BETWEEN 0 AND 2000
+              AND trunc((${t.response} ->> 'textLength')::numeric) = (${t.response} ->> 'textLength')::numeric
+          ELSE false
+        END
+        AND ${t.response} -> 'usedDictation' IN ('true'::jsonb, 'false'::jsonb)
+        AND ${t.response} ->> 'mode' IN ('draw', 'scribe', 'type', 'dictate')
+	        AND ${t.response} -> 'didDraw' IN ('true'::jsonb, 'false'::jsonb)
+	        AND jsonb_typeof(${t.score}) = 'object'
+	        AND CASE
+	          WHEN jsonb_typeof(${t.score}) = 'object'
+	            THEN ${t.score} ?& ARRAY['correct', 'total', 'stars', 'skillEvidence']
+	          ELSE false
+	        END
+	        AND CASE
+	          WHEN jsonb_typeof(${t.score}) = 'object'
+	            THEN ${t.score} - ARRAY['correct', 'total', 'stars', 'skillEvidence']::text[]
+	          ELSE NULL
+	        END IS NOT DISTINCT FROM '{}'::jsonb
+        AND ${t.score} -> 'correct' = '1'::jsonb
+        AND ${t.score} -> 'total' = '1'::jsonb
+        AND CASE
+          WHEN jsonb_typeof(${t.score} -> 'stars') = 'number'
+            THEN (${t.score} ->> 'stars')::numeric BETWEEN 1 AND 3
+              AND trunc((${t.score} ->> 'stars')::numeric) = (${t.score} ->> 'stars')::numeric
+          ELSE false
+        END
+        AND ${t.score} -> 'skillEvidence' = '[]'::jsonb
+      , false)`,
+    ),
+  ],
+);
+
+/**
+ * Short-lived, privacy-minimized proof that the bounded oral-reading service
+ * checked one exact authored activity. The route stores only child-safe
+ * derived facts: never audio, transcript, or the authored target/passage. A
+ * completion claims the row atomically with its attempt by binding the opaque
+ * witness to one browser-generated completion id.
+ */
+export const oralReadingVerification = pgTable(
+  "oral_reading_verification",
+  {
+    id: text("id").primaryKey().$defaultFn(uuid),
+    learnerId: text("learner_id")
+      .notNull()
+      .references(() => learner.id, { onDelete: "cascade" }),
+    programSlug: text("program_slug").notNull(),
+    programVersionId: text("program_version_id").references(() => programVersion.id, {
+      onDelete: "set null",
+    }),
+    unitKey: text("unit_key").notNull(),
+    activityId: text("activity_id").notNull(),
+    mode: text("mode").notNull(),
+    result: text("result").notNull(),
+    perWord: jsonb("per_word").$type<{ state: "correct" | "unclear" }[] | null>(),
+    correctCount: integer("correct_count"),
+    totalWords: integer("total_words"),
+    wcpm: integer("wcpm"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedCompletionId: text("consumed_completion_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("oral_reading_verification_learner_expiry_idx").on(t.learnerId, t.expiresAt),
+    uniqueIndex("oral_reading_verification_learner_completion_uq").on(
+      t.learnerId,
+      t.consumedCompletionId,
+    ),
   ],
 );
 
@@ -305,6 +431,10 @@ export const generatedActivity = pgTable(
       .notNull()
       .references(() => learner.id, { onDelete: "cascade" }),
     programSlug: text("program_slug").notNull(),
+    /** Exact content tree used to derive this item; null only on legacy rows. */
+    programVersionId: text("program_version_id").references(() => programVersion.id, {
+      onDelete: "set null",
+    }),
     /** Stable authored unit key (locates the shelf on the map). */
     unitKey: text("unit_key").notNull(),
     /** Stable authored lesson id the batch was generated for. */

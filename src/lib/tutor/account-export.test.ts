@@ -88,6 +88,45 @@ describe("shapeAccountExport (pure shaper)", () => {
     expect(result.learners.map((l) => l.learner.id)).toEqual(["L1", "L2"]);
   });
 
+  it("re-sanitizes escaped legacy journal artifacts in whole-account exports", () => {
+    const unsafe = learnerExport({
+      attempts: [
+        {
+          activityId: "journal-legacy",
+          kind: "journal-prompt",
+          programSlug: "summer-k-to-grade1",
+          unitKey: "unit-writing",
+          programVersionId: "version-7",
+          score: { stars: 3, correct: 1, total: 1 },
+          response: {
+            text: "never export this sentence",
+            drawingDataUrl: "data:image/png;base64,never-export-this-image",
+            didDraw: true,
+          },
+          day: "2026-06-20",
+          createdAt: "2026-06-20T10:00:00.000Z",
+        },
+      ],
+    });
+
+    const result = shapeAccountExport(baseInput({ learners: [unsafe] }));
+
+    expect(result.learners[0].attempts[0].response).toEqual({
+      markCount: 1,
+      textLength: 26,
+      usedDictation: false,
+      mode: "type",
+      didDraw: true,
+    });
+    expect(JSON.stringify(result)).not.toContain("never export");
+    expect(JSON.stringify(result)).not.toContain("data:image");
+    expect(result.learners[0].attempts[0]).toMatchObject({
+      programSlug: "summer-k-to-grade1",
+      unitKey: "unit-writing",
+      programVersionId: "version-7",
+    });
+  });
+
   it("does not mutate the module-level inventory constants (returns copies)", () => {
     const result = shapeAccountExport(baseInput());
     result.manifest.contents.push("tampered");
@@ -130,6 +169,9 @@ describe("account export inventory guard", () => {
     checkpoint_result: "checkpointResults",
     // Adventure 2.0 B3 (Task 6 wires the export read):
     generated_activity: "generatedActivities",
+    // Short-lived operational witness. A consumed witness's canonical facts are
+    // already exported in its attempt response; raw audio/transcript never exist.
+    oral_reading_verification: null,
   };
 
   /** All pgTable objects exported from the schema module. */

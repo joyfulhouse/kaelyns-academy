@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type {
+  ActivityKind,
   MathClockConfig,
   MathMeasureConfig,
   MathMoneyConfig,
   SeqOrderConfig,
   SortCategoriesConfig,
 } from "@/content/activity-configs";
-import { validateGeneratedFor } from "./generated-validators";
+import type { SkillTag } from "@/content/types";
+import { worldLanguages } from "@/content/programs/world-languages";
+import { isGenerableKind } from "./generable";
+import { prepareGeneratedItems, validateGeneratedFor } from "./generated-validators";
 
 // B3 §6: the deterministic answer-key net for AI-generated configs. A valid item
 // returns null; each corruption mode returns a non-null reason so the generator
@@ -150,26 +154,25 @@ describe("validateGeneratedFor — math-measure", () => {
     expect(validateGeneratedFor("math-measure", c)).not.toBeNull();
   });
 
-  it("passes a units item whose marked choice equals the true length", () => {
+  it("passes a direct-placement units item whose target comes from one length fact", () => {
     const c: MathMeasureConfig = {
       mode: "units",
-      instruction: "How many cubes long?",
+      instruction: "Measure the pencil with cubes.",
+      objectLabel: "pencil",
       unit: "cube",
       length: 5,
-      choices: [5, 3],
-      answerIndex: 0,
     };
     expect(validateGeneratedFor("math-measure", c)).toBeNull();
   });
 
-  it("rejects a units item whose marked choice is not the true length", () => {
-    const c: MathMeasureConfig = {
+  it("rejects legacy multiple-choice fields on a direct-placement units item", () => {
+    const c = {
       mode: "units",
       instruction: "How many cubes long?",
       unit: "cube",
       length: 5,
       choices: [3, 4],
-      answerIndex: 0, // 3 != 5
+      answerIndex: 0,
     };
     expect(validateGeneratedFor("math-measure", c)).not.toBeNull();
   });
@@ -243,10 +246,310 @@ describe("validateGeneratedFor — seq-order", () => {
   });
 });
 
-describe("validateGeneratedFor — kinds without a validator", () => {
-  it("passes through (null) any kind with no answer-key check", () => {
-    // Already-generable kinds (no validateGenerated) must be a no-op passthrough.
-    expect(validateGeneratedFor("phonics-wordbuild", { anything: true })).toBeNull();
-    expect(validateGeneratedFor("math-tenframe", {})).toBeNull();
+describe("validateGeneratedFor — shared playability", () => {
+  it("rejects malformed configs for kinds the old narrow switch skipped", () => {
+    expect(validateGeneratedFor("phonics-wordbuild", { anything: true })).not.toBeNull();
+    expect(validateGeneratedFor("math-tenframe", {})).not.toBeNull();
+  });
+
+  it("accepts a schema-valid, internally playable config", () => {
+    expect(
+      validateGeneratedFor("math-tenframe", {
+        instruction: "Make a ten.",
+        mode: "make-ten",
+        target: 7,
+        addend: 8,
+        frames: 2,
+      }),
+    ).toBeNull();
+  });
+});
+
+interface GenerableCase {
+  kind: ActivityKind;
+  config: unknown;
+  skillHints: SkillTag[];
+}
+
+const authoredLanguageActivities = worldLanguages.units.flatMap((unit) =>
+  unit.lessons.flatMap((lesson) => lesson.activities),
+);
+const symbolIntro = authoredLanguageActivities.find(
+  (activity) => activity.kind === "lang-symbol-intro",
+);
+const listenMatch = authoredLanguageActivities.find(
+  (activity) => activity.kind === "lang-listen-match",
+);
+if (symbolIntro?.kind !== "lang-symbol-intro" || listenMatch?.kind !== "lang-listen-match") {
+  throw new Error("test setup: authored language fixtures missing");
+}
+
+const GENERABLE_CASES: GenerableCase[] = [
+  {
+    kind: "phonics-wordbuild",
+    skillHints: ["phonics.decode.short-a-cvc"],
+    config: {
+      focus: "short a CVC words",
+      instruction: "Build the word.",
+      skillTag: "phonics.decode.short-e-cvc",
+      tiles: ["c", "a", "t"],
+      words: [{ word: "cat" }],
+    },
+  },
+  {
+    kind: "sightword-game",
+    skillHints: [],
+    config: {
+      instruction: "Listen, then find the word.",
+      rounds: [{ target: "the", choices: ["the", "they"] }],
+    },
+  },
+  {
+    kind: "math-tenframe",
+    skillHints: ["math.add.make-ten"],
+    config: { instruction: "Make a ten.", mode: "make-ten", target: 7, addend: 8, frames: 2 },
+  },
+  {
+    kind: "journal-prompt",
+    skillHints: [],
+    config: { prompt: "Draw or tell one idea." },
+  },
+  {
+    kind: "reading-comprehension",
+    skillHints: ["reading.comprehension.main-idea"],
+    config: {
+      instruction: "Read, then answer.",
+      passage: "Cats nap in warm places.",
+      questions: [
+        {
+          prompt: "What is this mostly about?",
+          choices: ["Cats resting", "Dogs running"],
+          answerIndex: 0,
+          kind: "main-idea",
+          skillTag: "reading.comprehension.main-idea",
+        },
+      ],
+    },
+  },
+  {
+    kind: "math-array",
+    skillHints: ["math.equal-groups.arrays"],
+    config: { instruction: "Build two rows of three.", mode: "build", rows: 2, cols: 3 },
+  },
+  {
+    kind: "lang-symbol-intro",
+    skillHints: [...symbolIntro.skillTags],
+    config: symbolIntro.config,
+  },
+  {
+    kind: "lang-listen-match",
+    skillHints: [...listenMatch.skillTags],
+    config: listenMatch.config,
+  },
+  {
+    kind: "math-clock",
+    skillHints: ["math.time"],
+    config: {
+      mode: "read",
+      instruction: "What time is it?",
+      hour: 3,
+      minute: 0,
+      choices: ["3:00", "4:00"],
+      answerIndex: 0,
+    },
+  },
+  {
+    kind: "math-money",
+    skillHints: ["math.money"],
+    config: {
+      mode: "identify",
+      instruction: "Find the dime.",
+      coins: ["penny", "dime"],
+      targetCoin: "dime",
+    },
+  },
+  {
+    kind: "math-measure",
+    skillHints: ["math.measure"],
+    config: {
+      mode: "units",
+      instruction: "Measure with cubes.",
+      objectLabel: "pencil",
+      unit: "cube",
+      length: 4,
+    },
+  },
+];
+
+function generableCase(kind: ActivityKind): GenerableCase {
+  const fixture = GENERABLE_CASES.find((candidate) => candidate.kind === kind);
+  if (!fixture) throw new Error(`test setup: ${kind} fixture missing`);
+  return fixture;
+}
+
+function expectNestedUnknownSiblingDropped(fixture: GenerableCase, raw: unknown): void {
+  expect(
+    prepareGeneratedItems(fixture.kind, [raw, fixture.config], {
+      skillHints: fixture.skillHints,
+    }),
+  ).toHaveLength(1);
+}
+
+describe("prepareGeneratedItems — exhaustive generable boundary", () => {
+  it("covers every generable kind and keeps ungrounded kinds authored-only", () => {
+    const actual = GENERABLE_CASES.map(({ kind }) => kind).sort();
+    const expected = Object.keys({
+      "phonics-wordbuild": true,
+      "sightword-game": true,
+      "math-tenframe": true,
+      "journal-prompt": true,
+      "reading-comprehension": true,
+      "math-array": true,
+      "lang-symbol-intro": true,
+      "lang-listen-match": true,
+      "math-clock": true,
+      "math-money": true,
+      "math-measure": true,
+    }).sort();
+    expect(actual).toEqual(expected);
+    for (const { kind } of GENERABLE_CASES) expect(isGenerableKind(kind), kind).toBe(true);
+    expect(isGenerableKind("math-fraction-bar")).toBe(false);
+    expect(isGenerableKind("oral-reading")).toBe(false);
+    expect(isGenerableKind("sort-categories")).toBe(false);
+    expect(isGenerableKind("seq-order")).toBe(false);
+  });
+
+  it.each(GENERABLE_CASES)(
+    "$kind parses siblings independently and returns only shared-playable output",
+    ({ kind, config, skillHints }) => {
+      const rawWithExtraField = { ...(config as Record<string, unknown>), rawModelField: true };
+      const result = prepareGeneratedItems(kind, [rawWithExtraField, config], { skillHints });
+      expect(result).toHaveLength(1);
+      expect(result[0]).not.toHaveProperty("rawModelField");
+      expect(validateGeneratedFor(kind, result[0])).toBeNull();
+    },
+  );
+
+  it("rejects unknown fields recursively inside every nested generated shape", () => {
+    const phonics = generableCase("phonics-wordbuild");
+    const phonicsConfig = phonics.config as { words: Record<string, unknown>[] };
+    expectNestedUnknownSiblingDropped(phonics, {
+      ...phonicsConfig,
+      words: [{ ...phonicsConfig.words[0], rawModelField: true }],
+    });
+
+    const sight = generableCase("sightword-game");
+    const sightConfig = sight.config as { rounds: Record<string, unknown>[] };
+    expectNestedUnknownSiblingDropped(sight, {
+      ...sightConfig,
+      rounds: [{ ...sightConfig.rounds[0], rawModelField: true }],
+    });
+
+    const reading = generableCase("reading-comprehension");
+    const readingConfig = reading.config as { questions: Record<string, unknown>[] };
+    expectNestedUnknownSiblingDropped(reading, {
+      ...readingConfig,
+      questions: [{ ...readingConfig.questions[0], rawModelField: true }],
+    });
+
+    const intro = generableCase("lang-symbol-intro");
+    const introConfig = intro.config as {
+      symbols: Record<string, unknown>[];
+      verify: Record<string, unknown>[];
+    };
+    expectNestedUnknownSiblingDropped(intro, {
+      ...introConfig,
+      symbols: [{ ...introConfig.symbols[0], rawModelField: true }, ...introConfig.symbols.slice(1)],
+      verify: [{ ...introConfig.verify[0], rawModelField: true }],
+    });
+
+    const listen = generableCase("lang-listen-match");
+    const listenConfig = listen.config as { items: Record<string, unknown>[] };
+    expectNestedUnknownSiblingDropped(listen, {
+      ...listenConfig,
+      items: [{ ...listenConfig.items[0], rawModelField: true }],
+    });
+
+    const measure = generableCase("math-measure");
+    expectNestedUnknownSiblingDropped(measure, {
+      mode: "compare",
+      instruction: "Which is longest?",
+      attribute: "length",
+      question: "most",
+      items: [
+        { label: "pencil", emoji: "✏️", size: 8, rawModelField: true },
+        { label: "crayon", emoji: "🖍️", size: 5 },
+      ],
+      answerIndex: 0,
+    });
+
+  });
+
+  it("isolates a canonicalizer failure to its malformed sibling", () => {
+    const sight = generableCase("sightword-game");
+    let calls = 0;
+    const result = prepareGeneratedItems(
+      sight.kind,
+      [sight.config, sight.config],
+      {
+        skillHints: sight.skillHints,
+        canonicalize: (parsed) => {
+          calls += 1;
+          if (calls === 1) throw new Error("malformed sibling");
+          return parsed;
+        },
+      },
+    );
+    expect(result).toHaveLength(1);
+  });
+
+  it("rejects known but out-of-scope runtime skills", () => {
+    const array = GENERABLE_CASES.find(({ kind }) => kind === "math-array");
+    if (!array) throw new Error("test setup: array fixture missing");
+    expect(() =>
+      prepareGeneratedItems(array.kind, [array.config], { skillHints: ["math.time"] }),
+    ).toThrow(/failed shared validation/);
+  });
+
+  it("pins phonics evidence to a current server hint and strips it without one", () => {
+    const phonics = generableCase("phonics-wordbuild");
+    const [targeted] = prepareGeneratedItems(phonics.kind, [phonics.config], {
+      skillHints: phonics.skillHints,
+    });
+    expect(targeted).toHaveProperty("skillTag", "phonics.decode.short-a-cvc");
+
+    const [neutral] = prepareGeneratedItems(phonics.kind, [phonics.config], { skillHints: [] });
+    expect(neutral).not.toHaveProperty("skillTag");
+  });
+
+  it("rejects unknown model-routed comprehension evidence", () => {
+    const invalid = {
+      instruction: "Read, then answer.",
+      passage: "Cats nap.",
+      questions: [
+        {
+          prompt: "What happened?",
+          choices: ["Cats nap", "Cats run"],
+          answerIndex: 0,
+          kind: "main-idea",
+          skillTag: "made.up.skill",
+        },
+      ],
+    };
+    expect(() =>
+      prepareGeneratedItems("reading-comprehension", [invalid], {
+        skillHints: ["reading.comprehension.main-idea"],
+      }),
+    ).toThrow(/failed shared validation/);
+  });
+
+  it("rejects targeted items that emit no observable evidence", () => {
+    const phonics = GENERABLE_CASES.find(({ kind }) => kind === "phonics-wordbuild");
+    if (!phonics) throw new Error("test setup: phonics fixture missing");
+    expect(() =>
+      prepareGeneratedItems(phonics.kind, [phonics.config], {
+        skillHints: ["word.syllables.division"],
+      }),
+    ).toThrow(/failed shared validation/);
   });
 });

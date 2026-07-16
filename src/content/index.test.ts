@@ -17,7 +17,10 @@ function activity(id: string): Activity {
     title: id,
     band: "ready",
     skillTags: [],
-    config: { instruction: "", words: ["the", "and"], decoys: [] },
+    config: {
+      instruction: "Find the word.",
+      rounds: [{ target: "the", choices: ["the", "they"] }],
+    },
   };
 }
 

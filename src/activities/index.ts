@@ -22,6 +22,7 @@ import { mathMeasure } from "./math-measure";
 import { journalPrompt } from "./journal-prompt";
 import { readingComprehension } from "./reading-comprehension";
 import { mathArray } from "./math-array";
+import { mathFractionBar } from "./math-fraction-bar";
 import { langSymbolIntro } from "./lang-symbol-intro";
 import { langListenMatch } from "./lang-listen-match";
 import { sortCategories } from "./sort-categories";
@@ -43,6 +44,7 @@ export function registerActivityTypes(): void {
   registerActivityType(journalPrompt);
   registerActivityType(readingComprehension);
   registerActivityType(mathArray);
+  registerActivityType(mathFractionBar);
   registerActivityType(langSymbolIntro);
   registerActivityType(langListenMatch);
   registerActivityType(sortCategories);

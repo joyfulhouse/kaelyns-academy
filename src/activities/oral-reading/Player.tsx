@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
-  CheckCircleIcon,
   MicrophoneIcon,
   StopCircleIcon,
 } from "@phosphor-icons/react/dist/ssr";
@@ -11,13 +10,12 @@ import type {
   OralReadingWordConfig,
 } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
-import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
-import { PlayerControls, SpeakerButton } from "../_shared/ActivityChrome";
 import { useActivity } from "../_shared/useActivity";
-import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
-import { schema, score, type OralReadingResponse } from "./logic";
+import { schema, type OralReadingResponse } from "./logic";
+import { ModeledAudioFallback, OralModelStep } from "./ModelStep";
+import { OralSupportPanel } from "./OralSupportPanel";
 import { SentenceReader } from "./SentenceReader";
 import {
   MAX_RECORDING_MS,
@@ -25,12 +23,19 @@ import {
   VERIFY_TIMEOUT_MS,
   browserHasMicrophone,
   canRecordAnother,
+  canStartOralAttempt,
   canSubmitRecording,
+  createOralReadingRequestForm,
+  isModelPlaybackLocked,
   parseWordRouteResult,
   phaseAfterUnmatched,
+  needsAdultModelFallback,
+  shouldCompleteAfterObservation,
   subscribeStatic,
   supportedMimeType,
+  stopModelAudioBeforeRecording,
   type OralReadingPhase,
+  type VerifiedWordRouteResult,
   type VerificationResult,
 } from "./recording";
 
@@ -69,20 +74,19 @@ function WordReadingPlayer({
   const micAllowed = learnerContext?.oralReading === true;
   const [phase, setPhase] = useState<OralReadingPhase>("ready");
   const [results, setResults] = useState<VerificationResult[]>([]);
+  const [modelStatus, setModelStatus] = useState<
+    "idle" | "playing" | "completed" | "unavailable"
+  >("idle");
   // Counts every UPLOADED recording, including ones whose verification came
   // back "unavailable" — the attempt cap bounds recordings and STT calls, so
   // gateway failures must not grant extra tries around it.
   const [submitted, setSubmitted] = useState(0);
-  const [done, setDone] = useState<OralReadingResponse | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const modelRequestRef = useRef(0);
   const activeRef = useRef(true);
-
-  // Model the known word before asking the child to read it. The visible target
-  // and manual speaker remain available even when automatic read-aloud is off.
-  useSpeakOnce(speech.speak, parsed.target);
 
   useEffect(() => {
     activeRef.current = true;
@@ -96,29 +100,34 @@ function WordReadingPlayer({
     };
   }, []);
 
-  if (done) {
-    const activityScore = score(parsed, done);
-    return (
-      <div className="mx-auto grid max-w-xl gap-5 rounded-3xl border-[3px] border-ink bg-success/25 p-8 text-center shadow-pop">
-        <CheckCircleIcon className="mx-auto size-20 text-ink" weight="fill" aria-hidden="true" />
-        <p className="font-display text-3xl text-ink">You read it!</p>
-        <p className="text-lg text-ink-soft">That sounded great.</p>
-        <Button size="kid" variant="soft" onClick={() => onComplete(done, activityScore)}>
-          Keep going
-        </Button>
-      </div>
-    );
-  }
-
   const fallbackMode = !micAllowed || !micSupported || phase === "fallback";
+  const readyForAttempt = canStartOralAttempt(
+    parsed.presentation,
+    modelStatus === "completed",
+  );
+  const adultModelFallback =
+    needsAdultModelFallback(parsed.presentation, speech.supported) ||
+    (parsed.presentation === "listen-repeat" && modelStatus === "unavailable");
 
-  function response(fallbackUsed: boolean): OralReadingResponse {
-    return { attempts: results.length, results, fallbackUsed };
+  function response(status: OralReadingResponse["status"]): OralReadingResponse {
+    return { attempts: results.length, results, status };
   }
 
   function completeFallback(): void {
-    const completed = response(true);
-    onComplete(completed, score(parsed, completed));
+    const completed = response("participated-unverified");
+    onComplete(completed);
+  }
+
+  function playModel(): void {
+    if (isModelPlaybackLocked(phase)) return;
+    const requestId = modelRequestRef.current + 1;
+    modelRequestRef.current = requestId;
+    setModelStatus("playing");
+    void speech.speak(parsed.target).then((outcome) => {
+      if (!activeRef.current || modelRequestRef.current !== requestId) return;
+      if (outcome === "completed") setModelStatus("completed");
+      else if (outcome === "unavailable") setModelStatus("unavailable");
+    });
   }
 
   async function verify(blob: Blob, recordingFailed = false): Promise<void> {
@@ -127,18 +136,19 @@ function WordReadingPlayer({
       return;
     }
 
+    const form = createOralReadingRequestForm(blob, learnerContext);
+    if (!form) {
+      setPhase("fallback");
+      return;
+    }
+
     setPhase("checking");
     setSubmitted((count) => count + 1);
-    const form = new FormData();
-    form.append("file", blob, "reading.webm");
-    form.append("target", parsed.target);
-    form.append("learnerId", learnerContext.learnerId);
-    form.append("programSlug", learnerContext.programSlug);
     const controller = new AbortController();
     abortRef.current = controller;
     const deadline = setTimeout(() => controller.abort(), VERIFY_TIMEOUT_MS);
 
-    let routeResult: VerificationResult | "unavailable" = "unavailable";
+    let routeResult: VerifiedWordRouteResult | "unavailable" = "unavailable";
     try {
       const apiResponse = await fetch("/api/oral-reading", {
         method: "POST",
@@ -162,10 +172,15 @@ function WordReadingPlayer({
       return;
     }
 
-    const nextResults = [...results, routeResult];
+    const nextResults = [...results, routeResult.result];
     setResults(nextResults);
-    if (routeResult === "matched") {
-      setDone({ attempts: nextResults.length, results: nextResults, fallbackUsed: false });
+    if (shouldCompleteAfterObservation(parsed.presentation, routeResult.result)) {
+      onComplete({
+        attempts: nextResults.length,
+        results: nextResults,
+        status: "verified",
+        verificationId: routeResult.verificationId,
+      });
     } else {
       // `submitted` is read pre-increment here because this closure captured
       // it before setSubmitted queued the +1 for this upload.
@@ -177,11 +192,13 @@ function WordReadingPlayer({
     if (
       !micAllowed ||
       !micSupported ||
+      !readyForAttempt ||
       !canRecordAnother(submitted) ||
       (phase !== "ready" && phase !== "unclear" && phase !== "fallback")
     ) {
       return;
     }
+    stopModelAudioBeforeRecording(speech.cancel);
     setPhase("requesting");
 
     try {
@@ -262,67 +279,41 @@ function WordReadingPlayer({
         </div>
       </div>
 
-      <PlayerControls>
-        <SpeakerButton
-          speech={speech}
-          text={parsed.target}
-          label={`Hear ${parsed.target} again`}
-          size="lg"
-          shape="round"
-        />
-      </PlayerControls>
+      <OralModelStep
+        presentation={parsed.presentation}
+        speechSupported={speech.supported && modelStatus !== "unavailable"}
+        modelStatus={modelStatus === "unavailable" ? "idle" : modelStatus}
+        disabled={isModelPlaybackLocked(phase)}
+        label={`Listen to the word ${parsed.target}`}
+        onPlay={playModel}
+      />
 
-      {fallbackMode ? (
-        <div className="grid gap-4 rounded-3xl border-[3px] border-ink bg-honey/30 p-6">
-          <p className="font-display text-2xl text-ink">Read it to a grown-up.</p>
-          <p className="text-ink-soft">The microphone is optional. You can still finish this one.</p>
-          <PlayerControls>
-            {micAllowed && micSupported && canRecordAnother(submitted) && (
-              <Button size="kid" variant="honey" onClick={() => void startListening()}>
-                <MicrophoneIcon size={34} weight="fill" aria-hidden="true" />
-                Try again
-              </Button>
-            )}
-            <Button size="kid" variant="honey" onClick={completeFallback}>
-              <CheckCircleIcon size={30} weight="fill" aria-hidden="true" />
-              A grown-up listened - I read it
-            </Button>
-            <Button size="kid" variant="soft" onClick={completeFallback}>
-              Keep going
-            </Button>
-          </PlayerControls>
-        </div>
+      {adultModelFallback ? (
+        <ModeledAudioFallback onComplete={completeFallback} />
+      ) : fallbackMode ? (
+        <OralSupportPanel
+          title="Read it to a grown-up."
+          description="The microphone is optional. You can still finish this one."
+          focusOnMount={phase === "fallback"}
+          canRetry={micAllowed && micSupported && readyForAttempt && canRecordAnother(submitted)}
+          onRetry={() => void startListening()}
+          onComplete={completeFallback}
+        />
       ) : phase === "unclear" ? (
-        <div className="grid gap-4 rounded-3xl border-[3px] border-ink bg-honey/35 p-6">
-          <p className="font-display text-2xl text-ink">I couldn&apos;t quite hear that</p>
-          <p className="text-ink-soft">Listen again, try once more, or ask a grown-up to listen.</p>
-          <PlayerControls>
-            <SpeakerButton
-              speech={speech}
-              text={parsed.target}
-              label={`Hear ${parsed.target} again`}
-              size="sm"
-              shape="round"
-            />
-            <Button size="kid" variant="honey" onClick={() => void startListening()}>
-              <MicrophoneIcon size={34} weight="fill" aria-hidden="true" />
-              Try again
-            </Button>
-            <Button size="kid" variant="honey" onClick={completeFallback}>
-              <CheckCircleIcon size={30} weight="fill" aria-hidden="true" />
-              A grown-up listened - I read it
-            </Button>
-            <Button size="kid" variant="soft" onClick={completeFallback}>
-              Keep going
-            </Button>
-          </PlayerControls>
-        </div>
+        <OralSupportPanel
+          title="I couldn't quite hear that"
+          description="Listen again, try once more, or ask a grown-up to listen."
+          focusOnMount
+          canRetry
+          onRetry={() => void startListening()}
+          onComplete={completeFallback}
+        />
       ) : (
         <div className="grid place-items-center gap-4">
           <button
             type="button"
             onClick={phase === "listening" ? stopListening : () => void startListening()}
-            disabled={phase === "requesting" || phase === "checking"}
+            disabled={!readyForAttempt || phase === "requesting" || phase === "checking"}
             aria-label={phase === "listening" ? "Stop listening" : "Read it aloud"}
             className={cn(
               "grid size-40 place-items-center rounded-full border-[4px] border-ink shadow-pop transition duration-200 ease-out",
@@ -347,7 +338,11 @@ function WordReadingPlayer({
                 ? "Listening back…"
                 : phase === "requesting"
                   ? "Getting the microphone…"
-                  : "Tap the microphone, then read"}
+                  : !readyForAttempt
+                    ? "Listen to the model first"
+                    : parsed.presentation === "cold"
+                      ? "Cold read: tap the microphone, then read"
+                      : "Step 2: tap the microphone, then read"}
           </p>
         </div>
       )}

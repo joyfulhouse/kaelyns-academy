@@ -19,9 +19,19 @@ describe("spokenEnglishStrings", () => {
     ]);
   });
 
-  it("pulls instruction + words from a sightword item and dedupes/blank-skips", () => {
-    const item = { instruction: "Find 'the'.", words: ["the", "the"], decoys: ["teh"] };
-    expect(spokenEnglishStrings(item)).toEqual(["Find 'the'.", "the"]);
+  it("warms each sight-word round's actual spoken cue", () => {
+    const item = {
+      instruction: "Listen, then find it.",
+      rounds: [
+        { target: "the", spokenPrompt: "Find the word the.", choices: ["the", "they"] },
+        { target: "you", choices: ["you", "your"] },
+      ],
+    };
+    expect(spokenEnglishStrings(item)).toEqual([
+      "Listen, then find it.",
+      "Find the word the.",
+      "you",
+    ]);
   });
 
   it("returns [] for an item with no spoken fields", () => {

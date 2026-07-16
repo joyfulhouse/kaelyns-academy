@@ -1,0 +1,163 @@
+import type { Unit } from "../../types";
+
+// ── Strand 4: Math ─────────────────────────────────────────────────────
+export const mathUnit: Unit = {
+  id: "math",
+  order: 4,
+  title: "Math",
+  emoji: "🎪",
+  world: "bigtop",
+  bigIdea:
+    "She already multiplies and reads place value into the hundreds. So we teach forward: equal groups, multiplication and division, make-a-ten strategies, area, fractions, and reasoning. Growing a mathematician, not a calculator.",
+  phonicsFocus: "Multiplication → fractions",
+  mathFocus: "11 levels",
+  project: "Author a two-step word problem for an expedition and the equation that solves it.",
+  lessons: [
+    {
+      id: "math-r1",
+      order: 1,
+      title: "Equal groups & arrays",
+      activities: [
+        {
+          id: "math-r1-a1",
+          kind: "math-array",
+          title: "Build the rocket seats",
+          blurb: "4 rows of 5. Skip-count to the total.",
+          estMinutes: 8,
+          band: "ready",
+          skillTags: ["math.equal-groups.arrays"],
+          config: {
+            instruction: "The rocket has 4 rows of seats, 5 seats in each row. Build it, then skip-count one row at a time to find the total.",
+            mode: "build",
+            rows: 4,
+            cols: 5,
+            emoji: "🚀",
+          },
+        },
+      ],
+    },
+    {
+      id: "math-r2",
+      order: 2,
+      title: "Multiplication means equal groups",
+      activities: [
+        {
+          id: "math-r2-a1",
+          kind: "math-array",
+          title: "See it three ways",
+          blurb: "Connect an array, repeated addition, and 3 x 4 = 12.",
+          estMinutes: 8,
+          band: "stretch",
+          skillTags: ["math.mult.meaning"],
+          config: {
+            instruction: "Build 3 rows of 4. Connect the model to 4 + 4 + 4 and 3 x 4, then find the product.",
+            mode: "multiply",
+            rows: 3,
+            cols: 4,
+            emoji: "🍪",
+          },
+        },
+        {
+          id: "math-r2-a2",
+          kind: "math-array",
+          title: "Skip-count the groups",
+          blurb: "Four equal rows of five, revealed and skip-counted.",
+          estMinutes: 6,
+          band: "stretch",
+          skillTags: ["math.mult.meaning"],
+          config: {
+            instruction: "Reveal four rows of five, then skip-count the equal groups: 5, 10, 15, 20.",
+            mode: "multiply",
+            rows: 4,
+            cols: 5,
+            emoji: "⭐",
+          },
+        },
+      ],
+    },
+    {
+      id: "math-r5",
+      order: 3,
+      title: "Division & fact families",
+      activities: [
+        {
+          id: "math-r5-a1",
+          kind: "math-array",
+          title: "Share the treasure",
+          blurb: "15 gold coins, 3 explorers. How many each?",
+          estMinutes: 8,
+          band: "stretch",
+          skillTags: ["math.div.fact-families"],
+          config: {
+            instruction: "Deal 15 gold coins fairly to 3 explorers. How many does each one get? Then finish all four related facts.",
+            mode: "divide",
+            total: 15,
+            groups: 3,
+            emoji: "🪙",
+          },
+        },
+      ],
+    },
+    {
+      id: "math-r7",
+      order: 4,
+      title: "Make a ten",
+      activities: [
+        {
+          id: "math-r7-a1",
+          kind: "math-tenframe",
+          title: "Make a ten",
+          blurb: "Fill the first frame, then count what is left.",
+          estMinutes: 10,
+          band: "ready",
+          skillTags: ["math.add.make-ten"],
+          config: {
+            instruction: "Add 7 and 8. Fill the first frame to make one ten, then count the 5 left in the next frame.",
+            mode: "make-ten",
+            target: 7,
+            addend: 8,
+            frames: 2,
+          },
+        },
+      ],
+    },
+    {
+      id: "math-r8",
+      order: 5,
+      title: "Area and equal parts",
+      activities: [
+        {
+          id: "math-r8-a1",
+          kind: "math-array",
+          title: "Area is an array",
+          blurb: "Tile the rectangle, then find its area.",
+          estMinutes: 8,
+          band: "stretch",
+          skillTags: ["math.geometry.area-arrays"],
+          config: {
+            instruction: "Tile this rectangle with unit squares. How many squares cover it? Notice you can multiply the rows by the columns instead of counting each one.",
+            mode: "area",
+            rows: 3,
+            cols: 4,
+            emoji: "🟦",
+          },
+        },
+        {
+          id: "math-r8-a2",
+          kind: "math-fraction-bar",
+          title: "Fair shares must be equal",
+          blurb: "Split the flatbread into 4 equal parts.",
+          estMinutes: 8,
+          band: "stretch",
+          skillTags: ["math.fractions.unit"],
+          config: {
+            instruction: "Share the Egyptian flatbread among 4 diggers. Choose the bar split into 4 equal parts. Each equal part is one fourth.",
+            mode: "partition",
+            numerator: 1,
+            denominator: 4,
+          },
+        },
+      ],
+    },
+  ],
+};
