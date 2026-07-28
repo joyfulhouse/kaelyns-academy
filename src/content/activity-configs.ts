@@ -20,6 +20,7 @@ import { readingComprehensionConfig } from "./activity-configs/reading-comprehen
 import { seqOrderConfig } from "./activity-configs/seq-order";
 import { sightwordGameConfig } from "./activity-configs/sightword-game";
 import { sortCategoriesConfig } from "./activity-configs/sort-categories";
+import { typingCatchConfig } from "./activity-configs/typing-catch";
 import { typingKeysConfig } from "./activity-configs/typing-keys";
 
 export * from "./activity-configs/journal-prompt";
@@ -37,6 +38,7 @@ export * from "./activity-configs/reading-comprehension";
 export * from "./activity-configs/seq-order";
 export * from "./activity-configs/sightword-game";
 export * from "./activity-configs/sort-categories";
+export * from "./activity-configs/typing-catch";
 export * from "./activity-configs/typing-keys";
 
 export const ACTIVITY_CONFIG_SCHEMAS = {
@@ -56,6 +58,7 @@ export const ACTIVITY_CONFIG_SCHEMAS = {
   "seq-order": seqOrderConfig,
   "oral-reading": oralReadingConfig,
   "typing-keys": typingKeysConfig,
+  "typing-catch": typingCatchConfig,
 } as const;
 
 export type ActivityKind = keyof typeof ACTIVITY_CONFIG_SCHEMAS;

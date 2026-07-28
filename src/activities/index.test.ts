@@ -60,6 +60,11 @@ const VALID_RESPONSES = {
   "seq-order": { attempts: 1, order: [0, 1, 2] },
   "oral-reading": { attempts: 1, results: ["matched"], status: "verified" },
   "typing-keys": { prompts: [{ key: "f", ok: true, retries: 0 }] },
+  "typing-catch": {
+    prompts: [{ text: "a", ok: true, ms: 900 }],
+    endedBy: "time",
+    elapsedMs: 45_000,
+  },
 } satisfies Record<ActivityKind, unknown>;
 
 const OVER_BOUNDED_RESPONSES = {
@@ -143,6 +148,11 @@ const OVER_BOUNDED_RESPONSES = {
   },
   "typing-keys": {
     prompts: Array.from({ length: 31 }, () => ({ key: "f", ok: true, retries: 0 })),
+  },
+  "typing-catch": {
+    prompts: Array.from({ length: 121 }, () => ({ text: "a", ok: true, ms: 900 })),
+    endedBy: "time",
+    elapsedMs: 45_000,
   },
 } satisfies Record<ActivityKind, unknown>;
 

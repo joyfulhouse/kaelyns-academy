@@ -95,6 +95,7 @@ const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
   "seq-order": "Order",
   "oral-reading": "Read aloud",
   "typing-keys": "Key Camp",
+  "typing-catch": "Star Catch",
 };
 
 /** Plain-language label for an attempt's kind (falls back to the raw kind). */
