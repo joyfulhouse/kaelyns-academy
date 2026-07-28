@@ -1,4 +1,5 @@
 import { kaelynAdaptive } from "./programs/kaelyn-adaptive";
+import { keyboardClub } from "./programs/keyboard-club";
 import { worldLanguages } from "./programs/world-languages";
 import { SKILLS } from "./skills";
 import type { Activity, Lesson, Program, SkillTag, Unit } from "./types";
@@ -9,7 +10,7 @@ export { SKILLS, getSkill } from "./skills";
 // Program 02 — Kaelyn's Adaptive Curriculum — is the program the app serves.
 // Program 01 (summer-k-to-grade1.ts) stays on disk, archived, but is no longer
 // in PROGRAMS; it was review, not learning, for this learner.
-export const PROGRAMS: Program[] = [kaelynAdaptive, worldLanguages];
+export const PROGRAMS: Program[] = [kaelynAdaptive, worldLanguages, keyboardClub];
 
 export function listPrograms(): Program[] {
   return PROGRAMS;
