@@ -9,13 +9,16 @@ import { KEY_FINGERS, TYPING_ROWS, type Finger } from "./keys";
  *
  * Static class maps only — Tailwind's JIT cannot see constructed strings.
  */
-const FINGER_TINT: Record<Finger, string> = {
+export const FINGER_TINT: Record<Finger, string> = {
   pinky: "bg-berry/20",
   ring: "bg-sky/20",
   middle: "bg-sprout/20",
   index: "bg-honey/30",
   thumb: "bg-coral/20",
 };
+
+/** Tint for a key with no finger assignment. */
+export const NO_FINGER_TINT = "bg-paper-sunk";
 
 const ROW_ORDER = ["top", "home", "bottom"] as const;
 
@@ -42,7 +45,7 @@ function Key({ char, target }: { char: string; target: string | null }) {
       className={cn(
         "grid place-items-center rounded-xl text-lg font-semibold text-ink",
         char === " " ? "h-12 w-64" : "size-12",
-        assignment ? FINGER_TINT[assignment.finger] : "bg-paper-sunk",
+        assignment ? FINGER_TINT[assignment.finger] : NO_FINGER_TINT,
         isTarget && "ring-4 ring-coral ring-offset-2 ring-offset-paper",
       )}
     >

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { KeyboardMap } from "./KeyboardMap";
+import { KeyboardMap, FINGER_TINT, NO_FINGER_TINT } from "./KeyboardMap";
 
 describe("KeyboardMap", () => {
   it("draws every lettered key plus the space bar", () => {
@@ -39,25 +39,18 @@ describe("KeyboardMap", () => {
       definedTokens.add(match[1]);
     }
 
-    // Extract all colour tokens referenced in KeyboardMap
+    // Extract all colour tokens referenced in KeyboardMap by reading the actual exports
     const referencedTokens = new Set<string>();
-    // From FINGER_TINT: bg-berry/20, bg-sky/20, bg-sprout/20, bg-honey/30, bg-coral/20
-    // From fallback: bg-paper-sunk
-    // Parse "bg-{token}/*" → "token"
-    const fingerTintClasses = [
-      "bg-berry/20",
-      "bg-sky/20",
-      "bg-sprout/20",
-      "bg-honey/30",
-      "bg-coral/20",
-    ];
-    const fallbackClass = "bg-paper-sunk";
 
-    fingerTintClasses.forEach((cls) => {
+    // From FINGER_TINT values: extract "token" from "bg-token/opacity"
+    Object.values(FINGER_TINT).forEach((cls) => {
       const tokenName = cls.split("/")[0].replace("bg-", "");
       referencedTokens.add(tokenName);
     });
-    referencedTokens.add(fallbackClass.replace("bg-", ""));
+
+    // From NO_FINGER_TINT: extract "token" from "bg-token" (or "bg-token/opacity")
+    const noFingerTokenName = NO_FINGER_TINT.split("/")[0].replace("bg-", "");
+    referencedTokens.add(noFingerTokenName);
 
     // Assert all referenced tokens are defined
     referencedTokens.forEach((token) => {
