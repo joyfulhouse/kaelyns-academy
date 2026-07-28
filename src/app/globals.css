@@ -34,6 +34,12 @@
   --color-warn: oklch(0.7 0.15 76);
   --color-danger: oklch(0.57 0.17 25);
 
+  /* Per-program accent tints used in the keyboard map (fixed across all worlds;
+     source: ocean, space, garden hues respectively). */
+  --color-sky: oklch(0.7 0.11 222);
+  --color-berry: oklch(0.58 0.15 300);
+  --color-sprout: oklch(0.72 0.13 150);
+
   /* Stretch — the "reach" / challenge tone (violet), paired light + deep like
      the brand tones above so Pill and friends can tint + carry readable text. */
   --color-stretch: oklch(0.58 0.15 300);

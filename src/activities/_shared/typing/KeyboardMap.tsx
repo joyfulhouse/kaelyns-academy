@@ -27,8 +27,8 @@ function keyLabel(key: string): string {
   const assignment = fingerOf(key);
   const hand = assignment?.hand === "left" ? "left" : "right";
   const finger = assignment?.finger ?? "index";
-  const fingerLabel = finger === "thumb" ? finger : `${finger} finger`;
   if (key === " ") return `Press the space bar, ${hand} ${finger}`;
+  const fingerLabel = `${finger} finger`;
   return `Press ${key.toUpperCase()}, ${hand} ${fingerLabel}`;
 }
 
@@ -39,11 +39,10 @@ function Key({ char, target }: { char: string; target: string | null }) {
     <span
       data-key={char}
       data-target={isTarget ? "true" : undefined}
-      aria-label={isTarget ? keyLabel(target) : undefined}
       className={cn(
         "grid place-items-center rounded-xl text-lg font-semibold text-ink",
         char === " " ? "h-12 w-64" : "size-12",
-        assignment ? FINGER_TINT[assignment.finger] : "bg-paper-deep",
+        assignment ? FINGER_TINT[assignment.finger] : "bg-paper-sunk",
         isTarget && "ring-4 ring-coral ring-offset-2 ring-offset-paper",
       )}
     >
@@ -53,8 +52,11 @@ function Key({ char, target }: { char: string; target: string | null }) {
 }
 
 export function KeyboardMap({ target }: { target: string | null }) {
+  const containerLabel =
+    target === null ? "Keyboard" : `Keyboard. ${keyLabel(target)}.`;
+
   return (
-    <div className="flex flex-col items-center gap-2" role="img" aria-label="Keyboard">
+    <div className="flex flex-col items-center gap-2" role="img" aria-label={containerLabel}>
       {ROW_ORDER.map((row) => (
         <div key={row} className="flex gap-2">
           {TYPING_ROWS[row].map((char) => (
