@@ -22,3 +22,21 @@ describe("Science & Nature skills", () => {
     }
   });
 });
+
+describe("Keyboard Club skills", () => {
+  it("registers the six typing rungs under the typing domain", () => {
+    for (const slug of [
+      "typing.keys.home-row",
+      "typing.keys.top-row",
+      "typing.keys.bottom-row",
+      "typing.keys.shift-space",
+      "typing.words.familiar",
+      "typing.fluency.rate",
+    ]) {
+      const skill = SKILLS.find((s) => s.slug === slug);
+      expect(skill, slug).toBeDefined();
+      expect(skill!.domain).toBe("typing");
+      expect(skill!.readyIndicator.length).toBeGreaterThan(0);
+    }
+  });
+});
