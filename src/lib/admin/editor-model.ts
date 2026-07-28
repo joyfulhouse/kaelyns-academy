@@ -155,6 +155,8 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
         instruction: "Listen, then read this word aloud.",
         target: "the",
       };
+    case "typing-keys":
+      return { instruction: "Press the glowing key.", keys: ["f", "j"], reps: 2 };
   }
 }
 

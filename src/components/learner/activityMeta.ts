@@ -5,6 +5,7 @@ import {
   DotsNineIcon,
   GridFourIcon,
   HandTapIcon,
+  KeyboardIcon,
   ListNumbersIcon,
   MicrophoneIcon,
   NotePencilIcon,
@@ -38,4 +39,5 @@ export const ACTIVITY_META: Record<ActivityKind, { icon: Icon; label: string }> 
   "sort-categories": { icon: StackIcon, label: "Sort" },
   "seq-order": { icon: ListNumbersIcon, label: "Order" },
   "oral-reading": { icon: MicrophoneIcon, label: "Read it out loud" },
+  "typing-keys": { icon: KeyboardIcon, label: "Key Camp" },
 };
