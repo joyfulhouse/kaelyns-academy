@@ -107,13 +107,23 @@ test("Key Camp completes the whole drill and reports a finish", async ({ page })
 test("Star Catch pops a falling star when its letter is typed", async ({ page }) => {
   await openGate(page, STAR_CATCH);
 
+  // As with Key Camp, the gate's proof keydown reaches the round too (the
+  // clock and useTypingKeys listener are live from mount), and the first
+  // star spawns immediately from config.pool[0]. For home-catch-gentle that's
+  // "a", so today the proof press ("f") is a harmless no-op — but nothing
+  // guarantees pool order, and home-catch-steady sits right below it with the
+  // same pool. Read the caught count rather than assuming it starts at 0, so
+  // a future reorder can't silently flip this from "Caught 1" to "Caught 2".
+  const caught = page.getByText(/^Caught \d+$/);
+  const before = Number((await caught.textContent())?.match(/\d+/)?.[0] ?? "0");
+
   const star = page.locator("[data-falling]").first();
   await expect(star).toBeVisible({ timeout: 15_000 });
   const letter = await star.getAttribute("data-falling");
   expect(letter).not.toBeNull();
 
   await page.keyboard.press(letter!);
-  await expect(page.getByText("Caught 1")).toBeVisible();
+  await expect(caught).toHaveText(`Caught ${before + 1}`);
 });
 
 test("a touch-only device is told to come back on a computer", async ({ browser }) => {
