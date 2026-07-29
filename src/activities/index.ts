@@ -31,6 +31,7 @@ import { oralReading } from "./oral-reading";
 import { typingKeys } from "./typing-keys";
 import { typingCatch } from "./typing-catch";
 import { typingWrite } from "./typing-write";
+import { typingRace } from "./typing-race";
 
 let registered = false;
 
@@ -56,6 +57,7 @@ export function registerActivityTypes(): void {
   registerActivityType(typingKeys);
   registerActivityType(typingCatch);
   registerActivityType(typingWrite);
+  registerActivityType(typingRace);
 }
 
 registerActivityTypes();

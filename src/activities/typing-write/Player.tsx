@@ -6,7 +6,6 @@ import type { TypingWriteConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { Mascot } from "@/components/art/Mascot";
 import { StarShape } from "@/components/ui/Stars";
-import { cn } from "@/lib/cn";
 import { Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
 import { useActivity } from "../_shared/useActivity";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
@@ -14,6 +13,7 @@ import { useSpeech } from "../_shared/useSpeech";
 import { useTargetSpeech } from "../_shared/useTargetSpeech";
 import { TypingStage } from "../_shared/typing/TypingStage";
 import { useTypingKeys } from "../_shared/typing/useTypingKeys";
+import { BufferTiles, ExpectedTiles } from "../_shared/typing/WordTiles";
 import {
   initialWordProgress,
   isWordComplete,
@@ -26,13 +26,6 @@ import { schema, type TypingWriteResponse } from "./logic";
 
 /** Retries within one word before the hidden target reveals itself (D7). */
 const REVEAL_RETRIES = 2;
-
-const TILE_BASE =
-  "grid size-14 place-items-center rounded-xl border-[3px] border-ink font-display text-2xl text-ink shadow-pop";
-const TILE_TONE: Record<"correct" | "wrong", string> = {
-  correct: "bg-honey",
-  wrong: "bg-coral/55",
-};
 
 export function TypingWritePlayer(
   props: ActivityPlayerProps<TypingWriteConfig, TypingWriteResponse>,
@@ -52,45 +45,6 @@ interface WriteState {
 
 function initialWriteState(): WriteState {
   return { index: 0, progress: initialWordProgress(), results: [] };
-}
-
-function glyph(char: string): string {
-  return char === " " ? "␣" : char;
-}
-
-/** The (always visible) target — hidden entirely in Player render; only shown
- *  in "see" mode or once a hear-mode round reveals. Decorative: the essential
- *  text lives in the aria-live announcement below. */
-export function ExpectedTiles({ item }: { item: string }) {
-  return (
-    <div aria-hidden="true" className="flex flex-wrap justify-center gap-2">
-      {[...item].map((ch, i) => (
-        <span key={i} className={cn(TILE_BASE, "bg-paper-raised")}>
-          {glyph(ch)}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-/**
- * §8: `progress.typed` is client-only display feedback. Only `wordItemResult`
- * (expected-derived data) is ever reported — this row is decorative, never the
- * source of what gets sent to `onComplete`.
- */
-export function BufferTiles({ progress }: { progress: WordProgress }) {
-  return (
-    <div aria-hidden="true" className="flex flex-wrap justify-center gap-2">
-      {progress.typed.map((entry, i) => (
-        <span key={i} className={cn(TILE_BASE, TILE_TONE[entry.ok ? "correct" : "wrong"])}>
-          {glyph(entry.char)}
-        </span>
-      ))}
-      <span className="grid size-14 place-items-center rounded-xl border-[3px] border-dashed border-ink/40 bg-paper-sunk text-2xl text-ink/40">
-        |
-      </span>
-    </div>
-  );
 }
 
 export function writeAnnouncement(item: string | null, hearMode: boolean): string {

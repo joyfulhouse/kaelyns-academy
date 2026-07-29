@@ -1,11 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-  HeartIcon,
-  PauseIcon,
-  StarIcon,
-} from "@phosphor-icons/react/dist/ssr";
+import { HeartIcon, StarIcon } from "@phosphor-icons/react/dist/ssr";
 import type { TypingCatchConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { ProgressRing } from "@/components/ui/ProgressRing";
@@ -18,6 +14,7 @@ import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { TypingStage } from "../_shared/typing/TypingStage";
 import { isCapitalKey } from "../_shared/typing/keys";
+import { PauseOverlay } from "../_shared/typing/PauseOverlay";
 import { useTypingKeys } from "../_shared/typing/useTypingKeys";
 import { fallMs, schema, type TypingCatchResponse } from "./logic";
 import {
@@ -27,10 +24,9 @@ import {
   tick,
   typeChar,
 } from "./state";
-import { useDocumentHidden, useRoundPaused } from "../_shared/typing/roundPause";
+import { useRoundPaused } from "../_shared/typing/roundPause";
 
 const TICK_MS = 100;
-const PAUSE_MESSAGE = "Paused — click to keep playing";
 
 const SPOKEN_TARGETS: Readonly<Record<string, string>> = {
   " ": "space",
@@ -57,43 +53,6 @@ export function TypingCatchPlayer(
     <TypingStage onExit={props.onExit}>
       <CatchRound {...props} />
     </TypingStage>
-  );
-}
-
-export function PauseOverlay({
-  paused,
-  onResume,
-}: {
-  paused: boolean;
-  onResume: () => void;
-}) {
-  const speech = useSpeech();
-  const cancelSpeech = speech.cancel;
-  const hidden = useDocumentHidden();
-  // A hidden tab pauses the round too, but nobody is looking at the overlay —
-  // announcing there talks to an empty room. Speak only when the page shows.
-  useSpeakOnce(speech.speak, paused && !hidden ? PAUSE_MESSAGE : null);
-
-  useEffect(
-    () => () => {
-      cancelSpeech();
-    },
-    [cancelSpeech],
-  );
-
-  if (!paused) return null;
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        cancelSpeech();
-        onResume();
-      }}
-      className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 rounded-2xl border-2 border-honey bg-paper/95 px-6 text-center text-xl font-semibold text-ink shadow-lg"
-    >
-      <PauseIcon size={72} weight="fill" className="text-honey-deep" aria-hidden />
-      <span>{PAUSE_MESSAGE}</span>
-    </button>
   );
 }
 

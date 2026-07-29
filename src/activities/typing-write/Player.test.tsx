@@ -87,7 +87,8 @@ vi.mock("../_shared/typing/TypingStage", () => ({
 }));
 
 import { TypingStage } from "../_shared/typing/TypingStage";
-import { ExpectedTiles, TypingWritePlayer, WriteRound, writeAnnouncement } from "./Player";
+import { ExpectedTiles } from "../_shared/typing/WordTiles";
+import { TypingWritePlayer, WriteRound, writeAnnouncement } from "./Player";
 
 function renderRound(
   config: TypingWriteConfig,
