@@ -36,8 +36,8 @@ export function TypingStage({ children }: { children: ReactNode }) {
 
   useSpeakOnce(speech.speak, spokenInstruction, state);
 
-  // Keep listening even while blocked: attaching a keyboard case to a tablet
-  // should just work, with no reload and no settings toggle.
+  // Keep listening even while blocked: after attaching a keyboard case to a
+  // tablet, pressing the displayed F proof key should work without a reload.
   useTypingKeys((intent) => {
     if (intent.type === "char" && isProofKey(intent)) {
       speech.cancel();

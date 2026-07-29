@@ -6,6 +6,7 @@ import {
 import {
   expectedSpawnCount,
   fallMs,
+  roundDurationMs,
   spawnCutoffMs,
   spawnIntervalMs,
   type TypingCatchResponse,
@@ -16,7 +17,7 @@ import {
  * unit-testable without a DOM or a fake timer. The Player owns only the
  * interval that supplies `nowMs`.
  */
-export interface CatchTarget {
+interface CatchTarget {
   id: number;
   text: string;
   spawnedMs: number;
@@ -32,7 +33,6 @@ export interface CatchState {
 }
 
 const DEFAULT_LIVES = 3;
-const DEFAULT_DURATION_SEC = 45;
 
 /**
  * The pool cycles in authored order rather than at random: a child gets every
@@ -75,7 +75,7 @@ export function tick(
 ): CatchState {
   const deadline = nowMs - fallMs(config);
   const landed = state.targets.filter((target) => target.spawnedMs < deadline);
-  let next: CatchState = {
+  const next: CatchState = {
     ...state,
     targets: state.targets.filter((target) => target.spawnedMs >= deadline),
     lives: Math.max(0, state.lives - landed.length),
@@ -89,7 +89,7 @@ export function tick(
     next.poolCursor < expectedSpawnCount(config) &&
     nowMs - next.lastSpawnMs >= spawnIntervalMs(config)
   ) {
-    next = spawn(next, config, nowMs);
+    return spawn(next, config, nowMs);
   }
   return next;
 }
@@ -148,6 +148,6 @@ export function roundOver(
   elapsedMs: number,
 ): "time" | "lives" | null {
   if (state.lives <= 0) return "lives";
-  if (elapsedMs >= (config.durationSec ?? DEFAULT_DURATION_SEC) * 1_000) return "time";
+  if (elapsedMs >= roundDurationMs(config)) return "time";
   return null;
 }

@@ -5,8 +5,8 @@ import type { TypingCharIntent } from "./typingKey";
  * that requires a physical keyboard (spec: the sole exception to touch-first
  * design), so a tablet gets an explanation rather than a broken game.
  *
- * "blocked" is a message, not a dead end — the stage keeps listening for a
- * keypress, so an iPad with a keyboard case opens the moment a key is pressed.
+ * "blocked" is a message, not a dead end — the stage keeps listening for the
+ * displayed F proof key, so an iPad with a keyboard case can still open it.
  */
 export type GateState = "blocked" | "prove" | "open";
 
