@@ -130,7 +130,18 @@ export function RaceRound({
   // counts toward elapsed time. Guarded for SSR/non-browser rendering, same
   // as roundPause's own subscribe guard.
   useEffect(() => {
-    if (!started || paused || finished) return;
+    if (!started || paused || finished) {
+      // Fold any EVENT-OPENED segment too: a keystroke and a pause can land
+      // in the same commit, in which case this effect's live branch (and its
+      // cleanup) never ran for that segment — without this fold, resume's
+      // ??= would keep the pre-pause timestamp and count blurred time.
+      // (performance.now is node-safe, so this needs no window guard.)
+      if (segmentStartRef.current !== null) {
+        accumulatedRef.current += performance.now() - segmentStartRef.current;
+        segmentStartRef.current = null;
+      }
+      return;
+    }
     if (typeof window === "undefined") return;
     segmentStartRef.current ??= performance.now();
     const id = window.setInterval(() => {

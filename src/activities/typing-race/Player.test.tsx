@@ -292,7 +292,37 @@ describe("Rocket Race word round", () => {
 
     const segmentStart = fixtures.refValues[2]?.current;
     expect(segmentStart).toEqual(expect.any(Number));
-    expect(currentElapsedMs(0, segmentStart as number, (segmentStart as number) + 250)).toBe(250);
+    expect(currentElapsedMs(0, segmentStart as number, (segmentStart as number) + 250)).toBeCloseTo(
+      250,
+      9,
+    );
+  });
+
+  it("folds an event-opened segment when a pause lands before the live effect ran", () => {
+    renderRound(CONFIG, () => undefined);
+    type("c");
+    const openedStart = fixtures.refValues[2]?.current;
+    expect(openedStart).toEqual(expect.any(Number));
+
+    // A blur can batch into the same commit as the keystroke: the live
+    // branch (and its cleanup) never ran for this segment, so the paused
+    // early-return itself must fold it — otherwise resume's ??= keeps the
+    // pre-pause timestamp and counts blurred wall-clock time.
+    fixtures.paused = true;
+    toMarkup(CONFIG, () => undefined);
+    expect(fixtures.refValues[2]?.current).toBeNull();
+    expect(fixtures.refValues[1]?.current).toEqual(expect.any(Number));
+
+    // Resume + next keystroke opens a FRESH segment rather than resurrecting
+    // the old one. (The effect's own re-open sits behind the SSR window
+    // guard, so in this node harness the event path is the opener — same as
+    // the synchronous-open test above.)
+    fixtures.paused = false;
+    renderRound(CONFIG, () => undefined);
+    type("a");
+    const resumedStart = fixtures.refValues[2]?.current;
+    expect(resumedStart).toEqual(expect.any(Number));
+    expect(resumedStart).toBeGreaterThanOrEqual(openedStart as number);
   });
 
   it("shows WPM only after the first completed word", () => {
