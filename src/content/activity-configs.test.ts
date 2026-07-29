@@ -24,6 +24,7 @@ import { sightwordGameConfig as sightwordGameModuleConfig } from "./activity-con
 import { sortCategoriesConfig as sortCategoriesModuleConfig } from "./activity-configs/sort-categories";
 import { typingCatchConfig as typingCatchModuleConfig } from "./activity-configs/typing-catch";
 import { typingKeysConfig as typingKeysModuleConfig } from "./activity-configs/typing-keys";
+import { typingRaceConfig as typingRaceModuleConfig } from "./activity-configs/typing-race";
 import { typingWriteConfig as typingWriteModuleConfig } from "./activity-configs/typing-write";
 
 const PER_KIND_SCHEMAS = {
@@ -45,6 +46,7 @@ const PER_KIND_SCHEMAS = {
   "typing-keys": typingKeysModuleConfig,
   "typing-catch": typingCatchModuleConfig,
   "typing-write": typingWriteModuleConfig,
+  "typing-race": typingRaceModuleConfig,
 } satisfies Record<ActivityKind, (typeof ACTIVITY_CONFIG_SCHEMAS)[ActivityKind]>;
 
 describe("activity config module registry", () => {

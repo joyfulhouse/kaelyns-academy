@@ -72,6 +72,16 @@ const VALID_RESPONSES = {
       { i: 2, ok: true, ms: 900, retries: 0, missedExpected: [] },
     ],
   },
+  "typing-race": {
+    words: Array.from({ length: 6 }, (_, i) => ({
+      i,
+      ok: true,
+      ms: 900,
+      retries: 0,
+      missedExpected: [],
+    })),
+    elapsedMs: 30_000,
+  },
 } satisfies Record<ActivityKind, unknown>;
 
 const OVER_BOUNDED_RESPONSES = {
@@ -169,6 +179,16 @@ const OVER_BOUNDED_RESPONSES = {
       retries: 0,
       missedExpected: [],
     })),
+  },
+  "typing-race": {
+    words: Array.from({ length: 21 }, (_, i) => ({
+      i: i % 20,
+      ok: true,
+      ms: 900,
+      retries: 0,
+      missedExpected: [],
+    })),
+    elapsedMs: 30_000,
   },
 } satisfies Record<ActivityKind, unknown>;
 

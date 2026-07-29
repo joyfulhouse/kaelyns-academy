@@ -10,6 +10,7 @@ import {
   MicrophoneIcon,
   NotePencilIcon,
   PuzzlePieceIcon,
+  RocketLaunchIcon,
   RulerIcon,
   SpeakerHighIcon,
   SquareHalfIcon,
@@ -44,4 +45,5 @@ export const ACTIVITY_META: Record<ActivityKind, { icon: Icon; label: string }> 
   "typing-keys": { icon: KeyboardIcon, label: "Key Camp" },
   "typing-catch": { icon: StarIcon, label: "Star Catch" },
   "typing-write": { icon: TextAaIcon, label: "Word Write" },
+  "typing-race": { icon: RocketLaunchIcon, label: "Rocket Race" },
 };

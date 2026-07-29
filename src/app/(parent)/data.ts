@@ -97,6 +97,7 @@ const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
   "typing-keys": "Key Camp",
   "typing-catch": "Star Catch",
   "typing-write": "Word Write",
+  "typing-race": "Rocket Race",
 };
 
 /** Plain-language label for an attempt's kind (falls back to the raw kind). */
