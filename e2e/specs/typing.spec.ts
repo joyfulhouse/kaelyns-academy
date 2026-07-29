@@ -181,11 +181,15 @@ test("Rocket Race hops the rocket forward as words finish", async ({ page }) => 
   // completes.
   await expect(page.getByText(/word 2 of 6/)).toBeVisible();
 
-  // The friendly pace comet rides the same track as the rocket
-  // (data-race-comet, already present on Player.tsx) — it renders before
-  // start and while paused too, so its presence here only confirms it rendered,
-  // not that the round is actively live.
-  await expect(page.locator('[data-race-comet="true"]')).toBeVisible();
+  // Assert the track in a MOTION-MODE-AGNOSTIC way: this suite runs with
+  // `reducedMotion: "reduce"` under CI (playwright.config.ts) and without it
+  // locally, and the two paths render different elements — the animated track
+  // carries the rocket and pace comet, the reduced-motion path a static
+  // "N of M words" line. `[data-race-track]` exists in both, so this pins that
+  // the round rendered its progress surface without pinning one motion mode.
+  // (The rocket's hop-per-completed-word geometry is unit-tested; the "word 2
+  // of 6" assertion above is what proves the hop wired up end to end.)
+  await expect(page.locator("[data-race-track]")).toBeVisible();
 });
 
 /**
