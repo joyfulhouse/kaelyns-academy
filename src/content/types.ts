@@ -17,6 +17,8 @@ import type {
   SeqOrderConfig,
   SightwordGameConfig,
   SortCategoriesConfig,
+  TypingCatchConfig,
+  TypingKeysConfig,
 } from "./activity-configs";
 
 export type { ActivityKind };
@@ -32,6 +34,7 @@ export type SkillDomain =
   | "habits"
   | "lifeskills" // Life Skills Math (B1): time · money · measurement
   | "science" // Science & Nature (B2): classify · sequence
+  | "typing" // Keyboard Club: keyboarding & touch typing
   // World Languages — one domain per language (one parent-report row each).
   | "zhuyin"
   | "spanish"
@@ -79,7 +82,9 @@ export type Activity =
   | ActivityOf<"math-measure", MathMeasureConfig>
   | ActivityOf<"sort-categories", SortCategoriesConfig>
   | ActivityOf<"seq-order", SeqOrderConfig>
-  | ActivityOf<"oral-reading", OralReadingConfig>;
+  | ActivityOf<"oral-reading", OralReadingConfig>
+  | ActivityOf<"typing-keys", TypingKeysConfig>
+  | ActivityOf<"typing-catch", TypingCatchConfig>;
 
 type CheckpointKind = "baseline" | "mid" | "final";
 

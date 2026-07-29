@@ -55,16 +55,21 @@ export function useEffectOncePerKey(
 }
 
 /**
- * Speak `text` once, on mount. Used by the Players that read their instruction
- * aloud the first time the screen appears. TTS is an enhancement (the prompt text
- * is always visible too), so a missing voice simply means nothing is spoken.
+ * Speak `text` once per `key`. The default key preserves once-on-mount behavior;
+ * callers with distinct screen states can key each utterance separately. A null
+ * text waits without latching, which lets hydration-sensitive callers defer
+ * narration until browser state resolves.
  */
-export function useSpeakOnce(speak: (text: string) => void, text: string): void {
+export function useSpeakOnce(
+  speak: (text: string) => void,
+  text: string | null,
+  key: unknown = ONCE,
+): void {
   const enabled = useContext(ReadAloudDefaultContext);
-  const spoken = useRef(false);
+  const spokenKey = useRef<unknown>(UNSEEN);
   useEffect(() => {
-    if (!enabled || spoken.current) return;
-    spoken.current = true;
+    if (!enabled || text === null || spokenKey.current === key) return;
+    spokenKey.current = key;
     speak(text);
-  }, [enabled, speak, text]);
+  }, [enabled, key, speak, text]);
 }

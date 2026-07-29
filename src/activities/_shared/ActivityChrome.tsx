@@ -140,17 +140,23 @@ export function PlayerControls({
 
 /**
  * The small, polite status line (progress / running count) under a Player's
- * surface. `aria-live="polite"` announces updates without stealing focus.
+ * surface. Updates are polite by default; a Player can opt out when a more
+ * actionable live region owns its announcements.
  */
 export function ProgressHint({
   children,
   className,
+  live = true,
 }: {
   children: ReactNode;
   className?: string;
+  live?: boolean;
 }) {
   return (
-    <p className={cn("text-center text-sm text-ink-soft", className)} aria-live="polite">
+    <p
+      className={cn("text-center text-sm text-ink-soft", className)}
+      aria-live={live ? "polite" : undefined}
+    >
       {children}
     </p>
   );

@@ -73,7 +73,7 @@ kaelyns-academy/
 │   │
 │   ├── content/                          # authored curriculum (typed, in-repo)
 │   │   ├── types.ts / registry.ts / index.ts / skills.ts / phonics.ts / activity-configs.ts
-│   │   ├── programs/                     # kaelyn-adaptive (pilot default), summer-k-to-grade1, world-languages/*
+│   │   ├── programs/                     # kaelyn-adaptive (pilot default), keyboard-club, summer-k-to-grade1, world-languages/*
 │   │   └── languages/                    # japanese, korean, spanish, zhuyin (+ audio, types)
 │   │
 │   ├── activities/                       # activity-type plugin registry (one dir per kind)

@@ -28,6 +28,8 @@ import { langListenMatch } from "./lang-listen-match";
 import { sortCategories } from "./sort-categories";
 import { seqOrder } from "./seq-order";
 import { oralReading } from "./oral-reading";
+import { typingKeys } from "./typing-keys";
+import { typingCatch } from "./typing-catch";
 
 let registered = false;
 
@@ -50,6 +52,8 @@ export function registerActivityTypes(): void {
   registerActivityType(sortCategories);
   registerActivityType(seqOrder);
   registerActivityType(oralReading);
+  registerActivityType(typingKeys);
+  registerActivityType(typingCatch);
 }
 
 registerActivityTypes();

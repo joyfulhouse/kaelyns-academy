@@ -22,6 +22,8 @@ import { readingComprehensionConfig as readingComprehensionModuleConfig } from "
 import { seqOrderConfig as seqOrderModuleConfig } from "./activity-configs/seq-order";
 import { sightwordGameConfig as sightwordGameModuleConfig } from "./activity-configs/sightword-game";
 import { sortCategoriesConfig as sortCategoriesModuleConfig } from "./activity-configs/sort-categories";
+import { typingCatchConfig as typingCatchModuleConfig } from "./activity-configs/typing-catch";
+import { typingKeysConfig as typingKeysModuleConfig } from "./activity-configs/typing-keys";
 
 const PER_KIND_SCHEMAS = {
   "phonics-wordbuild": phonicsWordbuildModuleConfig,
@@ -39,6 +41,8 @@ const PER_KIND_SCHEMAS = {
   "sort-categories": sortCategoriesModuleConfig,
   "seq-order": seqOrderModuleConfig,
   "oral-reading": oralReadingModuleConfig,
+  "typing-keys": typingKeysModuleConfig,
+  "typing-catch": typingCatchModuleConfig,
 } satisfies Record<ActivityKind, (typeof ACTIVITY_CONFIG_SCHEMAS)[ActivityKind]>;
 
 describe("activity config module registry", () => {

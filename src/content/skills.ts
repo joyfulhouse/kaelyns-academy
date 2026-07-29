@@ -429,6 +429,57 @@ export const SKILLS: Skill[] = [
     stretchIndicator: "Explains what comes before and after a given stage",
   },
 
+  // ── Keyboard Club (typing) ──────────────────────────────────────────
+  {
+    slug: "typing.keys.home-row",
+    domain: "typing",
+    label: "Home row",
+    readyIndicator: "Finds a-s-d-f and j-k-l-; from the F and J bumps without hunting for them",
+    stretchIndicator: "Returns her fingers to the bumps after each word without being reminded",
+  },
+  {
+    slug: "typing.keys.top-row",
+    domain: "typing",
+    label: "Top row",
+    readyIndicator: "Reaches up to q-w-e-r-t-y-u-i-o-p and comes back to the home row",
+    stretchIndicator: "Reaches up without her whole hand leaving home position",
+  },
+  {
+    slug: "typing.keys.bottom-row",
+    domain: "typing",
+    label: "Bottom row",
+    readyIndicator: "Reaches down to z-x-c-v-b-n-m and comes back to the home row",
+    stretchIndicator: "Keeps her wrists still while the fingers do the reaching",
+  },
+  {
+    slug: "typing.keys.space",
+    domain: "typing",
+    label: "Space bar",
+    readyIndicator: "Spaces with a thumb without looking down at the keyboard",
+    stretchIndicator: "Keeps both hands on the home row while a thumb reaches the space bar",
+  },
+  {
+    slug: "typing.keys.shift",
+    domain: "typing",
+    label: "Capitals with shift",
+    readyIndicator: "Makes a capital by holding the shift key while pressing a letter",
+    stretchIndicator: "Chooses the shift key opposite the letter instead of the nearer one",
+  },
+  {
+    slug: "typing.words.familiar",
+    domain: "typing",
+    label: "Typing familiar words",
+    readyIndicator: "Types words she can already read and spell, letter for letter",
+    stretchIndicator: "Notices a typo as she makes it and fixes it without being told",
+  },
+  {
+    slug: "typing.fluency.rate",
+    domain: "typing",
+    label: "Comfortable rate",
+    readyIndicator: "Keeps a steady, unhurried rate on familiar words instead of stopping at each key",
+    stretchIndicator: "Holds that rate while looking at the screen rather than her hands",
+  },
+
   // ── Decodable Readers (Phase 3 Slice 4): one decode skill per phonics
   // pattern, so each lesson tracks and schedules independently instead of
   // collapsing into a single fluency tag. ──
