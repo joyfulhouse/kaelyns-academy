@@ -22,6 +22,10 @@ export function spawnIntervalMs(config: TypingCatchConfig): number {
   return (FALL_SECONDS[config.speed ?? DEFAULT_SPEED] / 2) * 1_000;
 }
 
+export function roundDurationMs(config: TypingCatchConfig): number {
+  return (config.durationSec ?? DEFAULT_DURATION_SEC) * 1_000;
+}
+
 /**
  * The conservative floor for a full-length round counts only stars old enough
  * to have reached the ground before time-up. Stars still airborne are also
@@ -29,7 +33,7 @@ export function spawnIntervalMs(config: TypingCatchConfig): number {
  * frame without accepting the one-prompt forgery this bound exists to stop.
  */
 export function minPrompts(config: TypingCatchConfig): number {
-  const durationMs = (config.durationSec ?? DEFAULT_DURATION_SEC) * 1_000;
+  const durationMs = roundDurationMs(config);
   const fallMs = FALL_SECONDS[config.speed ?? DEFAULT_SPEED] * 1_000;
   return Math.max(1, Math.ceil(Math.max(0, durationMs - fallMs) / spawnIntervalMs(config)));
 }
@@ -37,11 +41,11 @@ export function minPrompts(config: TypingCatchConfig): number {
 /**
  * The most stars a round of this length could physically have shown. Scoring
  * needs this because a timed round has no fixed prompt count. The first target
- * spawns at zero; one more can spawn on every complete interval through time-up.
+ * spawns at zero; later targets spawn on complete intervals strictly before
+ * time-up. Runtime spawning reads this same bound.
  */
 export function maxPrompts(config: TypingCatchConfig): number {
-  const durationMs = (config.durationSec ?? DEFAULT_DURATION_SEC) * 1_000;
-  return Math.floor(durationMs / spawnIntervalMs(config)) + 1;
+  return Math.ceil(roundDurationMs(config) / spawnIntervalMs(config));
 }
 
 /**
@@ -69,6 +73,20 @@ export const responseSchema = z
   .strict();
 export type TypingCatchResponse = z.infer<typeof responseSchema>;
 
+function matchesSpawnBag(config: TypingCatchConfig, prompts: TypingCatchResponse["prompts"]) {
+  const remaining = new Map<string, number>();
+  for (const prompt of prompts) {
+    remaining.set(prompt.text, (remaining.get(prompt.text) ?? 0) + 1);
+  }
+  for (let index = 0; index < prompts.length; index += 1) {
+    const expected = config.pool[index % config.pool.length]!;
+    const count = remaining.get(expected) ?? 0;
+    if (count === 0) return false;
+    remaining.set(expected, count - 1);
+  }
+  return true;
+}
+
 export function score(
   config: TypingCatchConfig,
   response: TypingCatchResponse,
@@ -82,7 +100,8 @@ export function score(
   const plausible =
     response.prompts.length <= maxPrompts(config) &&
     response.prompts.every((prompt) => pool.has(prompt.text)) &&
-    endingIsPlausible;
+    endingIsPlausible &&
+    matchesSpawnBag(config, response.prompts);
   // Fail closed: an implausible round scores nothing and moves no mastery,
   // rather than being rejected outright — the child may simply have hit a bug,
   // and losing an attempt is worse than losing the evidence.

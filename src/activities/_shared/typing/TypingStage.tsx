@@ -22,7 +22,7 @@ export function TypingStage({ children }: { children: ReactNode }) {
   // Keep listening even while blocked: attaching a keyboard case to a tablet
   // should just work, with no reload and no settings toggle.
   useTypingKeys((intent) => {
-    if (intent.type === "char" && isProofKey(intent.char)) setKeyboardProven(true);
+    if (intent.type === "char" && isProofKey(intent)) setKeyboardProven(true);
   }, state !== "open");
 
   if (state === "open") return <>{children}</>;

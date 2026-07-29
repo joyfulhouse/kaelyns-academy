@@ -8,9 +8,11 @@ import {
 
 function press(overrides: Partial<KeydownLike> & { key: string }): KeydownLike {
   return {
+    code: "",
     ctrlKey: false,
     metaKey: false,
     altKey: false,
+    shiftKey: false,
     repeat: false,
     isComposing: false,
     ...overrides,
@@ -19,15 +21,30 @@ function press(overrides: Partial<KeydownLike> & { key: string }): KeydownLike {
 
 describe("classifyKeydown", () => {
   it("reads a plain letter as that character", () => {
-    expect(classifyKeydown(press({ key: "f" }))).toEqual({ type: "char", char: "f" });
+    expect(classifyKeydown(press({ key: "f", code: "KeyF" }))).toEqual({
+      type: "char",
+      char: "f",
+      shiftKey: false,
+      code: "KeyF",
+    });
   });
 
   it("keeps the capital a capital", () => {
-    expect(classifyKeydown(press({ key: "F" }))).toEqual({ type: "char", char: "F" });
+    expect(classifyKeydown(press({ key: "F", code: "KeyF", shiftKey: true }))).toEqual({
+      type: "char",
+      char: "F",
+      shiftKey: true,
+      code: "KeyF",
+    });
   });
 
   it("reads the space bar as a space character", () => {
-    expect(classifyKeydown(press({ key: " " }))).toEqual({ type: "char", char: " " });
+    expect(classifyKeydown(press({ key: " ", code: "Space" }))).toEqual({
+      type: "char",
+      char: " ",
+      shiftKey: false,
+      code: "Space",
+    });
   });
 
   it("ignores shortcuts so browser and OS keys never count as typing", () => {
@@ -72,8 +89,9 @@ describe("preventsDefault", () => {
 
 describe("matchesTypingTarget", () => {
   it("forgives CapsLock for lowercase targets but requires shift for capitals", () => {
-    expect(matchesTypingTarget("a", "A")).toBe(true);
-    expect(matchesTypingTarget("A", "a")).toBe(false);
-    expect(matchesTypingTarget("A", "A")).toBe(true);
+    expect(matchesTypingTarget("a", { char: "A", shiftKey: false })).toBe(true);
+    expect(matchesTypingTarget("A", { char: "a", shiftKey: true })).toBe(false);
+    expect(matchesTypingTarget("A", { char: "A", shiftKey: true })).toBe(true);
+    expect(matchesTypingTarget("A", { char: "A", shiftKey: false })).toBe(false);
   });
 });

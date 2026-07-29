@@ -1,3 +1,5 @@
+import type { TypingCharIntent } from "./typingKey";
+
 /**
  * The typing gate, as a pure decision. Typing is the one place in the product
  * that requires a physical keyboard (spec: the sole exception to touch-first
@@ -12,8 +14,8 @@ export type GateState = "blocked" | "prove" | "open";
 export const PROVE_KEY = "f";
 
 /** The proof screen names one key, so only that key may open the stage. */
-export function isProofKey(char: string): boolean {
-  return char.toLowerCase() === PROVE_KEY;
+export function isProofKey(intent: Pick<TypingCharIntent, "char" | "code">): boolean {
+  return intent.char.toLowerCase() === PROVE_KEY || intent.code === "KeyF";
 }
 
 export function gateState(input: {

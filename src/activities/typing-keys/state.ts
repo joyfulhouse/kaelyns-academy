@@ -1,5 +1,8 @@
 import type { TypingKeysResponse } from "./logic";
-import { matchesTypingTarget } from "../_shared/typing/typingKey";
+import {
+  matchesTypingTarget,
+  type TypingCharIntent,
+} from "../_shared/typing/typingKey";
 
 /**
  * Key Camp's rules as a pure reducer, so every case is testable in the node
@@ -18,8 +21,12 @@ export function initialKeysState(): KeysState {
   return { index: 0, retries: 0, done: [] };
 }
 
-export function pressKey(state: KeysState, expected: string, char: string): KeysState {
-  if (!matchesTypingTarget(expected, char)) {
+export function pressKey(
+  state: KeysState,
+  expected: string,
+  intent: TypingCharIntent,
+): KeysState {
+  if (!matchesTypingTarget(expected, intent)) {
     return { ...state, retries: Math.min(MAX_RETRIES, state.retries + 1) };
   }
   return {
@@ -37,10 +44,10 @@ export function pressKey(state: KeysState, expected: string, char: string): Keys
 export function pressNextKey(
   state: KeysState,
   prompts: readonly string[],
-  char: string,
+  intent: TypingCharIntent,
 ): KeysState {
   const expected = prompts[state.index];
-  return expected === undefined ? state : pressKey(state, expected, char);
+  return expected === undefined ? state : pressKey(state, expected, intent);
 }
 
 export function isKeysComplete(state: KeysState, total: number): boolean {

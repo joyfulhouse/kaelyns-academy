@@ -33,9 +33,9 @@ describe("pacing", () => {
 
   it("bounds how many stars a round could possibly have shown", () => {
     expect(minPrompts(CONFIG)).toBe(8);
-    expect(maxPrompts(CONFIG)).toBe(11);
+    expect(maxPrompts(CONFIG)).toBe(10);
     expect(minPrompts({ ...CONFIG, durationSec: 30, speed: "steady" })).toBe(10);
-    expect(maxPrompts({ ...CONFIG, durationSec: 30, speed: "steady" })).toBe(13);
+    expect(maxPrompts({ ...CONFIG, durationSec: 30, speed: "steady" })).toBe(12);
     expect(minPrompts({ ...CONFIG, speed: "zippy" })).toBe(25);
     expect(maxPrompts({ ...CONFIG, speed: "zippy" })).toBe(27);
   });
@@ -56,16 +56,34 @@ describe("score", () => {
         { text: "f", ok: true },
         { text: "a", ok: true },
         { text: "s", ok: true },
-        // The target spawned on the time-up tick has no playable frame, so the
-        // Player resolves it as a miss along with any other airborne stars.
-        { text: "d", ok: false },
       ]),
     );
     expect(result.correct).toBe(10);
-    expect(result.total).toBe(11);
-    expect(result.stars).toBe(2);
+    expect(result.total).toBe(10);
+    expect(result.stars).toBe(3);
     expect(result.skillEvidence).toEqual([
-      { skill: "typing.keys.home-row", outcome: "emerging" },
+      { skill: "typing.keys.home-row", outcome: "solid" },
+    ]);
+  });
+
+  it("accepts genuine targets in resolution order rather than spawn order", () => {
+    const result = score(
+      CONFIG,
+      round([
+        { text: "f", ok: true },
+        { text: "a", ok: true },
+        { text: "s", ok: true },
+        { text: "d", ok: true },
+        { text: "a", ok: true },
+        { text: "s", ok: true },
+        { text: "d", ok: true },
+        { text: "f", ok: true },
+      ]),
+    );
+
+    expect(result.correct).toBe(8);
+    expect(result.skillEvidence).toEqual([
+      { skill: "typing.keys.home-row", outcome: "solid" },
     ]);
   });
 
@@ -135,6 +153,37 @@ describe("score", () => {
     });
   });
 
+  it("fails closed when authored targets do not match the deterministic spawn bag", () => {
+    const forged = round(
+      Array.from({ length: minPrompts(CONFIG) }, () => ({
+        text: CONFIG.pool[0]!,
+        ok: true,
+      })),
+    );
+
+    expect(score(CONFIG, forged)).toEqual({
+      correct: 0,
+      total: minPrompts(CONFIG),
+      stars: 1,
+      skillEvidence: [],
+    });
+  });
+
+  it("applies the deterministic spawn bag check to hearts-lost rounds", () => {
+    const forged = round(
+      [
+        { text: "a", ok: true },
+        { text: "a", ok: true },
+        { text: "a", ok: false },
+        { text: "a", ok: false },
+        { text: "a", ok: false },
+      ],
+      "lives",
+    );
+
+    expect(score(CONFIG, forged).skillEvidence).toEqual([]);
+  });
+
   it("yields no evidence for a target that was never in the pool", () => {
     const forged = Array.from({ length: minPrompts(CONFIG) }, (_, index) => ({
       text: index === 0 ? "z" : "a",
@@ -146,13 +195,18 @@ describe("score", () => {
   });
 
   it("yields no evidence for more catches than the round could have shown", () => {
-    const forged = round(Array.from({ length: 13 }, () => ({ text: "a", ok: true })));
+    const forged = round(
+      Array.from({ length: maxPrompts(CONFIG) + 1 }, (_, index) => ({
+        text: CONFIG.pool[index % CONFIG.pool.length]!,
+        ok: true,
+      })),
+    );
     expect(score(CONFIG, forged).skillEvidence).toEqual([]);
   });
 
   it("ignores the client's clock entirely — WPM must never reach mastery", () => {
-    const fullRound = Array.from({ length: minPrompts(CONFIG) }, () => ({
-      text: "a",
+    const fullRound = Array.from({ length: minPrompts(CONFIG) }, (_, index) => ({
+      text: CONFIG.pool[index % CONFIG.pool.length]!,
       ok: true,
     }));
     const honest = score(CONFIG, round(fullRound));

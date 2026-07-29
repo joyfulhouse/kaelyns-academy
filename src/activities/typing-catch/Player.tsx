@@ -15,8 +15,8 @@ import { useTypingKeys } from "../_shared/typing/useTypingKeys";
 import { schema, type TypingCatchResponse } from "./logic";
 import {
   fallMs,
-  finishTimedRound,
   initialCatchState,
+  resolveAirborne,
   roundIsPaused,
   roundOver,
   tick,
@@ -24,6 +24,25 @@ import {
 } from "./state";
 
 const TICK_MS = 100;
+
+const SPOKEN_TARGETS: Readonly<Record<string, string>> = {
+  " ": "space",
+  ";": "semicolon",
+  ",": "comma",
+  ".": "period",
+  "/": "slash",
+};
+
+export function spawnAnnouncement(pool: readonly string[], spawnCount: number): string {
+  if (pool.length === 0 || spawnCount <= 0) return "";
+  const target = pool[(spawnCount - 1) % pool.length]!;
+  const spoken =
+    SPOKEN_TARGETS[target] ??
+    (target === target.toUpperCase() && target !== target.toLowerCase()
+      ? `capital ${target}`
+      : target.toUpperCase());
+  return `Type ${spoken}`;
+}
 
 export function TypingCatchPlayer(
   props: ActivityPlayerProps<TypingCatchConfig, TypingCatchResponse>,
@@ -48,6 +67,7 @@ function CatchRound({
   // without an impure state updater (which StrictMode would double-invoke).
   const elapsedRef = useRef(0);
   const finished = useRef(false);
+  const announcementRef = useRef<HTMLParagraphElement>(null);
 
   useSpeakOnce(speech.speak, parsed.instruction);
 
@@ -95,8 +115,7 @@ function CatchRound({
   useEffect(() => {
     if (!endedBy || finished.current) return;
     finished.current = true;
-    const completedState =
-      endedBy === "time" ? finishTimedRound(state, elapsedMs) : state;
+    const completedState = resolveAirborne(state, elapsedMs);
     onComplete({
       // The response schema needs at least one prompt. A round this long always
       // resolves at least one star, so this fallback is defensive only.
@@ -111,24 +130,21 @@ function CatchRound({
 
   useTypingKeys((intent) => {
     if (intent.type !== "char" || endedBy) return;
-    setState((current) => typeChar(current, parsed, intent.char, elapsedRef.current));
+    setState((current) => typeChar(current, parsed, intent, elapsedRef.current));
   }, endedBy === null);
+
+  // Keep React's live-region node empty on mount, then register each spawn as
+  // one discrete announcement. Depending only on nextId means catching or
+  // landing a star never re-reads an older target or the whole sky.
+  useEffect(() => {
+    const region = announcementRef.current;
+    if (region === null) return;
+    region.textContent = spawnAnnouncement(parsed.pool, state.nextId);
+  }, [parsed.pool, state.nextId]);
 
   const fall = fallMs(parsed);
   const caught = state.results.filter((result) => result.ok).length;
   const secondsLeft = Math.max(0, Math.ceil(parsed.durationSec - elapsedMs / 1_000));
-  const targetAnnouncement =
-    state.targets.length === 0
-      ? "Get ready"
-      : `Type ${state.targets
-          .map((target) =>
-            target.text === target.text.toUpperCase() &&
-            target.text !== target.text.toLowerCase()
-              ? `capital ${target.text}`
-              : target.text.toUpperCase(),
-          )
-          .join(", ")}`;
-
   return (
     <div className="flex flex-col items-center gap-6">
       <Prompt speech={speech} instruction={parsed.instruction} />
@@ -151,9 +167,7 @@ function CatchRound({
         <span className="text-lg font-semibold text-ink">{secondsLeft}s</span>
       </div>
 
-      <p className="sr-only" aria-live="polite" aria-atomic="true">
-        {targetAnnouncement}
-      </p>
+      <p ref={announcementRef} className="sr-only" aria-live="polite" aria-atomic="true" />
 
       {/* Reduced motion is a path, not a downgrade: nothing falls, the same
           stars queue up with a discrete countdown, and every rule and score
@@ -206,7 +220,7 @@ function CatchRound({
         )}
       </div>
 
-      <ProgressHint>Caught {caught}</ProgressHint>
+      <ProgressHint live={false}>Caught {caught}</ProgressHint>
     </div>
   );
 }

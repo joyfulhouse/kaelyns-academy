@@ -37,7 +37,7 @@ function KeysRound({
 
   useTypingKeys((intent) => {
     if (intent.type !== "char") return;
-    setState((current) => pressNextKey(current, prompts, intent.char));
+    setState((current) => pressNextKey(current, prompts, intent));
   }, !complete);
 
   // Completion is reported after React commits the final transition. Keeping

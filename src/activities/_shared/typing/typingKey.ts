@@ -10,17 +10,20 @@
 
 export interface KeydownLike {
   key: string;
+  code: string;
   ctrlKey: boolean;
   metaKey: boolean;
   altKey: boolean;
+  shiftKey: boolean;
   repeat: boolean;
   isComposing?: boolean;
 }
 
 export type KeyIntent =
   | { type: "ignore" }
-  | { type: "char"; char: string }
+  | { type: "char"; char: string; code: string; shiftKey: boolean }
   | { type: "backspace" };
+export type TypingCharIntent = Extract<KeyIntent, { type: "char" }>;
 
 const IGNORE: KeyIntent = { type: "ignore" };
 
@@ -35,7 +38,14 @@ export function classifyKeydown(event: KeydownLike): KeyIntent {
   if (event.key === "Backspace") return { type: "backspace" };
   // Every printable key reports a single-character `key`; named keys
   // ("Shift", "ArrowLeft", "F3") are longer and are not typing.
-  if (event.key.length === 1) return { type: "char", char: event.key };
+  if (event.key.length === 1) {
+    return {
+      type: "char",
+      char: event.key,
+      code: event.code,
+      shiftKey: event.shiftKey,
+    };
+  }
   return IGNORE;
 }
 
@@ -48,9 +58,16 @@ export function preventsDefault(event: KeydownLike): boolean {
 /**
  * Case-forgiving when the target is lowercase (a stray CapsLock is not a
  * mistake worth failing a child over), exact when the target is a capital —
- * because then reaching for shift IS the skill.
+ * with Shift held, because then reaching for Shift IS the skill. This slice
+ * deliberately does not distinguish left/right Shift: doing that reliably
+ * requires tracking a separate modifier keydown by code/location.
  */
-export function matchesTypingTarget(expected: string, char: string): boolean {
-  if (expected === expected.toLowerCase()) return char.toLowerCase() === expected;
-  return char === expected;
+export function matchesTypingTarget(
+  expected: string,
+  intent: Pick<TypingCharIntent, "char" | "shiftKey">,
+): boolean {
+  if (expected === expected.toLowerCase()) {
+    return intent.char.toLowerCase() === expected;
+  }
+  return intent.char === expected && intent.shiftKey;
 }

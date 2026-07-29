@@ -2,7 +2,7 @@ import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { TypingCatchConfig } from "@/content/activity-configs";
-import { TypingCatchPlayer } from "./Player";
+import { spawnAnnouncement, TypingCatchPlayer } from "./Player";
 
 vi.mock("../_shared/typing/TypingStage", () => ({
   TypingStage: ({ children }: { children: ReactNode }) => children,
@@ -17,7 +17,7 @@ const CONFIG: TypingCatchConfig = {
 };
 
 describe("Star Catch Player accessibility", () => {
-  it("announces the current targets without exposing visual sprites twice", () => {
+  it("mounts one empty live region and keeps the caught count non-live", () => {
     const markup = renderToStaticMarkup(
       createElement(TypingCatchPlayer, {
         config: CONFIG,
@@ -25,19 +25,21 @@ describe("Star Catch Player accessibility", () => {
       }),
     );
 
-    expect(markup).toContain('aria-live="polite"');
-    expect(markup).toContain("Type A");
+    expect(markup.match(/aria-live="polite"/g)).toHaveLength(1);
+    expect(markup).toContain(
+      '<p class="sr-only" aria-live="polite" aria-atomic="true"></p>',
+    );
+    expect(markup).not.toContain("Type A");
     expect(markup).toMatch(/aria-hidden="true"[^>]*><span data-falling="a"/);
   });
 
-  it("announces when a target is a capital so the shift skill is audible", () => {
-    const markup = renderToStaticMarkup(
-      createElement(TypingCatchPlayer, {
-        config: { ...CONFIG, pool: ["A", "s"] },
-        onComplete: () => undefined,
-      }),
-    );
+  it("announces only the newest spawned target", () => {
+    expect(spawnAnnouncement(["a", "s"], 1)).toBe("Type A");
+    expect(spawnAnnouncement(["a", "s"], 2)).toBe("Type S");
+  });
 
-    expect(markup).toContain("Type capital A");
+  it("speaks capitals and non-letter targets explicitly", () => {
+    expect(spawnAnnouncement(["A"], 1)).toBe("Type capital A");
+    expect(spawnAnnouncement([" "], 1)).toBe("Type space");
   });
 });

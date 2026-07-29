@@ -3,10 +3,14 @@ import { gateState, isProofKey } from "./gate";
 
 describe("isProofKey", () => {
   it("accepts only the advertised home-row anchor, case-insensitively", () => {
-    expect(isProofKey("f")).toBe(true);
-    expect(isProofKey("F")).toBe(true);
-    expect(isProofKey("a")).toBe(false);
-    expect(isProofKey(" ")).toBe(false);
+    expect(isProofKey({ char: "f", code: "KeyF" })).toBe(true);
+    expect(isProofKey({ char: "F", code: "KeyF" })).toBe(true);
+    expect(isProofKey({ char: "a", code: "KeyA" })).toBe(false);
+    expect(isProofKey({ char: " ", code: "Space" })).toBe(false);
+  });
+
+  it("accepts the physical F position on a non-Latin keyboard layout", () => {
+    expect(isProofKey({ char: "а", code: "KeyF" })).toBe(true);
   });
 });
 

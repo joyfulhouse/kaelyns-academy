@@ -1,6 +1,15 @@
 import type { TypingCatchConfig } from "@/content/activity-configs";
-import { matchesTypingTarget } from "../_shared/typing/typingKey";
-import { FALL_SECONDS, spawnIntervalMs, type TypingCatchResponse } from "./logic";
+import {
+  matchesTypingTarget,
+  type TypingCharIntent,
+} from "../_shared/typing/typingKey";
+import {
+  FALL_SECONDS,
+  maxPrompts,
+  roundDurationMs,
+  spawnIntervalMs,
+  type TypingCatchResponse,
+} from "./logic";
 
 /**
  * Star Catch's rules as pure, CLOCK-INJECTED functions — every timing case is
@@ -81,7 +90,11 @@ export function tick(
       ...landed.map((target) => ({ text: target.text, ok: false, ms: fallMs(config) })),
     ],
   };
-  if (nowMs - next.lastSpawnMs >= spawnIntervalMs(config)) {
+  if (
+    nowMs < roundDurationMs(config) &&
+    next.poolCursor < maxPrompts(config) &&
+    nowMs - next.lastSpawnMs >= spawnIntervalMs(config)
+  ) {
     next = spawn(next, config, nowMs);
   }
   return next;
@@ -97,10 +110,10 @@ export function tick(
 export function typeChar(
   state: CatchState,
   config: TypingCatchConfig,
-  char: string,
+  intent: TypingCharIntent,
   nowMs: number,
 ): CatchState {
-  const hit = state.targets.find((target) => matchesTypingTarget(target.text, char));
+  const hit = state.targets.find((target) => matchesTypingTarget(target.text, intent));
   if (!hit) return state;
   return {
     ...state,
@@ -110,11 +123,11 @@ export function typeChar(
 }
 
 /**
- * The clock ending resolves every star still in the sky. Omitting those targets
- * would make the same spawned star count against accuracy only when it happened
- * to land a frame earlier, inflating timed-round scores.
+ * Resolve every star still in the sky on either ending. Omitting those targets
+ * would make a spawned star count against accuracy only when it happened to
+ * land a frame earlier, inflating both timed and hearts-out scores.
  */
-export function finishTimedRound(state: CatchState, elapsedMs: number): CatchState {
+export function resolveAirborne(state: CatchState, elapsedMs: number): CatchState {
   if (state.targets.length === 0) return state;
   return {
     ...state,
