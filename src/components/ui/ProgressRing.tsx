@@ -7,6 +7,10 @@ import { cn } from "@/lib/cn";
 const ARC_TONE = {
   accent: "var(--color-accent)",
   "accent-deep": "var(--color-accent-deep)",
+  /* World-independent: accent-deep resolves per world and dips under 3:1 in
+     sunshine (2.26:1) and garden (2.94:1); coral-deep measures 4.19:1 against
+     the paper-sunk track in every world. */
+  "coral-deep": "var(--color-coral-deep)",
 } as const;
 
 /** Circular progress. Track = paper-sunk, fill = program accent. */

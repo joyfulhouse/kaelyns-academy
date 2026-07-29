@@ -220,7 +220,7 @@ function CatchRound({
           size={64}
           stroke={6}
           label={`${secondsLeft} seconds left`}
-          tone="accent-deep"
+          tone="coral-deep"
         >
           <span className="text-lg font-semibold text-ink">{secondsLeft}s</span>
         </ProgressRing>
