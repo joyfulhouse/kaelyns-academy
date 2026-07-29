@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { TypingCatchConfig } from "@/content/activity-configs";
 import { underGroundUnit } from "@/content/programs/keyboard-club/under-ground";
 import type { TypingCharIntent } from "../_shared/typing/typingKey";
+import { roundIsPaused } from "../_shared/typing/roundPause";
 import { expectedSpawnCount, fallMs, score } from "./logic";
 import {
   initialCatchState,
   resolveAirborne,
-  roundIsPaused,
   roundOver,
   tick,
   typeChar,

@@ -1,7 +1,6 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { roundIsPaused } from "./state";
 
 function subscribe(onChange: () => void): () => void {
   if (typeof document === "undefined" || typeof window === "undefined") {
@@ -41,4 +40,9 @@ function getHiddenSnapshot(): boolean {
  *  to, so speech keyed to the pause overlay must stay silent there. */
 export function useDocumentHidden(): boolean {
   return useSyncExternalStore(subscribeHidden, getHiddenSnapshot, () => false);
+}
+
+/** Both visibility and focus must agree that the child can see the round. */
+export function roundIsPaused(documentHidden: boolean, windowFocused: boolean): boolean {
+  return documentHidden || !windowFocused;
 }

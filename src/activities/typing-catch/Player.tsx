@@ -27,7 +27,7 @@ import {
   tick,
   typeChar,
 } from "./state";
-import { useDocumentHidden, useRoundPaused } from "./useRoundPaused";
+import { useDocumentHidden, useRoundPaused } from "../_shared/typing/roundPause";
 
 const TICK_MS = 100;
 const PAUSE_MESSAGE = "Paused — click to keep playing";

@@ -21,7 +21,7 @@ vi.mock("../_shared/typing/TypingStage", () => ({
   TypingStage: ({ children }: { children: ReactNode }) => children,
 }));
 
-vi.mock("./useRoundPaused", () => ({
+vi.mock("../_shared/typing/roundPause", () => ({
   useRoundPaused: () => mocks.paused,
   useDocumentHidden: () => mocks.documentHidden,
 }));
