@@ -15,7 +15,8 @@ describe("typing Player gate boundary", () => {
       }),
     );
 
-    expect(markup).toContain("Press the");
+    expect(markup).toContain('data-typing-gate-state="resolving"');
+    expect(markup).not.toContain("Press the");
     expect(onComplete).not.toHaveBeenCalled();
   });
 
@@ -28,7 +29,8 @@ describe("typing Player gate boundary", () => {
       }),
     );
 
-    expect(markup).toContain("Press the");
+    expect(markup).toContain('data-typing-gate-state="resolving"');
+    expect(markup).not.toContain("Press the");
     expect(onComplete).not.toHaveBeenCalled();
   });
 });

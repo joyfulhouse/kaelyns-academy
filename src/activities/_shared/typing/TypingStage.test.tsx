@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TypingStage } from "./TypingStage";
@@ -42,14 +43,34 @@ describe("TypingStage", () => {
     vi.clearAllMocks();
   });
 
-  it("shows the proof screen without narrating during media-query resolution", () => {
+  it("centers every gate state in the full shell activity area", () => {
+    const markup = renderToStaticMarkup(
+      <TypingStage>
+        <p>the game</p>
+      </TypingStage>,
+    );
+    const globalsPath = new URL("../../../app/globals.css", import.meta.url);
+    const globalsContent = readFileSync(globalsPath, "utf-8");
+
+    expect(markup).toMatch(
+      /class="[^"]*typing-stage[^"]*justify-center/,
+    );
+    expect(globalsContent).toMatch(
+      /\.typing-stage\s*\{[^}]*min-height:\s*calc\(100dvh - 10rem\)/s,
+    );
+  });
+
+  it("shows only a neutral keyboard icon during media-query resolution", () => {
     const markup = renderToStaticMarkup(
       <TypingStage>
         <p>the game</p>
       </TypingStage>,
     );
 
-    expect(markup).toContain("Press the");
+    expect(markup).toContain('data-typing-gate-state="resolving"');
+    expect(markup).toContain("<svg");
+    expect(markup).not.toContain("Press the");
+    expect(markup).not.toContain("Typing needs");
     expect(markup).not.toContain("the game");
     expect(mocks.spoken).toEqual([]);
   });
@@ -57,12 +78,15 @@ describe("TypingStage", () => {
   it("narrates the resolved proof screen with its own key", () => {
     mocks.coarsePointerOnly = false;
 
-    renderToStaticMarkup(
+    const markup = renderToStaticMarkup(
       <TypingStage>
         <p>the game</p>
       </TypingStage>,
     );
 
+    expect(markup).toMatch(
+      /<kbd[^>]*class="[^"]*rounded-sm[^"]*border-2[^"]*border-ink[^"]*shadow-pop/,
+    );
     expect(mocks.spoken).toEqual([
       {
         key: "prove",
@@ -73,14 +97,17 @@ describe("TypingStage", () => {
 
   it("speaks one short sentence when typing is blocked", () => {
     mocks.coarsePointerOnly = true;
+    const onExit = vi.fn();
 
     const markup = renderToStaticMarkup(
-      <TypingStage>
+      <TypingStage onExit={onExit}>
         <p>the game</p>
       </TypingStage>,
     );
 
     expect(markup).toContain("Typing needs a keyboard");
+    expect(markup).toMatch(/<button[^>]*>.*Pick something else<\/button>/s);
+    expect(markup).toContain("<svg");
     expect(mocks.spoken).toEqual([
       {
         key: "blocked",

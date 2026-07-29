@@ -16,17 +16,29 @@ import {
  * Static class maps only — Tailwind's JIT cannot see constructed strings.
  */
 export const FINGER_TINT: Record<Finger, string> = {
-  pinky: "bg-berry/20",
-  ring: "bg-sky/20",
-  middle: "bg-sprout/20",
-  index: "bg-honey/30",
-  thumb: "bg-coral/20",
+  pinky: "bg-key-pinky/55",
+  ring: "bg-key-ring/55",
+  middle: "bg-key-middle/55",
+  index: "bg-key-index/55",
+  thumb: "bg-key-thumb/55",
 };
 
 /** Tint for a key with no finger assignment. */
 export const NO_FINGER_TINT = "bg-paper-sunk";
 
 const ROW_ORDER = ["top", "home", "bottom"] as const;
+const ROW_PADDING: Record<(typeof ROW_ORDER)[number], string> = {
+  top: "pl-0",
+  home: "pl-3",
+  bottom: "pl-6",
+};
+const FINGER_LEGEND: readonly { finger: Finger; label: string }[] = [
+  { finger: "pinky", label: "pinky" },
+  { finger: "ring", label: "ring" },
+  { finger: "middle", label: "tall" },
+  { finger: "index", label: "pointer" },
+  { finger: "thumb", label: "thumb" },
+];
 
 function fingerOf(key: string) {
   return KEY_FINGERS[key.toLowerCase()];
@@ -52,10 +64,11 @@ function Key({ char, target }: { char: string; target: string | null }) {
       data-key={char}
       data-target={isTarget ? "true" : undefined}
       className={cn(
-        "grid place-items-center rounded-xl text-lg font-semibold text-ink",
-        char === " " ? "h-12 w-64" : "size-12",
+        "typing-key grid place-items-center rounded-sm border-2 border-ink text-lg font-semibold text-ink shadow-pop",
+        char === " " && "typing-key-space",
         assignment ? FINGER_TINT[assignment.finger] : NO_FINGER_TINT,
-        isTarget && "ring-4 ring-coral ring-offset-2 ring-offset-paper",
+        isTarget &&
+          "typing-key-target ring-4 ring-coral ring-offset-2 ring-offset-paper",
       )}
     >
       {char === " " ? "" : char}
@@ -82,9 +95,10 @@ function ShiftKey({ side, target }: { side: Hand; target: string | null }) {
       data-key={code}
       data-target={isTarget ? "true" : undefined}
       className={cn(
-        "grid h-12 w-16 place-items-center rounded-xl text-2xl font-semibold text-ink",
+        "typing-key typing-key-shift grid place-items-center rounded-sm border-2 border-ink text-2xl font-semibold text-ink shadow-pop",
         FINGER_TINT.pinky,
-        isTarget && "ring-4 ring-coral ring-offset-2 ring-offset-paper",
+        isTarget &&
+          "typing-key-target ring-4 ring-coral ring-offset-2 ring-offset-paper",
       )}
     >
       ⇧
@@ -97,17 +111,43 @@ export function KeyboardMap({ target }: { target: string | null }) {
     target === null ? "Keyboard" : `Keyboard. ${keyLabel(target)}.`;
 
   return (
-    <div className="flex flex-col items-center gap-2" role="img" aria-label={containerLabel}>
-      {ROW_ORDER.map((row) => (
-        <div key={row} className="flex gap-2">
-          {row === "bottom" && <ShiftKey side="left" target={target} />}
-          {TYPING_ROWS[row].map((char) => (
-            <Key key={char} char={char} target={target} />
-          ))}
-          {row === "bottom" && <ShiftKey side="right" target={target} />}
-        </div>
-      ))}
-      <Key char=" " target={target} />
+    <div className="flex flex-col items-center gap-3">
+      <div
+        className="typing-keyboard flex w-fit max-w-full flex-col items-start gap-2"
+        role="img"
+        aria-label={containerLabel}
+      >
+        {ROW_ORDER.map((row) => (
+          <div
+            key={row}
+            data-row={row}
+            className={cn("typing-keyboard-row flex", ROW_PADDING[row])}
+          >
+            {row === "bottom" && <ShiftKey side="left" target={target} />}
+            {TYPING_ROWS[row].map((char) => (
+              <Key key={char} char={char} target={target} />
+            ))}
+            {row === "bottom" && <ShiftKey side="right" target={target} />}
+          </div>
+        ))}
+        <span className="self-center">
+          <Key char=" " target={target} />
+        </span>
+      </div>
+      <ul
+        className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm font-medium text-ink"
+        aria-label="Finger color guide"
+      >
+        {FINGER_LEGEND.map(({ finger, label }) => (
+          <li key={finger} data-finger={label} className="flex items-center gap-2">
+            <span
+              className={cn("size-4 rounded-sm", FINGER_TINT[finger])}
+              aria-hidden="true"
+            />
+            {label}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

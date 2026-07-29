@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { TypingKeysConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
+import { Mascot } from "@/components/art/Mascot";
+import { Stars } from "@/components/ui/Stars";
 import { Prompt, ProgressHint } from "../_shared/ActivityChrome";
 import { useActivity } from "../_shared/useActivity";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
@@ -16,9 +18,25 @@ import { initialKeysState, isKeysComplete, pressNextKey } from "./state";
 
 export function TypingKeysPlayer(props: ActivityPlayerProps<TypingKeysConfig, TypingKeysResponse>) {
   return (
-    <TypingStage>
+    <TypingStage onExit={props.onExit}>
       <KeysRound {...props} />
     </TypingStage>
+  );
+}
+
+export function KeyPrompt({ target }: { target: string | null }) {
+  if (target === null) {
+    return <Mascot mood="cheer" size={96} title="Key Camp complete" />;
+  }
+
+  return (
+    <p className="text-6xl font-bold text-ink" aria-live="polite">
+      {target === " "
+        ? "space"
+        : isCapitalKey(target)
+          ? `⇧ + ${target}`
+          : target.toUpperCase()}
+    </p>
   );
 }
 
@@ -53,19 +71,14 @@ function KeysRound({
   return (
     <div className="flex flex-col items-center gap-8">
       <Prompt speech={speech} instruction={parsed.instruction} />
-      <p className="text-6xl font-bold text-ink" aria-live="polite">
-        {target === null
-          ? "🎉"
-          : target === " "
-            ? "space"
-            : isCapitalKey(target)
-              ? `⇧ + ${target}`
-              : target.toUpperCase()}
-      </p>
+      <KeyPrompt target={target} />
       {(parsed.showHands ?? true) && <KeyboardMap target={target} />}
-      <ProgressHint>
-        {Math.min(state.index + 1, prompts.length)} of {prompts.length}
-      </ProgressHint>
+      <div className="flex flex-col items-center gap-2">
+        <Stars value={state.index} max={prompts.length} size="sm" />
+        <ProgressHint>
+          {Math.min(state.index + 1, prompts.length)} of {prompts.length}
+        </ProgressHint>
+      </div>
     </div>
   );
 }

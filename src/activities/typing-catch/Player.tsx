@@ -1,9 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { HeartIcon, StarIcon } from "@phosphor-icons/react/dist/ssr";
+import {
+  HeartIcon,
+  PauseIcon,
+  StarIcon,
+} from "@phosphor-icons/react/dist/ssr";
 import type { TypingCatchConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
+import { ProgressRing } from "@/components/ui/ProgressRing";
+import { StarShape } from "@/components/ui/Stars";
 import { cn } from "@/lib/cn";
 import { Prompt, ProgressHint } from "../_shared/ActivityChrome";
 import { useActivity } from "../_shared/useActivity";
@@ -24,6 +30,7 @@ import {
 import { useRoundPaused } from "./useRoundPaused";
 
 const TICK_MS = 100;
+const PAUSE_MESSAGE = "Paused — click to keep playing";
 
 const SPOKEN_TARGETS: Readonly<Record<string, string>> = {
   " ": "space",
@@ -47,7 +54,7 @@ export function TypingCatchPlayer(
   props: ActivityPlayerProps<TypingCatchConfig, TypingCatchResponse>,
 ) {
   return (
-    <TypingStage>
+    <TypingStage onExit={props.onExit}>
       <CatchRound {...props} />
     </TypingStage>
   );
@@ -60,15 +67,66 @@ export function PauseOverlay({
   paused: boolean;
   onResume: () => void;
 }) {
+  const speech = useSpeech();
+  const cancelSpeech = speech.cancel;
+  useSpeakOnce(speech.speak, paused ? PAUSE_MESSAGE : null);
+
+  useEffect(
+    () => () => {
+      cancelSpeech();
+    },
+    [cancelSpeech],
+  );
+
   if (!paused) return null;
   return (
     <button
       type="button"
-      onClick={onResume}
-      className="absolute inset-0 z-20 grid place-items-center rounded-3xl border-2 border-honey bg-paper/95 px-6 text-center text-xl font-semibold text-ink shadow-lg"
+      onClick={() => {
+        cancelSpeech();
+        onResume();
+      }}
+      className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 rounded-2xl border-2 border-honey bg-paper/95 px-6 text-center text-xl font-semibold text-ink shadow-lg"
     >
-      Paused — click to keep playing
+      <PauseIcon size={72} weight="fill" className="text-honey-deep" aria-hidden />
+      <span>{PAUSE_MESSAGE}</span>
     </button>
+  );
+}
+
+export function HeartMeter({
+  lives,
+  maxLives,
+}: {
+  lives: number;
+  maxLives: number;
+}) {
+  return (
+    <>
+      <span
+        className="flex items-center gap-2"
+        role="img"
+        aria-label={`${lives} of ${maxLives} hearts left`}
+      >
+        {Array.from({ length: maxLives }, (_, index) => {
+          const available = index < lives;
+          return (
+            <HeartIcon
+              key={index}
+              size={32}
+              weight={available ? "fill" : "regular"}
+              className={cn(
+                available ? "text-coral" : "animate-heart-loss text-ink-soft",
+              )}
+              aria-hidden
+            />
+          );
+        })}
+      </span>
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {lives} {lives === 1 ? "heart" : "hearts"} left
+      </span>
+    </>
   );
 }
 
@@ -150,25 +208,18 @@ function CatchRound({
   };
   return (
     <div className="relative flex flex-col items-center gap-6">
-      <PauseOverlay paused={paused} onResume={resumeRound} />
+      {paused && <PauseOverlay paused onResume={resumeRound} />}
       <Prompt speech={speech} instruction={parsed.instruction} />
       <div className="flex items-center gap-6">
-        <span
-          className="flex items-center gap-2"
-          role="img"
-          aria-label={`${state.lives} of ${parsed.lives} hearts left`}
+        <HeartMeter lives={state.lives} maxLives={parsed.lives} />
+        <ProgressRing
+          value={secondsLeft / parsed.durationSec}
+          size={64}
+          stroke={6}
+          label={`${secondsLeft} seconds left`}
         >
-          {Array.from({ length: parsed.lives }, (_, index) => (
-            <HeartIcon
-              key={index}
-              size={32}
-              weight={index < state.lives ? "fill" : "regular"}
-              className={cn(index < state.lives ? "text-coral" : "text-ink-soft/30")}
-              aria-hidden
-            />
-          ))}
-        </span>
-        <span className="text-lg font-semibold text-ink">{secondsLeft}s</span>
+          <span className="text-lg font-semibold text-ink">{secondsLeft}s</span>
+        </ProgressRing>
       </div>
 
       <p ref={announcementRef} className="sr-only" aria-live="polite" aria-atomic="true" />
@@ -177,37 +228,55 @@ function CatchRound({
           stars queue up with a discrete countdown, and every rule and score
           comes from the same state.ts either way. */}
       <div
+        data-playfield="true"
         className={cn(
-          "relative w-full max-w-2xl",
+          "relative w-full max-w-2xl overflow-hidden rounded-2xl bg-paper-sunk",
           reducedMotion
             ? "flex flex-wrap items-start justify-center gap-4 py-6"
-            : "h-72 overflow-hidden",
+            : "h-72",
         )}
       >
+        <span
+          data-ground-line="true"
+          className="absolute inset-x-0 bottom-0 border-t-2 border-ink-soft"
+          aria-hidden="true"
+        />
         {state.targets.map((target) => {
           const remainingMs = Math.max(0, target.spawnedMs + fall - elapsedMs);
-          const progress = Math.min(1, (elapsedMs - target.spawnedMs) / fall);
           return (
             <span
               key={target.id}
               className={cn(
                 "flex flex-col items-center gap-1",
-                !reducedMotion && "absolute left-1/2 -translate-x-1/2",
+                !reducedMotion && "absolute left-1/2 top-0",
               )}
               aria-hidden
-              // Offset by the sprite's own 4rem height so progress 1 rests it
-              // ON the ground line rather than clipping it out of the sky.
               style={
-                reducedMotion ? undefined : { top: `calc(${progress} * (100% - 4rem))` }
+                reducedMotion
+                  ? undefined
+                  : {
+                      animationName: "typing-star-fall",
+                      animationDuration: `${fall}ms`,
+                      animationTimingFunction: "linear",
+                      animationFillMode: "forwards",
+                      animationPlayState: paused ? "paused" : "running",
+                    }
               }
             >
               <span
                 data-falling={target.text}
-                className="grid size-16 place-items-center rounded-full bg-honey text-2xl font-bold text-ink"
+                className="relative grid size-16 place-items-center text-2xl font-bold text-ink"
               >
-                {isCapitalKey(target.text)
-                  ? `⇧${target.text}`
-                  : target.text.toUpperCase()}
+                <StarShape
+                  size={64}
+                  strokeWidth={1.125}
+                  className="absolute inset-0"
+                />
+                <span className="relative">
+                  {isCapitalKey(target.text)
+                    ? `⇧${target.text}`
+                    : target.text.toUpperCase()}
+                </span>
               </span>
               {reducedMotion && (
                 <span className="text-sm text-ink-soft">
@@ -226,7 +295,13 @@ function CatchRound({
         )}
       </div>
 
-      <ProgressHint live={false}>Caught {caught}</ProgressHint>
+      <div data-catch-progress="true" className="flex flex-col items-center gap-1">
+        <span className="flex items-center gap-2" aria-hidden="true">
+          <StarShape size={40} />
+          <span className="font-display text-2xl font-semibold text-ink">{caught}</span>
+        </span>
+        <ProgressHint live={false}>Caught {caught}</ProgressHint>
+      </div>
     </div>
   );
 }

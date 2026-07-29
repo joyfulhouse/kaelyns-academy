@@ -2,10 +2,17 @@ import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TypingCatchConfig } from "@/content/activity-configs";
-import { PauseOverlay, spawnAnnouncement, TypingCatchPlayer } from "./Player";
+import {
+  HeartMeter,
+  PauseOverlay,
+  spawnAnnouncement,
+  TypingCatchPlayer,
+} from "./Player";
 
 const mocks = vi.hoisted(() => ({
   paused: false,
+  reducedMotion: false,
+  speakOnce: vi.fn(),
 }));
 
 vi.mock("../_shared/typing/TypingStage", () => ({
@@ -14,6 +21,14 @@ vi.mock("../_shared/typing/TypingStage", () => ({
 
 vi.mock("./useRoundPaused", () => ({
   useRoundPaused: () => mocks.paused,
+}));
+
+vi.mock("../_shared/useReducedMotion", () => ({
+  useReducedMotion: () => mocks.reducedMotion,
+}));
+
+vi.mock("../_shared/useSpeakOnce", () => ({
+  useSpeakOnce: (...args: unknown[]) => mocks.speakOnce(...args),
 }));
 
 const CONFIG: TypingCatchConfig = {
@@ -27,9 +42,11 @@ const CONFIG: TypingCatchConfig = {
 describe("Star Catch Player accessibility", () => {
   beforeEach(() => {
     mocks.paused = false;
+    mocks.reducedMotion = false;
+    vi.clearAllMocks();
   });
 
-  it("mounts one empty live region and keeps the caught count non-live", () => {
+  it("mounts separate spawn and heart live regions and keeps the caught count non-live", () => {
     const markup = renderToStaticMarkup(
       createElement(TypingCatchPlayer, {
         config: CONFIG,
@@ -37,12 +54,28 @@ describe("Star Catch Player accessibility", () => {
       }),
     );
 
-    expect(markup.match(/aria-live="polite"/g)).toHaveLength(1);
+    expect(markup.match(/aria-live="polite"/g)).toHaveLength(2);
     expect(markup).toContain(
       '<p class="sr-only" aria-live="polite" aria-atomic="true"></p>',
     );
+    expect(markup).toContain(
+      '<span class="sr-only" aria-live="polite" aria-atomic="true">3 hearts left</span>',
+    );
     expect(markup).not.toContain("Type A");
     expect(markup).toMatch(/aria-hidden="true"[^>]*><span data-falling="a"/);
+  });
+
+  it("shows spent hearts as visible outlines, animates the loss, and announces the count", () => {
+    const markup = renderToStaticMarkup(
+      createElement(HeartMeter, { lives: 1, maxLives: 3 }),
+    );
+
+    expect(markup).toContain('aria-label="1 of 3 hearts left"');
+    expect(markup.match(/animate-heart-loss text-ink-soft/g)).toHaveLength(2);
+    expect(markup).not.toContain("text-ink-soft/30");
+    expect(markup).toContain(
+      '<span class="sr-only" aria-live="polite" aria-atomic="true">1 heart left</span>',
+    );
   });
 
   it("announces only the newest spawned target", () => {
@@ -69,9 +102,104 @@ describe("Star Catch Player accessibility", () => {
       }),
     );
 
-    expect(capitalMarkup).toMatch(/data-falling="A"[^>]*>⇧A<\/span>/);
-    expect(lowercaseMarkup).toMatch(/data-falling="a"[^>]*>A<\/span>/);
+    expect(capitalMarkup).toMatch(/data-falling="A"[^>]*>.*⇧A.*<\/span>/s);
+    expect(lowercaseMarkup).toMatch(/data-falling="a"[^>]*>.*>A<\/span>/s);
     expect(lowercaseMarkup).not.toContain("⇧");
+  });
+
+  it("renders falling targets as honey stars with a three-pixel ink outline", () => {
+    const markup = renderToStaticMarkup(
+      createElement(TypingCatchPlayer, {
+        config: CONFIG,
+        onComplete: () => undefined,
+      }),
+    );
+
+    expect(markup).toMatch(/data-falling="a"[^>]*>.*data-star-shape="true"/s);
+    expect(markup).toMatch(/data-star-shape="true"[^>]*class="[^"]*text-ink/);
+    expect(markup).toContain('stroke="currentColor"');
+    expect(markup).toContain('stroke-width="1.125"');
+    expect(markup).not.toMatch(/data-falling="a"[^>]*rounded-full/);
+  });
+
+  it("falls with a linear transform animation and freezes that animation while paused", () => {
+    const playingMarkup = renderToStaticMarkup(
+      createElement(TypingCatchPlayer, {
+        config: CONFIG,
+        onComplete: () => undefined,
+      }),
+    );
+    mocks.paused = true;
+    const pausedMarkup = renderToStaticMarkup(
+      createElement(TypingCatchPlayer, {
+        config: CONFIG,
+        onComplete: () => undefined,
+      }),
+    );
+
+    expect(playingMarkup).toContain("animation-name:typing-star-fall");
+    expect(playingMarkup).toContain("animation-timing-function:linear");
+    expect(playingMarkup).toContain("animation-play-state:running");
+    expect(playingMarkup).not.toContain("style=\"top:");
+    expect(pausedMarkup).toContain("animation-play-state:paused");
+  });
+
+  it("keeps reduced motion static with the discrete per-star countdown", () => {
+    mocks.reducedMotion = true;
+
+    const markup = renderToStaticMarkup(
+      createElement(TypingCatchPlayer, {
+        config: CONFIG,
+        onComplete: () => undefined,
+      }),
+    );
+
+    expect(markup).toMatch(/data-playfield="true"[^>]*flex flex-wrap/);
+    expect(markup).not.toContain("animation-name:typing-star-fall");
+    expect(markup).toMatch(/data-falling="a".*<span class="text-sm text-ink-soft">8<\/span>/s);
+  });
+
+  it("renders a sunk-paper playfield with a visible landing line", () => {
+    const markup = renderToStaticMarkup(
+      createElement(TypingCatchPlayer, {
+        config: CONFIG,
+        onComplete: () => undefined,
+      }),
+    );
+
+    expect(markup).toMatch(
+      /data-playfield="true"[^>]*class="[^"]*rounded-2xl[^"]*bg-paper-sunk/,
+    );
+    expect(markup).toMatch(
+      /data-ground-line="true"[^>]*class="[^"]*border-t-2[^"]*border-ink-soft/,
+    );
+  });
+
+  it("adds a large child-visible star count while preserving the caught text", () => {
+    const markup = renderToStaticMarkup(
+      createElement(TypingCatchPlayer, {
+        config: CONFIG,
+        onComplete: () => undefined,
+      }),
+    );
+
+    expect(markup).toMatch(
+      /data-catch-progress="true"[^>]*>.*data-star-shape="true".*>0<\/span>/s,
+    );
+    expect(markup).toContain("Caught 0");
+  });
+
+  it("renders the remaining time as a draining ring with the numeral intact", () => {
+    const markup = renderToStaticMarkup(
+      createElement(TypingCatchPlayer, {
+        config: CONFIG,
+        onComplete: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain('aria-label="40 seconds left"');
+    expect(markup).toContain(">40s</span>");
+    expect(markup).toContain('stroke-dashoffset="0"');
   });
 
   it("shows a calm click-to-resume overlay only while paused", () => {
@@ -85,6 +213,13 @@ describe("Star Catch Player accessibility", () => {
     expect(pausedMarkup).toContain("Paused");
     expect(pausedMarkup).toContain("click to keep playing");
     expect(pausedMarkup).toMatch(/<button[^>]*type="button"/);
+    expect(pausedMarkup).toContain("rounded-2xl");
+    expect(pausedMarkup).not.toContain("rounded-3xl");
+    expect(pausedMarkup).toMatch(/<svg[^>]*width="72"[^>]*aria-hidden="true"/);
+    expect(mocks.speakOnce).toHaveBeenCalledWith(
+      expect.any(Function),
+      "Paused — click to keep playing",
+    );
     expect(playingMarkup).toBe("");
   });
 

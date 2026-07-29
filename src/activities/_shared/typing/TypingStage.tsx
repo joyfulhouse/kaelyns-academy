@@ -1,7 +1,11 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { KeyboardIcon } from "@phosphor-icons/react/dist/ssr";
+import {
+  KeyboardIcon,
+  MapTrifoldIcon,
+} from "@phosphor-icons/react/dist/ssr";
+import { Button } from "@/components/ui/Button";
 import { useSpeakOnce } from "../useSpeakOnce";
 import { useSpeech } from "../useSpeech";
 import { PROVE_KEY, gateState, isProofKey } from "./gate";
@@ -16,7 +20,13 @@ import { useTypingKeys } from "./useTypingKeys";
  * mistake the parent PIN gate had to correct). Gating at the Player boundary is
  * the only placement that cannot be bypassed.
  */
-export function TypingStage({ children }: { children: ReactNode }) {
+export function TypingStage({
+  children,
+  onExit,
+}: {
+  children: ReactNode;
+  onExit?: () => void;
+}) {
   const coarsePointerOnly = useCoarsePointerOnly();
   const [keyboardProven, setKeyboardProven] = useState(false);
   const state =
@@ -25,7 +35,6 @@ export function TypingStage({ children }: { children: ReactNode }) {
       : coarsePointerOnly === null
         ? "resolving"
         : gateState({ coarsePointerOnly, keyboardProven });
-  const visibleState = state === "resolving" ? "prove" : state;
   const speech = useSpeech();
   const spokenInstruction =
     state === "blocked"
@@ -45,22 +54,41 @@ export function TypingStage({ children }: { children: ReactNode }) {
     }
   }, state !== "open");
 
-  if (state === "open") return <>{children}</>;
+  if (state === "open") {
+    return (
+      <div className="typing-stage flex w-full flex-col justify-center">
+        {children}
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-col items-center gap-6 py-12 text-center">
+    <div
+      data-typing-gate-state={state}
+      className="typing-stage flex flex-col items-center justify-center gap-6 text-center"
+    >
       <KeyboardIcon size={72} weight="duotone" className="text-honey" aria-hidden />
-      {visibleState === "blocked" ? (
+      {state === "resolving" ? null : state === "blocked" ? (
         <>
           <h2 className="text-2xl font-semibold text-ink">Typing needs a keyboard</h2>
           <p className="max-w-sm text-ink-soft">
             This game is for a computer with real keys. See you there!
           </p>
+          {onExit && (
+            <Button type="button" onClick={onExit} variant="soft" size="kid">
+              <MapTrifoldIcon weight="duotone" className="size-6" aria-hidden />
+              Pick something else
+            </Button>
+          )}
         </>
       ) : (
         <>
           <h2 className="text-2xl font-semibold text-ink">
-            Press the <kbd className="rounded-xl bg-honey/30 px-3 py-1">{PROVE_KEY.toUpperCase()}</kbd> key to start
+            Press the{" "}
+            <kbd className="rounded-sm border-2 border-ink bg-key-index/55 px-3 py-1 shadow-pop">
+              {PROVE_KEY.toUpperCase()}
+            </kbd>{" "}
+            key to start
           </h2>
           <p className="max-w-sm text-ink-soft">
             Feel the little bump on it? That is where your left pointer finger lives.

@@ -5,6 +5,38 @@ const STAR_PATH =
 
 const SIZE = { sm: 18, md: 26, lg: 40 } as const;
 
+/** The shared Wonder Studio star silhouette. */
+export function StarShape({
+  size,
+  filled = true,
+  strokeWidth = 1.6,
+  className,
+}: {
+  size: number;
+  filled?: boolean;
+  strokeWidth?: number;
+  className?: string;
+}) {
+  return (
+    <svg
+      data-star-shape="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className={cn(filled ? "text-ink" : "text-ink/25", className)}
+    >
+      <path
+        d={STAR_PATH}
+        fill={filled ? "var(--color-honey)" : "var(--color-paper-sunk)"}
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /** Earned-star rating. Filled = honey with the storybook ink outline.
  *  Presentational + server-safe; award animation is applied by the caller. */
 export function Stars({
@@ -28,22 +60,11 @@ export function Stars({
       {Array.from({ length: max }, (_, i) => {
         const filled = i < value;
         return (
-          <svg
+          <StarShape
             key={i}
-            width={px}
-            height={px}
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-            className={filled ? "text-ink" : "text-ink/25"}
-          >
-            <path
-              d={STAR_PATH}
-              fill={filled ? "var(--color-honey)" : "var(--color-paper-sunk)"}
-              stroke="currentColor"
-              strokeWidth={1.6}
-              strokeLinejoin="round"
-            />
-          </svg>
+            size={px}
+            filled={filled}
+          />
         );
       })}
     </span>
