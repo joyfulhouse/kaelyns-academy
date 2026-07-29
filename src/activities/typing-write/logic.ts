@@ -51,9 +51,17 @@ export function itemsArePlausible(
     if (item.i !== index) return false;
     if (!item.missedExpected.every((ch) => expected[index].includes(ch))) return false;
     if (new Set(item.missedExpected).size !== item.missedExpected.length) return false;
-    // ok must agree with the evidence carried alongside it.
+    // ok must agree with the evidence carried alongside it. A diverged word
+    // ALWAYS records its first episode's expected character (a clean
+    // full-length buffer completes before any past-end key can land), so a
+    // non-first-try item with an empty missedExpected is reducer-impossible —
+    // forgery, not honest play.
     if (item.ok) return item.retries === 0 && item.missedExpected.length === 0;
-    return item.retries >= 1 && item.missedExpected.length <= item.retries;
+    return (
+      item.retries >= 1 &&
+      item.missedExpected.length >= 1 &&
+      item.missedExpected.length <= item.retries
+    );
   });
 }
 

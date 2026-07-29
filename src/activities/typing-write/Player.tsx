@@ -72,22 +72,26 @@ export function WriteRound({
   const shake = useWrongShake();
   const [state, setState] = useState(initialWriteState);
   const reported = useRef(false);
-  const targetSpeechIndexRef = useRef(state.index);
   // A monotonic clock read only from the event path (the useTypingKeys
   // handler below), never during render — react-hooks/purity forbids calling
   // performance.now() while rendering.
   const elapsedStartRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    if (targetSpeechIndexRef.current === state.index) return;
-    targetSpeechIndexRef.current = state.index;
-    targetSpeech.reset();
-  }, [state.index, targetSpeech]);
-
   const finished = state.index >= items.length;
   const item = finished ? null : (items[state.index] ?? null);
   const hearMode = parsed.mode === "hear";
-  const audioUnavailable = !speech.supported || targetSpeech.unavailable;
+  // Audio-reveal is pinned to the ITEM it failed on: `audioFailedFor` holds
+  // that item's index, so advancing self-invalidates the reveal in the same
+  // commit — no reset call, no stale frame where the next word's answer
+  // briefly shows. (The hook's own sticky `unavailable` is deliberately not
+  // read here for exactly that reason.)
+  const [audioFailedFor, setAudioFailedFor] = useState<number | null>(null);
+  const speakItem = (text: string, forIndex: number) => {
+    void targetSpeech.speakTarget(text).then((outcome) => {
+      if (outcome === "unavailable") setAudioFailedFor(forIndex);
+    });
+  };
+  const audioUnavailable = !speech.supported || audioFailedFor === state.index;
   const revealed = !hearMode || state.progress.retries >= REVEAL_RETRIES || audioUnavailable;
 
   useSpeakOnce(speech.speak, parsed.instruction);
@@ -96,7 +100,7 @@ export function WriteRound({
   // repeated word later in the list still speaks again.
   useSpeakOnce(
     (text) => {
-      void targetSpeech.speakTarget(text);
+      speakItem(text, state.index);
     },
     hearMode && item !== null ? item : null,
     state.index,
@@ -175,7 +179,7 @@ export function WriteRound({
               ) : (
                 <SpeakerButton
                   onSpeak={() => {
-                    void targetSpeech.speakTarget(item);
+                    speakItem(item, state.index);
                   }}
                   label="Hear the word again"
                 />

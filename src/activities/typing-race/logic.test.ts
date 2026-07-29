@@ -45,6 +45,13 @@ describe("typing-race scoring", () => {
     );
     expect(score(CONFIG, { words: alien, elapsedMs: 30_000 }).skillEvidence).toEqual([]);
   });
+
+  it("fails closed on a non-first-try word with no missed character (forgery shape)", () => {
+    const forged = perfectWords.map((w, i) =>
+      i === 0 ? { ...w, ok: false, retries: 1, missedExpected: [] as string[] } : w,
+    );
+    expect(score(CONFIG, { words: forged, elapsedMs: 30_000 }).skillEvidence).toEqual([]);
+  });
 });
 
 describe("typing-race derivation", () => {

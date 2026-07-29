@@ -104,6 +104,20 @@ describe("typing-write scoring", () => {
     expect(score(CONFIG, liar).skillEvidence).toEqual([]);
   });
 
+  it("fails closed when a non-first-try item carries no missed character", () => {
+    // Reducer-impossible: a diverged word always records its first episode's
+    // expected character, so retries >= 1 with an empty missedExpected is
+    // forgery (a clean full-length buffer completes before past-end keys).
+    const forged = {
+      items: [
+        { i: 0, ok: false, ms: 900, retries: 1, missedExpected: [] },
+        perfect.items[1],
+        perfect.items[2],
+      ],
+    };
+    expect(score(CONFIG, forged)).toEqual({ correct: 0, total: 3, stars: 1, skillEvidence: [] });
+  });
+
   it("fails closed when a completed non-first-try item has no counted retry", () => {
     const impossible = {
       items: [

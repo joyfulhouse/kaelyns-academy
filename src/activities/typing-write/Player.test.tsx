@@ -31,7 +31,9 @@ const fixtures = vi.hoisted(() => ({
   },
   targetSpeech: {
     unavailable: false,
-    speakTarget: vi.fn(() => Promise.resolve("completed" as const)),
+    speakTarget: vi.fn(
+      (): Promise<"completed" | "unavailable" | "cancelled"> => Promise.resolve("completed"),
+    ),
     reset: vi.fn(),
   },
   speakOnce: vi.fn(),
@@ -282,9 +284,14 @@ describe("Word Write hear mode", () => {
     expect(secondWordCall[2]).toBe(1);
   });
 
-  it("resets an unavailable target on item advance so the next hidden word starts unrevealed", () => {
-    fixtures.targetSpeech.unavailable = true;
+  it("pins an audio-failure reveal to its own item so the next word starts unrevealed", () => {
     const onComplete = vi.fn();
+    // First render allocates the state slots (WriteState, then audioFailedFor).
+    toMarkup(HEAR_CONFIG, onComplete);
+    // Audio failed FOR ITEM 0: the reveal derives from `audioFailedFor ===
+    // index`, so it needs no reset — advancing the index self-invalidates it
+    // in the same commit, leaving no stale frame that leaks the next answer.
+    fixtures.stateValues[1] = 0;
     const unavailable = toMarkup(HEAR_CONFIG, onComplete);
     expect(unavailable).toContain("bg-paper-raised");
     expect(unavailable).toMatch(/aria-live="polite"[^>]*>[^<]*cat</);
@@ -294,10 +301,26 @@ describe("Word Write hear mode", () => {
     type("t");
     const nextItem = toMarkup(HEAR_CONFIG, onComplete);
 
-    expect(fixtures.targetSpeech.reset).toHaveBeenCalledTimes(1);
     expect(nextItem).not.toContain("bg-paper-raised");
     expect(nextItem).toContain("Listen, then type the word");
     expect(nextItem).not.toContain("Type sun");
+  });
+
+  it("records the failing item's index when the target utterance is unavailable", async () => {
+    fixtures.targetSpeech.speakTarget.mockImplementation(() =>
+      Promise.resolve("unavailable" as const),
+    );
+    toMarkup(HEAR_CONFIG, () => undefined);
+
+    // The mount utterance for item 0 is wired through useSpeakOnce; invoke
+    // the registered speaker exactly as the hook would.
+    const wordCall = fixtures.speakOnce.mock.calls.find((call) => call[1] === "cat");
+    expect(wordCall).toBeDefined();
+    (wordCall![0] as (text: string) => void)("cat");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fixtures.stateValues[1]).toBe(0);
   });
 });
 
