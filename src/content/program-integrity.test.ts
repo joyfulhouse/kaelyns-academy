@@ -5,6 +5,7 @@ import {
   validatePlayableActivityConfig,
 } from "@/activities/definitions";
 import { exactSkillRoutingIssue } from "@/activities/skill-routing";
+import { minPrompts } from "@/activities/typing-catch/logic";
 import type {
   ActivityKind,
   MathMoneyConfig,
@@ -282,12 +283,18 @@ function successfulResponse(activity: Activity): unknown {
           .map((key) => ({ key, ok: true, retries: 0 })),
       };
     }
-    case "typing-catch":
+    case "typing-catch": {
+      const promptCount = minPrompts(config);
       return {
-        prompts: config.pool.map((text) => ({ text, ok: true, ms: 500 })),
+        prompts: Array.from({ length: promptCount }, (_, index) => ({
+          text: config.pool[index % config.pool.length]!,
+          ok: true,
+          ms: 500,
+        })),
         endedBy: "time",
         elapsedMs: (config.durationSec ?? 45) * 1_000,
       };
+    }
   }
 }
 

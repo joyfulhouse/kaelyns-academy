@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { classifyKeydown, preventsDefault, type KeydownLike } from "./typingKey";
+import {
+  classifyKeydown,
+  matchesTypingTarget,
+  preventsDefault,
+  type KeydownLike,
+} from "./typingKey";
 
 function press(overrides: Partial<KeydownLike> & { key: string }): KeydownLike {
   return {
@@ -62,5 +67,13 @@ describe("preventsDefault", () => {
   it("leaves ordinary letters and real shortcuts alone", () => {
     expect(preventsDefault(press({ key: "f" }))).toBe(false);
     expect(preventsDefault(press({ key: "r", ctrlKey: true }))).toBe(false);
+  });
+});
+
+describe("matchesTypingTarget", () => {
+  it("forgives CapsLock for lowercase targets but requires shift for capitals", () => {
+    expect(matchesTypingTarget("a", "A")).toBe(true);
+    expect(matchesTypingTarget("A", "a")).toBe(false);
+    expect(matchesTypingTarget("A", "A")).toBe(true);
   });
 });

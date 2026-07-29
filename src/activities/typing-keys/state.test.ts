@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialKeysState, isKeysComplete, pressKey } from "./state";
+import { initialKeysState, isKeysComplete, pressKey, pressNextKey } from "./state";
 
 describe("Key Camp state", () => {
   it("advances on the right key and banks a clean prompt", () => {
@@ -44,5 +44,24 @@ describe("Key Camp state", () => {
     const state = { index: 4, retries: 0, done: [] };
     expect(isKeysComplete(state, 4)).toBe(true);
     expect(isKeysComplete(state, 5)).toBe(false);
+  });
+
+  it("derives each expected key from current state so rapid presses cannot lose an advance", () => {
+    const prompts = ["f", "j"];
+    let state = initialKeysState();
+    state = pressNextKey(state, prompts, "f");
+    state = pressNextKey(state, prompts, "j");
+
+    expect(state.index).toBe(2);
+    expect(state.done).toEqual([
+      { key: "f", ok: true, retries: 0 },
+      { key: "j", ok: true, retries: 0 },
+    ]);
+  });
+
+  it("ignores another key after the completion transition", () => {
+    const prompts = ["f"];
+    const complete = pressNextKey(initialKeysState(), prompts, "f");
+    expect(pressNextKey(complete, prompts, "f")).toBe(complete);
   });
 });

@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { gateState } from "./gate";
+import { gateState, isProofKey } from "./gate";
+
+describe("isProofKey", () => {
+  it("accepts only the advertised home-row anchor, case-insensitively", () => {
+    expect(isProofKey("f")).toBe(true);
+    expect(isProofKey("F")).toBe(true);
+    expect(isProofKey("a")).toBe(false);
+    expect(isProofKey(" ")).toBe(false);
+  });
+});
 
 describe("gateState", () => {
   it("opens once a real keypress has proven a keyboard", () => {

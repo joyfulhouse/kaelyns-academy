@@ -11,6 +11,11 @@ export type GateState = "blocked" | "prove" | "open";
 /** The home-row anchor doubles as the proof-of-keyboard key. */
 export const PROVE_KEY = "f";
 
+/** The proof screen names one key, so only that key may open the stage. */
+export function isProofKey(char: string): boolean {
+  return char.toLowerCase() === PROVE_KEY;
+}
+
 export function gateState(input: {
   coarsePointerOnly: boolean;
   keyboardProven: boolean;

@@ -1,4 +1,5 @@
 import type { TypingKeysResponse } from "./logic";
+import { matchesTypingTarget } from "../_shared/typing/typingKey";
 
 /**
  * Key Camp's rules as a pure reducer, so every case is testable in the node
@@ -17,18 +18,8 @@ export function initialKeysState(): KeysState {
   return { index: 0, retries: 0, done: [] };
 }
 
-/**
- * Case-forgiving when the target is lowercase (a stray CapsLock is not a
- * mistake worth failing a child over), exact when the target is a capital —
- * because then reaching for shift IS the skill.
- */
-function matches(expected: string, char: string): boolean {
-  if (expected === expected.toLowerCase()) return char.toLowerCase() === expected;
-  return char === expected;
-}
-
 export function pressKey(state: KeysState, expected: string, char: string): KeysState {
-  if (!matches(expected, char)) {
+  if (!matchesTypingTarget(expected, char)) {
     return { ...state, retries: Math.min(MAX_RETRIES, state.retries + 1) };
   }
   return {
@@ -36,6 +27,20 @@ export function pressKey(state: KeysState, expected: string, char: string): Keys
     retries: 0,
     done: [...state.done, { key: expected, ok: true, retries: state.retries }],
   };
+}
+
+/**
+ * Resolve the expected prompt from the state being transitioned, not from a
+ * render-time target. React may batch two keydowns before painting either one;
+ * each updater must therefore advance from the result of the previous updater.
+ */
+export function pressNextKey(
+  state: KeysState,
+  prompts: readonly string[],
+  char: string,
+): KeysState {
+  const expected = prompts[state.index];
+  return expected === undefined ? state : pressKey(state, expected, char);
 }
 
 export function isKeysComplete(state: KeysState, total: number): boolean {

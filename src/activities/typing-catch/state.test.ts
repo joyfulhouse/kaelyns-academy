@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { TypingCatchConfig } from "@/content/activity-configs";
-import { initialCatchState, roundOver, tick, typeChar } from "./state";
+import {
+  finishTimedRound,
+  initialCatchState,
+  roundIsPaused,
+  roundOver,
+  tick,
+  typeChar,
+} from "./state";
 
 const CONFIG: TypingCatchConfig = {
   instruction: "Pop the stars!",
@@ -66,6 +73,29 @@ describe("Star Catch state", () => {
     expect(state.results).toEqual([{ text: "a", ok: true, ms: 1_000 }]);
   });
 
+  it("requires exact case when the falling target is a capital", () => {
+    const capitalConfig = { ...CONFIG, pool: ["A", "s"] };
+    const missed = typeChar(initialCatchState(capitalConfig, 0), capitalConfig, "a", 1_000);
+    const caught = typeChar(initialCatchState(capitalConfig, 0), capitalConfig, "A", 1_000);
+
+    expect(missed.results).toEqual([]);
+    expect(missed.targets).toHaveLength(1);
+    expect(caught.results).toEqual([{ text: "A", ok: true, ms: 1_000 }]);
+  });
+
+  it("banks every airborne target as a miss when time expires", () => {
+    let state = initialCatchState(CONFIG, 0);
+    state = tick(state, CONFIG, 4_000);
+    state = typeChar(state, CONFIG, "a", 5_000);
+    const finished = finishTimedRound(state, 40_000);
+
+    expect(finished.targets).toEqual([]);
+    expect(finished.results).toEqual([
+      { text: "a", ok: true, ms: 5_000 },
+      { text: "s", ok: false, ms: 36_000 },
+    ]);
+  });
+
   it("ends on the clock", () => {
     const state = initialCatchState(CONFIG, 0);
     expect(roundOver(state, CONFIG, 39_000)).toBeNull();
@@ -75,5 +105,14 @@ describe("Star Catch state", () => {
   it("ends when the last heart goes out", () => {
     const state = { ...initialCatchState(CONFIG, 0), lives: 0 };
     expect(roundOver(state, CONFIG, 1_000)).toBe("lives");
+  });
+});
+
+describe("Star Catch pause state", () => {
+  it("pauses for a hidden document or blurred window and resumes only when both recover", () => {
+    expect(roundIsPaused(false, true)).toBe(false);
+    expect(roundIsPaused(true, true)).toBe(true);
+    expect(roundIsPaused(false, false)).toBe(true);
+    expect(roundIsPaused(true, false)).toBe(true);
   });
 });

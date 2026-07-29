@@ -44,3 +44,13 @@ export function preventsDefault(event: KeydownLike): boolean {
   if (intent.type === "backspace") return true;
   return intent.type === "char" && SWALLOWED.has(intent.char);
 }
+
+/**
+ * Case-forgiving when the target is lowercase (a stray CapsLock is not a
+ * mistake worth failing a child over), exact when the target is a capital —
+ * because then reaching for shift IS the skill.
+ */
+export function matchesTypingTarget(expected: string, char: string): boolean {
+  if (expected === expected.toLowerCase()) return char.toLowerCase() === expected;
+  return char === expected;
+}

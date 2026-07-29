@@ -13,11 +13,29 @@ import { useSpeech } from "../_shared/useSpeech";
 import { TypingStage } from "../_shared/typing/TypingStage";
 import { useTypingKeys } from "../_shared/typing/useTypingKeys";
 import { schema, type TypingCatchResponse } from "./logic";
-import { fallMs, initialCatchState, roundOver, tick, typeChar } from "./state";
+import {
+  fallMs,
+  finishTimedRound,
+  initialCatchState,
+  roundIsPaused,
+  roundOver,
+  tick,
+  typeChar,
+} from "./state";
 
 const TICK_MS = 100;
 
-export function TypingCatchPlayer({
+export function TypingCatchPlayer(
+  props: ActivityPlayerProps<TypingCatchConfig, TypingCatchResponse>,
+) {
+  return (
+    <TypingStage>
+      <CatchRound {...props} />
+    </TypingStage>
+  );
+}
+
+function CatchRound({
   config,
   onComplete,
 }: ActivityPlayerProps<TypingCatchConfig, TypingCatchResponse>) {
@@ -34,14 +52,26 @@ export function TypingCatchPlayer({
   useSpeakOnce(speech.speak, parsed.instruction);
 
   // A single interval drives the round. The clock pauses while the tab is
-  // hidden: a parent taking the laptop mid-round must not cost hearts or
-  // corrupt the rate — with no pause, both the hearts and the WPM would lie.
+  // hidden or its window loses focus: a parent taking the laptop mid-round
+  // must not cost hearts or corrupt the rate — with no pause, both the hearts
+  // and the WPM would lie.
   useEffect(() => {
-    let paused = document.hidden;
+    let windowFocused = document.hasFocus();
+    let paused = roundIsPaused(document.hidden, windowFocused);
     const onVisibility = () => {
-      paused = document.hidden;
+      paused = roundIsPaused(document.hidden, windowFocused);
+    };
+    const onBlur = () => {
+      windowFocused = false;
+      paused = true;
+    };
+    const onFocus = () => {
+      windowFocused = true;
+      paused = roundIsPaused(document.hidden, windowFocused);
     };
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
     const id = window.setInterval(() => {
       if (paused || finished.current) return;
       elapsedRef.current += TICK_MS;
@@ -52,6 +82,8 @@ export function TypingCatchPlayer({
     return () => {
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
     };
   }, [parsed]);
 
@@ -63,12 +95,14 @@ export function TypingCatchPlayer({
   useEffect(() => {
     if (!endedBy || finished.current) return;
     finished.current = true;
+    const completedState =
+      endedBy === "time" ? finishTimedRound(state, elapsedMs) : state;
     onComplete({
       // The response schema needs at least one prompt. A round this long always
       // resolves at least one star, so this fallback is defensive only.
       prompts:
-        state.results.length > 0
-          ? state.results
+        completedState.results.length > 0
+          ? completedState.results
           : [{ text: parsed.pool[0]!, ok: false, ms: 0 }],
       endedBy,
       elapsedMs,
@@ -83,82 +117,96 @@ export function TypingCatchPlayer({
   const fall = fallMs(parsed);
   const caught = state.results.filter((result) => result.ok).length;
   const secondsLeft = Math.max(0, Math.ceil(parsed.durationSec - elapsedMs / 1_000));
+  const targetAnnouncement =
+    state.targets.length === 0
+      ? "Get ready"
+      : `Type ${state.targets
+          .map((target) =>
+            target.text === target.text.toUpperCase() &&
+            target.text !== target.text.toLowerCase()
+              ? `capital ${target.text}`
+              : target.text.toUpperCase(),
+          )
+          .join(", ")}`;
 
   return (
-    <TypingStage>
-      <div className="flex flex-col items-center gap-6">
-        <Prompt speech={speech} instruction={parsed.instruction} />
-        <div className="flex items-center gap-6">
-          <span
-            className="flex items-center gap-2"
-            role="img"
-            aria-label={`${state.lives} of ${parsed.lives} hearts left`}
-          >
-            {Array.from({ length: parsed.lives }, (_, index) => (
-              <HeartIcon
-                key={index}
-                size={32}
-                weight={index < state.lives ? "fill" : "regular"}
-                className={cn(index < state.lives ? "text-coral" : "text-ink-soft/30")}
-                aria-hidden
-              />
-            ))}
-          </span>
-          <span className="text-lg font-semibold text-ink">{secondsLeft}s</span>
-        </div>
-
-        {/* Reduced motion is a path, not a downgrade: nothing falls, the same
-            stars queue up with a discrete countdown, and every rule and score
-            comes from the same state.ts either way. */}
-        <div
-          className={cn(
-            "relative w-full max-w-2xl",
-            reducedMotion
-              ? "flex flex-wrap items-start justify-center gap-4 py-6"
-              : "h-72 overflow-hidden",
-          )}
+    <div className="flex flex-col items-center gap-6">
+      <Prompt speech={speech} instruction={parsed.instruction} />
+      <div className="flex items-center gap-6">
+        <span
+          className="flex items-center gap-2"
+          role="img"
+          aria-label={`${state.lives} of ${parsed.lives} hearts left`}
         >
-          {state.targets.map((target) => {
-            const remainingMs = Math.max(0, target.spawnedMs + fall - elapsedMs);
-            const progress = Math.min(1, (elapsedMs - target.spawnedMs) / fall);
-            return (
-              <span
-                key={target.id}
-                className={cn(
-                  "flex flex-col items-center gap-1",
-                  !reducedMotion && "absolute left-1/2 -translate-x-1/2",
-                )}
-                // Offset by the sprite's own 4rem height so progress 1 rests it
-                // ON the ground line rather than clipping it out of the sky.
-                style={
-                  reducedMotion ? undefined : { top: `calc(${progress} * (100% - 4rem))` }
-                }
-              >
-                <span
-                  data-falling={target.text}
-                  className="grid size-16 place-items-center rounded-full bg-honey text-2xl font-bold text-ink"
-                >
-                  {target.text.toUpperCase()}
-                </span>
-                {reducedMotion && (
-                  <span className="text-sm text-ink-soft">
-                    {Math.ceil(remainingMs / 1_000)}
-                  </span>
-                )}
-              </span>
-            );
-          })}
-          {state.targets.length === 0 && (
-            <span
-              className={cn("grid place-items-center", !reducedMotion && "absolute inset-0")}
-            >
-              <StarIcon size={40} className="text-honey/40" aria-hidden />
-            </span>
-          )}
-        </div>
-
-        <ProgressHint>Caught {caught}</ProgressHint>
+          {Array.from({ length: parsed.lives }, (_, index) => (
+            <HeartIcon
+              key={index}
+              size={32}
+              weight={index < state.lives ? "fill" : "regular"}
+              className={cn(index < state.lives ? "text-coral" : "text-ink-soft/30")}
+              aria-hidden
+            />
+          ))}
+        </span>
+        <span className="text-lg font-semibold text-ink">{secondsLeft}s</span>
       </div>
-    </TypingStage>
+
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        {targetAnnouncement}
+      </p>
+
+      {/* Reduced motion is a path, not a downgrade: nothing falls, the same
+          stars queue up with a discrete countdown, and every rule and score
+          comes from the same state.ts either way. */}
+      <div
+        className={cn(
+          "relative w-full max-w-2xl",
+          reducedMotion
+            ? "flex flex-wrap items-start justify-center gap-4 py-6"
+            : "h-72 overflow-hidden",
+        )}
+      >
+        {state.targets.map((target) => {
+          const remainingMs = Math.max(0, target.spawnedMs + fall - elapsedMs);
+          const progress = Math.min(1, (elapsedMs - target.spawnedMs) / fall);
+          return (
+            <span
+              key={target.id}
+              className={cn(
+                "flex flex-col items-center gap-1",
+                !reducedMotion && "absolute left-1/2 -translate-x-1/2",
+              )}
+              aria-hidden
+              // Offset by the sprite's own 4rem height so progress 1 rests it
+              // ON the ground line rather than clipping it out of the sky.
+              style={
+                reducedMotion ? undefined : { top: `calc(${progress} * (100% - 4rem))` }
+              }
+            >
+              <span
+                data-falling={target.text}
+                className="grid size-16 place-items-center rounded-full bg-honey text-2xl font-bold text-ink"
+              >
+                {target.text.toUpperCase()}
+              </span>
+              {reducedMotion && (
+                <span className="text-sm text-ink-soft">
+                  {Math.ceil(remainingMs / 1_000)}
+                </span>
+              )}
+            </span>
+          );
+        })}
+        {state.targets.length === 0 && (
+          <span
+            className={cn("grid place-items-center", !reducedMotion && "absolute inset-0")}
+          >
+            <StarIcon size={40} className="text-honey/40" aria-hidden />
+          </span>
+        )}
+      </div>
+
+      <ProgressHint>Caught {caught}</ProgressHint>
+    </div>
   );
 }

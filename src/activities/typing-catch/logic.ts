@@ -16,8 +16,6 @@ export const FALL_SECONDS = { gentle: 8, steady: 5, zippy: 3 } as const;
 
 const DEFAULT_DURATION_SEC = 45;
 const DEFAULT_SPEED = "gentle";
-/** Slack for the last star already falling when the timer runs out. */
-const SPAWN_SLACK = 2;
 
 /** Two spawns per fall, so at most two stars share the sky. */
 export function spawnIntervalMs(config: TypingCatchConfig): number {
@@ -25,13 +23,25 @@ export function spawnIntervalMs(config: TypingCatchConfig): number {
 }
 
 /**
+ * The conservative floor for a full-length round counts only stars old enough
+ * to have reached the ground before time-up. Stars still airborne are also
+ * resolved by the Player, but excluding them here tolerates a delayed timer
+ * frame without accepting the one-prompt forgery this bound exists to stop.
+ */
+export function minPrompts(config: TypingCatchConfig): number {
+  const durationMs = (config.durationSec ?? DEFAULT_DURATION_SEC) * 1_000;
+  const fallMs = FALL_SECONDS[config.speed ?? DEFAULT_SPEED] * 1_000;
+  return Math.max(1, Math.ceil(Math.max(0, durationMs - fallMs) / spawnIntervalMs(config)));
+}
+
+/**
  * The most stars a round of this length could physically have shown. Scoring
- * needs this because a timed round has no fixed prompt count: without a ceiling,
- * a one-prompt response would read as a flawless round.
+ * needs this because a timed round has no fixed prompt count. The first target
+ * spawns at zero; one more can spawn on every complete interval through time-up.
  */
 export function maxPrompts(config: TypingCatchConfig): number {
   const durationMs = (config.durationSec ?? DEFAULT_DURATION_SEC) * 1_000;
-  return Math.ceil(durationMs / spawnIntervalMs(config)) + SPAWN_SLACK;
+  return Math.floor(durationMs / spawnIntervalMs(config)) + 1;
 }
 
 /**
@@ -64,9 +74,15 @@ export function score(
   response: TypingCatchResponse,
 ): ActivityScore {
   const pool = new Set(config.pool);
+  const misses = response.prompts.filter((prompt) => !prompt.ok).length;
+  const endingIsPlausible =
+    response.endedBy === "lives"
+      ? misses >= (config.lives ?? 3)
+      : response.prompts.length >= minPrompts(config);
   const plausible =
     response.prompts.length <= maxPrompts(config) &&
-    response.prompts.every((prompt) => pool.has(prompt.text));
+    response.prompts.every((prompt) => pool.has(prompt.text)) &&
+    endingIsPlausible;
   // Fail closed: an implausible round scores nothing and moves no mastery,
   // rather than being rejected outright — the child may simply have hit a bug,
   // and losing an attempt is worse than losing the evidence.

@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { KeyboardIcon } from "@phosphor-icons/react/dist/ssr";
-import { PROVE_KEY, gateState } from "./gate";
+import { PROVE_KEY, gateState, isProofKey } from "./gate";
 import { useCoarsePointerOnly } from "./useCoarsePointerOnly";
 import { useTypingKeys } from "./useTypingKeys";
 
@@ -22,7 +22,7 @@ export function TypingStage({ children }: { children: ReactNode }) {
   // Keep listening even while blocked: attaching a keyboard case to a tablet
   // should just work, with no reload and no settings toggle.
   useTypingKeys((intent) => {
-    if (intent.type === "char") setKeyboardProven(true);
+    if (intent.type === "char" && isProofKey(intent.char)) setKeyboardProven(true);
   }, state !== "open");
 
   if (state === "open") return <>{children}</>;

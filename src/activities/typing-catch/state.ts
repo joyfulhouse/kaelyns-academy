@@ -1,4 +1,5 @@
 import type { TypingCatchConfig } from "@/content/activity-configs";
+import { matchesTypingTarget } from "../_shared/typing/typingKey";
 import { FALL_SECONDS, spawnIntervalMs, type TypingCatchResponse } from "./logic";
 
 /**
@@ -99,15 +100,39 @@ export function typeChar(
   char: string,
   nowMs: number,
 ): CatchState {
-  const hit = state.targets.find(
-    (target) => target.text.toLowerCase() === char.toLowerCase(),
-  );
+  const hit = state.targets.find((target) => matchesTypingTarget(target.text, char));
   if (!hit) return state;
   return {
     ...state,
     targets: state.targets.filter((target) => target.id !== hit.id),
     results: [...state.results, { text: hit.text, ok: true, ms: nowMs - hit.spawnedMs }],
   };
+}
+
+/**
+ * The clock ending resolves every star still in the sky. Omitting those targets
+ * would make the same spawned star count against accuracy only when it happened
+ * to land a frame earlier, inflating timed-round scores.
+ */
+export function finishTimedRound(state: CatchState, elapsedMs: number): CatchState {
+  if (state.targets.length === 0) return state;
+  return {
+    ...state,
+    targets: [],
+    results: [
+      ...state.results,
+      ...state.targets.map((target) => ({
+        text: target.text,
+        ok: false,
+        ms: Math.max(0, elapsedMs - target.spawnedMs),
+      })),
+    ],
+  };
+}
+
+/** Both visibility and focus must agree that the child can see the round. */
+export function roundIsPaused(documentHidden: boolean, windowFocused: boolean): boolean {
+  return documentHidden || !windowFocused;
 }
 
 export function roundOver(
