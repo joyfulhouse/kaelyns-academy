@@ -21,7 +21,8 @@ function getSnapshot(): boolean {
   return roundIsPaused(document.hidden, document.hasFocus());
 }
 
-/** Hydration-safe visibility/focus state for the timed Star Catch round. */
+/** Hydration-safe visibility/focus state for a timed typing round (Star
+ *  Catch, Rocket Race). */
 export function useRoundPaused(): boolean {
   return useSyncExternalStore(subscribe, getSnapshot, () => false);
 }
