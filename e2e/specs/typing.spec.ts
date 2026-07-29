@@ -27,12 +27,10 @@ const STAR_CATCH = "/learn/keyboard-club/home-base/home-catch-gentle"; // pool a
  * a genuine synchronization requirement, not a workaround: it asserts the gate
  * is truly showing before proving the keyboard against it.
  *
- * The proof keypress is NOT absorbed by the gate — the Player is already
- * mounted underneath it, so this keydown reaches the drill too. For Key Camp
- * that means the gate's proof key ("f") also satisfies the drill's first
- * target whenever the drill's first key happens to be "f" (e.g. home-fj).
- * Callers must not assume which prompt the drill is on right after
- * `openGate()` returns — read the live target from the DOM instead.
+ * The gate arms the game rather than merely hiding an already-mounted Player.
+ * `TypingStage` consumes the proof keydown while the inner round is unmounted;
+ * the round mounts on a later render once the gate is open, so that keydown
+ * cannot affect it. Key Camp therefore starts at prompt 1 of 6 with target "f".
  */
 async function openGate(page: Page, url: string) {
   await page.goto(url);
@@ -51,9 +49,9 @@ test("the gate asks for a real keypress before revealing the drill", async ({ pa
   ).toBeVisible({ timeout: 25_000 });
   await expect(page.locator('[data-key="f"]')).toHaveCount(0);
 
-  // This keydown is not absorbed by the gate — the Player is already mounted
-  // underneath it, so the same press both proves the keyboard and reaches the
-  // drill (Key Camp's first target here is also "f").
+  // TypingStage consumes this proof keydown to arm the game. KeysRound mounts
+  // only after the gate opens, so the proof press cannot reach the drill or
+  // advance its first "f" target.
   await page.keyboard.press("f");
   await expect(page.locator('[data-key="f"]')).toBeVisible();
 });
@@ -63,8 +61,8 @@ test("Key Camp advances only on the right key and never punishes a wrong one", a
 }) => {
   await openGate(page, KEY_CAMP);
 
-  // The gate's proof key also reaches the drill (see openGate's doc comment),
-  // so don't assume which prompt we land on — read the live target instead.
+  // The gate arms the game before KeysRound mounts, so its proof press cannot
+  // affect the round: this is prompt 1 of 6, with "f" as the live target.
   const target = page.locator('[data-target="true"]');
   await expect(target).toBeVisible();
   const current = await target.getAttribute("data-key");
@@ -88,10 +86,9 @@ test("Key Camp advances only on the right key and never punishes a wrong one", a
 });
 
 test("Key Camp completes the whole drill and reports a finish", async ({ page }) => {
-  // The gate's proof press ("f") also reaches the drill and satisfies its
-  // first target, so this loop presses one more key than there are remaining
-  // prompts — the invariant proven above (a wrong key holds position, no
-  // penalty) is what makes that leading "f" harmless here too.
+  // TypingStage consumes the gate's proof press before KeysRound mounts, so the
+  // round is freshly armed at prompt 1. These six presses complete its six
+  // prompts in authored order.
   await openGate(page, KEY_CAMP);
 
   for (const key of ["f", "j", "f", "j", "f", "j"]) {
@@ -107,13 +104,10 @@ test("Key Camp completes the whole drill and reports a finish", async ({ page })
 test("Star Catch pops a falling star when its letter is typed", async ({ page }) => {
   await openGate(page, STAR_CATCH);
 
-  // As with Key Camp, the gate's proof keydown reaches the round too (the
-  // clock and useTypingKeys listener are live from mount), and the first
-  // star spawns immediately from config.pool[0]. For home-catch-gentle that's
-  // "a", so today the proof press ("f") is a harmless no-op — but nothing
-  // guarantees pool order, and home-catch-steady sits right below it with the
-  // same pool. Read the caught count rather than assuming it starts at 0, so
-  // a future reorder can't silently flip this from "Caught 1" to "Caught 2".
+  // TypingStage consumes the proof keydown before CatchRound mounts, so that
+  // press cannot pop a star; the old config.pool[0] coupling is now moot.
+  // Reading the count before and after remains the more robust assertion shape:
+  // it verifies exactly one catch without assuming a particular initial count.
   const caught = page.getByText(/^Caught \d+$/);
   const before = Number((await caught.textContent())?.match(/\d+/)?.[0] ?? "0");
 
