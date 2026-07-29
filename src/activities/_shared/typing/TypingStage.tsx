@@ -19,19 +19,30 @@ import { useTypingKeys } from "./useTypingKeys";
 export function TypingStage({ children }: { children: ReactNode }) {
   const coarsePointerOnly = useCoarsePointerOnly();
   const [keyboardProven, setKeyboardProven] = useState(false);
-  const state = gateState({ coarsePointerOnly, keyboardProven });
+  const state =
+    keyboardProven
+      ? "open"
+      : coarsePointerOnly === null
+        ? "resolving"
+        : gateState({ coarsePointerOnly, keyboardProven });
+  const visibleState = state === "resolving" ? "prove" : state;
   const speech = useSpeech();
   const spokenInstruction =
     state === "blocked"
       ? "Typing needs a real keyboard, so come back on a computer."
-      : `Press the ${PROVE_KEY.toUpperCase()} key to start with your left pointer finger.`;
+      : state === "prove"
+        ? `Press the ${PROVE_KEY.toUpperCase()} key to start with your left pointer finger.`
+        : null;
 
-  useSpeakOnce(speech.speak, spokenInstruction);
+  useSpeakOnce(speech.speak, spokenInstruction, state);
 
   // Keep listening even while blocked: attaching a keyboard case to a tablet
   // should just work, with no reload and no settings toggle.
   useTypingKeys((intent) => {
-    if (intent.type === "char" && isProofKey(intent)) setKeyboardProven(true);
+    if (intent.type === "char" && isProofKey(intent)) {
+      speech.cancel();
+      setKeyboardProven(true);
+    }
   }, state !== "open");
 
   if (state === "open") return <>{children}</>;
@@ -39,7 +50,7 @@ export function TypingStage({ children }: { children: ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-6 py-12 text-center">
       <KeyboardIcon size={72} weight="duotone" className="text-honey" aria-hidden />
-      {state === "blocked" ? (
+      {visibleState === "blocked" ? (
         <>
           <h2 className="text-2xl font-semibold text-ink">Typing needs a keyboard</h2>
           <p className="max-w-sm text-ink-soft">

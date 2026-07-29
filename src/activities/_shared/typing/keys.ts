@@ -66,6 +66,11 @@ export function isTeachableKey(char: string): boolean {
   return KEY_FINGERS[char.toLowerCase()] !== undefined;
 }
 
+/** True only for a letter authored as a capital, never punctuation or space. */
+export function isCapitalKey(char: string): boolean {
+  return char !== char.toLowerCase();
+}
+
 export function rowOf(char: string): TypingRow {
   const lower = char.toLowerCase();
   if (lower === " ") return "space";

@@ -3,8 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TypingStage } from "./TypingStage";
 
 const mocks = vi.hoisted(() => ({
-  coarsePointerOnly: false,
-  spoken: [] as string[],
+  coarsePointerOnly: null as boolean | null,
+  gateKeyHandler: null as
+    | ((intent: { type: "char"; char: string; code: string; shiftKey: boolean }) => void)
+    | null,
+  spoken: [] as { key: unknown; text: string }[],
+  cancel: vi.fn(),
   speak: vi.fn(),
 }));
 
@@ -13,33 +17,57 @@ vi.mock("./useCoarsePointerOnly", () => ({
 }));
 
 vi.mock("../useSpeech", () => ({
-  useSpeech: () => ({ speak: mocks.speak }),
+  useSpeech: () => ({ cancel: mocks.cancel, speak: mocks.speak }),
 }));
 
 vi.mock("../useSpeakOnce", () => ({
-  useSpeakOnce: (_speak: unknown, text: string) => {
-    mocks.spoken.push(text);
+  useSpeakOnce: (_speak: unknown, text: string | null, key: unknown) => {
+    if (text !== null) mocks.spoken.push({ key, text });
+  },
+}));
+
+vi.mock("./useTypingKeys", () => ({
+  useTypingKeys: (
+    onIntent: (intent: { type: "char"; char: string; code: string; shiftKey: boolean }) => void,
+  ) => {
+    mocks.gateKeyHandler = onIntent;
   },
 }));
 
 describe("TypingStage", () => {
   beforeEach(() => {
-    mocks.coarsePointerOnly = false;
+    mocks.coarsePointerOnly = null;
+    mocks.gateKeyHandler = null;
     mocks.spoken.length = 0;
+    vi.clearAllMocks();
   });
 
-  it("asks for the home-row anchor before revealing the game", () => {
+  it("shows the proof screen without narrating during media-query resolution", () => {
     const markup = renderToStaticMarkup(
       <TypingStage>
         <p>the game</p>
       </TypingStage>,
     );
 
-    // The server snapshot is "not coarse, not proven" — the prove screen.
     expect(markup).toContain("Press the");
     expect(markup).not.toContain("the game");
+    expect(mocks.spoken).toEqual([]);
+  });
+
+  it("narrates the resolved proof screen with its own key", () => {
+    mocks.coarsePointerOnly = false;
+
+    renderToStaticMarkup(
+      <TypingStage>
+        <p>the game</p>
+      </TypingStage>,
+    );
+
     expect(mocks.spoken).toEqual([
-      "Press the F key to start with your left pointer finger.",
+      {
+        key: "prove",
+        text: "Press the F key to start with your left pointer finger.",
+      },
     ]);
   });
 
@@ -54,7 +82,28 @@ describe("TypingStage", () => {
 
     expect(markup).toContain("Typing needs a keyboard");
     expect(mocks.spoken).toEqual([
-      "Typing needs a real keyboard, so come back on a computer.",
+      {
+        key: "blocked",
+        text: "Typing needs a real keyboard, so come back on a computer.",
+      },
     ]);
+  });
+
+  it("cancels gate narration before accepting the proof key", () => {
+    mocks.coarsePointerOnly = false;
+    renderToStaticMarkup(
+      <TypingStage>
+        <p>the game</p>
+      </TypingStage>,
+    );
+
+    mocks.gateKeyHandler?.({
+      type: "char",
+      char: "f",
+      code: "KeyF",
+      shiftKey: false,
+    });
+
+    expect(mocks.cancel).toHaveBeenCalledOnce();
   });
 });

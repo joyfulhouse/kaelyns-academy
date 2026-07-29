@@ -11,16 +11,17 @@ import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { TypingStage } from "../_shared/typing/TypingStage";
+import { isCapitalKey } from "../_shared/typing/keys";
 import { useTypingKeys } from "../_shared/typing/useTypingKeys";
 import { fallMs, schema, type TypingCatchResponse } from "./logic";
 import {
   initialCatchState,
   resolveAirborne,
-  roundIsPaused,
   roundOver,
   tick,
   typeChar,
 } from "./state";
+import { useRoundPaused } from "./useRoundPaused";
 
 const TICK_MS = 100;
 
@@ -81,11 +82,7 @@ function CatchRound({
   const reducedMotion = useReducedMotion();
   const [elapsedMs, setElapsedMs] = useState(0);
   const [state, setState] = useState(() => initialCatchState(parsed, 0));
-  const [paused, setPaused] = useState(() =>
-    typeof document === "undefined"
-      ? false
-      : roundIsPaused(document.hidden, document.hasFocus()),
-  );
+  const paused = useRoundPaused();
   // The round's clock lives in a ref so the interval can read and advance it
   // without an impure state updater (which StrictMode would double-invoke).
   const elapsedRef = useRef(0);
@@ -99,24 +96,6 @@ function CatchRound({
   // must not cost hearts or corrupt the rate — with no pause, both the hearts
   // and the WPM would lie.
   useEffect(() => {
-    let windowFocused = document.hasFocus();
-    const syncPaused = () => {
-      setPaused(roundIsPaused(document.hidden, windowFocused));
-    };
-    const onVisibility = () => {
-      syncPaused();
-    };
-    const onBlur = () => {
-      windowFocused = false;
-      syncPaused();
-    };
-    const onFocus = () => {
-      windowFocused = true;
-      syncPaused();
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("blur", onBlur);
-    window.addEventListener("focus", onFocus);
     const id = window.setInterval(() => {
       if (paused || finished.current) return;
       elapsedRef.current += TICK_MS;
@@ -126,9 +105,6 @@ function CatchRound({
     }, TICK_MS);
     return () => {
       window.clearInterval(id);
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("blur", onBlur);
-      window.removeEventListener("focus", onFocus);
     };
   }, [parsed, paused]);
 
@@ -171,7 +147,7 @@ function CatchRound({
   const caught = state.results.filter((result) => result.ok).length;
   const secondsLeft = Math.max(0, Math.ceil(parsed.durationSec - elapsedMs / 1_000));
   const resumeRound = () => {
-    if (!document.hidden && document.hasFocus()) setPaused(false);
+    window.focus();
   };
   return (
     <div className="relative flex flex-col items-center gap-6">
@@ -230,7 +206,9 @@ function CatchRound({
                 data-falling={target.text}
                 className="grid size-16 place-items-center rounded-full bg-honey text-2xl font-bold text-ink"
               >
-                {target.text.toUpperCase()}
+                {isCapitalKey(target.text)
+                  ? `⇧${target.text}`
+                  : target.text.toUpperCase()}
               </span>
               {reducedMotion && (
                 <span className="text-sm text-ink-soft">

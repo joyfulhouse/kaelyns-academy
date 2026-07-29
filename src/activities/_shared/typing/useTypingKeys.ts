@@ -1,10 +1,16 @@
 "use client";
 
 import { useEffect, useEffectEvent } from "react";
-import { classifyKeydown, preventsDefault, type KeyIntent } from "./typingKey";
+import {
+  classifyKeydown,
+  preventsDefault,
+  type KeydownLike,
+  type KeyIntent,
+} from "./typingKey";
 
-const INTERACTIVE_SELECTOR =
-  "button, a, input, textarea, select, [contenteditable]:not([contenteditable='false'])";
+const ACTIVATABLE_SELECTOR = "button, a, [role='button']";
+const TEXT_ENTRY_SELECTOR =
+  "input, textarea, select, [contenteditable]:not([contenteditable='false'])";
 
 type ClosestTarget = EventTarget & {
   closest: (selector: string) => Element | null;
@@ -14,9 +20,36 @@ function hasClosest(target: EventTarget | null): target is ClosestTarget {
   return target !== null && "closest" in target && typeof target.closest === "function";
 }
 
-/** Interactive controls keep their native keyboard behavior, including Space. */
-export function isInteractiveTarget(target: EventTarget | null): boolean {
-  return hasClosest(target) && target.closest(INTERACTIVE_SELECTOR) !== null;
+function matchesClosest(target: EventTarget | null, selector: string): boolean {
+  return hasClosest(target) && target.closest(selector) !== null;
+}
+
+function isActivationKey(key: string): boolean {
+  return key === " " || key === "Enter";
+}
+
+/**
+ * Apply the focus policy, classify one keydown, and deliver any gameplay
+ * intent. Text-entry controls own every key. Buttons and links own only their
+ * native activation keys, so using a speaker does not strand the next letter.
+ */
+export function dispatchTypingKeydown(
+  event: KeydownLike & {
+    target: EventTarget | null;
+    preventDefault: () => void;
+  },
+  emit: (intent: KeyIntent) => void,
+): void {
+  if (matchesClosest(event.target, TEXT_ENTRY_SELECTOR)) return;
+  if (
+    isActivationKey(event.key) &&
+    matchesClosest(event.target, ACTIVATABLE_SELECTOR)
+  ) {
+    return;
+  }
+  if (preventsDefault(event)) event.preventDefault();
+  const intent = classifyKeydown(event);
+  if (intent.type !== "ignore") emit(intent);
 }
 
 /**
@@ -37,10 +70,7 @@ export function useTypingKeys(onIntent: (intent: KeyIntent) => void, active: boo
   useEffect(() => {
     if (!active) return;
     function onKeyDown(event: KeyboardEvent) {
-      if (isInteractiveTarget(event.target)) return;
-      if (preventsDefault(event)) event.preventDefault();
-      const intent = classifyKeydown(event);
-      if (intent.type !== "ignore") emit(intent);
+      dispatchTypingKeydown(event, emit);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

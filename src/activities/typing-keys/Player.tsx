@@ -9,6 +9,7 @@ import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { KeyboardMap } from "../_shared/typing/KeyboardMap";
 import { TypingStage } from "../_shared/typing/TypingStage";
+import { isCapitalKey } from "../_shared/typing/keys";
 import { useTypingKeys } from "../_shared/typing/useTypingKeys";
 import { expectedPrompts, schema, type TypingKeysResponse } from "./logic";
 import { initialKeysState, isKeysComplete, pressNextKey } from "./state";
@@ -53,7 +54,13 @@ function KeysRound({
     <div className="flex flex-col items-center gap-8">
       <Prompt speech={speech} instruction={parsed.instruction} />
       <p className="text-6xl font-bold text-ink" aria-live="polite">
-        {target === null ? "🎉" : target === " " ? "space" : target.toUpperCase()}
+        {target === null
+          ? "🎉"
+          : target === " "
+            ? "space"
+            : isCapitalKey(target)
+              ? `⇧ + ${target}`
+              : target.toUpperCase()}
       </p>
       {(parsed.showHands ?? true) && <KeyboardMap target={target} />}
       <ProgressHint>

@@ -10,6 +10,13 @@
 
 **Spec:** `docs/superpowers/specs/2026-07-28-typing-tutor-design.md`
 
+> **Erratum — closing-round correction (2026-07-28):** This plan preserves
+> its original implementation history below, but two details are superseded.
+> `typing.keys.shift-space` was split into `typing.keys.space` and
+> `typing.keys.shift` because the shared tag allowed the space bar to complete
+> the Shift lesson. Child-facing finger copy now says “pointer finger,” not
+> “index finger.” The design spec linked above is the current source of truth.
+
 ## Global Constraints
 
 Every task's requirements implicitly include this section.

@@ -20,9 +20,9 @@ function getSnapshot(): boolean {
  * True when the device reports NO fine pointer — a phone or tablet with no
  * mouse or trackpad, which almost always means no keyboard either. Mirrors
  * `useReducedMotion`'s `useSyncExternalStore` shape. SSR-safe: the server
- * snapshot is `false`, so the first paint is the friendly "press F" screen
- * rather than a block that flashes at laptop users.
+ * snapshot is `null`, so consumers can distinguish the hydration frame from a
+ * resolved fine-pointer result and avoid narrating the wrong gate.
  */
-export function useCoarsePointerOnly(): boolean {
-  return useSyncExternalStore(subscribe, getSnapshot, () => false);
+export function useCoarsePointerOnly(): boolean | null {
+  return useSyncExternalStore<boolean | null>(subscribe, getSnapshot, () => null);
 }

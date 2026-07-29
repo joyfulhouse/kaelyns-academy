@@ -4,11 +4,13 @@ import { describe, expect, it } from "vitest";
 import { KeyboardMap, FINGER_TINT, NO_FINGER_TINT } from "./KeyboardMap";
 
 describe("KeyboardMap", () => {
-  it("draws every lettered key plus the space bar", () => {
+  it("draws every lettered key, both shift keys, and the space bar", () => {
     const markup = renderToStaticMarkup(<KeyboardMap target={null} />);
     for (const key of ["q", "a", "z", "p", ";", "/"]) {
       expect(markup, key).toContain(`data-key="${key}"`);
     }
+    expect(markup).toContain('data-key="ShiftLeft"');
+    expect(markup).toContain('data-key="ShiftRight"');
     expect(markup).toContain('data-key=" "');
   });
 
@@ -24,9 +26,26 @@ describe("KeyboardMap", () => {
     expect(markup).toContain('aria-label="Keyboard. Press the space bar, right thumb."');
   });
 
-  it("treats a capital as its own key on the board", () => {
-    const markup = renderToStaticMarkup(<KeyboardMap target="F" />);
-    expect(markup).toContain('data-target="true"');
+  it("labels a capital as a chord and marks the opposite-hand shift", () => {
+    const leftLetter = renderToStaticMarkup(<KeyboardMap target="A" />);
+    const rightLetter = renderToStaticMarkup(<KeyboardMap target="J" />);
+
+    expect(leftLetter).toContain(
+      'aria-label="Keyboard. Hold shift, then press A, left pinky finger."',
+    );
+    expect(leftLetter).toMatch(/data-key="ShiftRight"[^>]*data-target="true"/);
+    expect(leftLetter).not.toMatch(/data-key="ShiftLeft"[^>]*data-target="true"/);
+    expect(rightLetter).toMatch(/data-key="ShiftLeft"[^>]*data-target="true"/);
+    expect(rightLetter).not.toMatch(/data-key="ShiftRight"[^>]*data-target="true"/);
+  });
+
+  it("does not mark either shift for a lowercase target", () => {
+    const markup = renderToStaticMarkup(<KeyboardMap target="a" />);
+
+    expect(markup).toContain(
+      'aria-label="Keyboard. Press A, left pinky finger."',
+    );
+    expect(markup).not.toMatch(/data-key="Shift(?:Left|Right)"[^>]*data-target="true"/);
   });
 
   it("references only defined Tailwind colour tokens (regression guard)", () => {

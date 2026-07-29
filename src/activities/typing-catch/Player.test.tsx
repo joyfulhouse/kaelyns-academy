@@ -1,11 +1,19 @@
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TypingCatchConfig } from "@/content/activity-configs";
 import { PauseOverlay, spawnAnnouncement, TypingCatchPlayer } from "./Player";
 
+const mocks = vi.hoisted(() => ({
+  paused: false,
+}));
+
 vi.mock("../_shared/typing/TypingStage", () => ({
   TypingStage: ({ children }: { children: ReactNode }) => children,
+}));
+
+vi.mock("./useRoundPaused", () => ({
+  useRoundPaused: () => mocks.paused,
 }));
 
 const CONFIG: TypingCatchConfig = {
@@ -17,6 +25,10 @@ const CONFIG: TypingCatchConfig = {
 };
 
 describe("Star Catch Player accessibility", () => {
+  beforeEach(() => {
+    mocks.paused = false;
+  });
+
   it("mounts one empty live region and keeps the caught count non-live", () => {
     const markup = renderToStaticMarkup(
       createElement(TypingCatchPlayer, {
@@ -43,6 +55,25 @@ describe("Star Catch Player accessibility", () => {
     expect(spawnAnnouncement([" "], 1)).toBe("Type space");
   });
 
+  it("renders a capital star as a shift chord and leaves lowercase unchanged", () => {
+    const capitalMarkup = renderToStaticMarkup(
+      createElement(TypingCatchPlayer, {
+        config: { ...CONFIG, pool: ["A", "S"] },
+        onComplete: () => undefined,
+      }),
+    );
+    const lowercaseMarkup = renderToStaticMarkup(
+      createElement(TypingCatchPlayer, {
+        config: { ...CONFIG, pool: ["a", "s"] },
+        onComplete: () => undefined,
+      }),
+    );
+
+    expect(capitalMarkup).toMatch(/data-falling="A"[^>]*>⇧A<\/span>/);
+    expect(lowercaseMarkup).toMatch(/data-falling="a"[^>]*>A<\/span>/);
+    expect(lowercaseMarkup).not.toContain("⇧");
+  });
+
   it("shows a calm click-to-resume overlay only while paused", () => {
     const pausedMarkup = renderToStaticMarkup(
       createElement(PauseOverlay, { paused: true, onResume: () => undefined }),
@@ -55,5 +86,18 @@ describe("Star Catch Player accessibility", () => {
     expect(pausedMarkup).toContain("click to keep playing");
     expect(pausedMarkup).toMatch(/<button[^>]*type="button"/);
     expect(playingMarkup).toBe("");
+  });
+
+  it("renders the pause overlay from the visibility and focus store", () => {
+    mocks.paused = true;
+
+    const markup = renderToStaticMarkup(
+      createElement(TypingCatchPlayer, {
+        config: CONFIG,
+        onComplete: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain("Paused — click to keep playing");
   });
 });
