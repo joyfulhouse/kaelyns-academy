@@ -15,6 +15,7 @@ import {
   SquareHalfIcon,
   StackIcon,
   StarIcon,
+  TextAaIcon,
   TranslateIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import type { Icon } from "@phosphor-icons/react";
@@ -42,4 +43,5 @@ export const ACTIVITY_META: Record<ActivityKind, { icon: Icon; label: string }> 
   "oral-reading": { icon: MicrophoneIcon, label: "Read it out loud" },
   "typing-keys": { icon: KeyboardIcon, label: "Key Camp" },
   "typing-catch": { icon: StarIcon, label: "Star Catch" },
+  "typing-write": { icon: TextAaIcon, label: "Word Write" },
 };

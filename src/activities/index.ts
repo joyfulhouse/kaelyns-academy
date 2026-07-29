@@ -30,6 +30,7 @@ import { seqOrder } from "./seq-order";
 import { oralReading } from "./oral-reading";
 import { typingKeys } from "./typing-keys";
 import { typingCatch } from "./typing-catch";
+import { typingWrite } from "./typing-write";
 
 let registered = false;
 
@@ -54,6 +55,7 @@ export function registerActivityTypes(): void {
   registerActivityType(oralReading);
   registerActivityType(typingKeys);
   registerActivityType(typingCatch);
+  registerActivityType(typingWrite);
 }
 
 registerActivityTypes();
