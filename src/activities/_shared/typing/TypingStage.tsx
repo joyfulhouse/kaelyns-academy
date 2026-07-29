@@ -2,6 +2,8 @@
 
 import { useState, type ReactNode } from "react";
 import { KeyboardIcon } from "@phosphor-icons/react/dist/ssr";
+import { useSpeakOnce } from "../useSpeakOnce";
+import { useSpeech } from "../useSpeech";
 import { PROVE_KEY, gateState, isProofKey } from "./gate";
 import { useCoarsePointerOnly } from "./useCoarsePointerOnly";
 import { useTypingKeys } from "./useTypingKeys";
@@ -18,6 +20,13 @@ export function TypingStage({ children }: { children: ReactNode }) {
   const coarsePointerOnly = useCoarsePointerOnly();
   const [keyboardProven, setKeyboardProven] = useState(false);
   const state = gateState({ coarsePointerOnly, keyboardProven });
+  const speech = useSpeech();
+  const spokenInstruction =
+    state === "blocked"
+      ? "Typing needs a real keyboard, so come back on a computer."
+      : `Press the ${PROVE_KEY.toUpperCase()} key to start with your left pointer finger.`;
+
+  useSpeakOnce(speech.speak, spokenInstruction);
 
   // Keep listening even while blocked: attaching a keyboard case to a tablet
   // should just work, with no reload and no settings toggle.

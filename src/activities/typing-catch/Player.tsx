@@ -12,9 +12,8 @@ import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { TypingStage } from "../_shared/typing/TypingStage";
 import { useTypingKeys } from "../_shared/typing/useTypingKeys";
-import { schema, type TypingCatchResponse } from "./logic";
+import { fallMs, schema, type TypingCatchResponse } from "./logic";
 import {
-  fallMs,
   initialCatchState,
   resolveAirborne,
   roundIsPaused,
@@ -54,6 +53,25 @@ export function TypingCatchPlayer(
   );
 }
 
+export function PauseOverlay({
+  paused,
+  onResume,
+}: {
+  paused: boolean;
+  onResume: () => void;
+}) {
+  if (!paused) return null;
+  return (
+    <button
+      type="button"
+      onClick={onResume}
+      className="absolute inset-0 z-20 grid place-items-center rounded-3xl border-2 border-honey bg-paper/95 px-6 text-center text-xl font-semibold text-ink shadow-lg"
+    >
+      Paused — click to keep playing
+    </button>
+  );
+}
+
 function CatchRound({
   config,
   onComplete,
@@ -63,6 +81,11 @@ function CatchRound({
   const reducedMotion = useReducedMotion();
   const [elapsedMs, setElapsedMs] = useState(0);
   const [state, setState] = useState(() => initialCatchState(parsed, 0));
+  const [paused, setPaused] = useState(() =>
+    typeof document === "undefined"
+      ? false
+      : roundIsPaused(document.hidden, document.hasFocus()),
+  );
   // The round's clock lives in a ref so the interval can read and advance it
   // without an impure state updater (which StrictMode would double-invoke).
   const elapsedRef = useRef(0);
@@ -77,17 +100,19 @@ function CatchRound({
   // and the WPM would lie.
   useEffect(() => {
     let windowFocused = document.hasFocus();
-    let paused = roundIsPaused(document.hidden, windowFocused);
+    const syncPaused = () => {
+      setPaused(roundIsPaused(document.hidden, windowFocused));
+    };
     const onVisibility = () => {
-      paused = roundIsPaused(document.hidden, windowFocused);
+      syncPaused();
     };
     const onBlur = () => {
       windowFocused = false;
-      paused = true;
+      syncPaused();
     };
     const onFocus = () => {
       windowFocused = true;
-      paused = roundIsPaused(document.hidden, windowFocused);
+      syncPaused();
     };
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("blur", onBlur);
@@ -105,7 +130,7 @@ function CatchRound({
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("focus", onFocus);
     };
-  }, [parsed]);
+  }, [parsed, paused]);
 
   // Whether the round is over is derived in render, not read from a ref: the
   // keydown subscription below needs it, and reading a ref during render is
@@ -129,9 +154,9 @@ function CatchRound({
   }, [endedBy, state, parsed, elapsedMs, onComplete]);
 
   useTypingKeys((intent) => {
-    if (intent.type !== "char" || endedBy) return;
+    if (intent.type !== "char" || endedBy || paused) return;
     setState((current) => typeChar(current, parsed, intent, elapsedRef.current));
-  }, endedBy === null);
+  }, endedBy === null && !paused);
 
   // Keep React's live-region node empty on mount, then register each spawn as
   // one discrete announcement. Depending only on nextId means catching or
@@ -145,8 +170,12 @@ function CatchRound({
   const fall = fallMs(parsed);
   const caught = state.results.filter((result) => result.ok).length;
   const secondsLeft = Math.max(0, Math.ceil(parsed.durationSec - elapsedMs / 1_000));
+  const resumeRound = () => {
+    if (!document.hidden && document.hasFocus()) setPaused(false);
+  };
   return (
-    <div className="flex flex-col items-center gap-6">
+    <div className="relative flex flex-col items-center gap-6">
+      <PauseOverlay paused={paused} onResume={resumeRound} />
       <Prompt speech={speech} instruction={parsed.instruction} />
       <div className="flex items-center gap-6">
         <span

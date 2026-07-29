@@ -24,19 +24,25 @@ describe("Science & Nature skills", () => {
 });
 
 describe("Keyboard Club skills", () => {
-  it("registers the six typing rungs under the typing domain", () => {
-    for (const slug of [
+  it("registers the seven typing rungs under the typing domain", () => {
+    const expectedSlugs = [
       "typing.keys.home-row",
       "typing.keys.top-row",
       "typing.keys.bottom-row",
-      "typing.keys.shift-space",
+      "typing.keys.space",
+      "typing.keys.shift",
       "typing.words.familiar",
       "typing.fluency.rate",
-    ]) {
+    ];
+    expect(SKILLS.filter((skill) => skill.domain === "typing").map((skill) => skill.slug)).toEqual(
+      expectedSlugs,
+    );
+    for (const slug of expectedSlugs) {
       const skill = SKILLS.find((s) => s.slug === slug);
       expect(skill, slug).toBeDefined();
       expect(skill!.domain).toBe("typing");
       expect(skill!.readyIndicator.length).toBeGreaterThan(0);
+      expect(skill!.stretchIndicator?.length, slug).toBeGreaterThan(0);
     }
   });
 });

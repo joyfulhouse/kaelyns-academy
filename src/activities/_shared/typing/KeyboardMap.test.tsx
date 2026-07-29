@@ -15,7 +15,8 @@ describe("KeyboardMap", () => {
   it("marks the target key so it is not colour alone", () => {
     const markup = renderToStaticMarkup(<KeyboardMap target="f" />);
     expect(markup).toContain('data-target="true"');
-    expect(markup).toContain('aria-label="Keyboard. Press F, left index finger."');
+    expect(markup).toContain('aria-label="Keyboard. Press F, left pointer finger."');
+    expect(markup).not.toContain("index finger");
   });
 
   it("names the space bar in words rather than as a blank", () => {

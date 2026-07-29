@@ -22,7 +22,7 @@ not looking at the hands.
 | Product-rule exceptions | Typing is the **sole** exception to four PRODUCT.md rules: touch-first design, "no punishing timers", "the child can't read the UI", and "no fail states". Timers, visible WPM, letter-forward UI, and round-ending misses are all sanctioned **inside `keyboard-club` only**. |
 | Content | **Keys first, curriculum words later.** Units 1–4 drill raw keys; unit 5 draws from `DECODABLE_LIBRARY` and the sight-word list so typing doubles as spelling practice. |
 | Activity kinds | **Five**: `typing-keys`, `typing-catch`, `typing-race`, `typing-write`, `typing-echo`. |
-| Skill domain | New `SkillDomain` `"typing"`, six skills in `SKILLS`. |
+| Skill domain | New `SkillDomain` `"typing"`, seven skills in `SKILLS`. |
 | Keystroke privacy | Response records **which expected key was missed**, never which key was pressed, and never free text. Raw keystrokes never leave component state. |
 | WPM | Client-measured → **indicative only**. Displays to child, charts for parent, **never feeds mastery**. Mastery keys on accuracy. (Same decoupling as `wcpm` in oral reading.) |
 | Layout | US QWERTY. Correctness judged on `event.key`, not `event.code`. |
@@ -36,7 +36,8 @@ not looking at the hands.
 | `typing.keys.home-row` | Finds `asdf`/`jkl;` from the F/J bumps without hunting |
 | `typing.keys.top-row` | Reaches the top row and returns to home position |
 | `typing.keys.bottom-row` | Reaches the bottom row and returns to home position |
-| `typing.keys.shift-space` | Spaces with a thumb, capitalizes with shift, ends with a period |
+| `typing.keys.space` | Spaces with a thumb without looking down at the keyboard |
+| `typing.keys.shift` | Makes a capital by holding the shift key with the opposite hand |
 | `typing.words.familiar` | Types known sight and decodable words accurately |
 | `typing.fluency.rate` | Sustains a comfortable rate on familiar words |
 
@@ -52,7 +53,7 @@ silently vanish.
 | 1 | Home Base | sunshine | `a s d f j k l ;`, F/J bumps, finger assignment |
 | 2 | Sky Row | space | `q w e r t y u i o p` |
 | 3 | Under Ground | garden | `z x c v b n m` |
-| 4 | Big Letters | bigtop | shift + capitals, space bar, period |
+| 4 | Big Letters | bigtop | shift + capitals, space bar |
 | 5 | Word Workshop | ocean | curriculum words and short decodable sentences |
 
 Each unit's lessons mix kinds: a `typing-keys` drill introduces the keys, then

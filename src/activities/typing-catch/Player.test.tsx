@@ -2,7 +2,7 @@ import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { TypingCatchConfig } from "@/content/activity-configs";
-import { spawnAnnouncement, TypingCatchPlayer } from "./Player";
+import { PauseOverlay, spawnAnnouncement, TypingCatchPlayer } from "./Player";
 
 vi.mock("../_shared/typing/TypingStage", () => ({
   TypingStage: ({ children }: { children: ReactNode }) => children,
@@ -41,5 +41,19 @@ describe("Star Catch Player accessibility", () => {
   it("speaks capitals and non-letter targets explicitly", () => {
     expect(spawnAnnouncement(["A"], 1)).toBe("Type capital A");
     expect(spawnAnnouncement([" "], 1)).toBe("Type space");
+  });
+
+  it("shows a calm click-to-resume overlay only while paused", () => {
+    const pausedMarkup = renderToStaticMarkup(
+      createElement(PauseOverlay, { paused: true, onResume: () => undefined }),
+    );
+    const playingMarkup = renderToStaticMarkup(
+      createElement(PauseOverlay, { paused: false, onResume: () => undefined }),
+    );
+
+    expect(pausedMarkup).toContain("Paused");
+    expect(pausedMarkup).toContain("click to keep playing");
+    expect(pausedMarkup).toMatch(/<button[^>]*type="button"/);
+    expect(playingMarkup).toBe("");
   });
 });

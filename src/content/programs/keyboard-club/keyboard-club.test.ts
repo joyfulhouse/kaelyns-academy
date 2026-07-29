@@ -59,7 +59,8 @@ describe("Keyboard Club", () => {
         "typing.keys.home-row",
         "typing.keys.top-row",
         "typing.keys.bottom-row",
-        "typing.keys.shift-space",
+        "typing.keys.space",
+        "typing.keys.shift",
       ],
     };
     for (const { unit, activity } of activities()) {
@@ -67,6 +68,19 @@ describe("Keyboard Club", () => {
         expect(allowed[unit.id], `${activity.id} → ${tag}`).toContain(tag);
       }
     }
+  });
+
+  it("assesses space and shift independently so space cannot complete the capitals lesson", () => {
+    const bigLetters = keyboardClub.units.find((unit) => unit.id === "big-letters")!;
+    const spaceLesson = bigLetters.lessons.find((lesson) => lesson.id === "big-space")!;
+    const shiftLesson = bigLetters.lessons.find((lesson) => lesson.id === "big-shift")!;
+
+    expect(spaceLesson.activities.flatMap((activity) => activity.skillTags)).toEqual([
+      "typing.keys.space",
+    ]);
+    expect(
+      new Set(shiftLesson.activities.flatMap((activity) => activity.skillTags)),
+    ).toEqual(new Set(["typing.keys.shift"]));
   });
 
   it("uses only teachable characters in every drill and pool", () => {

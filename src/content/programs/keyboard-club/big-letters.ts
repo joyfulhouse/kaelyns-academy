@@ -1,9 +1,9 @@
 import type { Unit } from "../../types";
 
 // ── Unit 4 · Big Letters ──────────────────────────────────────────────
-// Space and shift. Every target here is either a space or a capital, and
-// `skillForKey` routes both to "typing.keys.shift-space" no matter which row
-// the letter sits on — reaching for shift is the skill, not the letter.
+// Space and shift are separate rungs: a thumb press cannot complete the
+// capitals lesson, while every capital routes to shift no matter which row the
+// letter sits on — reaching for shift is the skill, not the letter.
 export const bigLettersUnit: Unit = {
   id: "big-letters",
   order: 4,
@@ -27,7 +27,7 @@ export const bigLettersUnit: Unit = {
           blurb: "The long bar at the bottom is for spaces between words.",
           estMinutes: 3,
           band: "ready",
-          skillTags: ["typing.keys.shift-space"],
+          skillTags: ["typing.keys.space"],
           config: {
             instruction: "Press the long space bar with your thumb.",
             keys: [" "],
@@ -48,7 +48,7 @@ export const bigLettersUnit: Unit = {
           blurb: "Hold shift, then press the letter to make it big.",
           estMinutes: 4,
           band: "ready",
-          skillTags: ["typing.keys.shift-space"],
+          skillTags: ["typing.keys.shift"],
           config: {
             instruction: "Hold shift with your other hand to make a big letter.",
             keys: ["A", "S", "D", "F"],
@@ -62,7 +62,7 @@ export const bigLettersUnit: Unit = {
           blurb: "Every star here needs a big letter — hold shift first.",
           estMinutes: 3,
           band: "stretch",
-          skillTags: ["typing.keys.shift-space"],
+          skillTags: ["typing.keys.shift"],
           config: {
             instruction: "Type the big letter on each star to pop it!",
             pool: ["A", "S", "D", "F", "J", "K"],

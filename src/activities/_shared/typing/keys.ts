@@ -58,7 +58,7 @@ const ROW_SKILL: Record<TypingRow, SkillTag> = {
   top: "typing.keys.top-row",
   home: "typing.keys.home-row",
   bottom: "typing.keys.bottom-row",
-  space: "typing.keys.shift-space",
+  space: "typing.keys.space",
 };
 
 /** Case-insensitive: "A" is the same physical key as "a". */
@@ -81,7 +81,7 @@ export function rowOf(char: string): TypingRow {
  */
 export function skillForKey(char: string): SkillTag {
   if (char === " ") return ROW_SKILL.space;
-  if (char !== char.toLowerCase()) return ROW_SKILL.space;
+  if (char !== char.toLowerCase()) return "typing.keys.shift";
   return ROW_SKILL[rowOf(char)];
 }
 

@@ -4,9 +4,9 @@ import {
   type TypingCharIntent,
 } from "../_shared/typing/typingKey";
 import {
-  FALL_SECONDS,
-  maxPrompts,
-  roundDurationMs,
+  expectedSpawnCount,
+  fallMs,
+  spawnCutoffMs,
   spawnIntervalMs,
   type TypingCatchResponse,
 } from "./logic";
@@ -32,13 +32,7 @@ export interface CatchState {
 }
 
 const DEFAULT_LIVES = 3;
-const DEFAULT_SPEED = "gentle";
 const DEFAULT_DURATION_SEC = 45;
-
-/** How long a star spends in the sky before it reaches the ground. */
-export function fallMs(config: TypingCatchConfig): number {
-  return FALL_SECONDS[config.speed ?? DEFAULT_SPEED] * 1_000;
-}
 
 /**
  * The pool cycles in authored order rather than at random: a child gets every
@@ -91,8 +85,8 @@ export function tick(
     ],
   };
   if (
-    nowMs < roundDurationMs(config) &&
-    next.poolCursor < maxPrompts(config) &&
+    nowMs <= spawnCutoffMs(config) &&
+    next.poolCursor < expectedSpawnCount(config) &&
     nowMs - next.lastSpawnMs >= spawnIntervalMs(config)
   ) {
     next = spawn(next, config, nowMs);

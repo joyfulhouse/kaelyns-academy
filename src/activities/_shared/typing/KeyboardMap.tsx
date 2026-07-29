@@ -31,7 +31,7 @@ function keyLabel(key: string): string {
   const hand = assignment?.hand === "left" ? "left" : "right";
   const finger = assignment?.finger ?? "index";
   if (key === " ") return `Press the space bar, ${hand} ${finger}`;
-  const fingerLabel = `${finger} finger`;
+  const fingerLabel = finger === "index" ? "pointer finger" : `${finger} finger`;
   return `Press ${key.toUpperCase()}, ${hand} ${fingerLabel}`;
 }
 

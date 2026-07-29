@@ -81,7 +81,7 @@ describe("skillsAffected", () => {
   });
 
   it("counts a capital as shift work", () => {
-    expect(skillsAffected({ ...CONFIG, keys: ["F"] })).toEqual(["typing.keys.shift-space"]);
+    expect(skillsAffected({ ...CONFIG, keys: ["F"] })).toEqual(["typing.keys.shift"]);
   });
 });
 

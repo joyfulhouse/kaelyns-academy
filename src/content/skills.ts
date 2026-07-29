@@ -452,10 +452,17 @@ export const SKILLS: Skill[] = [
     stretchIndicator: "Keeps her wrists still while the fingers do the reaching",
   },
   {
-    slug: "typing.keys.shift-space",
+    slug: "typing.keys.space",
     domain: "typing",
-    label: "Space & capitals",
-    readyIndicator: "Spaces with a thumb and makes a capital with the far-hand shift key",
+    label: "Space bar",
+    readyIndicator: "Spaces with a thumb without looking down at the keyboard",
+    stretchIndicator: "Keeps both hands on the home row while a thumb reaches the space bar",
+  },
+  {
+    slug: "typing.keys.shift",
+    domain: "typing",
+    label: "Capitals with shift",
+    readyIndicator: "Makes a capital by holding the shift key with the opposite hand",
     stretchIndicator: "Chooses the shift key opposite the letter instead of the nearer one",
   },
   {

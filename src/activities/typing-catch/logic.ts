@@ -26,26 +26,31 @@ export function roundDurationMs(config: TypingCatchConfig): number {
   return (config.durationSec ?? DEFAULT_DURATION_SEC) * 1_000;
 }
 
-/**
- * The conservative floor for a full-length round counts only stars old enough
- * to have reached the ground before time-up. Stars still airborne are also
- * resolved by the Player, but excluding them here tolerates a delayed timer
- * frame without accepting the one-prompt forgery this bound exists to stop.
- */
-export function minPrompts(config: TypingCatchConfig): number {
-  const durationMs = roundDurationMs(config);
-  const fallMs = FALL_SECONDS[config.speed ?? DEFAULT_SPEED] * 1_000;
-  return Math.max(1, Math.ceil(Math.max(0, durationMs - fallMs) / spawnIntervalMs(config)));
+/** How long a star spends in the sky before it reaches the ground. */
+export function fallMs(config: TypingCatchConfig): number {
+  return FALL_SECONDS[config.speed ?? DEFAULT_SPEED] * 1_000;
+}
+
+/** Last instant at which a newly shown star can receive its full fall window. */
+export function spawnCutoffMs(config: TypingCatchConfig): number {
+  return roundDurationMs(config) - fallMs(config);
 }
 
 /**
- * The most stars a round of this length could physically have shown. Scoring
- * needs this because a timed round has no fixed prompt count. The first target
- * spawns at zero; later targets spawn on complete intervals strictly before
- * time-up. Runtime spawning reads this same bound.
+ * Exact number of stars in a timed round. The first appears at zero, and a star
+ * may appear on the cutoff itself because it still receives one complete fall.
+ * Runtime and plausibility bounds all consume this one derivation.
  */
+export function expectedSpawnCount(config: TypingCatchConfig): number {
+  return Math.max(1, Math.floor(spawnCutoffMs(config) / spawnIntervalMs(config)) + 1);
+}
+
+export function minPrompts(config: TypingCatchConfig): number {
+  return expectedSpawnCount(config);
+}
+
 export function maxPrompts(config: TypingCatchConfig): number {
-  return Math.ceil(roundDurationMs(config) / spawnIntervalMs(config));
+  return expectedSpawnCount(config);
 }
 
 /**

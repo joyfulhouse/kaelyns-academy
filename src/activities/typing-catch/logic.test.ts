@@ -32,12 +32,12 @@ describe("pacing", () => {
   });
 
   it("bounds how many stars a round could possibly have shown", () => {
-    expect(minPrompts(CONFIG)).toBe(8);
-    expect(maxPrompts(CONFIG)).toBe(10);
-    expect(minPrompts({ ...CONFIG, durationSec: 30, speed: "steady" })).toBe(10);
-    expect(maxPrompts({ ...CONFIG, durationSec: 30, speed: "steady" })).toBe(12);
+    expect(minPrompts(CONFIG)).toBe(9);
+    expect(maxPrompts(CONFIG)).toBe(9);
+    expect(minPrompts({ ...CONFIG, durationSec: 30, speed: "steady" })).toBe(11);
+    expect(maxPrompts({ ...CONFIG, durationSec: 30, speed: "steady" })).toBe(11);
     expect(minPrompts({ ...CONFIG, speed: "zippy" })).toBe(25);
-    expect(maxPrompts({ ...CONFIG, speed: "zippy" })).toBe(27);
+    expect(maxPrompts({ ...CONFIG, speed: "zippy" })).toBe(25);
   });
 });
 
@@ -55,11 +55,10 @@ describe("score", () => {
         { text: "d", ok: true },
         { text: "f", ok: true },
         { text: "a", ok: true },
-        { text: "s", ok: true },
       ]),
     );
-    expect(result.correct).toBe(10);
-    expect(result.total).toBe(10);
+    expect(result.correct).toBe(9);
+    expect(result.total).toBe(9);
     expect(result.stars).toBe(3);
     expect(result.skillEvidence).toEqual([
       { skill: "typing.keys.home-row", outcome: "solid" },
@@ -78,10 +77,11 @@ describe("score", () => {
         { text: "s", ok: true },
         { text: "d", ok: true },
         { text: "f", ok: true },
+        { text: "a", ok: true },
       ]),
     );
 
-    expect(result.correct).toBe(8);
+    expect(result.correct).toBe(9);
     expect(result.skillEvidence).toEqual([
       { skill: "typing.keys.home-row", outcome: "solid" },
     ]);

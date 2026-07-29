@@ -31,8 +31,8 @@ describe("key/finger tables", () => {
 
   it("treats any capital as shift work, whatever row the letter sits on", () => {
     expect(skillForKey("a")).toBe("typing.keys.home-row");
-    expect(skillForKey("A")).toBe("typing.keys.shift-space");
-    expect(skillForKey(" ")).toBe("typing.keys.shift-space");
+    expect(skillForKey("A")).toBe("typing.keys.shift");
+    expect(skillForKey(" ")).toBe("typing.keys.space");
     expect(skillForKey("q")).toBe("typing.keys.top-row");
     expect(skillForKey("z")).toBe("typing.keys.bottom-row");
   });

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { TypingCatchConfig } from "@/content/activity-configs";
+import { underGroundUnit } from "@/content/programs/keyboard-club/under-ground";
 import type { TypingCharIntent } from "../_shared/typing/typingKey";
-import { maxPrompts, score } from "./logic";
+import { fallMs, maxPrompts, score } from "./logic";
 import {
   initialCatchState,
   resolveAirborne,
@@ -21,6 +22,24 @@ const CONFIG: TypingCatchConfig = {
 
 function key(char: string, shiftKey = false): TypingCharIntent {
   return { type: "char", char, shiftKey, code: "" };
+}
+
+function perfectAtFullFall(config: TypingCatchConfig) {
+  let state = initialCatchState(config, 0);
+  const durationMs = (config.durationSec ?? 45) * 1_000;
+  for (let nowMs = 100; nowMs <= durationMs; nowMs += 100) {
+    state = tick(state, config, nowMs);
+    for (const target of state.targets) {
+      if (nowMs - target.spawnedMs < fallMs(config)) continue;
+      state = typeChar(state, config, key(target.text), nowMs);
+    }
+  }
+  const finished = resolveAirborne(state, durationMs);
+  return score(config, {
+    prompts: finished.results,
+    endedBy: "time",
+    elapsedMs: durationMs,
+  });
 }
 
 describe("Star Catch state", () => {
@@ -43,7 +62,7 @@ describe("Star Catch state", () => {
     expect(state.targets.map((t) => t.text)).toEqual(["a", "s", "a"]);
   });
 
-  it("never spawns a target at or after the round deadline", () => {
+  it("spawns through the full-fall cutoff and never after it", () => {
     const longLived = { ...CONFIG, lives: 99 };
     let state = initialCatchState(longLived, 0);
     for (let nowMs = 4_000; nowMs <= 40_000; nowMs += 4_000) {
@@ -51,7 +70,8 @@ describe("Star Catch state", () => {
     }
 
     expect(state.poolCursor).toBe(maxPrompts(longLived));
-    expect(state.poolCursor).toBe(10);
+    expect(state.poolCursor).toBe(9);
+    expect(state.targets.at(-1)?.spawnedMs).toBe(32_000);
   });
 
   it("lands a star that was never typed, costing a heart", () => {
@@ -154,30 +174,25 @@ describe("Star Catch state", () => {
     ]);
   });
 
-  it("gives a perfect real 60-second gentle round three stars", () => {
-    const config: TypingCatchConfig = {
-      instruction: "Type the letter on each star to pop it!",
-      pool: ["a", "s", "d", "f", "q", "w", "z", "x", "n", "m"],
-      durationSec: 60,
-      lives: 3,
-      speed: "gentle",
-    };
-    let state = initialCatchState(config, 0);
-    state = typeChar(state, config, key("a"), 0);
-    for (let nowMs = 4_000; nowMs < 60_000; nowMs += 4_000) {
-      state = tick(state, config, nowMs);
-      const target = state.targets.at(-1)!;
-      state = typeChar(state, config, key(target.text), nowMs);
-    }
-    state = tick(state, config, 60_000);
-    const finished = resolveAirborne(state, 60_000);
+  it("gives a perfect real under-catch-all round three stars", () => {
+    const activity = underGroundUnit.lessons
+      .flatMap((lesson) => lesson.activities)
+      .find((candidate) => candidate.id === "under-catch-all")!;
+    if (activity.kind !== "typing-catch") throw new Error("under-catch-all changed kind");
 
-    expect(finished.results).toHaveLength(15);
-    expect(score(config, {
-      prompts: finished.results,
-      endedBy: "time",
-      elapsedMs: 60_000,
-    }).stars).toBe(3);
+    expect(perfectAtFullFall(activity.config)).toMatchObject({
+      correct: 14,
+      total: 14,
+      stars: 3,
+    });
+  });
+
+  it("gives a perfect 45-second gentle round three stars", () => {
+    expect(perfectAtFullFall({ ...CONFIG, durationSec: 45, lives: 3 })).toMatchObject({
+      correct: 10,
+      total: 10,
+      stars: 3,
+    });
   });
 
   it("ends on the clock", () => {
