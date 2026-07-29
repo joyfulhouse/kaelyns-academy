@@ -18,6 +18,7 @@ import * as seqOrder from "./seq-order/logic";
 import * as oralReading from "./oral-reading/logic";
 import * as typingCatch from "./typing-catch/logic";
 import * as typingKeys from "./typing-keys/logic";
+import * as typingWrite from "./typing-write/logic";
 
 export interface ServerActivityDefinition<Config = unknown, Response = unknown> {
   kind: ActivityKind;
@@ -88,6 +89,7 @@ const SERVER_ACTIVITY_TYPES = {
   "oral-reading": defineServerActivity("oral-reading", oralReading, "server-witness"),
   "typing-keys": defineServerActivity("typing-keys", typingKeys, "full-score"),
   "typing-catch": defineServerActivity("typing-catch", typingCatch, "response-validated"),
+  "typing-write": defineServerActivity("typing-write", typingWrite, "response-validated"),
 } satisfies Record<ActivityKind, ServerActivityDefinition>;
 
 export function getServerActivityType(kind: ActivityKind): ServerActivityDefinition {

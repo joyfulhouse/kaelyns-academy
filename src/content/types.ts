@@ -19,6 +19,7 @@ import type {
   SortCategoriesConfig,
   TypingCatchConfig,
   TypingKeysConfig,
+  TypingWriteConfig,
 } from "./activity-configs";
 
 export type { ActivityKind };
@@ -84,7 +85,8 @@ export type Activity =
   | ActivityOf<"seq-order", SeqOrderConfig>
   | ActivityOf<"oral-reading", OralReadingConfig>
   | ActivityOf<"typing-keys", TypingKeysConfig>
-  | ActivityOf<"typing-catch", TypingCatchConfig>;
+  | ActivityOf<"typing-catch", TypingCatchConfig>
+  | ActivityOf<"typing-write", TypingWriteConfig>;
 
 type CheckpointKind = "baseline" | "mid" | "final";
 
