@@ -1,6 +1,14 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
+/** Arc tones. The accent fill reads fine on large dashboard rings; a ring
+ *  that must be legible AS the indicator (not just decorate a numeral) needs
+ *  the deep variant — accent-on-sunk measures ~1.6:1, under WCAG 1.4.11's 3:1. */
+const ARC_TONE = {
+  accent: "var(--color-accent)",
+  "accent-deep": "var(--color-accent-deep)",
+} as const;
+
 /** Circular progress. Track = paper-sunk, fill = program accent. */
 export function ProgressRing({
   value,
@@ -9,6 +17,7 @@ export function ProgressRing({
   className,
   children,
   label,
+  tone = "accent",
 }: {
   /** 0..1 */
   value: number;
@@ -17,6 +26,7 @@ export function ProgressRing({
   className?: string;
   children?: ReactNode;
   label?: string;
+  tone?: keyof typeof ARC_TONE;
 }) {
   const clamped = Math.max(0, Math.min(1, value));
   const r = (size - stroke) / 2;
@@ -43,7 +53,7 @@ export function ProgressRing({
           cy={size / 2}
           r={r}
           fill="none"
-          stroke="var(--color-accent)"
+          stroke={ARC_TONE[tone]}
           strokeWidth={stroke}
           strokeLinecap="round"
           strokeDasharray={c}

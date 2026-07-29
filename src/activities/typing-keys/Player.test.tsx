@@ -45,13 +45,15 @@ describe("Key Camp target prompt", () => {
       showHands: false,
     });
 
-    // The fill-up row is decorative: its "N of M stars" name would collide
-    // with the 1-3 reward stars, so ProgressHint owns the announcement.
-    expect(markup).toMatch(
-      /<span aria-hidden="true"><span[^>]*aria-label="0 of 3 stars"/,
-    );
+    // The fill-up row is decorative (aria-hidden, no accessible name to
+    // collide with the 1-3 reward stars); ProgressHint owns the announcement.
+    // Empty shapes carry a solid ink-soft stroke — the faint reward default
+    // is invisible at progress-row size.
+    expect(markup).toMatch(/<span aria-hidden="true"[^>]*><svg data-star-shape="true"/);
+    expect(markup).not.toContain("stars");
     expect(markup).toContain("1 of 3");
     expect(markup.match(/data-star-shape="true"/g)).toHaveLength(3);
+    expect(markup.match(/text-ink-soft"/g)?.length).toBeGreaterThanOrEqual(3);
   });
 
   it("renders a capital as an explicit shift chord", () => {

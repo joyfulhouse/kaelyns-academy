@@ -11,11 +11,15 @@ export function StarShape({
   filled = true,
   strokeWidth = 1.6,
   className,
+  emptyClassName = "text-ink/25",
 }: {
   size: number;
   filled?: boolean;
   strokeWidth?: number;
   className?: string;
+  /** Stroke tone for the unfilled state. The faint default reads fine at the
+   *  40px reward size; small progress rows need a stronger stroke. */
+  emptyClassName?: string;
 }) {
   return (
     <svg
@@ -24,7 +28,7 @@ export function StarShape({
       height={size}
       viewBox="0 0 24 24"
       aria-hidden="true"
-      className={cn(filled ? "text-ink" : "text-ink/25", className)}
+      className={cn(filled ? "text-ink" : emptyClassName, className)}
     >
       <path
         d={STAR_PATH}

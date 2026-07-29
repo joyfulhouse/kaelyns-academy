@@ -220,6 +220,7 @@ function CatchRound({
           size={64}
           stroke={6}
           label={`${secondsLeft} seconds left`}
+          tone="accent-deep"
         >
           <span className="text-lg font-semibold text-ink">{secondsLeft}s</span>
         </ProgressRing>
@@ -239,11 +240,13 @@ function CatchRound({
             : "typing-playfield",
         )}
       >
-        <span
-          data-ground-line="true"
-          className="absolute inset-x-0 bottom-0 border-t-2 border-ink-soft"
-          aria-hidden="true"
-        />
+        {!reducedMotion && (
+          <span
+            data-ground-line="true"
+            className="absolute inset-x-0 bottom-0 border-t-2 border-ink-soft"
+            aria-hidden="true"
+          />
+        )}
         {state.targets.map((target) => {
           const remainingMs = Math.max(0, target.spawnedMs + fall - elapsedMs);
           return (
@@ -303,7 +306,11 @@ function CatchRound({
           <StarShape size={40} />
           <span className="font-display text-2xl font-semibold text-ink">{caught}</span>
         </span>
-        <ProgressHint live={false}>Caught {caught}</ProgressHint>
+        {/* The big star-and-count above says the same thing; keep this line
+            for screen readers and the e2e assertion, not as a visible twin. */}
+        <ProgressHint live={false} className="sr-only">
+          Caught {caught}
+        </ProgressHint>
       </div>
     </div>
   );

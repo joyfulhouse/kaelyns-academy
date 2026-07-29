@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { TypingKeysConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { Mascot } from "@/components/art/Mascot";
-import { Stars } from "@/components/ui/Stars";
+import { StarShape } from "@/components/ui/Stars";
 import { Prompt, ProgressHint } from "../_shared/ActivityChrome";
 import { useActivity } from "../_shared/useActivity";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
@@ -74,10 +74,19 @@ function KeysRound({
       <KeyPrompt target={target} />
       {(parsed.showHands ?? true) && <KeyboardMap target={target} />}
       <div className="flex flex-col items-center gap-2">
-        {/* Decorative fill-up only: its "N of M stars" name would collide with
-            the 1-3 reward stars and double the ProgressHint announcement. */}
-        <span aria-hidden="true">
-          <Stars value={state.index} max={prompts.length} size="sm" />
+        {/* Decorative fill-up only, so no accessible name to collide with the
+            1-3 reward stars; ProgressHint owns the announcement. Big shapes
+            with a solid empty stroke — the faint reward default vanishes at
+            progress-row size on paper. */}
+        <span aria-hidden="true" className="flex items-center gap-1.5">
+          {prompts.map((_, i) => (
+            <StarShape
+              key={i}
+              size={40}
+              filled={i < state.index}
+              emptyClassName="text-ink-soft"
+            />
+          ))}
         </span>
         <ProgressHint>
           {Math.min(state.index + 1, prompts.length)} of {prompts.length}

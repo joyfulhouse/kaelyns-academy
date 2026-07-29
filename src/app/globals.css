@@ -221,9 +221,13 @@
   .typing-key {
     width: var(--typing-key-size);
     height: var(--typing-key-size);
+    /* Glyphs scale with the cap: fixed text-lg/2xl overflow the clamp()ed
+       box below ~640px (descenders clip, shift caps spill). */
+    font-size: calc(var(--typing-key-size) * 0.42);
   }
   .typing-key-shift {
     width: var(--typing-shift-width);
+    font-size: calc(var(--typing-key-size) * 0.6);
   }
   .typing-key-space {
     width: var(--typing-space-width);
@@ -244,7 +248,9 @@
   }
   @media (min-width: 40rem) {
     .typing-stage {
-      min-height: calc(100dvh - 11rem);
+      /* 11rem left a 2px overflow at 1280x800 — a phantom scrollbar on a
+         screen with nothing to scroll. */
+      min-height: calc(100dvh - 11.5rem);
     }
   }
   .typing-key-target {
@@ -257,9 +263,11 @@
     z-index: -1;
     inset: -0.5rem;
     border-radius: calc(var(--radius-sm) + 0.5rem);
+    /* Strong mixes on purpose: at the audited 24%/42% the composited halo sat
+       at 1.28-1.31:1 over paper — invisible, while the copy promises a glow. */
     box-shadow:
-      0 0 0 0.375rem color-mix(in oklch, var(--color-coral) 24%, transparent),
-      0 0 1.25rem 0.5rem color-mix(in oklch, var(--color-honey) 42%, transparent);
+      0 0 0 0.375rem color-mix(in oklch, var(--color-coral) 70%, transparent),
+      0 0 1.25rem 0.5rem color-mix(in oklch, var(--color-honey-deep) 60%, transparent);
     content: "";
     opacity: 0.68;
     animation: typing-key-halo 2s var(--ease-out-quart) infinite;

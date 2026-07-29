@@ -64,7 +64,7 @@ function Key({ char, target }: { char: string; target: string | null }) {
       data-key={char}
       data-target={isTarget ? "true" : undefined}
       className={cn(
-        "typing-key grid place-items-center rounded-sm border-2 border-ink text-lg font-semibold text-ink shadow-pop",
+        "typing-key grid place-items-center rounded-sm border-2 border-ink font-semibold text-ink shadow-pop",
         char === " " && "typing-key-space",
         assignment ? FINGER_TINT[assignment.finger] : NO_FINGER_TINT,
         isTarget &&
@@ -95,7 +95,7 @@ function ShiftKey({ side, target }: { side: Hand; target: string | null }) {
       data-key={code}
       data-target={isTarget ? "true" : undefined}
       className={cn(
-        "typing-key typing-key-shift grid place-items-center rounded-sm border-2 border-ink text-2xl font-semibold text-ink shadow-pop",
+        "typing-key typing-key-shift grid place-items-center rounded-sm border-2 border-ink font-semibold text-ink shadow-pop",
         FINGER_TINT.pinky,
         isTarget &&
           "typing-key-target ring-4 ring-coral ring-offset-2 ring-offset-paper",
@@ -141,7 +141,10 @@ export function KeyboardMap({ target }: { target: string | null }) {
         {FINGER_LEGEND.map(({ finger, label }) => (
           <li key={finger} data-finger={label} className="flex items-center gap-2">
             <span
-              className={cn("size-4 rounded-sm", FINGER_TINT[finger])}
+              className={cn(
+                "size-4 rounded-[3px] border-[1.5px] border-ink",
+                FINGER_TINT[finger],
+              )}
               aria-hidden="true"
             />
             {label}
