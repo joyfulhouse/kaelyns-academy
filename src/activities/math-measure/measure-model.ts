@@ -5,9 +5,7 @@ import type {
 
 export {
   deriveComparisonIndex,
-  type ComparisonQuestion,
   type MeasureAttribute,
-  type SizedItem,
 } from "@/content/activity-configs/math-measure-derivation";
 
 export type BalanceTilt = "left" | "level" | "right";

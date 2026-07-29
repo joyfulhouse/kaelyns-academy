@@ -36,7 +36,7 @@ function explicitlyNamedTargets(instruction: string): string[] {
   return [...new Set(matches.filter(Boolean))];
 }
 
-export const sightwordRoundSchema = z
+const sightwordRoundSchema = z
   .object({
     target: boundedWord,
     choices: z.array(boundedWord).min(2).max(6),
@@ -58,9 +58,9 @@ export const sightwordRoundSchema = z
       });
     }
   });
-export type SightwordRound = z.infer<typeof sightwordRoundSchema>;
+type SightwordRound = z.infer<typeof sightwordRoundSchema>;
 
-export function validateSightwordRoundSet(
+function validateSightwordRoundSet(
   instruction: string,
   rounds: readonly SightwordRound[],
 ): string | null {

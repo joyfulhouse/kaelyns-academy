@@ -67,7 +67,7 @@ export type { LearnerRow };
 const MAX_HISTORY = 24;
 
 /** A witness only bridges the upload and its immediate completion save. */
-export const ORAL_READING_VERIFICATION_TTL_MS = 5 * 60_000;
+const ORAL_READING_VERIFICATION_TTL_MS = 5 * 60_000;
 
 const oralVerificationIdentitySchema = z.object({
   learnerId: z.string().min(1).max(100),

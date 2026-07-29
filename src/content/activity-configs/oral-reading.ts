@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const oralReadingPresentation = z.enum(["cold", "listen-repeat"]);
+const oralReadingPresentation = z.enum(["cold", "listen-repeat"]);
 export type OralReadingPresentation = z.infer<typeof oralReadingPresentation>;
 
 // What is read (word/sentence) stays separate from whether the target is

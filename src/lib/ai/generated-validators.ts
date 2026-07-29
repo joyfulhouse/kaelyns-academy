@@ -16,7 +16,7 @@ export interface PrepareGeneratedItemsOptions {
   canonicalize?: (parsed: unknown) => unknown | null;
 }
 
-export function assertKnownSkillHints(kind: ActivityKind, skillHints: readonly SkillTag[]): void {
+function assertKnownSkillHints(kind: ActivityKind, skillHints: readonly SkillTag[]): void {
   if (skillHints.some((skill) => getSkill(skill) === undefined)) {
     throw new Error(`prepareGeneratedItems: ${kind} received an unknown skill hint`);
   }

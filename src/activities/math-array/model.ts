@@ -3,7 +3,7 @@ export interface DealState {
   groups: number[][];
 }
 
-export interface FactFamilyFact {
+interface FactFamilyFact {
   left: number;
   operator: "×" | "÷";
   right: number;
