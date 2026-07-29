@@ -88,6 +88,7 @@ vi.mock("../_shared/useReducedMotion", () => ({
 
 import { TypingStage } from "../_shared/typing/TypingStage";
 import {
+  currentElapsedMs,
   pacerChars,
   raceFraction,
   RaceRound,
@@ -117,6 +118,12 @@ function type(char: string, shiftKey = false): void {
 
 function backspace(): void {
   fixtures.onIntent?.({ type: "backspace" });
+}
+
+/** Reads the rocket layer's translate3d percentage out of rendered markup. */
+function rocketPercent(markup: string): number {
+  const match = markup.match(/data-race-rocket="true"[^>]*translate3d\(([-\d.]+)%/);
+  return match ? Number(match[1]) : NaN;
 }
 
 const CONFIG: TypingRaceConfig = {
@@ -170,6 +177,20 @@ describe("Rocket Race pure helpers", () => {
   });
 });
 
+describe("currentElapsedMs (D3 pause-clock accounting)", () => {
+  it("returns only the accumulated total when no segment is open (paused/never started)", () => {
+    expect(currentElapsedMs(1000, null, 999_999)).toBe(1000);
+  });
+
+  it("adds the open segment's wall-clock span to the accumulated total", () => {
+    expect(currentElapsedMs(1000, 5000, 5800)).toBe(1800);
+  });
+
+  it("handles a zero-accumulated open segment (the very first running segment)", () => {
+    expect(currentElapsedMs(0, 1000, 1500)).toBe(500);
+  });
+});
+
 describe("Rocket Race word round", () => {
   it("shows the target word tiles and announces only the expected word, visible throughout (req 2, 5)", () => {
     const markup = toMarkup(CONFIG, () => undefined);
@@ -204,6 +225,31 @@ describe("Rocket Race word round", () => {
     expect(markup).not.toContain("translate3d");
     expect(markup).not.toContain('data-race-track="true"');
     expect(markup).toContain("1 of 6 words");
+  });
+
+  it("hops the rocket forward only on completed words and never retreats on a correction (req 4)", () => {
+    const onComplete = vi.fn();
+    let markup = toMarkup(CONFIG, onComplete); // mount
+    expect(rocketPercent(markup)).toBe(0);
+
+    // Mid-word, even after a wrong keystroke corrected by backspace, the
+    // rocket must not budge — it hops per completed word, not per character.
+    type("x");
+    backspace();
+    type("c");
+    markup = toMarkup(CONFIG, onComplete);
+    expect(rocketPercent(markup)).toBe(0);
+
+    type("a");
+    type("t"); // completes "cat" -> word 1 of 6
+    markup = toMarkup(CONFIG, onComplete);
+    expect(rocketPercent(markup)).toBeCloseTo(100 / 6);
+
+    type("s");
+    type("u");
+    type("n"); // completes "sun" -> word 2 of 6
+    markup = toMarkup(CONFIG, onComplete);
+    expect(rocketPercent(markup)).toBeCloseTo(200 / 6);
   });
 
   it("shows the pause overlay and keeps the live readout at its frozen value (req 3, 7)", () => {

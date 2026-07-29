@@ -34,13 +34,6 @@ function completedChars(words: readonly string[], index: number): number {
   return words.slice(0, index).reduce((sum, word) => sum + word.length, 0);
 }
 
-/** Characters advanced through so far, including any not-yet-corrected wrong
- *  keystroke — mirrors what the buffer tiles show, so the rocket's position
- *  always matches what's on screen. */
-function typedChars(words: readonly string[], index: number, progress: WordProgress): number {
-  return completedChars(words, index) + progress.typed.length;
-}
-
 /** Only characters that ended up correct — the standard WPM numerator. */
 function typedCorrectChars(
   words: readonly string[],
@@ -70,8 +63,15 @@ export function raceFraction(chars: number, total: number): number {
 /** A single continuous wall clock, offset by refs (not state) so a keydown's
  *  per-word timestamp and the live-readout interval agree on "now" — pause
  *  simply stops the segment from growing, exactly like typing-catch's tick
- *  accounting, just wall-clock instead of fixed-tick. */
-function currentElapsedMs(accumulatedMs: number, segmentStartMs: number | null, nowMs: number): number {
+ *  accounting, just wall-clock instead of fixed-tick. Exported (rather than
+ *  only exercised indirectly through the Player) so the accumulation math
+ *  itself — the one part of the clock this suite's node/no-window
+ *  environment can't reach via a real interval — gets direct assertions. */
+export function currentElapsedMs(
+  accumulatedMs: number,
+  segmentStartMs: number | null,
+  nowMs: number,
+): number {
   return accumulatedMs + (segmentStartMs === null ? 0 : Math.max(0, nowMs - segmentStartMs));
 }
 
@@ -183,7 +183,12 @@ export function RaceRound({
     };
   }, [speech]);
 
-  const rocketFraction = raceFraction(typedChars(words, state.index, state.progress), totalChars(words));
+  // The rocket hops forward one discrete step per COMPLETED word (design
+  // spec: "each completed word hops the rocket forward") and can never
+  // retreat — a backspace corrects the buffer tiles, not the rocket, so a
+  // child fixing a mistake is never shown losing ground. The comet stays
+  // continuous: it's the pacer clock, not a word-progress indicator.
+  const rocketFraction = raceFraction(state.index, words.length);
   const cometFraction = raceFraction(pacerChars(parsed.pacerWpm, liveElapsedMs), totalChars(words));
   const liveWpm = wpm(typedCorrectChars(words, state.index, state.progress), liveElapsedMs);
   const resumeRound = () => {
