@@ -64,12 +64,20 @@ export function useSpeakOnce(
   speak: (text: string) => void,
   text: string | null,
   key: unknown = ONCE,
+  options: { essentialContentAudio?: boolean } = {},
 ): void {
   const enabled = useContext(ReadAloudDefaultContext);
+  const essentialContentAudio = options.essentialContentAudio ?? false;
   const spokenKey = useRef<unknown>(UNSEEN);
   useEffect(() => {
-    if (!enabled || text === null || spokenKey.current === key) return;
+    if (
+      !shouldRunOneShotEffect(enabled, essentialContentAudio) ||
+      text === null ||
+      spokenKey.current === key
+    ) {
+      return;
+    }
     spokenKey.current = key;
     speak(text);
-  }, [enabled, key, speak, text]);
+  }, [enabled, essentialContentAudio, key, speak, text]);
 }

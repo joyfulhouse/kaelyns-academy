@@ -17,7 +17,7 @@ vi.mock("react", async (importActual) => ({
   },
 }));
 
-import { useRoundPaused } from "./useRoundPaused";
+import { roundIsPaused, useRoundPaused } from "./roundPause";
 
 const documentListeners = {
   add: vi.fn(),
@@ -76,5 +76,14 @@ describe("useRoundPaused", () => {
     expect(documentListeners.remove).toHaveBeenCalledWith("visibilitychange", onChange);
     expect(windowListeners.remove).toHaveBeenCalledWith("blur", onChange);
     expect(windowListeners.remove).toHaveBeenCalledWith("focus", onChange);
+  });
+});
+
+describe("roundPause state", () => {
+  it("pauses for a hidden document or blurred window and resumes only when both recover", () => {
+    expect(roundIsPaused(false, true)).toBe(false);
+    expect(roundIsPaused(true, true)).toBe(true);
+    expect(roundIsPaused(false, false)).toBe(true);
+    expect(roundIsPaused(true, false)).toBe(true);
   });
 });

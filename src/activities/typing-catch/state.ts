@@ -137,11 +137,6 @@ export function resolveAirborne(state: CatchState, elapsedMs: number): CatchStat
   };
 }
 
-/** Both visibility and focus must agree that the child can see the round. */
-export function roundIsPaused(documentHidden: boolean, windowFocused: boolean): boolean {
-  return documentHidden || !windowFocused;
-}
-
 export function roundOver(
   state: CatchState,
   config: TypingCatchConfig,

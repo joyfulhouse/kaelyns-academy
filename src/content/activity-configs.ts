@@ -22,6 +22,8 @@ import { sightwordGameConfig } from "./activity-configs/sightword-game";
 import { sortCategoriesConfig } from "./activity-configs/sort-categories";
 import { typingCatchConfig } from "./activity-configs/typing-catch";
 import { typingKeysConfig } from "./activity-configs/typing-keys";
+import { typingRaceConfig } from "./activity-configs/typing-race";
+import { typingWriteConfig } from "./activity-configs/typing-write";
 
 export * from "./activity-configs/journal-prompt";
 export * from "./activity-configs/lang-listen-match";
@@ -40,6 +42,8 @@ export * from "./activity-configs/sightword-game";
 export * from "./activity-configs/sort-categories";
 export * from "./activity-configs/typing-catch";
 export * from "./activity-configs/typing-keys";
+export * from "./activity-configs/typing-race";
+export * from "./activity-configs/typing-write";
 
 export const ACTIVITY_CONFIG_SCHEMAS = {
   "phonics-wordbuild": phonicsWordbuildConfig,
@@ -59,6 +63,8 @@ export const ACTIVITY_CONFIG_SCHEMAS = {
   "oral-reading": oralReadingConfig,
   "typing-keys": typingKeysConfig,
   "typing-catch": typingCatchConfig,
+  "typing-write": typingWriteConfig,
+  "typing-race": typingRaceConfig,
 } as const;
 
 export type ActivityKind = keyof typeof ACTIVITY_CONFIG_SCHEMAS;

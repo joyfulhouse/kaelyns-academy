@@ -6,7 +6,6 @@ import { expectedSpawnCount, fallMs, score } from "./logic";
 import {
   initialCatchState,
   resolveAirborne,
-  roundIsPaused,
   roundOver,
   tick,
   typeChar,
@@ -217,14 +216,5 @@ describe("Star Catch state", () => {
   it("ends when the last heart goes out", () => {
     const state = { ...initialCatchState(CONFIG, 0), lives: 0 };
     expect(roundOver(state, CONFIG, 1_000)).toBe("lives");
-  });
-});
-
-describe("Star Catch pause state", () => {
-  it("pauses for a hidden document or blurred window and resumes only when both recover", () => {
-    expect(roundIsPaused(false, true)).toBe(false);
-    expect(roundIsPaused(true, true)).toBe(true);
-    expect(roundIsPaused(false, false)).toBe(true);
-    expect(roundIsPaused(true, false)).toBe(true);
   });
 });

@@ -14,6 +14,8 @@ const REST: TargetAndTransition = { x: 0 };
 export interface WrongShake {
   /** True while the shake / input-locked window is active. */
   wrong: boolean;
+  /** Increments on every trigger so callers can restart keyframe motion. */
+  sequence: number;
   /**
    * Enter the wrong state: optionally `speak` a gentle nudge now, then auto-clear
    * after `holdMs` (default 900ms), running `onClear` (e.g. resetting a build).
@@ -32,11 +34,13 @@ export interface WrongShake {
  */
 export function useWrongShake(): WrongShake {
   const [wrong, setWrong] = useState(false);
+  const [sequence, setSequence] = useState(0);
   const timer = useManagedTimeout();
 
   const trigger = useCallback<WrongShake["trigger"]>(
     (opts) => {
       setWrong(true);
+      setSequence((current) => current + 1);
       opts?.speak?.();
       timer.set(() => {
         setWrong(false);
@@ -54,5 +58,5 @@ export function useWrongShake(): WrongShake {
     [wrong],
   );
 
-  return { wrong, trigger, shakeProps };
+  return { wrong, sequence, trigger, shakeProps };
 }

@@ -165,6 +165,19 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
         lives: 3,
         speed: "gentle",
       };
+    case "typing-write":
+      return {
+        instruction: "Type each word.",
+        mode: "see",
+        scope: "word",
+        items: ["cat", "map", "sat"],
+      };
+    case "typing-race":
+      return {
+        instruction: "Type each word to hop the rocket forward!",
+        words: ["ask", "sad", "dad", "fall", "flask", "salad"],
+        pacerWpm: 10,
+      };
   }
 }
 

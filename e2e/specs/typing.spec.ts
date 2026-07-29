@@ -18,6 +18,8 @@ import { expectSingleHostReward } from "../helpers";
 
 const KEY_CAMP = "/learn/keyboard-club/home-base/home-fj"; // keys ["f","j"], reps 3 → 6 prompts
 const STAR_CATCH = "/learn/keyboard-club/home-base/home-catch-gentle"; // pool a-s-d-f-j-k-l, gentle (8s fall)
+const WORD_WRITE = "/learn/keyboard-club/home-base/home-write"; // items ["sad","dad","ask","fall","salad"]
+const ROCKET_RACE = "/learn/keyboard-club/home-base/home-race"; // words ["ask","sad","dad","fall","flask","salad"], pacerWpm 8
 
 /**
  * Open the keyboard gate. The gate proves a physical keyboard by listening for a
@@ -153,6 +155,55 @@ test("Star Catch pops a falling star when its letter is typed", async ({ page })
   await expect(caught).toHaveText(`Caught ${before + 1}`);
 });
 
+test("Word Write advances letter by letter and forgives a wrong key", async ({ page }) => {
+  await openGate(page, WORD_WRITE);
+
+  // First item is "sad" (authored order). A wrong key still lands in the
+  // buffer (WordTiles renders it) rather than being silently swallowed; a
+  // backspace un-diverges the word with no penalty (pressWordBackspace),
+  // and finishing the remaining letters completes the word normally.
+  await page.keyboard.type("s");
+  await page.keyboard.type("x"); // wrong — enters the buffer, diverges the word
+  await page.keyboard.press("Backspace"); // correction, no punishment
+  await page.keyboard.type("ad");
+
+  // Word 1 done → ProgressHint advances from "1 of 5" to "2 of 5".
+  await expect(page.getByText(/2 of 5/)).toBeVisible();
+});
+
+test("Rocket Race hops the rocket forward as words finish", async ({ page }) => {
+  await openGate(page, ROCKET_RACE);
+
+  // First word is "ask" (authored order).
+  await page.keyboard.type("ask");
+
+  // ProgressHint reads "word N of 6" (RaceRound), advancing once the word
+  // completes.
+  await expect(page.getByText(/word 2 of 6/)).toBeVisible();
+
+  // The friendly pace comet rides the same track as the rocket
+  // (data-race-comet, already present on Player.tsx) — it renders before
+  // start and while paused too, so its presence here only confirms it rendered,
+  // not that the round is actively live.
+  await expect(page.locator('[data-race-comet="true"]')).toBeVisible();
+});
+
+/**
+ * A "records only expected-character data" spec (per the §8 payload note in
+ * the Task 8 brief) was investigated and dropped: guest completions never
+ * expose the raw response. `ActivityHost` → `useLearnerState.record` resolves
+ * a guest session to the "guest" destination, which calls
+ * `parseAndScoreActivity` and keeps only the derived `ActivityScore`
+ * (`stars` + coarse per-skill outcome) in two `ka:`-prefixed localStorage
+ * keys (`ka:progress:*`, `ka:skillstate:*`); the parsed response — where
+ * `items[].missedExpected` lives — is discarded once scored, and there is no
+ * network request to intercept either (recordAttemptAction, the one call
+ * that would round-trip the raw response, is only reachable on the
+ * "account" destination). Asserting `missedExpected` provenance for a guest
+ * run would therefore only be possible with test-only instrumentation added
+ * to the Player itself, which the brief's own guidance says to avoid — so
+ * this spec is left unwritten rather than asserting something vacuous.
+ */
 test("a touch-only device is told to come back on a computer", async ({ browser }) => {
   const context = await browser.newContext({
     hasTouch: true,

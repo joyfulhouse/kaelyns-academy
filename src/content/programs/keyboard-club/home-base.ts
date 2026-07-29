@@ -1,9 +1,12 @@
 import type { Unit } from "../../types";
 
 // ── Unit 1 · Home Base ────────────────────────────────────────────────
-// The home row and the F/J bumps. Every drill here is home-row only, so
+// The home row and the F/J bumps. Every key-drill here is home-row only, so
 // `skillsAffected` resolves to exactly ["typing.keys.home-row"] and the
 // authored tags match it (skill-routing demands set equality, not subset).
+// The closing word lesson steps outside that row rule on purpose: multi-char
+// targets route to ["typing.words.familiar"] (plus "typing.fluency.rate" for
+// the race), a first taste of Word Workshop's whole-word skills.
 export const homeBaseUnit: Unit = {
   id: "home-base",
   order: 1,
@@ -99,6 +102,42 @@ export const homeBaseUnit: Unit = {
             durationSec: 45,
             lives: 3,
             speed: "steady",
+          },
+        },
+      ],
+    },
+    {
+      id: "home-words",
+      order: 3,
+      title: "Home Row Words",
+      activities: [
+        {
+          id: "home-write",
+          kind: "typing-write",
+          title: "Type home row words",
+          blurb: "Sad, dad, ask — whole words using only your home row keys.",
+          estMinutes: 4,
+          band: "ready",
+          skillTags: ["typing.words.familiar"],
+          config: {
+            instruction: "Type each word, one letter at a time. Stay on your home row!",
+            mode: "see",
+            scope: "word",
+            items: ["sad", "dad", "ask", "fall", "salad"],
+          },
+        },
+        {
+          id: "home-race",
+          kind: "typing-race",
+          title: "Rocket Race: home row words",
+          blurb: "Type each word before the friendly comet catches up.",
+          estMinutes: 4,
+          band: "ready",
+          skillTags: ["typing.fluency.rate", "typing.words.familiar"],
+          config: {
+            instruction: "Type each word, one letter at a time. The rocket hops when you finish a word!",
+            words: ["ask", "sad", "dad", "fall", "flask", "salad"],
+            pacerWpm: 8,
           },
         },
       ],
