@@ -22,7 +22,8 @@ function glyph(char: string): string {
 
 /** The (always visible) target — hidden entirely in Player render; only shown
  *  in "see" mode, once a hear-mode round reveals, or always (Rocket Race).
- *  Decorative: the essential text lives in each Player's aria-live announcement. */
+ *  Sighted-only: `aria-hidden` means a hear-mode reveal never reaches
+ *  accessible text, so this is a purely visual aid, not a substitute for one. */
 export function ExpectedTiles({ item }: { item: string }) {
   return (
     <div aria-hidden="true" className="flex flex-wrap justify-center gap-2">

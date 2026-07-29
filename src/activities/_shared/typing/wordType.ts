@@ -20,6 +20,14 @@ export interface WordProgress {
 /** A couple of stray keys past the end still render; more are ignored. */
 export const BUFFER_SLACK = 2;
 
+/**
+ * Both response schemas cap per-item `ms` at this value. `ms` is
+ * indicative-only (never scoring evidence), so an honestly slow completion —
+ * a child who walks away mid-word with the tab still visible, then finishes —
+ * must clamp here rather than fail the whole round's response validation.
+ */
+export const MAX_ITEM_MS = 600_000;
+
 export function initialWordProgress(): WordProgress {
   return { typed: [], retries: 0, missedExpected: [], diverged: false, startedMs: null, completedMs: null };
 }
@@ -80,7 +88,7 @@ export function wordItemResult(
 ): { i: number; ok: boolean; ms: number; retries: number; missedExpected: string[] } {
   const ms =
     state.completedMs !== null && state.startedMs !== null
-      ? Math.max(0, state.completedMs - state.startedMs)
+      ? Math.min(MAX_ITEM_MS, Math.max(0, state.completedMs - state.startedMs))
       : 0;
   return {
     i,

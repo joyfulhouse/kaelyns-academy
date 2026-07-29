@@ -182,8 +182,9 @@ test("Rocket Race hops the rocket forward as words finish", async ({ page }) => 
   await expect(page.getByText(/word 2 of 6/)).toBeVisible();
 
   // The friendly pace comet rides the same track as the rocket
-  // (data-race-comet, already present on Player.tsx) — it never disappears,
-  // reduced-motion aside, so its presence here confirms the round is live.
+  // (data-race-comet, already present on Player.tsx) — it renders before
+  // start and while paused too, so its presence here only confirms it rendered,
+  // not that the round is actively live.
   await expect(page.locator('[data-race-comet="true"]')).toBeVisible();
 });
 

@@ -219,12 +219,3 @@ describe("Star Catch state", () => {
     expect(roundOver(state, CONFIG, 1_000)).toBe("lives");
   });
 });
-
-describe("Star Catch pause state", () => {
-  it("pauses for a hidden document or blurred window and resumes only when both recover", () => {
-    expect(roundIsPaused(false, true)).toBe(false);
-    expect(roundIsPaused(true, true)).toBe(true);
-    expect(roundIsPaused(false, false)).toBe(true);
-    expect(roundIsPaused(true, false)).toBe(true);
-  });
-});

@@ -3,7 +3,6 @@ import {
   matchesTypingTarget,
   type TypingCharIntent,
 } from "../_shared/typing/typingKey";
-import { roundIsPaused } from "../_shared/typing/roundPause";
 import {
   expectedSpawnCount,
   fallMs,

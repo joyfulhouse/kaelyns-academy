@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { responseSchema } from "../../typing-write/logic";
 import {
   BUFFER_SLACK,
   initialWordProgress,
   isWordComplete,
+  MAX_ITEM_MS,
   pressWordBackspace,
   pressWordKey,
   wordItemResult,
@@ -96,5 +98,24 @@ describe("pressWordKey", () => {
   it("starts the clock on the first keystroke, not construction", () => {
     const s = pressWordKey(initialWordProgress(), "cat", key("c"), 5_000);
     expect(s.startedMs).toBe(5_000);
+  });
+
+  it("clamps an honestly slow completion to MAX_ITEM_MS and still serializes schema-valid", () => {
+    let s = pressWordKey(initialWordProgress(), "cat", key("c"), 0);
+    s = pressWordKey(s, "cat", key("a"), 100);
+    const twentyMinutesMs = 20 * 60 * 1_000;
+    s = pressWordKey(s, "cat", key("t"), twentyMinutesMs); // walked away, finished 20 minutes later
+    expect(isWordComplete(s)).toBe(true);
+    expect(wordItemResult(s, 0)).toEqual({
+      i: 0,
+      ok: true,
+      ms: MAX_ITEM_MS,
+      retries: 0,
+      missedExpected: [],
+    });
+
+    const item = wordItemResult(s, 0);
+    const parsed = responseSchema.safeParse({ items: [item, item, item] });
+    expect(parsed.success).toBe(true);
   });
 });
