@@ -20,6 +20,7 @@ describe("Keyboard Club", () => {
       "sky-row",
       "under-ground",
       "big-letters",
+      "word-workshop",
     ]);
   });
 
@@ -48,7 +49,11 @@ describe("Keyboard Club", () => {
 
   it("teaches each unit's own row, and nothing a later unit has not reached yet", () => {
     const allowed: Record<string, string[]> = {
-      "home-base": ["typing.keys.home-row"],
+      "home-base": [
+        "typing.keys.home-row",
+        "typing.words.familiar",
+        "typing.fluency.rate",
+      ],
       "sky-row": ["typing.keys.home-row", "typing.keys.top-row"],
       "under-ground": [
         "typing.keys.home-row",
@@ -62,6 +67,7 @@ describe("Keyboard Club", () => {
         "typing.keys.space",
         "typing.keys.shift",
       ],
+      "word-workshop": ["typing.words.familiar", "typing.fluency.rate"],
     };
     for (const { unit, activity } of activities()) {
       for (const tag of activity.skillTags) {
@@ -83,13 +89,21 @@ describe("Keyboard Club", () => {
     ).toEqual(new Set(["typing.keys.shift"]));
   });
 
-  it("uses only teachable characters in every drill and pool", () => {
+  it("uses only teachable characters in every drill, pool, and word", () => {
     for (const { activity } of activities()) {
-      const targets =
-        activity.kind === "typing-keys"
-          ? (activity.config as { keys: string[] }).keys
-          : (activity.config as { pool: string[] }).pool;
-      for (const target of targets) expect(isTeachableKey(target), target).toBe(true);
+      if (activity.kind === "typing-keys") {
+        for (const key of activity.config.keys) expect(isTeachableKey(key), key).toBe(true);
+      } else if (activity.kind === "typing-catch") {
+        for (const key of activity.config.pool) expect(isTeachableKey(key), key).toBe(true);
+      } else if (activity.kind === "typing-write") {
+        for (const item of activity.config.items) {
+          for (const char of item) expect(isTeachableKey(char), `${item}: ${char}`).toBe(true);
+        }
+      } else if (activity.kind === "typing-race") {
+        for (const word of activity.config.words) {
+          for (const char of word) expect(isTeachableKey(char), `${word}: ${char}`).toBe(true);
+        }
+      }
     }
   });
 });
