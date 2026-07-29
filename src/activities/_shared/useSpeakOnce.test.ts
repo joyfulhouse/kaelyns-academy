@@ -5,6 +5,7 @@ const hooks = vi.hoisted(() => {
   const refs: { current: unknown }[] = [];
 
   return {
+    readAloudEnabled: true,
     beginRender() {
       cursor = 0;
     },
@@ -23,7 +24,7 @@ const hooks = vi.hoisted(() => {
 
 vi.mock("react", async (importActual) => ({
   ...(await importActual<typeof import("react")>()),
-  useContext: () => true,
+  useContext: () => hooks.readAloudEnabled,
   useEffect: (effect: () => void) => effect(),
   useRef: hooks.useRef,
 }));
@@ -32,6 +33,7 @@ import { shouldRunOneShotEffect, useSpeakOnce } from "./useSpeakOnce";
 
 beforeEach(() => {
   hooks.reset();
+  hooks.readAloudEnabled = true;
 });
 
 describe("one-shot activity audio", () => {
@@ -41,6 +43,18 @@ describe("one-shot activity audio", () => {
 
   it("allows an explicit exception for essential content audio", () => {
     expect(shouldRunOneShotEffect(false, true)).toBe(true);
+  });
+
+  it("speaks essential content once even when the read-aloud default is disabled", () => {
+    hooks.readAloudEnabled = false;
+    const speak = vi.fn();
+
+    useSpeakOnce(speak, "hidden target", "target", { essentialContentAudio: true });
+    hooks.beginRender();
+    useSpeakOnce(speak, "ordinary instruction", "instruction");
+
+    expect(speak).toHaveBeenCalledTimes(1);
+    expect(speak).toHaveBeenCalledWith("hidden target");
   });
 
   it("waits through a null message and speaks once for each resolved key", () => {

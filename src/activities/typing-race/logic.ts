@@ -7,10 +7,12 @@ import {
   outcomeFromAccuracy,
   starsFromAccuracy,
 } from "../_shared/scoring";
+import { MAX_ITEM_MS, MAX_ITEM_RETRIES } from "../_shared/typing/wordType";
 import { itemsArePlausible } from "../typing-write/logic";
 
 /** Server-safe schema + scoring for typing-race. No "use client". */
 export const schema = typingRaceConfig;
+export const MAX_RACE_ELAPSED_MS = 1_600_000;
 
 /**
  * §8: same per-item shape as typing-write (shared `itemsArePlausible`), plus
@@ -25,15 +27,15 @@ export const responseSchema = z
           .object({
             i: z.number().int().min(0).max(19),
             ok: z.boolean(),
-            ms: z.number().int().min(0).max(600_000),
-            retries: z.number().int().min(0).max(30),
+            ms: z.number().int().min(0).max(MAX_ITEM_MS),
+            retries: z.number().int().min(0).max(MAX_ITEM_RETRIES),
             missedExpected: z.array(z.string().length(1)).max(40),
           })
           .strict(),
       )
       .min(6)
       .max(20),
-    elapsedMs: z.number().int().min(0).max(1_600_000),
+    elapsedMs: z.number().int().min(0).max(MAX_RACE_ELAPSED_MS),
   })
   .strict();
 export type TypingRaceResponse = z.infer<typeof responseSchema>;

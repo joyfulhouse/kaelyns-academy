@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TypingRaceConfig } from "@/content/activity-configs";
 import type { KeyIntent } from "../_shared/typing/typingKey";
-import type { TypingRaceResponse } from "./logic";
+import { MAX_RACE_ELAPSED_MS, responseSchema, type TypingRaceResponse } from "./logic";
 
 /**
  * Same technique as typing-write/Player.test.tsx (this suite runs in vitest's
@@ -28,6 +28,10 @@ const fixtures = vi.hoisted(() => ({
     cancel: vi.fn(),
   },
   speakOnce: vi.fn(),
+  wrongShake: {
+    trigger: vi.fn(),
+    shakeProps: vi.fn(() => ({ animate: { x: 0 }, transition: { duration: 0.4 } })),
+  },
   onIntent: null as ((intent: KeyIntent) => void) | null,
   paused: false,
   documentHidden: false,
@@ -69,6 +73,9 @@ vi.mock("../_shared/useSpeech", () => ({
 }));
 vi.mock("../_shared/useSpeakOnce", () => ({
   useSpeakOnce: (...args: unknown[]) => fixtures.speakOnce(...args),
+}));
+vi.mock("../_shared/useWrongShake", () => ({
+  useWrongShake: () => ({ wrong: false, ...fixtures.wrongShake }),
 }));
 vi.mock("../_shared/typing/useTypingKeys", () => ({
   useTypingKeys: (onIntent: (intent: KeyIntent) => void) => {
@@ -120,10 +127,12 @@ function backspace(): void {
   fixtures.onIntent?.({ type: "backspace" });
 }
 
-/** Reads the rocket layer's translate3d percentage out of rendered markup. */
+/** Reads the rocket layer's bounded-track fraction as a percentage. */
 function rocketPercent(markup: string): number {
-  const match = markup.match(/data-race-rocket="true"[^>]*translate3d\(([-\d.]+)%/);
-  return match ? Number(match[1]) : NaN;
+  const match = markup.match(
+    /data-race-rocket="true"[^>]*translate3d\(calc\(([-\d.]+) \* \(100% - 3rem\)\)/,
+  );
+  return match ? Number(match[1]) * 100 : NaN;
 }
 
 const CONFIG: TypingRaceConfig = {
@@ -199,7 +208,11 @@ describe("Rocket Race word round", () => {
     expect(markup.match(/aria-live="polite"/g)).toHaveLength(2); // the word + the progress hint
     expect(markup.match(/bg-paper-raised/g)?.length).toBeGreaterThanOrEqual(3);
     expect(markup).toContain("word 1 of 6");
-    expect(markup).toMatch(/0<\/span> words a minute/);
+    expect(markup).toMatch(
+      /<span aria-hidden="true" class="flex flex-wrap items-center justify-center gap-1.5">/,
+    );
+    expect(markup).toContain("Your speed will show after one word");
+    expect(markup).not.toContain("words a minute");
   });
 
   it("renders the track with the rocket and pace comet on a paper-sunk, ink-outlined well (req 4)", () => {
@@ -210,12 +223,15 @@ describe("Rocket Race word round", () => {
     );
     expect(markup).toContain('data-race-comet="true"');
     expect(markup).toContain('data-race-rocket="true"');
-    expect(markup).toContain("translate3d(0%, 0, 0)");
+    expect(markup).toContain("translate3d(calc(0 * (100% - 2rem)), 0, 0)");
+    expect(markup).toContain("translate3d(calc(0 * (100% - 3rem)), 0, 0)");
     expect(markup).toContain("transition:transform 500ms linear");
     // Comet renders first, so it stacks behind the rocket.
     expect(markup.indexOf('data-race-comet="true"')).toBeLessThan(
       markup.indexOf('data-race-rocket="true"'),
     );
+    expect(markup).toMatch(/data-race-comet="true"[^>]*class="[^"]*inset-y-0 left-2 right-2/);
+    expect(markup).toMatch(/data-race-rocket="true"[^>]*class="[^"]*inset-y-0 left-2 right-2/);
   });
 
   it("reduced motion renders a static word fraction with zero transform styles (req 6)", () => {
@@ -252,14 +268,74 @@ describe("Rocket Race word round", () => {
     expect(rocketPercent(markup)).toBeCloseTo(200 / 6);
   });
 
+  it("bounds both chips by their own widths at fraction 1 instead of translating a bare 100%", () => {
+    const onComplete = vi.fn();
+    toMarkup(CONFIG, onComplete);
+    fixtures.stateValues[2] = 600_000;
+    let markup = toMarkup(CONFIG, onComplete);
+    expect(markup).toContain("translate3d(calc(1 * (100% - 2rem)), 0, 0)");
+
+    for (const word of CONFIG.words) {
+      for (const ch of word) type(ch);
+    }
+    markup = toMarkup(CONFIG, onComplete);
+
+    expect(markup).toContain("translate3d(calc(1 * (100% - 3rem)), 0, 0)");
+    expect(markup).not.toContain("translate3d(100%");
+  });
+
+  it("opens the race-clock segment synchronously on the first character intent", () => {
+    renderRound(CONFIG, () => undefined);
+    expect(fixtures.refValues[2]?.current).toBeNull();
+
+    type("c");
+
+    const segmentStart = fixtures.refValues[2]?.current;
+    expect(segmentStart).toEqual(expect.any(Number));
+    expect(currentElapsedMs(0, segmentStart as number, (segmentStart as number) + 250)).toBe(250);
+  });
+
+  it("shows WPM only after the first completed word", () => {
+    const onComplete = vi.fn();
+    let markup = toMarkup(CONFIG, onComplete);
+    expect(markup).toContain("Your speed will show after one word");
+    expect(markup).not.toContain("words a minute");
+
+    type("c");
+    type("a");
+    type("t");
+    markup = toMarkup(CONFIG, onComplete);
+
+    expect(markup).toMatch(/0<\/span> words a minute/);
+    expect(markup).not.toContain("Your speed will show after one word");
+  });
+
+  it("announces Backspace after divergence and re-shakes on a key at the buffer cap", () => {
+    const onComplete = vi.fn();
+    toMarkup(CONFIG, onComplete);
+    for (let i = 0; i < 5; i++) type("x");
+    const diverged = toMarkup(CONFIG, onComplete);
+
+    expect(diverged).toContain("Press Backspace to fix it");
+    expect(diverged).toContain('data-backspace-hint="true"');
+    expect(diverged).toMatch(/bg-coral\/55[^"]*line-through/);
+    fixtures.wrongShake.trigger.mockClear();
+
+    type("x");
+
+    expect(fixtures.wrongShake.trigger).toHaveBeenCalledTimes(1);
+    expect(toMarkup(CONFIG, onComplete)).toContain('data-typing-buffer="true"');
+  });
+
   it("shows the pause overlay and keeps the live readout at its frozen value (req 3, 7)", () => {
     fixtures.paused = true;
     const markup = toMarkup(CONFIG, () => undefined);
 
     expect(markup).toContain("Paused — click to keep playing");
-    // Paused from the start: the live-readout segment never opened, so it
-    // never advanced off its initial reading.
-    expect(markup).toMatch(/0<\/span> words a minute/);
+    // Paused from the start: no word has completed, so a volatile speed
+    // number is not shown.
+    expect(markup).toContain("Your speed will show after one word");
+    expect(markup).not.toContain("words a minute");
   });
 });
 
@@ -306,5 +382,24 @@ describe("Rocket Race completion (§8)", () => {
     for (const result of payload.words) {
       expect(result.missedExpected).not.toContain("x");
     }
+  });
+
+  it("clamps a visible-idle race clock to the response schema cap", () => {
+    const onComplete = vi.fn();
+    fixtures.refValues = [
+      { current: false },
+      { current: MAX_RACE_ELAPSED_MS + 10_000 },
+      { current: null },
+    ];
+    renderRound(CONFIG, onComplete);
+
+    for (const word of CONFIG.words) {
+      for (const ch of word) type(ch);
+    }
+    renderRound(CONFIG, onComplete);
+
+    const payload = onComplete.mock.calls[0]![0] as TypingRaceResponse;
+    expect(payload.elapsedMs).toBe(MAX_RACE_ELAPSED_MS);
+    expect(responseSchema.safeParse(payload).success).toBe(true);
   });
 });

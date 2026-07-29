@@ -27,6 +27,7 @@ export const BUFFER_SLACK = 2;
  * must clamp here rather than fail the whole round's response validation.
  */
 export const MAX_ITEM_MS = 600_000;
+export const MAX_ITEM_RETRIES = 30;
 
 export function initialWordProgress(): WordProgress {
   return { typed: [], retries: 0, missedExpected: [], diverged: false, startedMs: null, completedMs: null };
@@ -34,6 +35,17 @@ export function initialWordProgress(): WordProgress {
 
 export function isWordComplete(state: WordProgress): boolean {
   return state.completedMs !== null;
+}
+
+/** Whether a character intent will add a visually wrong entry (or hit the cap). */
+export function wordKeyWillBeWrong(
+  state: WordProgress,
+  expected: string,
+  intent: Pick<TypingCharIntent, "char" | "shiftKey">,
+): boolean {
+  if (state.completedMs !== null) return false;
+  const pos = state.typed.length;
+  return state.diverged || pos >= expected.length || !matchesTypingTarget(expected[pos], intent);
 }
 
 export function pressWordKey(
@@ -78,7 +90,10 @@ export function pressWordBackspace(state: WordProgress): WordProgress {
     ...state,
     typed,
     diverged: stillDiverged,
-    retries: state.diverged && !stillDiverged ? state.retries + 1 : state.retries,
+    retries:
+      state.diverged && !stillDiverged
+        ? Math.min(MAX_ITEM_RETRIES, state.retries + 1)
+        : state.retries,
   };
 }
 

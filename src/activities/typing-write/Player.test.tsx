@@ -35,6 +35,10 @@ const fixtures = vi.hoisted(() => ({
     reset: vi.fn(),
   },
   speakOnce: vi.fn(),
+  wrongShake: {
+    trigger: vi.fn(),
+    shakeProps: vi.fn(() => ({ animate: { x: 0 }, transition: { duration: 0.4 } })),
+  },
   onIntent: null as ((intent: KeyIntent) => void) | null,
 }));
 
@@ -77,6 +81,12 @@ vi.mock("../_shared/useTargetSpeech", () => ({
 vi.mock("../_shared/useSpeakOnce", () => ({
   useSpeakOnce: (...args: unknown[]) => fixtures.speakOnce(...args),
 }));
+vi.mock("../_shared/useWrongShake", () => ({
+  useWrongShake: () => ({ wrong: false, ...fixtures.wrongShake }),
+}));
+vi.mock("../_shared/useReducedMotion", () => ({
+  useReducedMotion: () => false,
+}));
 vi.mock("../_shared/typing/useTypingKeys", () => ({
   useTypingKeys: (onIntent: (intent: KeyIntent) => void) => {
     fixtures.onIntent = onIntent;
@@ -87,7 +97,7 @@ vi.mock("../_shared/typing/TypingStage", () => ({
 }));
 
 import { TypingStage } from "../_shared/typing/TypingStage";
-import { ExpectedTiles } from "../_shared/typing/WordTiles";
+import { BufferTiles, ExpectedTiles } from "../_shared/typing/WordTiles";
 import { TypingWritePlayer, WriteRound, writeAnnouncement } from "./Player";
 
 function renderRound(
@@ -131,15 +141,19 @@ beforeEach(() => {
   fixtures.speech.supported = true;
   fixtures.speech.hasVoice = true;
   fixtures.targetSpeech.unavailable = false;
+  fixtures.targetSpeech.reset.mockImplementation(() => {
+    fixtures.targetSpeech.unavailable = false;
+  });
   fixtures.onIntent = null;
   vi.clearAllMocks();
 });
 
 describe("writeAnnouncement", () => {
-  it("announces the item to type in see mode, a listen cue in hear mode, and nothing once finished", () => {
-    expect(writeAnnouncement("cat", false)).toBe("Type cat");
-    expect(writeAnnouncement("cat", true)).toBe("Listen, then type the word");
-    expect(writeAnnouncement(null, false)).toBe("");
+  it("announces the visible item, keeps a hidden hear target private, and says nothing once finished", () => {
+    expect(writeAnnouncement("cat", false, true)).toBe("Type cat");
+    expect(writeAnnouncement("cat", true, false)).toBe("Listen, then type the word");
+    expect(writeAnnouncement("cat", true, true)).toContain("cat");
+    expect(writeAnnouncement(null, false, true)).toBe("");
   });
 });
 
@@ -165,33 +179,48 @@ describe("Word Write see mode", () => {
     // Three expected-tile letters for "cat", ink-on-paper (not yet typed).
     expect(
       markup.match(
-        /grid size-14 place-items-center rounded-xl border-\[3px\] border-ink font-display text-2xl text-ink shadow-pop bg-paper-raised/g,
+        /grid size-14 place-items-center rounded-sm border-\[3px\] border-ink font-display text-2xl text-ink shadow-pop bg-paper-raised/g,
       ),
     ).toHaveLength(3);
     // The caret placeholder, present with an empty buffer.
-    expect(markup).toContain("border-dashed border-ink/40");
+    expect(markup).toContain("border-dashed border-ink-soft");
+    expect(markup).toContain("text-ink-soft");
     // Decorative fill-up stars: aria-hidden, one per item.
     expect(markup).toMatch(/<span aria-hidden="true"[^>]*><svg data-star-shape="true"/);
     expect(markup.match(/data-star-shape="true"/g)).toHaveLength(3);
+    expect(markup).toMatch(
+      /<span aria-hidden="true" class="flex flex-wrap items-center justify-center gap-1.5">/,
+    );
     expect(markup).toContain("1 of 3");
     // The live region carries the expected item, never the (empty) buffer.
     expect(markup).toMatch(/aria-live="polite"[^>]*>Type cat</);
   });
 
-  it("colors a correct keystroke honey and a wrong one coral, never revealing intent in the live region", () => {
+  it("marks a wrong glyph without relying on color and announces the Backspace recovery", () => {
     toMarkup(SEE_CONFIG, () => undefined);
     type("c");
     type("x"); // wrong: "cat"'s second letter is "a"
     const markup = toMarkup(SEE_CONFIG, () => undefined);
 
-    expect(markup).toContain(
-      "grid size-14 place-items-center rounded-xl border-[3px] border-ink font-display text-2xl text-ink shadow-pop bg-honey",
-    );
-    expect(markup).toContain(
-      "grid size-14 place-items-center rounded-xl border-[3px] border-ink font-display text-2xl text-ink shadow-pop bg-coral/55",
-    );
-    // Still announcing the target, never "cx" or any typed buffer content.
-    expect(markup).toMatch(/aria-live="polite"[^>]*>Type cat</);
+    expect(markup).toContain("bg-honey");
+    expect(markup).toMatch(/bg-coral\/55[^"]*line-through/);
+    expect(markup).toContain("Press Backspace to fix it");
+    expect(markup).toContain('data-backspace-hint="true"');
+    expect(markup).not.toContain(">cx<");
+    expect(fixtures.wrongShake.trigger).toHaveBeenCalled();
+  });
+
+  it("re-triggers the buffer shake when another character is pressed at the cap", () => {
+    const onComplete = vi.fn();
+    toMarkup(SEE_CONFIG, onComplete);
+    for (let i = 0; i < 5; i++) type("x");
+    toMarkup(SEE_CONFIG, onComplete);
+    fixtures.wrongShake.trigger.mockClear();
+
+    type("x");
+
+    expect(fixtures.wrongShake.trigger).toHaveBeenCalledTimes(1);
+    expect(toMarkup(SEE_CONFIG, onComplete)).toContain('data-typing-buffer="true"');
   });
 });
 
@@ -212,6 +241,8 @@ describe("Word Write hear mode", () => {
     expect(markup).toContain("bg-paper-raised");
     expect(markup).toContain("Audio isn’t available here.");
     expect(markup).not.toContain("Hear the word again");
+    expect(markup).toMatch(/aria-live="polite"[^>]*>[^<]*cat</);
+    expect(markup).not.toMatch(/aria-live="polite"[^>]*>Listen, then type the word</);
   });
 
   it("reveals the tiles after two corrected mistakes, even while audio stays available (req 5, D7)", () => {
@@ -227,6 +258,7 @@ describe("Word Write hear mode", () => {
     expect(revealed).toContain("bg-paper-raised");
     expect(revealed).toContain("Hear the word again");
     expect(revealed).not.toContain("Audio isn’t available here.");
+    expect(revealed).toMatch(/aria-live="polite"[^>]*>[^<]*cat</);
   });
 
   it("speaks a NEW utterance per item, keyed by index (req 5)", () => {
@@ -236,6 +268,7 @@ describe("Word Write hear mode", () => {
     const firstWordCall = fixtures.speakOnce.mock.calls[1];
     expect(firstWordCall[1]).toBe("cat");
     expect(firstWordCall[2]).toBe(0);
+    expect(firstWordCall[3]).toEqual({ essentialContentAudio: true });
     (firstWordCall[0] as (text: string) => void)("cat");
     expect(fixtures.targetSpeech.speakTarget).toHaveBeenCalledWith("cat");
 
@@ -247,6 +280,24 @@ describe("Word Write hear mode", () => {
     const secondWordCall = fixtures.speakOnce.mock.calls[3];
     expect(secondWordCall[1]).toBe("sun");
     expect(secondWordCall[2]).toBe(1);
+  });
+
+  it("resets an unavailable target on item advance so the next hidden word starts unrevealed", () => {
+    fixtures.targetSpeech.unavailable = true;
+    const onComplete = vi.fn();
+    const unavailable = toMarkup(HEAR_CONFIG, onComplete);
+    expect(unavailable).toContain("bg-paper-raised");
+    expect(unavailable).toMatch(/aria-live="polite"[^>]*>[^<]*cat</);
+
+    type("c");
+    type("a");
+    type("t");
+    const nextItem = toMarkup(HEAR_CONFIG, onComplete);
+
+    expect(fixtures.targetSpeech.reset).toHaveBeenCalledTimes(1);
+    expect(nextItem).not.toContain("bg-paper-raised");
+    expect(nextItem).toContain("Listen, then type the word");
+    expect(nextItem).not.toContain("Type sun");
   });
 });
 
@@ -284,9 +335,60 @@ describe("Word Write completion (§8)", () => {
   });
 });
 
-describe("ExpectedTiles", () => {
-  it("renders a space as a visible glyph rather than collapsing it", () => {
-    const markup = renderToStaticMarkup(ExpectedTiles({ item: "a b" }));
-    expect(markup).toContain("␣");
+describe("WordTiles", () => {
+  it("groups a sentence by word, omits space tiles, and keeps punctuation with its word", () => {
+    const markup = renderToStaticMarkup(ExpectedTiles({ item: "Go, cat." }));
+
+    expect(markup.match(/data-expected-word-group="true"/g)).toHaveLength(2);
+    expect(markup).not.toContain("␣");
+    expect(markup).not.toContain('data-expected-position="3"');
+    expect(markup).toMatch(
+      /data-expected-word-group="true"[^>]*>.*data-expected-position="4"[^>]*>c<.*data-expected-position="7"[^>]*>\.</,
+    );
+  });
+
+  it("renders wrong buffer tiles with a line-through and an ink-outlined Backspace hint", () => {
+    const markup = renderToStaticMarkup(
+      BufferTiles({
+        item: "cat",
+        progress: {
+          typed: [{ char: "x", ok: false }],
+          retries: 0,
+          missedExpected: ["c"],
+          diverged: true,
+          startedMs: 0,
+          completedMs: null,
+        },
+      }),
+    );
+
+    expect(markup).toMatch(/bg-coral\/55[^"]*line-through/);
+    expect(markup).toMatch(/data-backspace-hint="true"[^>]*border-\[3px\] border-ink/);
+  });
+
+  it("maps typed characters across a space boundary without rendering the correct space", () => {
+    const markup = renderToStaticMarkup(
+      BufferTiles({
+        item: "a b",
+        progress: {
+          typed: [
+            { char: "a", ok: true },
+            { char: " ", ok: true },
+            { char: "b", ok: true },
+          ],
+          retries: 0,
+          missedExpected: [],
+          diverged: false,
+          startedMs: 0,
+          completedMs: 100,
+        },
+      }),
+    );
+
+    expect(markup.match(/data-buffer-word-group="true"/g)).toHaveLength(2);
+    expect(markup).toMatch(/data-buffer-position="0"[^>]*>a</);
+    expect(markup).not.toContain('data-buffer-position="1"');
+    expect(markup).toMatch(/data-buffer-position="2"[^>]*>b</);
+    expect(markup).not.toContain("␣");
   });
 });

@@ -2,15 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import { EarIcon } from "@phosphor-icons/react/dist/ssr";
+import { motion } from "motion/react";
 import type { TypingWriteConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { Mascot } from "@/components/art/Mascot";
 import { StarShape } from "@/components/ui/Stars";
 import { Prompt, ProgressHint, SpeakerButton } from "../_shared/ActivityChrome";
 import { useActivity } from "../_shared/useActivity";
+import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useTargetSpeech } from "../_shared/useTargetSpeech";
+import { useWrongShake } from "../_shared/useWrongShake";
 import { TypingStage } from "../_shared/typing/TypingStage";
 import { useTypingKeys } from "../_shared/typing/useTypingKeys";
 import { BufferTiles, ExpectedTiles } from "../_shared/typing/WordTiles";
@@ -19,6 +22,7 @@ import {
   isWordComplete,
   pressWordBackspace,
   pressWordKey,
+  wordKeyWillBeWrong,
   wordItemResult,
   type WordProgress,
 } from "../_shared/typing/wordType";
@@ -47,9 +51,13 @@ function initialWriteState(): WriteState {
   return { index: 0, progress: initialWordProgress(), results: [] };
 }
 
-export function writeAnnouncement(item: string | null, hearMode: boolean): string {
+export function writeAnnouncement(
+  item: string | null,
+  hearMode: boolean,
+  revealed: boolean,
+): string {
   if (item === null) return "";
-  return hearMode ? "Listen, then type the word" : `Type ${item}`;
+  return hearMode && !revealed ? "Listen, then type the word" : `Type ${item}`;
 }
 
 export function WriteRound({
@@ -60,12 +68,21 @@ export function WriteRound({
   const items = parsed.items;
   const speech = useSpeech();
   const targetSpeech = useTargetSpeech(speech);
+  const reducedMotion = useReducedMotion();
+  const shake = useWrongShake();
   const [state, setState] = useState(initialWriteState);
   const reported = useRef(false);
+  const targetSpeechIndexRef = useRef(state.index);
   // A monotonic clock read only from the event path (the useTypingKeys
   // handler below), never during render — react-hooks/purity forbids calling
   // performance.now() while rendering.
   const elapsedStartRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (targetSpeechIndexRef.current === state.index) return;
+    targetSpeechIndexRef.current = state.index;
+    targetSpeech.reset();
+  }, [state.index, targetSpeech]);
 
   const finished = state.index >= items.length;
   const item = finished ? null : (items[state.index] ?? null);
@@ -83,6 +100,7 @@ export function WriteRound({
     },
     hearMode && item !== null ? item : null,
     state.index,
+    { essentialContentAudio: true },
   );
 
   useTypingKeys((intent) => {
@@ -91,6 +109,9 @@ export function WriteRound({
       return;
     }
     if (intent.type !== "char") return;
+    if (item !== null && wordKeyWillBeWrong(state.progress, item, intent)) {
+      shake.trigger();
+    }
     const nowMs = performance.now();
     if (elapsedStartRef.current === null) elapsedStartRef.current = nowMs;
     // Rounded: the response schema's `ms` is an integer, and performance.now()
@@ -163,16 +184,24 @@ export function WriteRound({
           ) : (
             <ExpectedTiles item={item} />
           )}
-          <BufferTiles progress={state.progress} />
+          <motion.div
+            key={shake.sequence}
+            data-typing-buffer="true"
+            {...shake.shakeProps(reducedMotion)}
+          >
+            <BufferTiles item={item} progress={state.progress} />
+          </motion.div>
         </div>
       )}
 
       <p aria-live="polite" className="min-h-7 text-center font-display text-lg text-ink">
-        {writeAnnouncement(item, hearMode)}
+        {state.progress.diverged
+          ? "Press Backspace to fix it"
+          : writeAnnouncement(item, hearMode, revealed)}
       </p>
 
       <div className="flex flex-col items-center gap-2">
-        <span aria-hidden="true" className="flex items-center gap-1.5">
+        <span aria-hidden="true" className="flex flex-wrap items-center justify-center gap-1.5">
           {items.map((_, i) => (
             <StarShape key={i} size={40} filled={i < state.index} emptyClassName="text-ink-soft" />
           ))}

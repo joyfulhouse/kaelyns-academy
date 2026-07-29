@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { RocketIcon, ShootingStarIcon } from "@phosphor-icons/react/dist/ssr";
+import { motion } from "motion/react";
 import type { TypingRaceConfig } from "@/content/activity-configs";
 import type { ActivityPlayerProps } from "@/content/types";
 import { Mascot } from "@/components/art/Mascot";
@@ -11,6 +12,7 @@ import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
 import { useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
+import { useWrongShake } from "../_shared/useWrongShake";
 import { PauseOverlay } from "../_shared/typing/PauseOverlay";
 import { TypingStage } from "../_shared/typing/TypingStage";
 import { useRoundPaused } from "../_shared/typing/roundPause";
@@ -21,11 +23,12 @@ import {
   isWordComplete,
   pressWordBackspace,
   pressWordKey,
+  wordKeyWillBeWrong,
   wordItemResult,
   type WordProgress,
 } from "../_shared/typing/wordType";
 import { wpm } from "../_shared/typing/wpm";
-import { schema, type TypingRaceResponse } from "./logic";
+import { MAX_RACE_ELAPSED_MS, schema, type TypingRaceResponse } from "./logic";
 
 /** How often the live readout (WPM + pace comet) refreshes while running. */
 const LIVE_TICK_MS = 500;
@@ -107,6 +110,7 @@ export function RaceRound({
   const words = parsed.words;
   const speech = useSpeech();
   const reducedMotion = useReducedMotion();
+  const shake = useWrongShake();
   const paused = useRoundPaused();
   const [state, setState] = useState(initialRaceState);
   const [started, setStarted] = useState(false);
@@ -128,7 +132,7 @@ export function RaceRound({
   useEffect(() => {
     if (!started || paused || finished) return;
     if (typeof window === "undefined") return;
-    segmentStartRef.current = performance.now();
+    segmentStartRef.current ??= performance.now();
     const id = window.setInterval(() => {
       setLiveElapsedMs(
         Math.round(currentElapsedMs(accumulatedRef.current, segmentStartRef.current, performance.now())),
@@ -149,9 +153,14 @@ export function RaceRound({
       return;
     }
     if (intent.type !== "char") return;
+    if (item !== null && wordKeyWillBeWrong(state.progress, item, intent)) {
+      shake.trigger();
+    }
+    const nowMs = performance.now();
     if (!started) setStarted(true);
+    segmentStartRef.current ??= nowMs;
     const now = Math.round(
-      currentElapsedMs(accumulatedRef.current, segmentStartRef.current, performance.now()),
+      currentElapsedMs(accumulatedRef.current, segmentStartRef.current, nowMs),
     );
     setState((current) => {
       const currentWord = words[current.index];
@@ -174,7 +183,10 @@ export function RaceRound({
   useEffect(() => {
     if (!finished || reported.current) return;
     reported.current = true;
-    onComplete({ words: state.results, elapsedMs: state.elapsedMs });
+    onComplete({
+      words: state.results,
+      elapsedMs: Math.min(MAX_RACE_ELAPSED_MS, state.elapsedMs),
+    });
   }, [finished, onComplete, state.results, state.elapsedMs]);
 
   useEffect(() => {
@@ -205,12 +217,22 @@ export function RaceRound({
       ) : (
         <div className="flex flex-col items-center gap-4">
           <ExpectedTiles item={item} />
-          <BufferTiles progress={state.progress} />
+          <motion.div
+            key={shake.sequence}
+            data-typing-buffer="true"
+            {...shake.shakeProps(reducedMotion)}
+          >
+            <BufferTiles item={item} progress={state.progress} />
+          </motion.div>
         </div>
       )}
 
       <p aria-live="polite" className="min-h-7 text-center font-display text-lg text-ink">
-        {item === null ? "" : `Type ${item}`}
+        {item === null
+          ? ""
+          : state.progress.diverged
+            ? "Press Backspace to fix it"
+            : `Type ${item}`}
       </p>
 
       {/* Reduced motion is a path, not a downgrade: the same word tiles and
@@ -231,9 +253,9 @@ export function RaceRound({
               warm finish (no "you lost" framing exists anywhere here). */}
           <div
             data-race-comet="true"
-            className="absolute inset-0"
+            className="absolute inset-y-0 left-2 right-2"
             style={{
-              transform: `translate3d(${cometFraction * 100}%, 0, 0)`,
+              transform: `translate3d(calc(${cometFraction} * (100% - 2rem)), 0, 0)`,
               transition: "transform 500ms linear",
             }}
           >
@@ -243,9 +265,9 @@ export function RaceRound({
           </div>
           <div
             data-race-rocket="true"
-            className="absolute inset-0"
+            className="absolute inset-y-0 left-2 right-2"
             style={{
-              transform: `translate3d(${rocketFraction * 100}%, 0, 0)`,
+              transform: `translate3d(calc(${rocketFraction} * (100% - 3rem)), 0, 0)`,
               transition: "transform 500ms linear",
             }}
           >
@@ -257,11 +279,17 @@ export function RaceRound({
       )}
 
       <p data-race-wpm="true" className="text-center text-ink">
-        <span className="font-display text-2xl font-bold">{liveWpm}</span> words a minute
+        {state.index >= 1 ? (
+          <>
+            <span className="font-display text-2xl font-bold">{liveWpm}</span> words a minute
+          </>
+        ) : (
+          <span className="font-display text-lg">Your speed will show after one word</span>
+        )}
       </p>
 
       <div className="flex flex-col items-center gap-2">
-        <span aria-hidden="true" className="flex items-center gap-1.5">
+        <span aria-hidden="true" className="flex flex-wrap items-center justify-center gap-1.5">
           {words.map((_, i) => (
             <StarShape key={i} size={40} filled={i < state.index} emptyClassName="text-ink-soft" />
           ))}

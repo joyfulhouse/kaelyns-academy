@@ -7,6 +7,7 @@ import {
   outcomeFromAccuracy,
   starsFromAccuracy,
 } from "../_shared/scoring";
+import { MAX_ITEM_MS, MAX_ITEM_RETRIES } from "../_shared/typing/wordType";
 
 /** Server-safe schema + scoring for typing-write. No "use client". */
 export const schema = typingWriteConfig;
@@ -24,8 +25,8 @@ export const responseSchema = z
           .object({
             i: z.number().int().min(0).max(11),
             ok: z.boolean(),
-            ms: z.number().int().min(0).max(600_000),
-            retries: z.number().int().min(0).max(30),
+            ms: z.number().int().min(0).max(MAX_ITEM_MS),
+            retries: z.number().int().min(0).max(MAX_ITEM_RETRIES),
             missedExpected: z.array(z.string().length(1)).max(40),
           })
           .strict(),
@@ -48,11 +49,11 @@ export function itemsArePlausible(
   if (items.length !== expected.length) return false;
   return items.every((item, index) => {
     if (item.i !== index) return false;
-    const chars = expected[index].toLowerCase();
-    if (!item.missedExpected.every((ch) => chars.includes(ch.toLowerCase()))) return false;
+    if (!item.missedExpected.every((ch) => expected[index].includes(ch))) return false;
+    if (new Set(item.missedExpected).size !== item.missedExpected.length) return false;
     // ok must agree with the evidence carried alongside it.
     if (item.ok) return item.retries === 0 && item.missedExpected.length === 0;
-    return item.retries >= 1 || item.missedExpected.length >= 1;
+    return item.retries >= 1 && item.missedExpected.length <= item.retries;
   });
 }
 

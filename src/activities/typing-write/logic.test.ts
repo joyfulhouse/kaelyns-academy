@@ -58,6 +58,41 @@ describe("typing-write scoring", () => {
     expect(score(CONFIG, alien).skillEvidence).toEqual([]);
   });
 
+  it("fails closed when missedExpected changes the case of the exact expected character (§8)", () => {
+    const capitalConfig: TypingWriteConfig = {
+      ...CONFIG,
+      scope: "sentence",
+      items: ["Bat.", "Map.", "Sat."],
+    };
+    const forged = {
+      items: [
+        { i: 0, ok: false, ms: 900, retries: 1, missedExpected: ["b"] },
+        perfect.items[1],
+        perfect.items[2],
+      ],
+    };
+
+    expect(score(capitalConfig, forged).skillEvidence).toEqual([]);
+  });
+
+  it("accepts an honest corrected capital with exact expected-character provenance", () => {
+    const capitalConfig: TypingWriteConfig = {
+      ...CONFIG,
+      scope: "sentence",
+      items: ["Bat.", "Map.", "Sat."],
+    };
+    const honest = {
+      items: [
+        { i: 0, ok: false, ms: 900, retries: 1, missedExpected: ["B"] },
+        perfect.items[1],
+        perfect.items[2],
+      ],
+    };
+
+    expect(score(capitalConfig, honest)).toMatchObject({ correct: 2, total: 3 });
+    expect(score(capitalConfig, honest).skillEvidence).not.toEqual([]);
+  });
+
   it("fails closed when ok contradicts retries/missedExpected", () => {
     const liar = {
       items: [
@@ -67,6 +102,42 @@ describe("typing-write scoring", () => {
       ],
     };
     expect(score(CONFIG, liar).skillEvidence).toEqual([]);
+  });
+
+  it("fails closed when a completed non-first-try item has no counted retry", () => {
+    const impossible = {
+      items: [
+        { i: 0, ok: false, ms: 900, retries: 0, missedExpected: ["c"] },
+        perfect.items[1],
+        perfect.items[2],
+      ],
+    };
+
+    expect(score(CONFIG, impossible).skillEvidence).toEqual([]);
+  });
+
+  it("fails closed on duplicate missedExpected entries", () => {
+    const impossible = {
+      items: [
+        { i: 0, ok: false, ms: 900, retries: 2, missedExpected: ["c", "c"] },
+        perfect.items[1],
+        perfect.items[2],
+      ],
+    };
+
+    expect(score(CONFIG, impossible).skillEvidence).toEqual([]);
+  });
+
+  it("fails closed when missedExpected has more entries than counted retries", () => {
+    const impossible = {
+      items: [
+        { i: 0, ok: false, ms: 900, retries: 1, missedExpected: ["c", "a"] },
+        perfect.items[1],
+        perfect.items[2],
+      ],
+    };
+
+    expect(score(CONFIG, impossible).skillEvidence).toEqual([]);
   });
 
   it("responseSchema rejects multi-char missedExpected entries", () => {

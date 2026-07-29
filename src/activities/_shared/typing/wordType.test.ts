@@ -5,6 +5,7 @@ import {
   initialWordProgress,
   isWordComplete,
   MAX_ITEM_MS,
+  MAX_ITEM_RETRIES,
   pressWordBackspace,
   pressWordKey,
   wordItemResult,
@@ -62,6 +63,21 @@ describe("pressWordKey", () => {
     s = pressWordKey(s, "cat", key("t"), 400);
     expect(isWordComplete(s)).toBe(true);
     expect(wordItemResult(s, 0).ok).toBe(false);      // corrected, not first-try
+  });
+
+  it("clamps 31 honest correction episodes to MAX_ITEM_RETRIES and stays schema-valid", () => {
+    let s = initialWordProgress();
+    for (let i = 0; i < MAX_ITEM_RETRIES + 1; i++) {
+      s = pressWordKey(s, "cat", key("x"), i * 2);
+      s = pressWordBackspace(s);
+    }
+    s = pressWordKey(s, "cat", key("c"), 100);
+    s = pressWordKey(s, "cat", key("a"), 200);
+    s = pressWordKey(s, "cat", key("t"), 300);
+
+    const item = wordItemResult(s, 0);
+    expect(item.retries).toBe(MAX_ITEM_RETRIES);
+    expect(responseSchema.safeParse({ items: [item, item, item] }).success).toBe(true);
   });
 
   it("dedupes missedExpected across episodes at the same position", () => {
