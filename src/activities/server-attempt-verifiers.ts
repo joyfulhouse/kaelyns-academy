@@ -11,7 +11,7 @@ import type { DayKey } from "@/lib/tutor/mastery";
 import type { OralReadingResponse } from "./oral-reading/logic";
 import { parseAndScoreActivity } from "./server-verification";
 
-export interface ServerAttemptVerifierInput {
+interface ServerAttemptVerifierInput {
   accountId: string;
   learnerId: string;
   programSlug: string;

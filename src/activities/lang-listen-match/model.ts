@@ -1,6 +1,6 @@
 const MAX_ATTEMPTS = 20;
 
-export interface ListenMatchResult {
+interface ListenMatchResult {
   choiceIndex: number;
   attempts: number;
   usedHelp: boolean;

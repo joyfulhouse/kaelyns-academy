@@ -26,7 +26,7 @@ const activityScoreSchema = z
     path: ["correct"],
   });
 
-export type ParseAndScoreActivityFailureReason =
+type ParseAndScoreActivityFailureReason =
   | "invalid-config"
   | "invalid-response"
   | "invalid-score"

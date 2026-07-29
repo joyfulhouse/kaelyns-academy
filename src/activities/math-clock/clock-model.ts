@@ -1,5 +1,5 @@
-export const CLOCK_CYCLE_MINUTES = 12 * 60;
-export const HALF_HOUR_MINUTES = 30;
+const CLOCK_CYCLE_MINUTES = 12 * 60;
+const HALF_HOUR_MINUTES = 30;
 
 export type ClockHand = "hour" | "minute";
 

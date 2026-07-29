@@ -1,6 +1,6 @@
 const MAX_ATTEMPTS = 20;
 
-export interface SightwordRoundResult {
+interface SightwordRoundResult {
   roundIndex: number;
   choiceIndex: number;
   attempts: number;
