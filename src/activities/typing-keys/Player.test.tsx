@@ -45,7 +45,11 @@ describe("Key Camp target prompt", () => {
       showHands: false,
     });
 
-    expect(markup).toContain('aria-label="0 of 3 stars"');
+    // The fill-up row is decorative: its "N of M stars" name would collide
+    // with the 1-3 reward stars, so ProgressHint owns the announcement.
+    expect(markup).toMatch(
+      /<span aria-hidden="true"><span[^>]*aria-label="0 of 3 stars"/,
+    );
     expect(markup).toContain("1 of 3");
     expect(markup.match(/data-star-shape="true"/g)).toHaveLength(3);
   });

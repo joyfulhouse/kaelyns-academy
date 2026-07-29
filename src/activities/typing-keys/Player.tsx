@@ -74,7 +74,11 @@ function KeysRound({
       <KeyPrompt target={target} />
       {(parsed.showHands ?? true) && <KeyboardMap target={target} />}
       <div className="flex flex-col items-center gap-2">
-        <Stars value={state.index} max={prompts.length} size="sm" />
+        {/* Decorative fill-up only: its "N of M stars" name would collide with
+            the 1-3 reward stars and double the ProgressHint announcement. */}
+        <span aria-hidden="true">
+          <Stars value={state.index} max={prompts.length} size="sm" />
+        </span>
         <ProgressHint>
           {Math.min(state.index + 1, prompts.length)} of {prompts.length}
         </ProgressHint>

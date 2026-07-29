@@ -27,7 +27,7 @@ import {
   tick,
   typeChar,
 } from "./state";
-import { useRoundPaused } from "./useRoundPaused";
+import { useDocumentHidden, useRoundPaused } from "./useRoundPaused";
 
 const TICK_MS = 100;
 const PAUSE_MESSAGE = "Paused — click to keep playing";
@@ -69,7 +69,10 @@ export function PauseOverlay({
 }) {
   const speech = useSpeech();
   const cancelSpeech = speech.cancel;
-  useSpeakOnce(speech.speak, paused ? PAUSE_MESSAGE : null);
+  const hidden = useDocumentHidden();
+  // A hidden tab pauses the round too, but nobody is looking at the overlay —
+  // announcing there talks to an empty room. Speak only when the page shows.
+  useSpeakOnce(speech.speak, paused && !hidden ? PAUSE_MESSAGE : null);
 
   useEffect(
     () => () => {
@@ -233,7 +236,7 @@ function CatchRound({
           "relative w-full max-w-2xl overflow-hidden rounded-2xl bg-paper-sunk",
           reducedMotion
             ? "flex flex-wrap items-start justify-center gap-4 py-6"
-            : "h-72",
+            : "typing-playfield",
         )}
       >
         <span

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +12,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   paused: false,
+  documentHidden: false,
   reducedMotion: false,
   speakOnce: vi.fn(),
 }));
@@ -21,6 +23,7 @@ vi.mock("../_shared/typing/TypingStage", () => ({
 
 vi.mock("./useRoundPaused", () => ({
   useRoundPaused: () => mocks.paused,
+  useDocumentHidden: () => mocks.documentHidden,
 }));
 
 vi.mock("../_shared/useReducedMotion", () => ({
@@ -42,6 +45,7 @@ const CONFIG: TypingCatchConfig = {
 describe("Star Catch Player accessibility", () => {
   beforeEach(() => {
     mocks.paused = false;
+    mocks.documentHidden = false;
     mocks.reducedMotion = false;
     vi.clearAllMocks();
   });
@@ -221,6 +225,45 @@ describe("Star Catch Player accessibility", () => {
       "Paused — click to keep playing",
     );
     expect(playingMarkup).toBe("");
+  });
+
+  it("derives the fall distance from the playfield geometry in one CSS block", () => {
+    const globalsPath = new URL("../../app/globals.css", import.meta.url);
+    const globalsContent = readFileSync(globalsPath, "utf-8");
+
+    // The keyframe must read the derived var — a literal distance here can
+    // silently detach from the well height and land stars off the ground line.
+    expect(globalsContent).toContain(
+      "translate3d(-50%, var(--typing-fall-distance), 0)",
+    );
+    const playfieldBlock = globalsContent.match(/\.typing-playfield \{[^}]*\}/)?.[0];
+    expect(playfieldBlock).toBeDefined();
+    expect(playfieldBlock).toContain("--typing-playfield-height: 18rem");
+    expect(playfieldBlock).toContain("--typing-sprite-size: 4rem");
+    expect(playfieldBlock).toMatch(
+      /--typing-fall-distance: calc\(\s*var\(--typing-playfield-height\) - var\(--typing-sprite-size\)\s*\)/,
+    );
+    expect(playfieldBlock).toContain("height: var(--typing-playfield-height)");
+
+    // The sprite is Tailwind size-16 = 4rem; keep it matched to the CSS var.
+    const markup = renderToStaticMarkup(
+      createElement(TypingCatchPlayer, {
+        config: CONFIG,
+        onComplete: () => undefined,
+      }),
+    );
+    expect(markup).toMatch(/data-playfield="true"[^>]*typing-playfield/);
+    expect(markup).toMatch(/data-falling="a"[^>]*class="[^"]*size-16/);
+  });
+
+  it("stays silent when the pause comes from a hidden tab", () => {
+    mocks.documentHidden = true;
+
+    renderToStaticMarkup(
+      createElement(PauseOverlay, { paused: true, onResume: () => undefined }),
+    );
+
+    expect(mocks.speakOnce).toHaveBeenCalledWith(expect.any(Function), null);
   });
 
   it("renders the pause overlay from the visibility and focus store", () => {

@@ -135,7 +135,7 @@
     transform: translate3d(-50%, 0, 0);
   }
   to {
-    transform: translate3d(-50%, 14rem, 0);
+    transform: translate3d(-50%, var(--typing-fall-distance), 0);
   }
 }
 
@@ -227,6 +227,17 @@
   }
   .typing-key-space {
     width: var(--typing-space-width);
+  }
+  /* Fall geometry lives in ONE place: a spawned star travels exactly the well
+     height minus its own 4rem sprite (Player.tsx size-16), so its lower edge
+     comes to rest on the ground line. The keyframe reads the derived var. */
+  .typing-playfield {
+    --typing-playfield-height: 18rem;
+    --typing-sprite-size: 4rem;
+    --typing-fall-distance: calc(
+      var(--typing-playfield-height) - var(--typing-sprite-size)
+    );
+    height: var(--typing-playfield-height);
   }
   .typing-stage {
     min-height: calc(100dvh - 10rem);

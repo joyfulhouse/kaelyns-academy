@@ -26,3 +26,19 @@ function getSnapshot(): boolean {
 export function useRoundPaused(): boolean {
   return useSyncExternalStore(subscribe, getSnapshot, () => false);
 }
+
+function subscribeHidden(onChange: () => void): () => void {
+  if (typeof document === "undefined") return () => {};
+  document.addEventListener("visibilitychange", onChange);
+  return () => document.removeEventListener("visibilitychange", onChange);
+}
+
+function getHiddenSnapshot(): boolean {
+  return typeof document !== "undefined" && document.hidden;
+}
+
+/** Hydration-safe document visibility. A hidden tab has no listener to talk
+ *  to, so speech keyed to the pause overlay must stay silent there. */
+export function useDocumentHidden(): boolean {
+  return useSyncExternalStore(subscribeHidden, getHiddenSnapshot, () => false);
+}
