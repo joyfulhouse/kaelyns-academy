@@ -57,10 +57,10 @@ export function preventsDefault(event: KeydownLike): boolean {
 
 /**
  * Case-forgiving when the target is lowercase (a stray CapsLock is not a
- * mistake worth failing a child over), exact when the target is a capital —
- * with Shift held, because then reaching for Shift IS the skill. This slice
- * deliberately does not distinguish left/right Shift: doing that reliably
- * requires tracking a separate modifier keydown by code/location.
+ * mistake worth failing a child over). Capital targets also compare without
+ * case, but require Shift because then reaching for Shift IS the skill. This
+ * slice deliberately does not distinguish left/right Shift: doing that
+ * reliably requires tracking a separate modifier keydown by code/location.
  */
 export function matchesTypingTarget(
   expected: string,
@@ -69,5 +69,5 @@ export function matchesTypingTarget(
   if (expected === expected.toLowerCase()) {
     return intent.char.toLowerCase() === expected;
   }
-  return intent.char === expected && intent.shiftKey;
+  return intent.shiftKey && intent.char.toLowerCase() === expected.toLowerCase();
 }

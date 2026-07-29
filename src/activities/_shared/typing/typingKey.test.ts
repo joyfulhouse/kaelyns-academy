@@ -88,10 +88,23 @@ describe("preventsDefault", () => {
 });
 
 describe("matchesTypingTarget", () => {
-  it("forgives CapsLock for lowercase targets but requires shift for capitals", () => {
+  it("forgives CapsLock for lowercase targets", () => {
     expect(matchesTypingTarget("a", { char: "A", shiftKey: false })).toBe(true);
-    expect(matchesTypingTarget("A", { char: "a", shiftKey: true })).toBe(false);
+  });
+
+  it("accepts a normal Shift+a chord for a capital target", () => {
     expect(matchesTypingTarget("A", { char: "A", shiftKey: true })).toBe(true);
+  });
+
+  it("accepts a CapsLock-on Shift+a chord for a capital target", () => {
+    expect(matchesTypingTarget("A", { char: "a", shiftKey: true })).toBe(true);
+  });
+
+  it("rejects CapsLock alone for a capital target", () => {
     expect(matchesTypingTarget("A", { char: "A", shiftKey: false })).toBe(false);
+  });
+
+  it("rejects a bare lowercase press for a capital target", () => {
+    expect(matchesTypingTarget("A", { char: "a", shiftKey: false })).toBe(false);
   });
 });

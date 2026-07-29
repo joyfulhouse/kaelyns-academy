@@ -35,7 +35,7 @@ describe("Key Camp state", () => {
   });
 
   it("still demands the shift when the drill IS the capital", () => {
-    expect(pressKey(initialKeysState(), "F", key("f", true)).index).toBe(0);
+    expect(pressKey(initialKeysState(), "F", key("f", true)).index).toBe(1);
     expect(pressKey(initialKeysState(), "F", key("F")).index).toBe(0);
     expect(pressKey(initialKeysState(), "F", key("F", true)).index).toBe(1);
   });

@@ -31,6 +31,7 @@ interface SpeakerVisual {
   label?: string;
   className?: string;
   disabled?: boolean;
+  releasePointerFocus?: boolean;
   size?: SpeakerSize;
   shape?: SpeakerShape;
   tone?: SpeakerTone;
@@ -60,6 +61,7 @@ export function SpeakerButton(props: SpeakerButtonProps) {
     label = "Hear it again",
     className,
     disabled = false,
+    releasePointerFocus = false,
     size = "md",
     shape = "square",
     tone = "honey",
@@ -81,6 +83,7 @@ export function SpeakerButton(props: SpeakerButtonProps) {
     <button
       type="button"
       onClick={onClick}
+      onPointerDown={releasePointerFocus ? (event) => event.preventDefault() : undefined}
       disabled={disabled}
       aria-label={label}
       className={cn(
@@ -105,14 +108,20 @@ export function Prompt({
   speech,
   instruction,
   className,
+  releaseSpeakerPointerFocus = false,
 }: {
   speech: SpeechController;
   instruction: string;
   className?: string;
+  releaseSpeakerPointerFocus?: boolean;
 }) {
   return (
     <div className={cn("flex items-center justify-center gap-4", className)}>
-      <SpeakerButton speech={speech} text={instruction} />
+      <SpeakerButton
+        speech={speech}
+        text={instruction}
+        releasePointerFocus={releaseSpeakerPointerFocus}
+      />
       <p className="text-balance font-display text-2xl leading-tight text-ink sm:text-3xl">
         {instruction}
       </p>

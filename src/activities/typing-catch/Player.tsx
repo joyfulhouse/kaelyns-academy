@@ -36,11 +36,10 @@ const SPOKEN_TARGETS: Readonly<Record<string, string>> = {
 export function spawnAnnouncement(pool: readonly string[], spawnCount: number): string {
   if (pool.length === 0 || spawnCount <= 0) return "";
   const target = pool[(spawnCount - 1) % pool.length]!;
-  const spoken =
-    SPOKEN_TARGETS[target] ??
-    (target === target.toUpperCase() && target !== target.toLowerCase()
-      ? `capital ${target}`
-      : target.toUpperCase());
+  if (target === target.toUpperCase() && target !== target.toLowerCase()) {
+    return `Hold shift, then type ${target}`;
+  }
+  const spoken = SPOKEN_TARGETS[target] ?? target.toUpperCase();
   return `Type ${spoken}`;
 }
 
@@ -152,7 +151,11 @@ function CatchRound({
   return (
     <div className="relative flex flex-col items-center gap-6">
       <PauseOverlay paused={paused} onResume={resumeRound} />
-      <Prompt speech={speech} instruction={parsed.instruction} />
+      <Prompt
+        speech={speech}
+        instruction={parsed.instruction}
+        releaseSpeakerPointerFocus
+      />
       <div className="flex items-center gap-6">
         <span
           className="flex items-center gap-2"

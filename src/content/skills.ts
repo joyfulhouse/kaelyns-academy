@@ -462,7 +462,7 @@ export const SKILLS: Skill[] = [
     slug: "typing.keys.shift",
     domain: "typing",
     label: "Capitals with shift",
-    readyIndicator: "Makes a capital by holding the shift key with the opposite hand",
+    readyIndicator: "Makes a capital by holding the shift key while pressing a letter",
     stretchIndicator: "Chooses the shift key opposite the letter instead of the nearer one",
   },
   {

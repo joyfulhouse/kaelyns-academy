@@ -51,7 +51,7 @@ describe("Star Catch Player accessibility", () => {
   });
 
   it("speaks capitals and non-letter targets explicitly", () => {
-    expect(spawnAnnouncement(["A"], 1)).toBe("Type capital A");
+    expect(spawnAnnouncement(["A"], 1)).toBe("Hold shift, then type A");
     expect(spawnAnnouncement([" "], 1)).toBe("Type space");
   });
 
