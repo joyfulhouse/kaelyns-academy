@@ -6,7 +6,7 @@ import { matchesTypingTarget, type TypingCharIntent } from "./typingKey";
  * ONLY from `wordItemResult`, which carries expected-derived data (the missed
  * EXPECTED characters), never what the child actually pressed.
  */
-export interface TypedChar { char: string; ok: boolean }
+interface TypedChar { char: string; ok: boolean }
 
 export interface WordProgress {
   typed: TypedChar[];

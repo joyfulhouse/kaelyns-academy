@@ -81,10 +81,12 @@ kaelyns-academy/
 │   │   ├── _shared/                      # ActivityChrome (SpeakerButton/Prompt/PlayerControls/ProgressHint),
 │   │   │                                 #   RewardOverlay, ChoiceGrid, scoring, speechRouting, shuffle,
 │   │   │                                 #   useAudio/useSpeech/useReducedMotion/useSpeakOnce/useManagedTimeout/
-│   │   │                                 #   useWrongShake/useActivity/useMultipleChoice, voiceUtils (Player DRY kit)
+│   │   │                                 #   useWrongShake/useActivity/useMultipleChoice, voiceUtils (Player DRY kit);
+│   │   │                                 #   typing/: word-typing engine (wordType, WordTiles, PauseOverlay,
+│   │   │                                 #   roundPause, wpm) shared by typing-write/typing-race
 │   │   └── <kind>/{index,logic,Player}.tsx   # math-array, math-tenframe, phonics-wordbuild,
 │   │                                     #   sightword-game, reading-comprehension, journal-prompt,
-│   │                                     #   lang-listen-match, lang-symbol-intro
+│   │                                     #   lang-listen-match, lang-symbol-intro, typing-write, typing-race
 │   │
 │   └── components/                       # Wonder Studio component vocabulary
 │       ├── ui/                           # Button, Field, TextInput, Select, Switch, Pill, ProgressRing,

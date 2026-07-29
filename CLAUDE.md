@@ -70,9 +70,12 @@ Ported from askcv.ai (homelab-adapted): `/ship`, `/sprint`, `/sprint-plan`, `/sp
 ```
 src/
 ├── activities/
-│   ├── _shared/typing/   # keyboard gate, key/finger map, keydown hardening
+│   ├── _shared/typing/   # word-typing engine (wordType, WordTiles, PauseOverlay, roundPause, wpm)
 │   ├── typing-keys/      # Key Camp drill
-│   └── typing-catch/     # Star Catch arcade
+│   ├── typing-catch/     # Star Catch arcade
+│   ├── typing-write/     # writing lessons
+│   ├── typing-race/      # race exercises
+│   └── (other kinds)
 ├── app/
 │   ├── layout.tsx, page.tsx, globals.css
 │   └── api/
