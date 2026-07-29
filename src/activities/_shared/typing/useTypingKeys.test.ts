@@ -1,26 +1,19 @@
-import { isValidElement } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { SpeakerButton } from "../ActivityChrome";
 import { dispatchTypingKeydown } from "./useTypingKeys";
 import type { KeydownLike } from "./typingKey";
 
-interface SpeakerElementProps {
-  onClick?: () => void;
-  onPointerDown?: (event: { preventDefault: () => void }) => void;
-}
-
-function speakerElement(onSpeak: () => void, releasePointerFocus: boolean) {
-  const element = SpeakerButton({ onSpeak, releasePointerFocus });
-  if (!isValidElement<SpeakerElementProps>(element)) {
-    throw new Error("Expected SpeakerButton to render a button");
-  }
-  return element;
-}
-
-function targetMatching(selectorFragment: string | null): EventTarget {
+function targetMatching(
+  selectorFragment: string | null,
+  focusVisible = false,
+): EventTarget {
+  const control = {
+    matches: vi.fn((selector: string) => selector === ":focus-visible" && focusVisible),
+  };
   return {
     closest: (selector: string) => {
-      return selectorFragment !== null && selector.includes(selectorFragment) ? {} : null;
+      return selectorFragment !== null && selector.includes(selectorFragment)
+        ? control
+        : null;
     },
   } as unknown as EventTarget;
 }
@@ -44,29 +37,28 @@ function keydown(
 }
 
 describe("dispatchTypingKeydown", () => {
-  it("delivers a letter typed while a button keeps focus", () => {
+  it.each([false, true])(
+    "delivers a letter when an activatable is focus-visible=%s",
+    (focusVisible) => {
+      const emit = vi.fn();
+
+      dispatchTypingKeydown(keydown("a", targetMatching("button", focusVisible)), emit);
+
+      expect(emit).toHaveBeenCalledWith({
+        type: "char",
+        char: "a",
+        code: "KeyA",
+        shiftKey: false,
+      });
+    },
+  );
+
+  it("delivers Space and prevents its native action on a pointer-focused activatable", () => {
     const emit = vi.fn();
+    const space = keydown(" ", targetMatching("button"));
 
-    dispatchTypingKeydown(keydown("a", targetMatching("button")), emit);
-
-    expect(emit).toHaveBeenCalledWith({
-      type: "char",
-      char: "a",
-      code: "KeyA",
-      shiftKey: false,
-    });
-  });
-
-  it("delivers Space to the game after pointer activation of the typing speaker", () => {
-    const speaker = speakerElement(vi.fn(), true);
-    const preventPointerFocus = vi.fn();
-    speaker.props.onPointerDown?.({ preventDefault: preventPointerFocus });
-
-    const emit = vi.fn();
-    const space = keydown(" ", null);
     dispatchTypingKeydown(space, emit);
 
-    expect(preventPointerFocus).toHaveBeenCalledOnce();
     expect(emit).toHaveBeenCalledWith({
       type: "char",
       char: " ",
@@ -76,27 +68,17 @@ describe("dispatchTypingKeydown", () => {
     expect(space.preventDefault).toHaveBeenCalledOnce();
   });
 
-  it("leaves Space with a keyboard-focused speaker for native activation", () => {
-    const onSpeak = vi.fn();
-    const speaker = speakerElement(onSpeak, true);
+  it("leaves Space and Enter with a keyboard-focused activatable", () => {
     const emit = vi.fn();
-    const space = keydown(" ", targetMatching("button"));
+    const target = targetMatching("button", true);
+    const space = keydown(" ", target);
+    const enter = keydown("Enter", target);
 
     dispatchTypingKeydown(space, emit);
-    speaker.props.onClick?.();
-
-    expect(emit).not.toHaveBeenCalled();
-    expect(space.preventDefault).not.toHaveBeenCalled();
-    expect(onSpeak).toHaveBeenCalledOnce();
-  });
-
-  it("withholds Enter from a focused button for native activation", () => {
-    const emit = vi.fn();
-    const enter = keydown("Enter", targetMatching("button"));
-
     dispatchTypingKeydown(enter, emit);
 
     expect(emit).not.toHaveBeenCalled();
+    expect(space.preventDefault).not.toHaveBeenCalled();
     expect(enter.preventDefault).not.toHaveBeenCalled();
   });
 

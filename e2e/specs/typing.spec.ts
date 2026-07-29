@@ -85,6 +85,39 @@ test("Key Camp advances only on the right key and never punishes a wrong one", a
   await expect(target).not.toHaveAttribute("data-key", current!);
 });
 
+test("Key Camp keeps accepting typing after the shell speaker is tapped", async ({
+  page,
+}) => {
+  await openGate(page, KEY_CAMP);
+
+  const progress = page.getByText(/^\d+ of 6$/);
+  const before = await progress.textContent();
+  const target = page.locator('[data-target="true"]');
+  const current = await target.getAttribute("data-key");
+  expect(current).not.toBeNull();
+
+  await page.getByRole("button", { name: "Read this aloud" }).click();
+
+  // No guest-reachable activity has a Space target, so the trap's key can't be
+  // exercised end-to-end here. Instead, pin the browser behaviour the fix rests
+  // on: a pointer-tapped button takes focus WITHOUT matching :focus-visible,
+  // which is precisely the state in which useTypingKeys must keep delivering
+  // gameplay keys (the Space path itself is unit-tested against this state).
+  const speakerFocus = await page.evaluate(() => {
+    const el = document.activeElement;
+    return {
+      isSpeaker: el instanceof HTMLElement && el.getAttribute("aria-label") === "Read this aloud",
+      focusVisible: el instanceof HTMLElement && el.matches(":focus-visible"),
+    };
+  });
+  expect(speakerFocus.isSpeaker).toBe(true);
+  expect(speakerFocus.focusVisible).toBe(false);
+
+  await page.keyboard.press(current!);
+
+  await expect(progress).not.toHaveText(before!);
+});
+
 test("Key Camp completes the whole drill and reports a finish", async ({ page }) => {
   // TypingStage consumes the gate's proof press before KeysRound mounts, so the
   // round is freshly armed at prompt 1. These six presses complete its six

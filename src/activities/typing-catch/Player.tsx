@@ -151,11 +151,7 @@ function CatchRound({
   return (
     <div className="relative flex flex-col items-center gap-6">
       <PauseOverlay paused={paused} onResume={resumeRound} />
-      <Prompt
-        speech={speech}
-        instruction={parsed.instruction}
-        releaseSpeakerPointerFocus
-      />
+      <Prompt speech={speech} instruction={parsed.instruction} />
       <div className="flex items-center gap-6">
         <span
           className="flex items-center gap-2"

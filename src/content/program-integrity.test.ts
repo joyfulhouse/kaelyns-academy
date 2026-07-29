@@ -5,7 +5,7 @@ import {
   validatePlayableActivityConfig,
 } from "@/activities/definitions";
 import { exactSkillRoutingIssue } from "@/activities/skill-routing";
-import { minPrompts } from "@/activities/typing-catch/logic";
+import { expectedSpawnCount } from "@/activities/typing-catch/logic";
 import type {
   ActivityKind,
   MathMoneyConfig,
@@ -284,7 +284,7 @@ function successfulResponse(activity: Activity): unknown {
       };
     }
     case "typing-catch": {
-      const promptCount = minPrompts(config);
+      const promptCount = expectedSpawnCount(config);
       return {
         prompts: Array.from({ length: promptCount }, (_, index) => ({
           text: config.pool[index % config.pool.length]!,

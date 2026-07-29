@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TypingCatchConfig } from "@/content/activity-configs";
 import {
-  maxPrompts,
-  minPrompts,
+  expectedSpawnCount,
   score,
   skillsAffected,
   spawnIntervalMs,
@@ -31,13 +30,10 @@ describe("pacing", () => {
     expect(spawnIntervalMs({ ...CONFIG, speed: "zippy" })).toBe(1_500);
   });
 
-  it("bounds how many stars a round could possibly have shown", () => {
-    expect(minPrompts(CONFIG)).toBe(9);
-    expect(maxPrompts(CONFIG)).toBe(9);
-    expect(minPrompts({ ...CONFIG, durationSec: 30, speed: "steady" })).toBe(11);
-    expect(maxPrompts({ ...CONFIG, durationSec: 30, speed: "steady" })).toBe(11);
-    expect(minPrompts({ ...CONFIG, speed: "zippy" })).toBe(25);
-    expect(maxPrompts({ ...CONFIG, speed: "zippy" })).toBe(25);
+  it("derives the exact number of stars a round can show", () => {
+    expect(expectedSpawnCount(CONFIG)).toBe(9);
+    expect(expectedSpawnCount({ ...CONFIG, durationSec: 30, speed: "steady" })).toBe(11);
+    expect(expectedSpawnCount({ ...CONFIG, speed: "zippy" })).toBe(25);
   });
 });
 
@@ -155,7 +151,7 @@ describe("score", () => {
 
   it("fails closed when authored targets do not match the deterministic spawn bag", () => {
     const forged = round(
-      Array.from({ length: minPrompts(CONFIG) }, () => ({
+      Array.from({ length: expectedSpawnCount(CONFIG) }, () => ({
         text: CONFIG.pool[0]!,
         ok: true,
       })),
@@ -163,7 +159,7 @@ describe("score", () => {
 
     expect(score(CONFIG, forged)).toEqual({
       correct: 0,
-      total: minPrompts(CONFIG),
+      total: expectedSpawnCount(CONFIG),
       stars: 1,
       skillEvidence: [],
     });
@@ -185,7 +181,7 @@ describe("score", () => {
   });
 
   it("yields no evidence for a target that was never in the pool", () => {
-    const forged = Array.from({ length: minPrompts(CONFIG) }, (_, index) => ({
+    const forged = Array.from({ length: expectedSpawnCount(CONFIG) }, (_, index) => ({
       text: index === 0 ? "z" : "a",
       ok: true,
     }));
@@ -196,7 +192,7 @@ describe("score", () => {
 
   it("yields no evidence for more catches than the round could have shown", () => {
     const forged = round(
-      Array.from({ length: maxPrompts(CONFIG) + 1 }, (_, index) => ({
+      Array.from({ length: expectedSpawnCount(CONFIG) + 1 }, (_, index) => ({
         text: CONFIG.pool[index % CONFIG.pool.length]!,
         ok: true,
       })),
@@ -205,7 +201,7 @@ describe("score", () => {
   });
 
   it("ignores the client's clock entirely — WPM must never reach mastery", () => {
-    const fullRound = Array.from({ length: minPrompts(CONFIG) }, (_, index) => ({
+    const fullRound = Array.from({ length: expectedSpawnCount(CONFIG) }, (_, index) => ({
       text: CONFIG.pool[index % CONFIG.pool.length]!,
       ok: true,
     }));

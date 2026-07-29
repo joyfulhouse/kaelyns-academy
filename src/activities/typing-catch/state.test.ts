@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TypingCatchConfig } from "@/content/activity-configs";
 import { underGroundUnit } from "@/content/programs/keyboard-club/under-ground";
 import type { TypingCharIntent } from "../_shared/typing/typingKey";
-import { fallMs, maxPrompts, score } from "./logic";
+import { expectedSpawnCount, fallMs, score } from "./logic";
 import {
   initialCatchState,
   resolveAirborne,
@@ -69,7 +69,7 @@ describe("Star Catch state", () => {
       state = tick(state, longLived, nowMs);
     }
 
-    expect(state.poolCursor).toBe(maxPrompts(longLived));
+    expect(state.poolCursor).toBe(expectedSpawnCount(longLived));
     expect(state.poolCursor).toBe(9);
     expect(state.targets.at(-1)?.spawnedMs).toBe(32_000);
   });
@@ -110,7 +110,7 @@ describe("Star Catch state", () => {
     expect(state.results).toEqual([{ text: "a", ok: true, ms: 1_000 }]);
   });
 
-  it("requires exact case when the falling target is a capital", () => {
+  it("requires Shift when the falling target is a capital", () => {
     const capitalConfig = { ...CONFIG, pool: ["A", "s"] };
     const missed = typeChar(
       initialCatchState(capitalConfig, 0),
@@ -128,6 +128,19 @@ describe("Star Catch state", () => {
     expect(missed.results).toEqual([]);
     expect(missed.targets).toHaveLength(1);
     expect(caught.results).toEqual([{ text: "A", ok: true, ms: 1_000 }]);
+  });
+
+  it("catches a capital target when Shift+CapsLock reports a lowercase character", () => {
+    const capitalConfig = { ...CONFIG, pool: ["A", "s"] };
+    const caught = typeChar(
+      initialCatchState(capitalConfig, 0),
+      capitalConfig,
+      key("a", true),
+      1_000,
+    );
+
+    expect(caught.results).toEqual([{ text: "A", ok: true, ms: 1_000 }]);
+    expect(caught.targets).toHaveLength(0);
   });
 
   it("banks every airborne target as a miss when time expires", () => {

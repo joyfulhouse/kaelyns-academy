@@ -24,14 +24,20 @@ function matchesClosest(target: EventTarget | null, selector: string): boolean {
   return hasClosest(target) && target.closest(selector) !== null;
 }
 
+function isKeyboardFocusedActivatable(target: EventTarget | null): boolean {
+  if (!hasClosest(target)) return false;
+  const control = target.closest(ACTIVATABLE_SELECTOR);
+  return control !== null && control.matches(":focus-visible");
+}
+
 function isActivationKey(key: string): boolean {
   return key === " " || key === "Enter";
 }
 
 /**
  * Apply the focus policy, classify one keydown, and deliver any gameplay
- * intent. Text-entry controls own every key. Buttons and links own only their
- * native activation keys, so using a speaker does not strand the next letter.
+ * intent. Text-entry controls own every key. Keyboard-focused buttons and links
+ * own their native activation keys; pointer-focused controls do not trap Space.
  */
 export function dispatchTypingKeydown(
   event: KeydownLike & {
@@ -43,7 +49,7 @@ export function dispatchTypingKeydown(
   if (matchesClosest(event.target, TEXT_ENTRY_SELECTOR)) return;
   if (
     isActivationKey(event.key) &&
-    matchesClosest(event.target, ACTIVATABLE_SELECTOR)
+    isKeyboardFocusedActivatable(event.target)
   ) {
     return;
   }

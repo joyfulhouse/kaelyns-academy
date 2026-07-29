@@ -45,14 +45,6 @@ export function expectedSpawnCount(config: TypingCatchConfig): number {
   return Math.max(1, Math.floor(spawnCutoffMs(config) / spawnIntervalMs(config)) + 1);
 }
 
-export function minPrompts(config: TypingCatchConfig): number {
-  return expectedSpawnCount(config);
-}
-
-export function maxPrompts(config: TypingCatchConfig): number {
-  return expectedSpawnCount(config);
-}
-
 /**
  * §8: every recorded target is one the config itself authored, so this carries
  * no free child input. `ms` is client-measured and feeds display only — `score`
@@ -101,9 +93,9 @@ export function score(
   const endingIsPlausible =
     response.endedBy === "lives"
       ? misses >= (config.lives ?? 3)
-      : response.prompts.length >= minPrompts(config);
+      : response.prompts.length === expectedSpawnCount(config);
   const plausible =
-    response.prompts.length <= maxPrompts(config) &&
+    response.prompts.length <= expectedSpawnCount(config) &&
     response.prompts.every((prompt) => pool.has(prompt.text)) &&
     endingIsPlausible &&
     matchesSpawnBag(config, response.prompts);

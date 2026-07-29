@@ -52,11 +52,7 @@ function KeysRound({
 
   return (
     <div className="flex flex-col items-center gap-8">
-      <Prompt
-        speech={speech}
-        instruction={parsed.instruction}
-        releaseSpeakerPointerFocus
-      />
+      <Prompt speech={speech} instruction={parsed.instruction} />
       <p className="text-6xl font-bold text-ink" aria-live="polite">
         {target === null
           ? "🎉"
