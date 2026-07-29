@@ -169,10 +169,3 @@ export async function setPickedInterests(
     false,
   );
 }
-
-/** The ≤5 picked labels for AI practice theming (§8: bounded preset labels
- *  from the admin-authored taxonomy — the ONLY interest text AI ever sees). */
-export async function pickedInterestLabels(accountId: string, learnerId: string): Promise<string[]> {
-  const { picked } = await getLearnerInterests(accountId, learnerId);
-  return picked.slice(0, 5).map((p) => p.label);
-}

@@ -1,4 +1,4 @@
-export const COIN_TYPES = ["penny", "nickel", "dime", "quarter"] as const;
+const COIN_TYPES = ["penny", "nickel", "dime", "quarter"] as const;
 export type Coin = (typeof COIN_TYPES)[number];
 
 export const COIN_FACTS = {

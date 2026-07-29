@@ -1,4 +1,4 @@
-export interface FractionPoint {
+interface FractionPoint {
   numerator: number;
   denominator: number;
 }

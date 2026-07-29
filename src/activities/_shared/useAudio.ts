@@ -11,7 +11,7 @@ import {
 import { useSpeech } from "./useSpeech";
 import type { SpeechPlaybackOutcome } from "./useSpeech";
 
-export type AudioPlaybackOutcome = SpeechPlaybackOutcome;
+type AudioPlaybackOutcome = SpeechPlaybackOutcome;
 
 /**
  * Hybrid audio: play a pre-generated clip when one exists, else fall back to
@@ -41,7 +41,7 @@ export interface AudioController {
 }
 
 /** Request-scoped media outcomes; superseded requests never invoke these handlers. */
-export interface AudioPlaybackHandlers {
+interface AudioPlaybackHandlers {
   onComplete?: () => void;
   onUnavailable?: () => void;
 }

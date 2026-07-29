@@ -1,13 +1,13 @@
 const MAX_ATTEMPTS = 20;
 
-export interface SymbolExposure {
+interface SymbolExposure {
   symbolId: string;
   activated: boolean;
   heardExample: boolean;
   usedHelp: boolean;
 }
 
-export interface SymbolCheck {
+interface SymbolCheck {
   choiceIndex: number;
   attempts: number;
 }

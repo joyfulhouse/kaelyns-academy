@@ -30,9 +30,6 @@ const config: KnipConfig = {
   ignore: [
     // Archived v2 app — excluded from build/lint/tests everywhere else.
     "_archive/**",
-    // Program 01 curriculum kept on disk but intentionally NOT wired into the
-    // registry (see the note in src/content/index.ts) — retained, not dead.
-    "src/content/programs/summer-k-to-grade1.ts",
   ],
   // macOS system binaries used only by the dev-only audio generator (not npm bins).
   ignoreBinaries: ["afconvert", "say"],
