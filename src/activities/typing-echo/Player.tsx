@@ -51,6 +51,19 @@ export const INSTRUCTION_SETTLE_FALLBACK_MS = 900;
  * resolve, just unfavorably — this is the independent backstop for one that
  * never resolves at all. Audio is an enhancement, never required: this must
  * win eventually regardless of what the speech engine does.
+ *
+ * ROUND 4 STRUCTURAL NOTE: this ceiling is no longer enforced by a
+ * `setTimeout` callback. Three separate hangs were found and fixed in this
+ * exact spot — round 2's fallback armed only inside one outcome branch, a
+ * queued utterance that never fires `onend`/`onerror` at all, and (this
+ * round) an effect replay whose cleanup clears the timer while the guard
+ * that would rearm it blocks a second attempt. All three share one root
+ * cause: forward progress depended on a `setTimeout` SURVIVING — and timers
+ * don't survive effect replays, `speech` identity changes, or remounts. The
+ * fix is structural, not another patch: `instructionIsReady` below is a pure
+ * deadline comparison, evaluated every tick by the SAME interval that was
+ * already going to keep running regardless of what any kickoff effect did.
+ * Losing an effect entirely can no longer strand the round.
  */
 export const INSTRUCTION_HARD_CEILING_MS = 4_000;
 
@@ -64,9 +77,10 @@ export const INSTRUCTION_HARD_CEILING_MS = 4_000;
  * `flashMs` — which is real: "capital F, then j" already approaches
  * `big-echo-caps`'s 1400ms budget. So `flashMs` does NOT get to silently
  * truncate this; recall begins at max(flashMs elapsed, this episode's
- * speech settled) — see the tick effect below. This ceiling is the bound on
- * that wait, so a hung speech engine (same failure mode as
- * INSTRUCTION_HARD_CEILING_MS) can't strand the round a second way.
+ * speech settled) — see `holdForSequenceSpeech` below. This ceiling bounds
+ * that wait via the same deadline-in-loop mechanism as
+ * `INSTRUCTION_HARD_CEILING_MS` (see its doc comment) — not a `setTimeout`
+ * that a replay could strand.
  */
 const SEQUENCE_SPEECH_HARD_CEILING_MS = 3_000;
 
@@ -110,22 +124,43 @@ function watchAnnouncement(sequence: string): string {
 }
 
 /**
+ * Whether "wait for X" has resolved, given an optional fast-path signal
+ * (X's own promise settled) and an absolute deadline in the SAME clock as
+ * `nowMs` (both must come from `performance.now()`, never mixed with wall
+ * time). Release the instant the fast signal arrives, or unconditionally
+ * once the deadline passes, whichever comes first — a pure comparison, not
+ * a callback, so nothing has to "survive" an effect replay for the round to
+ * make progress: whichever loop evaluates this on its own next pass reaches
+ * the same answer regardless of what kicked the wait off. Shared by the
+ * instruction gate and (via `holdForSequenceSpeech`) the sequence-speech
+ * gate — see `INSTRUCTION_HARD_CEILING_MS`'s doc comment for the class of
+ * bug this replaces.
+ */
+export function speechIsReady(settledFast: boolean, nowMs: number, deadlineMs: number): boolean {
+  return settledFast || nowMs >= deadlineMs;
+}
+
+/**
  * Whether a flash -> recall transition `tickEcho` just computed should be
  * held back one more tick because this episode's essential-content speech
  * hasn't settled yet — the judgment call documented at
  * `SEQUENCE_SPEECH_HARD_CEILING_MS`: a fixed `flashMs` must not silently
- * truncate a blind child's only channel for the sequence. Exported as a
- * pure function (rather than inlined in the interval callback) so it's
- * directly unit-testable — the real interval is a no-op in this suite's
- * window-less test environment, the same reason `tickEcho` itself lives in
- * `state.ts` as a pure, clock-injected function.
+ * truncate a blind child's only channel for the sequence. `nowMs`/`deadlineMs`
+ * make the release rule itself the same pure deadline comparison as
+ * `speechIsReady` — exported so it's directly unit-testable with concrete
+ * numbers: the real interval is a no-op in this suite's window-less test
+ * environment, the same reason `tickEcho` itself lives in `state.ts` as a
+ * pure, clock-injected function.
  */
 export function holdForSequenceSpeech(
   prevPhase: EchoState["phase"],
   nextPhase: EchoState["phase"],
   speechSettled: boolean,
+  nowMs: number,
+  deadlineMs: number,
 ): boolean {
-  return prevPhase === "flash" && nextPhase === "recall" && !speechSettled;
+  if (prevPhase !== "flash" || nextPhase !== "recall") return false;
+  return !speechIsReady(speechSettled, nowMs, deadlineMs);
 }
 
 export function EchoRound({
@@ -148,6 +183,12 @@ export function EchoRound({
     () => !shouldRunOneShotEffect(readAloudEnabled, false),
   );
   const instructionStarted = useRef(false);
+  // Set once by the kickoff effect below, read every tick by the interval —
+  // never by a `setTimeout` callback. See INSTRUCTION_HARD_CEILING_MS's doc
+  // comment: a ref survives an effect replay or a `speech` identity change;
+  // a scheduled timeout does not.
+  const instructionSettledFastRef = useRef(false);
+  const instructionDeadlineRef = useRef(0);
   const reported = useRef(false);
   const accumulatedRef = useRef(0);
   const segmentStartRef = useRef<number | null>(null);
@@ -161,38 +202,37 @@ export function EchoRound({
   // while that instruction is still being spoken. Once settled, this stays
   // true for the rest of the round — every later flash and reflash is free
   // to open immediately, since by then the child has already heard it once.
+  //
+  // This effect's ONLY job is to kick the utterance off and record the refs
+  // the tick interval below polls — it never itself decides readiness, and
+  // deliberately has NO cleanup. The guard (`instructionStarted`) still
+  // prevents a replay from re-triggering `speech.speak()` a second time (an
+  // audible restart), but if a replay's cleanup ran and its guard then
+  // blocked re-arming, there is nothing left here that NEEDED to survive:
+  // `instructionDeadlineRef` was already written, and the interval reads it
+  // fresh every 100ms regardless of whether this effect ever runs again.
   useEffect(() => {
     if (instructionStarted.current) return;
     instructionStarted.current = true;
-    // Nothing will be spoken (see the lazy initializer above) — already settled.
+    // Nothing will be spoken (see the lazy initializer above) — already
+    // settled; the deadline stays at its initial 0, which speechIsReady
+    // treats as already-past, so the interval agrees immediately too.
     if (!shouldRunOneShotEffect(readAloudEnabled, false)) return;
-    let active = true;
-    let fallback: ReturnType<typeof setTimeout> | null = null;
-    const settle = (): void => {
-      if (active) setInstructionSettled(true);
-    };
-    // Independent backstop, started alongside the speak() call rather than
-    // chained off its outcome: covers a promise that never settles at all
-    // (see INSTRUCTION_HARD_CEILING_MS), not just one that settles
-    // unfavorably. `settle` is idempotent, so racing this against the
-    // outcome-driven paths below is safe — whichever fires first wins.
-    const hardCeiling = setTimeout(settle, INSTRUCTION_HARD_CEILING_MS);
+    const startedAt = performance.now();
+    instructionDeadlineRef.current = startedAt + INSTRUCTION_HARD_CEILING_MS;
     void speech.speak(parsed.instruction).then((outcome) => {
-      if (!active) return;
-      clearTimeout(hardCeiling);
       if (outcome !== "unavailable") {
-        settle();
+        instructionSettledFastRef.current = true;
         return;
       }
       // Nothing is actually playing (unsupported engine, no voice) — a real
-      // wait would never end, so stand in with a short, finite beat instead.
-      fallback = setTimeout(settle, INSTRUCTION_SETTLE_FALLBACK_MS);
+      // wait would never end, so shorten the deadline to a short, finite
+      // beat instead of the full hard ceiling.
+      instructionDeadlineRef.current = Math.min(
+        instructionDeadlineRef.current,
+        startedAt + INSTRUCTION_SETTLE_FALLBACK_MS,
+      );
     });
-    return () => {
-      active = false;
-      clearTimeout(hardCeiling);
-      if (fallback !== null) clearTimeout(fallback);
-    };
   }, [readAloudEnabled, speech, parsed.instruction]);
 
   // ITEM 4: the sequence IS the puzzle content — for a blind child it's the
@@ -208,32 +248,34 @@ export function EchoRound({
       ? `${state.index}:${state.phaseStartedMs}`
       : null;
   const sequenceAnnouncement = sequenceKey !== null ? announceSequence(current!) : null;
-  // Spoken directly rather than via `useSpeakOnce`: the tick effect below
+  // Spoken directly rather than via `useSpeakOnce`: the tick interval below
   // needs the SETTLE signal (not just the fire) to hold flash -> recall at
-  // max(flashMs elapsed, this episode's speech settled) — see
-  // SEQUENCE_SPEECH_HARD_CEILING_MS's doc comment for why a fixed `flashMs`
-  // is not allowed to silently truncate a blind child's only channel.
+  // max(flashMs elapsed, this episode's speech settled). Same shape as the
+  // instruction kickoff above — refs only, no cleanup, no timer to lose.
   const sequenceSpeechSettledRef = useRef(true);
+  const sequenceSpeechDeadlineRef = useRef(0);
   const sequenceSpokenKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (sequenceKey === null || sequenceAnnouncement === null) return;
     if (sequenceSpokenKeyRef.current === sequenceKey) return;
     sequenceSpokenKeyRef.current = sequenceKey;
     sequenceSpeechSettledRef.current = false;
-    let active = true;
-    const settle = (): void => {
-      if (active) sequenceSpeechSettledRef.current = true;
-    };
-    const hardCeiling = setTimeout(settle, SEQUENCE_SPEECH_HARD_CEILING_MS);
+    const startedAt = performance.now();
+    sequenceSpeechDeadlineRef.current = startedAt + SEQUENCE_SPEECH_HARD_CEILING_MS;
+    // Unlike the instruction kickoff above (a one-shot singleton), this
+    // effect re-arms per episode — so a promise that outlived ITS OWN
+    // ceiling (the round having already moved on to a later episode via the
+    // deadline path) can still resolve after a NEWER episode has reset
+    // `sequenceSpeechSettledRef` to false. Compare against the key this
+    // promise was actually spoken for before writing: a late settle from an
+    // old episode must never be mistaken for the current one's, or a later
+    // utterance could get truncated the same way this whole mechanism
+    // exists to prevent.
+    const speakingKey = sequenceKey;
     void speech.speak(sequenceAnnouncement).then(() => {
-      if (!active) return;
-      clearTimeout(hardCeiling);
-      settle();
+      if (sequenceSpokenKeyRef.current !== speakingKey) return;
+      sequenceSpeechSettledRef.current = true;
     });
-    return () => {
-      active = false;
-      clearTimeout(hardCeiling);
-    };
   }, [sequenceKey, sequenceAnnouncement, speech]);
 
   // `useSpeakOnce`-style dedup only guards against STARTING a new utterance
@@ -251,12 +293,18 @@ export function EchoRound({
     speech.cancel();
   }, [state.phase, speech]);
 
-  // Opens a wall-clock segment for exactly as long as the round is truly
-  // live; its cleanup folds the segment's duration into accumulatedRef the
-  // instant the round pauses, finishes, or unmounts, so a blurred tab never
-  // shortens (or lengthens) the flash a child actually sees.
+  // The single continuous clock. Gated only on paused/finished — NOT on
+  // `instructionSettled`, which used to gate this interval's very existence
+  // and is exactly what made the instruction ceiling depend on a timer
+  // surviving (see INSTRUCTION_HARD_CEILING_MS's doc comment). Now this
+  // loop is the one thing that was ALWAYS going to keep running once the
+  // round starts, so it — not a kickoff effect's own timer — is the sole
+  // authority for both readiness checks: it polls `speechIsReady` for the
+  // instruction every tick (flipping `instructionSettled` once true; the
+  // setter is idempotent, so calling it on every ready tick is harmless),
+  // and only opens the wall-clock segment / advances `tickEcho` once ready.
   useEffect(() => {
-    if (paused || finished || !instructionSettled) {
+    if (paused || finished) {
       // Fold any EVENT-OPENED segment too: a keystroke and a pause can land
       // in the same commit, in which case this effect's live branch (and its
       // cleanup) never ran for that segment — without this fold, resume's
@@ -268,16 +316,27 @@ export function EchoRound({
       return;
     }
     if (typeof window === "undefined") return;
-    segmentStartRef.current ??= performance.now();
     const id = window.setInterval(() => {
-      const now = Math.round(
-        currentElapsedMs(accumulatedRef.current, segmentStartRef.current, performance.now()),
-      );
+      const nowPerf = performance.now();
+      if (!speechIsReady(instructionSettledFastRef.current, nowPerf, instructionDeadlineRef.current)) {
+        return;
+      }
+      setInstructionSettled(true);
+      segmentStartRef.current ??= nowPerf;
+      const now = Math.round(currentElapsedMs(accumulatedRef.current, segmentStartRef.current, nowPerf));
       setState((prev) => {
         const next = tickEcho(prev, parsed.flashMs, now);
         // The next tick (100ms later) re-checks and applies the transition
         // the moment the speech settles (or its own ceiling forces it to).
-        if (holdForSequenceSpeech(prev.phase, next.phase, sequenceSpeechSettledRef.current)) {
+        if (
+          holdForSequenceSpeech(
+            prev.phase,
+            next.phase,
+            sequenceSpeechSettledRef.current,
+            nowPerf,
+            sequenceSpeechDeadlineRef.current,
+          )
+        ) {
           return prev;
         }
         return next;
@@ -290,7 +349,7 @@ export function EchoRound({
         segmentStartRef.current = null;
       }
     };
-  }, [paused, finished, parsed.flashMs, instructionSettled]);
+  }, [paused, finished, parsed.flashMs]);
 
   // The listener detaches the instant the round completes or pauses (Key
   // Camp's pattern, ITEM 9: matches typing-race/typing-catch's

@@ -25,6 +25,13 @@ const fixtures = vi.hoisted(() => ({
   refValues: [] as { current: unknown }[],
   stateIndex: 0,
   stateValues: [] as unknown[],
+  // Round 4: captured per effect call-site (index-cursor, same technique as
+  // refs/state above) so a test can simulate React's own mount -> cleanup ->
+  // mount replay (what StrictMode does deliberately in dev, and exactly the
+  // sequence a reviewer found this file's OLD instruction/sequence-speech
+  // effects couldn't survive) — see `replayEffects` below.
+  effectIndex: 0,
+  effectCleanups: [] as (void | (() => void))[],
   speech: {
     supported: true,
     hasVoice: true,
@@ -45,7 +52,8 @@ const fixtures = vi.hoisted(() => ({
 vi.mock("react", async (importActual) => ({
   ...(await importActual<typeof import("react")>()),
   useEffect: (effect: () => void | (() => void)) => {
-    effect();
+    const index = fixtures.effectIndex++;
+    fixtures.effectCleanups[index] = effect();
   },
   useRef: (initial: unknown) => {
     const index = fixtures.refIndex++;
@@ -114,6 +122,7 @@ import {
   holdForSequenceSpeech,
   INSTRUCTION_HARD_CEILING_MS,
   INSTRUCTION_SETTLE_FALLBACK_MS,
+  speechIsReady,
   TypingEchoPlayer,
 } from "./Player";
 
@@ -123,7 +132,28 @@ function renderRound(
 ): ReactElement {
   fixtures.refIndex = 0;
   fixtures.stateIndex = 0;
+  fixtures.effectIndex = 0;
   return EchoRound({ config, onComplete }) as ReactElement;
+}
+
+/**
+ * Simulates a React mount -> cleanup -> mount replay (what StrictMode does
+ * deliberately in dev to catch effects that aren't safe to run twice, and
+ * the exact sequence a reviewer found stranded the OLD instruction/sequence-
+ * speech effects: cleanup cleared their `setTimeout`, then the guard that
+ * would rearm it blocked a second attempt). Runs every captured cleanup
+ * from the LAST render, then re-renders — refs/state persist across this
+ * (exactly like real React), so this proves whether a round's forward
+ * progress depends on anything a cleanup could discard.
+ */
+function replayEffects(
+  config: TypingEchoConfig,
+  onComplete: (response: TypingEchoResponse) => void,
+): void {
+  for (const cleanup of fixtures.effectCleanups) {
+    cleanup?.();
+  }
+  renderRound(config, onComplete);
 }
 
 function toMarkup(
@@ -152,13 +182,18 @@ function advanceToRecall(onComplete: (response: TypingEchoResponse) => void): vo
   renderRound(CONFIG, onComplete);
 }
 
-/** Lets the instruction-settle effect's queued microtask run (ITEM 1), then
- *  re-renders so the Player's next pass sees `instructionSettled`. One
- *  `await` is enough: `speech.speak(...).then(cb)` queues `cb` the instant
- *  `renderRound` runs (the mocked `useEffect` executes synchronously), ahead
- *  of this `await`'s own continuation in the microtask queue. */
-async function settleInstruction(onComplete: (response: TypingEchoResponse) => void): Promise<void> {
-  await Promise.resolve();
+/**
+ * Round 4: `instructionSettled` is set ONLY from inside the tick interval's
+ * `window.setInterval` callback (a no-op in this window-less suite — see the
+ * file-header comment) — never from a promise `.then()` anymore, exactly so
+ * a lost effect replay can't strand it (see `INSTRUCTION_HARD_CEILING_MS`'s
+ * doc comment in Player.tsx). So this suite simulates the interval's own
+ * conclusion the same way `advanceToRecall` simulates a tick it can't run:
+ * poking the state slot directly, then re-rendering. Slot 1 is
+ * `instructionSettled` (`useState<EchoState>` claims slot 0 first).
+ */
+function settleInstruction(onComplete: (response: TypingEchoResponse) => void): void {
+  fixtures.stateValues[1] = true;
   renderRound(CONFIG, onComplete);
 }
 
@@ -173,6 +208,8 @@ beforeEach(() => {
   fixtures.refValues = [];
   fixtures.stateIndex = 0;
   fixtures.stateValues = [];
+  fixtures.effectIndex = 0;
+  fixtures.effectCleanups = [];
   fixtures.paused = false;
   fixtures.documentHidden = false;
   fixtures.reducedMotion = false;
@@ -238,13 +275,7 @@ describe("Star Echo instruction-gated first flash (ITEM 1)", () => {
     expect(fixtures.speech.speak).toHaveBeenCalledWith(CONFIG.instruction);
   });
 
-  /**
-   * Round-3 refactor note: the sequence is now spoken by a manual effect
-   * that calls `speech.speak()` directly (not via the mocked `useSpeakOnce`)
-   * — see `holdForSequenceSpeech`'s doc comment — so these assertions read
-   * `fixtures.speech.speak`'s OWN call list rather than `fixtures.speakOnce`.
-   */
-  it("does not speak the sequence's essential-content audio until the instruction resolves", async () => {
+  it("does not speak the sequence's essential-content audio until the instruction settles", () => {
     const onComplete = vi.fn();
     renderRound(CONFIG, onComplete);
 
@@ -252,68 +283,133 @@ describe("Star Echo instruction-gated first flash (ITEM 1)", () => {
     // sequence's own speech must stay gated, not race it.
     expect(fixtures.speech.speak).not.toHaveBeenCalledWith("f, then j");
 
-    await settleInstruction(onComplete);
+    settleInstruction(onComplete);
     expect(fixtures.speech.speak).toHaveBeenCalledWith("f, then j");
   });
 
-  it("still starts the round, via a short fallback, when speech resolves unavailable (unsupported engine)", async () => {
-    vi.useFakeTimers();
-    try {
-      fixtures.speech.speak = vi.fn(() => Promise.resolve<SpeechPlaybackOutcome>("unavailable"));
-      const onComplete = vi.fn();
-      renderRound(CONFIG, onComplete);
-
-      await settleInstruction(onComplete);
-      // The "unavailable" branch schedules a fallback timer rather than
-      // settling immediately — the sequence hasn't been asked to speak yet.
-      expect(fixtures.speech.speak).not.toHaveBeenCalledWith("f, then j");
-
-      await vi.advanceTimersByTimeAsync(INSTRUCTION_SETTLE_FALLBACK_MS);
-      renderRound(CONFIG, onComplete);
-      expect(fixtures.speech.speak).toHaveBeenCalledWith("f, then j");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  /**
-   * Round-3 follow-up: a real headless-Chromium `speechSynthesis` engine can
-   * leave an utterance queued forever, firing neither `onend` nor `onerror` —
-   * `speech.speak()`'s promise then never settles at all (this exact gap
-   * hung the e2e gate under `CI=1`). `INSTRUCTION_SETTLE_FALLBACK_MS` cannot
-   * help here since it only runs once the promise DOES resolve. Without
-   * `INSTRUCTION_HARD_CEILING_MS`'s independent timer, this round never
-   * starts.
-   */
-  it("still starts the round, via a hard ceiling, when speech never settles at all", async () => {
-    vi.useFakeTimers();
-    try {
-      fixtures.speech.speak = vi.fn(() => new Promise<SpeechPlaybackOutcome>(() => {}));
-      const onComplete = vi.fn();
-      renderRound(CONFIG, onComplete);
-
-      await vi.advanceTimersByTimeAsync(INSTRUCTION_HARD_CEILING_MS - 1);
-      renderRound(CONFIG, onComplete);
-      expect(fixtures.speech.speak).not.toHaveBeenCalledWith("f, then j");
-
-      await vi.advanceTimersByTimeAsync(1);
-      renderRound(CONFIG, onComplete);
-      expect(fixtures.speech.speak).toHaveBeenCalledWith("f, then j");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not wait at all when the read-aloud default is off (nothing will be spoken)", async () => {
+  it("does not wait at all when the read-aloud default is off (nothing will be spoken)", () => {
     fixtures.readAloudEnabled = false;
     const onComplete = vi.fn();
     renderRound(CONFIG, onComplete);
-    await settleInstruction(onComplete);
 
     expect(fixtures.speech.speak).not.toHaveBeenCalledWith(CONFIG.instruction);
-    // Gated only on `instructionSettled` now, which resolved synchronously —
-    // the essential-content flash speech (unaffected by the toggle) fires.
+    // `instructionSettled`'s lazy initializer resolves this synchronously on
+    // the FIRST render, with no interval tick needed — the essential-content
+    // flash speech (unaffected by the toggle) fires immediately.
     expect(fixtures.speech.speak).toHaveBeenCalledWith("f, then j");
+  });
+
+  it("keeps the unavailable-engine fallback strictly shorter than the hard ceiling (required for the shortening in Player.tsx's kickoff effect to actually shorten anything)", () => {
+    expect(INSTRUCTION_SETTLE_FALLBACK_MS).toBeLessThan(INSTRUCTION_HARD_CEILING_MS);
+  });
+
+  it("still functions when speech resolves 'unavailable' (unsupported engine, no voice) — the round is not left throwing or stuck", () => {
+    fixtures.speech.speak = vi.fn(() => Promise.resolve<SpeechPlaybackOutcome>("unavailable"));
+    const onComplete = vi.fn();
+
+    expect(() => {
+      renderRound(CONFIG, onComplete);
+      // Simulates the interval discovering readiness via the shortened
+      // fallback deadline (INSTRUCTION_SETTLE_FALLBACK_MS) rather than the
+      // full hard ceiling — the exact timing isn't independently observable
+      // at this level (same caveat as the doc comment below), only that the
+      // round still proceeds rather than hanging on the "unavailable" branch.
+      settleInstruction(onComplete);
+    }).not.toThrow();
+    expect(fixtures.speech.speak).toHaveBeenCalledWith(CONFIG.instruction);
+    expect(fixtures.speech.speak).toHaveBeenCalledWith("f, then j");
+  });
+
+  /**
+   * Round-4 structural note (the class-level fix, not another patch): the
+   * ACTUAL release mechanism — a `window.setInterval` polling
+   * `speechIsReady(fastSignal, now, deadline)` every 100ms — cannot run in
+   * this suite (no `window`; see the file-header comment), so it is not
+   * unit-testable end to end here. What IS unit-tested, exhaustively, is the
+   * pure `speechIsReady`/`holdForSequenceSpeech` release RULE below (every
+   * combination of settled/deadline-passed), which is the part that used to
+   * be a `setTimeout` a cleanup could drop — it no longer exists at all, so
+   * there is nothing left for a replay to lose. What's tested here, at the
+   * kickoff-effect level, is that the guard survives being invoked multiple
+   * times (this suite's `useEffect` mock runs every effect body on every
+   * render, unlike real React — a strictly HARDER case than a single
+   * StrictMode replay) without ever double-speaking. The full mechanism —
+   * kickoff writes a ref, the interval reads it fresh every tick regardless
+   * of whether the kickoff effect ever runs again — is verified end to end
+   * by the real e2e suite (`e2e/specs/typing.spec.ts`), which exercises an
+   * actual browser `speechSynthesis` engine and an actual `setInterval`.
+   */
+  it("still functions when the instruction's speech promise never settles at all — the round is not left throwing or stuck mid-render", () => {
+    fixtures.speech.speak = vi.fn(() => new Promise<SpeechPlaybackOutcome>(() => {}));
+    const onComplete = vi.fn();
+
+    expect(() => {
+      renderRound(CONFIG, onComplete);
+      // Simulates the interval eventually deciding readiness via the
+      // deadline (see the doc comment above) — the rest of the pipeline
+      // must work identically regardless of whether the original promise
+      // ever resolved.
+      settleInstruction(onComplete);
+    }).not.toThrow();
+    expect(fixtures.speech.speak).toHaveBeenCalledWith("f, then j");
+  });
+
+  /**
+   * The P1 this file exists to guard against: the OLD kickoff effect's
+   * cleanup cleared its `setTimeout` hard-ceiling, and the `instructionStarted`
+   * guard then blocked a replay from rearming it — so a mount -> cleanup ->
+   * mount replay (exactly what React StrictMode does deliberately in dev,
+   * reportedly reproduced with read-aloud off) permanently stranded the
+   * round on an utterance that never settles. `replayEffects` now runs this
+   * effect's REAL cleanup (captured per call-site by the mock above) before
+   * re-mounting, so this is a genuine replay, not just another same-render
+   * call. What this proves: the kickoff effect has no cleanup left to lose
+   * anything from (calling `speech.speak` exactly once, never twice, across
+   * repeated replays — an audible restart would itself be a bug) and does
+   * not throw. What it CANNOT prove from here: whether the round actually
+   * reaches recall afterward — that requires the tick interval
+   * (`window.setInterval`) to run and read the deadline ref this effect
+   * wrote, and that interval is a no-op in this suite's window-less
+   * environment (see the file-header comment). That end-to-end guarantee is
+   * covered by `speechIsReady`'s exhaustive pure-function tests above (the
+   * exact release rule the interval evaluates) plus the real e2e run
+   * (`e2e/specs/typing.spec.ts`), not by this test.
+   */
+  it("survives a genuine mount -> cleanup -> mount replay while speech never settles, without re-speaking or throwing", () => {
+    fixtures.speech.speak = vi.fn(() => new Promise<SpeechPlaybackOutcome>(() => {}));
+    const onComplete = vi.fn();
+
+    renderRound(CONFIG, onComplete);
+    expect(fixtures.speech.speak).toHaveBeenCalledTimes(1);
+
+    expect(() => replayEffects(CONFIG, onComplete)).not.toThrow();
+    expect(fixtures.speech.speak).toHaveBeenCalledTimes(1);
+
+    // A second replay too, not just one — StrictMode's own replay is a
+    // single extra pass, but nothing about this fix should depend on that
+    // being the only one that ever happens.
+    expect(() => replayEffects(CONFIG, onComplete)).not.toThrow();
+    expect(fixtures.speech.speak).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("speechIsReady (round-4 structural fix — the deadline comparison)", () => {
+  it("is not ready when neither the fast signal nor the deadline has arrived", () => {
+    expect(speechIsReady(false, 100, 200)).toBe(false);
+  });
+
+  it("is ready the instant the fast signal arrives, even well before the deadline", () => {
+    expect(speechIsReady(true, 100, 999_999)).toBe(true);
+  });
+
+  it("is ready once the deadline passes, even with no fast signal at all", () => {
+    expect(speechIsReady(false, 200, 200)).toBe(true);
+    expect(speechIsReady(false, 201, 200)).toBe(true);
+  });
+
+  it("is ready under the exact real constants: unsettled at HARD_CEILING - 1, ready at HARD_CEILING", () => {
+    expect(speechIsReady(false, INSTRUCTION_HARD_CEILING_MS - 1, INSTRUCTION_HARD_CEILING_MS)).toBe(false);
+    expect(speechIsReady(false, INSTRUCTION_HARD_CEILING_MS, INSTRUCTION_HARD_CEILING_MS)).toBe(true);
   });
 });
 
@@ -324,21 +420,78 @@ describe("Star Echo essential-content flash speech settling (ITEM 4 judgment cal
    * itself doesn't know about speech — the Player holds the transition via
    * `holdForSequenceSpeech`, a pure function kept separate exactly so this
    * decision is testable without a real interval (a no-op in this suite).
+   * Round 4: the release rule is now the same deadline comparison as the
+   * instruction gate (`speechIsReady`), not a `setTimeout`-armed ref.
    */
-  it("holds a flash -> recall transition when the episode's speech hasn't settled", () => {
-    expect(holdForSequenceSpeech("flash", "recall", false)).toBe(true);
+  it("holds a flash -> recall transition when the episode's speech hasn't settled and the deadline hasn't passed", () => {
+    expect(holdForSequenceSpeech("flash", "recall", false, 100, 200)).toBe(true);
   });
 
-  it("lets a flash -> recall transition through once speech has settled", () => {
-    expect(holdForSequenceSpeech("flash", "recall", true)).toBe(false);
+  it("lets a flash -> recall transition through once speech has settled, even before the deadline", () => {
+    expect(holdForSequenceSpeech("flash", "recall", true, 100, 999_999)).toBe(false);
+  });
+
+  it("lets a flash -> recall transition through once the deadline passes, even with speech unsettled", () => {
+    expect(holdForSequenceSpeech("flash", "recall", false, 200, 200)).toBe(false);
   });
 
   it("never holds a tick that doesn't cross into recall (nothing to guard yet)", () => {
-    expect(holdForSequenceSpeech("flash", "flash", false)).toBe(false);
+    expect(holdForSequenceSpeech("flash", "flash", false, 100, 200)).toBe(false);
   });
 
   it("never holds a transition that didn't start in flash (recall -> flash, e.g. a completed item)", () => {
-    expect(holdForSequenceSpeech("recall", "flash", false)).toBe(false);
+    expect(holdForSequenceSpeech("recall", "flash", false, 100, 200)).toBe(false);
+  });
+});
+
+describe("Star Echo sequence-speech epoch guard (a stale settle from a superseded episode)", () => {
+  /**
+   * The sequence-speech effect re-arms per episode (unlike the instruction
+   * kickoff, a one-shot singleton) — so an earlier episode's `speech.speak()`
+   * promise can still be pending, and later resolve, well after the round
+   * has moved on to a NEW episode that already reset the settled ref to
+   * false for itself. Without comparing the resolving promise against the
+   * key it was actually spoken for, that late resolution would wrongly mark
+   * the NEW episode as settled — releasing its flash -> recall transition
+   * before its own utterance actually finished, exactly the truncation this
+   * whole mechanism exists to prevent. `sequenceSpeechSettledRef` isn't
+   * exposed for direct assertion, and the interval that would act on it is a
+   * no-op in this suite (see the file-header comment) — what's provable here
+   * is that a superseded promise resolving late is inert: the round moves on
+   * to the next sequence's speech normally, and settling the stale one
+   * afterwards doesn't throw or otherwise disturb it.
+   */
+  it("moves on to the next sequence's speech normally, and a stale settle from the previous episode doesn't disturb it", () => {
+    let resolveFirst: ((outcome: SpeechPlaybackOutcome) => void) | undefined;
+    let speakCallCount = 0;
+    // Kept zero-arg (matching the fixture's declared shape above) and
+    // branches on call ORDER instead of inspecting the argument: calls, in
+    // order, are (1) the instruction, (2) episode 0's own speech
+    // ("f, then j") — the one left hanging — and (3) episode 1's own speech
+    // ("d, then k"). The established call order (instruction first, per
+    // "speaks the instruction on mount, before anything else" above) makes
+    // this deterministic.
+    fixtures.speech.speak = vi.fn(() => {
+      speakCallCount += 1;
+      if (speakCallCount === 2) {
+        return new Promise<SpeechPlaybackOutcome>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return Promise.resolve<SpeechPlaybackOutcome>("completed");
+    });
+    const onComplete = vi.fn();
+    renderRound(CONFIG, onComplete);
+    settleInstruction(onComplete);
+    expect(fixtures.speech.speak).toHaveBeenCalledWith("f, then j");
+
+    advanceToRecall(onComplete);
+    for (const ch of "fj") type(ch);
+    renderRound(CONFIG, onComplete); // lets the second sequence's speech effect run
+
+    expect(fixtures.speech.speak).toHaveBeenCalledWith("d, then k");
+
+    expect(() => resolveFirst?.("completed")).not.toThrow();
   });
 });
 
@@ -395,10 +548,10 @@ describe("Star Echo recall phase — the leak guard (§8, req 3, 5)", () => {
     expect(fixtures.wrongShake.trigger).toHaveBeenCalledTimes(1);
   });
 
-  it("extends the leak guard to the speech mock (ITEM 4): the sequence speaks during flash but never during recall", async () => {
+  it("extends the leak guard to the speech mock (ITEM 4): the sequence speaks during flash but never during recall", () => {
     const onComplete = vi.fn();
     renderRound(CONFIG, onComplete);
-    await settleInstruction(onComplete); // lets the essential-content flash speech open
+    settleInstruction(onComplete); // lets the essential-content flash speech open
 
     expect(fixtures.speech.speak).toHaveBeenCalledWith("f, then j");
 
