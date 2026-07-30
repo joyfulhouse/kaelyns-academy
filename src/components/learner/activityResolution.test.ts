@@ -58,6 +58,7 @@ describe("resolvePlayableActivity", () => {
         available: true,
         program: null,
         activeUnitKeys: undefined,
+        completedActivityIds: new Set<string>(),
         unitKey: "route-unit",
         activityKey: "target",
         ssrUnit: SSR_UNIT,
@@ -79,6 +80,7 @@ describe("resolvePlayableActivity", () => {
         available: true,
         program: pinned,
         activeUnitKeys: undefined,
+        completedActivityIds: new Set<string>(),
         unitKey: "route-unit",
         activityKey: "target",
         ssrUnit: SSR_UNIT,
@@ -95,6 +97,7 @@ describe("resolvePlayableActivity", () => {
         available: true,
         program: program([unit("other-unit", [activity("target")])]),
         activeUnitKeys: undefined,
+        completedActivityIds: new Set<string>(),
         unitKey: "route-unit",
         activityKey: "target",
         ssrUnit: SSR_UNIT,
@@ -111,6 +114,7 @@ describe("resolvePlayableActivity", () => {
         available: true,
         program: program([SSR_UNIT]),
         activeUnitKeys: ["another-unit"],
+        completedActivityIds: new Set<string>(),
         unitKey: "route-unit",
         activityKey: "target",
         ssrUnit: SSR_UNIT,
@@ -127,12 +131,77 @@ describe("resolvePlayableActivity", () => {
         available: true,
         program: null,
         activeUnitKeys: undefined,
+        completedActivityIds: new Set<string>(),
         unitKey: "route-unit",
         activityKey: "target",
         ssrUnit: SSR_UNIT,
         ssrActivity: SSR_ACTIVITY,
       }),
     ).toMatchObject({ status: "ready", activity: SSR_ACTIVITY, unit: SSR_UNIT });
+  });
+});
+
+describe("resolvePlayableActivity — unit sequencing (pacing)", () => {
+  const FIRST = unit("first-unit", [activity("first-a")]);
+  const LATER = unit("later-unit", [activity("later-a")]);
+  const PINNED = program([FIRST, LATER]);
+
+  const at = (
+    unitKey: string,
+    activityKey: string,
+    completedActivityIds: ReadonlySet<string>,
+    overrides: { mode?: "account" | "guest"; activeUnitKeys?: string[] } = {},
+  ) =>
+    resolvePlayableActivity({
+      mode: overrides.mode ?? "account",
+      ready: true,
+      available: true,
+      program: PINNED,
+      activeUnitKeys: overrides.activeUnitKeys,
+      completedActivityIds,
+      unitKey,
+      activityKey,
+      ssrUnit: LATER,
+      ssrActivity: LATER.lessons[0].activities[0],
+    });
+
+  it("plays the opening unit for a learner with no progress at all", () => {
+    expect(at("first-unit", "first-a", new Set())).toMatchObject({ status: "ready" });
+  });
+
+  it("locks a later unit a deep link reached ahead of the map's pacing", () => {
+    expect(at("later-unit", "later-a", new Set())).toEqual({ status: "locked", unit: LATER });
+  });
+
+  it("returns the unit with the lock so the screen can name the world", () => {
+    const resolved = at("later-unit", "later-a", new Set());
+    expect(resolved.status === "locked" && resolved.unit.title).toBe("later-unit");
+  });
+
+  it("opens the later unit once the previous one is merely started", () => {
+    expect(at("later-unit", "later-a", new Set(["first-a"]))).toMatchObject({ status: "ready" });
+  });
+
+  // Ordering matters: a bogus key in a locked unit is a broken link, not a
+  // pacing problem, and must not blame the child's progress.
+  it("prefers moved over locked for an activity that is not there at all", () => {
+    expect(at("later-unit", "ghost", new Set())).toEqual({ status: "moved" });
+  });
+
+  // Curation is the parent's explicit assignment; sequencing runs INSIDE it, so
+  // assigning only a later unit must never lock the learner out of it.
+  it("plays a solely-curated later unit with no progress", () => {
+    expect(
+      at("later-unit", "later-a", new Set(), { activeUnitKeys: ["later-unit"] }),
+    ).toMatchObject({ status: "ready" });
+  });
+
+  // Deliberate exemption: a guest has no enrollment whose pacing could be
+  // circumvented, and the route is never handed the unit graph the gate needs.
+  it("leaves guest deep links playable", () => {
+    expect(at("later-unit", "later-a", new Set(), { mode: "guest" })).toMatchObject({
+      status: "ready",
+    });
   });
 });
 

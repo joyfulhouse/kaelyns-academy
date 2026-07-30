@@ -25,6 +25,8 @@ import { useLearnerState } from "./useLearnerState";
 import { ACTIVITY_META } from "./activityMeta";
 import { accountLearnerSelectionRequired } from "./learnerAccess";
 import { AccountLearnerPicker } from "./AccountLearnerPicker";
+import { UnitLocked } from "./UnitLocked";
+import { activeUnitKeySet, playableUnitIds } from "./unitAccess";
 import { AccountSessionError } from "./AccountSessionError";
 
 /**
@@ -102,6 +104,23 @@ export function UnitView({
     return <UnitMoved programSlug={programSlug} />;
   }
   const unit = effectiveUnit;
+
+  // Sequencing gate, same set the map locks tiles with. Resolved after the unit
+  // so a bogus key still reads as "moved". Gated here as well as on the activity
+  // route because a locked world would otherwise render its full activity list
+  // and bounce the child off every single tile — one clear message beats a
+  // shelf of dead ends. Account mode only: a guest has no enrollment whose
+  // pacing could be circumvented.
+  if (
+    mode === "account" &&
+    ready &&
+    program &&
+    !playableUnitIds(program.units, activeUnitKeySet(config.activeUnitKeys), completed).has(
+      unit.id,
+    )
+  ) {
+    return <UnitLocked programSlug={programSlug} unitTitle={unit.title} />;
+  }
 
   const readAloud = `${unit.title}. ${unit.bigIdea} Pick something to do.`;
 

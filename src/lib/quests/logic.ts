@@ -20,14 +20,21 @@ export interface QuestHrefCandidate {
   skills: string[];
 }
 
-/** All replayable authored destinations in the learner's resolved program tree. */
+/**
+ * All replayable authored destinations in the learner's resolved program tree.
+ *
+ * `playableUnitIds` is a unit-id allowlist: the caller passes the set that
+ * already accounts for BOTH parent curation and world-map unlock, so a quest can
+ * never send a child to a unit the activity route would refuse. Null disables the
+ * filter entirely.
+ */
 export function authoredQuestCandidates(
   program: Program,
-  activeUnitKeys: ReadonlySet<string> | null,
+  playableUnitIds: ReadonlySet<string> | null,
 ): QuestHrefCandidate[] {
   const candidates: QuestHrefCandidate[] = [];
   for (const unit of program.units) {
-    if (activeUnitKeys && !activeUnitKeys.has(unit.id)) continue;
+    if (playableUnitIds && !playableUnitIds.has(unit.id)) continue;
     for (const lesson of unit.lessons) {
       for (const activity of lesson.activities) {
         candidates.push({

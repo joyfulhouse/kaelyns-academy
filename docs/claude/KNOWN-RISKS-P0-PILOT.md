@@ -113,37 +113,57 @@ cosmetic follow-up; it no longer affects what a child can actually play or recor
 
 ---
 
-## Unit sequencing (pacing, not access control) — not enforced on the activity route
+## Unit sequencing (pacing, not access control) — enforced for account learners
 
-**Where:** `src/components/learner/branching.ts` — `computeUnlockedIds`.
+**Where:** `src/components/learner/unitAccess.ts` — `playableUnitIds`, the one
+derivation the world map, the unit route, the activity route, and every offered
+destination (hero pick, warm-up row, quest) now share.
 
-**Vector.** `computeUnlockedIds` gates only `StudioHome`'s world-map tiles (a
-unit shows as locked/unlocked based on prior completions). The activity route
-itself (`ActivityHost` → `resolvePlayableActivity`) has no equivalent check for
-account (signed-in) learners, so an enrolled child who deep-links straight to an
-activity in a later, still-locked unit can play it — the forgiving-unlock
-pacing is a map affordance, not a gate the route enforces.
+**Status: closed for account learners; deliberately open for guests.**
 
-**Scope / bounds.** Pacing only, not access control or curation. Everything
-`computeUnlockedIds` would eventually unlock is already curriculum the parent
-has enrolled the learner in (Kid-surface curation above still applies in full —
-`activeUnitKeys`/enrollment status still block anything the parent hasn't
-curated); this gap only lets a child reach a *later* unit of already-curated
-content sooner than the pacing intends. No PII exposure, no uncurated content.
+Previously `computeUnlockedIds` gated only `StudioHome`'s world-map tiles, so an
+enrolled child who deep-linked into a later, still-locked unit played it anyway.
+Now a signed-in learner resolving a locked unit gets `UnitLocked` ("Not open
+yet!") on both the unit and activity routes, and the tutor no longer *offers*
+locked destinations it would then refuse.
 
-**Why accepted for P0.** Single pilot learner, parent-curated content only, and
-the worst case is a child seeing a later unit's activity earlier than the
-world-map pacing intends — not a privacy or curation violation.
+**Still open, by design — guest mode.** A guest has no enrollment whose pacing
+could be circumvented, and the activity route is never handed the published unit
+graph the gate needs (it receives only the single SSR unit). Gating guests would
+mean shipping the whole unit graph into every activity page's HTML to protect a
+surface where nothing is being protected. `e2e/specs/typing.spec.ts` deep-links
+through this exemption and is expected to keep working.
 
-**Coupling to watch.** `e2e/specs/typing.spec.ts`'s Star Echo spec deep-links
-through exactly this gap (unit 4 / Big Letters is locked on the world map for a
-fresh guest, but the activity route plays it anyway) — see the spec's own
-comment above its `STAR_ECHO` constant. Closing this gap by adding a
-route-level lock check would break that spec, and the failure would look like a
-Star Echo regression rather than the sequencing fix working as intended.
+**Deliberately absent from the write path.** `recordAttemptAction` still checks
+enrollment, curation, and the version pin — but NOT sequencing. Pacing must
+never cost a child work they finished: a locked-unit attempt that somehow
+reaches the server is saved, not rejected. Curation stays enforced on the write
+path because it is access control; sequencing is not.
 
-**Fix (deferred).** Extend the A3-style render-gating already used for
-enrollment/curation to unit sequencing on the activity route, keyed off the
-same unlocked-set the world map already computes — and update the Star Echo
-spec to unlock its way there (or move it to an already-unlocked unit) when
-that lands.
+**Checkpoint units are never locked.** `computeUnlockedIds` sequences by array
+POSITION, but check-ins carry `order: 0` and sit at the END of the authored
+array (`kaelyn-adaptive`'s `reading-baseline` / `math-baseline` are array
+positions 8-9 of 9). Gating them by position would bury a new learner's baseline
+placement behind the entire program — backwards, since placement is the first
+thing they do. Consistent with how checkpoints are already excluded from the
+practice shelf and from due reviews.
+
+**Parent skip-ahead still works.** Sequencing runs INSIDE curation, and
+`computeUnlockedIds` always opens the first segment — so a parent who assigns
+only unit 7 (`activeUnitKeys`) gets unit 7 open immediately rather than a
+learner locked out of their own assignment. This is the intended skip-ahead
+lever. Note that `applyPlacement` seeds *skills* solid (skipping spaced review);
+it never marks units complete, so it does not and is not meant to move a learner
+forward on the map.
+
+**Residual — generated practice.** `resolveGeneratedPractice` is not sequence-
+gated. Generated items are created for units the learner is already working in
+(started ⇒ unlocked), and the shelf that surfaces them is filtered, so this is
+reachable only by deep-linking a generated-practice UUID.
+
+**Coupling to watch.** Account-mode e2e specs that deep-link into a non-first
+unit now need their throwaway learner to have a path to it. `oral-reading.spec.ts`
+(parent project) targets `word-study` (array position 2) and `decodable-readers`
+(position 7) with a freshly created learner that has zero completions — the
+supported way to make those reachable is `activeUnitKeys` curation, which opens
+the assigned unit as the first curated segment.

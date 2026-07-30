@@ -38,7 +38,11 @@ import { useQuests } from "./useQuests";
 import { TodaysAdventures } from "./TodaysAdventures";
 import { curateAdventureCandidates } from "./adventureCandidates";
 import { computeUnitProgress, computeProgramRatio } from "./useProgress";
-import { computeUnlockedIds, pathLabelsByUnitId, segmentUnits } from "./branching";
+import { pathLabelsByUnitId, segmentUnits } from "./branching";
+import { activeUnitKeySet, curatedUnits, playableUnitIds } from "./unitAccess";
+
+/** Stable empty set, so the unlock memo doesn't churn before state is read. */
+const EMPTY_COMPLETED: ReadonlySet<string> = new Set();
 import { ACTIVITY_META } from "./activityMeta";
 import { lockParentAreaAction } from "@/app/(parent)/pin-actions";
 import { captureNonCritical } from "@/lib/capture";
@@ -481,15 +485,26 @@ function WorldMap({
   // activeUnitKeys curation applies to every playable surface: path tiles,
   // hero picks, generated fallbacks, and quest destinations.
   const activeUnitKeys = useMemo(
-    () =>
-      config.activeUnitKeys && config.activeUnitKeys.length > 0
-        ? new Set(config.activeUnitKeys)
-        : null,
+    () => activeUnitKeySet(config.activeUnitKeys),
     [config.activeUnitKeys],
   );
-  const visibleUnits = activeUnitKeys
-    ? program.units.filter((u) => activeUnitKeys.has(u.id))
-    : program.units;
+  const visibleUnits = curatedUnits(program.units, activeUnitKeys);
+  // Fork-aware unlock (spec §4.4): a unit is "started" once it has any
+  // completion — the same "forgiving" posture as the old prevDone gate, routed
+  // through the pure branching model so fork groups open both paths together
+  // and a fully linear program unlocks identically to before (guarded by
+  // branching.test.ts's "fully linear" case).
+  //
+  // Computed HERE, above the adventure curation below, because the tutor ranks
+  // by skill need and will happily surface an activity in a unit the map shows
+  // as locked. Offering that as the hero/warm-up/quest would point the child at
+  // a door the activity route then closes, so both are filtered by this one set.
+  // Empty progress until `ready`, matching the pre-read map exactly.
+  const unlockedIds = useMemo(
+    () =>
+      playableUnitIds(program.units, activeUnitKeys, ready ? completedIds : EMPTY_COMPLETED),
+    [program.units, activeUnitKeys, ready, completedIds],
+  );
 
   const globalRecommendations = useMemo(
     () => (ready ? nextBest(program, skillState, completedIds) : []),
@@ -504,10 +519,10 @@ function WorldMap({
       curateAdventureCandidates(
         globalRecommendations,
         generatedShelf,
-        activeUnitKeys,
+        unlockedIds,
         dueReviews,
       ),
-    [activeUnitKeys, dueReviews, generatedShelf, globalRecommendations],
+    [unlockedIds, dueReviews, generatedShelf, globalRecommendations],
   );
   const topPick = recommendations[0];
   // A skill that regressed to non-solid can be recommended as the "needs work"
@@ -525,8 +540,8 @@ function WorldMap({
   const questGeneratedPick = nextGeneratedPick(curatedGeneratedShelf, completedIds);
   const generatedPick = topPick ? undefined : questGeneratedPick;
   const authoredQuestCandidates = useMemo(
-    () => buildAuthoredQuestCandidates(program, activeUnitKeys),
-    [program, activeUnitKeys],
+    () => buildAuthoredQuestCandidates(program, unlockedIds),
+    [program, unlockedIds],
   );
   const rankedAuthoredQuestCandidates = useMemo(
     () =>
@@ -556,16 +571,6 @@ function WorldMap({
       ),
     ];
   }, [authoredQuestCandidates, completedIds, curatedGeneratedShelf, program.slug, rankedAuthoredQuestCandidates]);
-
-  // Fork-aware unlock (spec §4.4): a unit is "started" once it has any
-  // completion, same "forgiving" posture as the old prevDone gate — but routed
-  // through the pure branching model so fork groups open both paths together
-  // and a fully linear program (no branchKey anywhere) unlocks identically to
-  // before (guarded by branching.test.ts's "fully linear" case).
-  const startedIds = new Set(
-    visibleUnits.filter((u) => computeUnitProgress(u, progressMap).completed > 0).map((u) => u.id),
-  );
-  const unlockedIds = computeUnlockedIds(visibleUnits, startedIds);
 
   // Fork rendering v1 (spec §4.4): a single-column path, plus a "choose your
   // path" divider and a small "Path N" pill per branch. Segment once and derive
