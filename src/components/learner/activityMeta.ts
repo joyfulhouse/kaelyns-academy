@@ -3,6 +3,7 @@ import {
   ClockIcon,
   CoinIcon,
   DotsNineIcon,
+  EyeClosedIcon,
   GridFourIcon,
   HandTapIcon,
   KeyboardIcon,
@@ -44,6 +45,7 @@ export const ACTIVITY_META: Record<ActivityKind, { icon: Icon; label: string }> 
   "oral-reading": { icon: MicrophoneIcon, label: "Read it out loud" },
   "typing-keys": { icon: KeyboardIcon, label: "Key Camp" },
   "typing-catch": { icon: StarIcon, label: "Star Catch" },
+  "typing-echo": { icon: EyeClosedIcon, label: "Star Echo" },
   "typing-write": { icon: TextAaIcon, label: "Word Write" },
   "typing-race": { icon: RocketLaunchIcon, label: "Rocket Race" },
 };

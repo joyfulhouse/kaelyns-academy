@@ -128,7 +128,7 @@ export function FluencyChart({ points, latest, best }: FluencyChartProps) {
         <polyline
           points={polylinePoints}
           fill="none"
-          stroke="var(--color-accent-deep)"
+          stroke="var(--color-coral-deep)"
           strokeWidth="4"
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -144,7 +144,7 @@ export function FluencyChart({ points, latest, best }: FluencyChartProps) {
               cy={y}
               r="5"
               fill="var(--color-paper)"
-              stroke="var(--color-accent-deep)"
+              stroke="var(--color-coral-deep)"
               strokeWidth="3"
             >
               <title>{`${point.label}: ${formatWcpm(point.wcpm)} WCPM`}</title>

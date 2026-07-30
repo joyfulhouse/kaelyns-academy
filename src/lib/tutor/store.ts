@@ -23,6 +23,7 @@ import {
   verification,
 } from "@/lib/db/schema";
 import type { Activity, ActivityScore, Lesson, Program, SkillOutcome, SkillTag, Unit } from "@/content";
+import { getProgram, findActivity } from "@/content";
 import type { ActivityKind } from "@/content/activity-configs";
 import { SHELF_BATCH, SHELF_LESSON_CAP } from "./shelf";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
@@ -34,6 +35,7 @@ import {
   type LearnerSettings,
 } from "@/lib/content/config";
 import { getPublishedVersionId } from "@/lib/content/store";
+import { getProgramVersionAsync } from "@/lib/content/repository";
 import { earnedStarsForAttempt } from "@/lib/rewards/logic";
 import { computePlacement, outcomeToRate, type PlacementVerdict } from "@/lib/placement/placement";
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
@@ -45,6 +47,14 @@ import { applyAttemptToQuests } from "@/lib/quests/store";
 import { unitSkills } from "./recommend";
 import { nextSchedule, type ReviewScheduleState } from "./schedule";
 import { responseSchema as oralReadingResponseSchema } from "@/activities/oral-reading/logic";
+import { responseSchema as typingKeysResponseSchema } from "@/activities/typing-keys/logic";
+import {
+  itemsArePlausible,
+  responseSchema as typingWriteResponseSchema,
+} from "@/activities/typing-write/logic";
+import { responseSchema as typingRaceResponseSchema } from "@/activities/typing-race/logic";
+import { responseSchema as typingEchoResponseSchema } from "@/activities/typing-echo/logic";
+import { wpm } from "@/activities/_shared/typing/wpm";
 
 /** The transaction type recordAttempt's tx-scoped helpers share (mirrors the
  *  same derivation in src/lib/quests/store.ts). */
@@ -1295,6 +1305,254 @@ export async function getFluencyHistory(
           }
           return [{ day, wcpm: parsed.data.wcpm }];
         });
+    },
+    [],
+  );
+}
+
+export interface KeyMissPoint {
+  key: string;
+  misses: number;
+  attempts: number;
+}
+
+export interface TypingRatePoint {
+  day: string;
+  wpm: number;
+}
+
+/** The only four typing kinds that carry per-key miss evidence (`typing-catch`
+ *  has no retry/miss field at all and contributes nothing — see E6). */
+const TYPING_MISS_KINDS = ["typing-keys", "typing-write", "typing-race", "typing-echo"] as const;
+
+/** Shared by typing-write/typing-race/typing-echo (identical item shape): fold
+ *  each item's `missedExpected` characters into the tally as MISSES ONLY. A
+ *  clean item (empty `missedExpected`) never touches the tally — the response
+ *  doesn't record which OTHER keys it typed correctly, so nothing is inferred
+ *  for them (§8: only a key that was actually MISSED is ever known here).
+ *  `attempts` is deliberately NOT incremented here — see the doc comment on
+ *  {@link getTypingMissHistory} for why these three kinds can never prove a
+ *  key was attempted-and-succeeded. */
+function foldMissedExpected(
+  items: readonly { missedExpected: readonly string[] }[],
+  tally: Map<string, { attempts: number; misses: number }>,
+): void {
+  for (const item of items) {
+    for (const ch of item.missedExpected) {
+      const entry = tally.get(ch) ?? { attempts: 0, misses: 0 };
+      entry.misses += 1;
+      tally.set(ch, entry);
+    }
+  }
+}
+
+/**
+ * §8 privacy contract (E6): the ONLY two permitted sources of per-key miss
+ * evidence for the parent typing panel — a typing game is keylogger-shaped,
+ * so this boundary is load-bearing, not incidental. Neither source, nor this
+ * fold, ever sees or infers a PRESSED key:
+ *  1. `typing-keys` prompts each carry the EXPECTED key plus its retry count —
+ *     every prompt contributes an attempt, keyed to that key, whether or not
+ *     it was ever missed.
+ *  2. `typing-write`/`typing-race`/`typing-echo` items only ever record the
+ *     EXPECTED characters missed on a diverged item's first episode — a key
+ *     appears from this source only when it was actually missed at least once.
+ *
+ * `attempts` therefore ONLY ever accrues from source 1: a `typing-write`/
+ * `typing-race`/`typing-echo` response can prove a character was MISSED but
+ * never that it was attempted-and-succeeded (a clean item's other keys are
+ * simply not recorded), so inventing an `attempts` count for them would
+ * misrepresent the child's typing to their parent — those three kinds
+ * contribute `misses` only, and a key that appears solely from them always
+ * carries `attempts: 0`.
+ *
+ * `misses` is ONE UNIT throughout: the number of prompts/items in which the
+ * key was missed at least once — never a raw retry-keystroke count. A
+ * `typing-keys` prompt with `retries: 6` contributes 1 miss (one prompt on
+ * which the key was missed), matching how `foldMissedExpected` already counts
+ * one miss per item regardless of how many characters diverged within it.
+ * Summing raw retries would let one fumbled prompt on an otherwise-mastered
+ * key outrank a key the child cannot type at all.
+ *
+ * Each stored response is re-parsed with its OWN kind's `responseSchema` (the
+ * `getFluencyHistory` precedent) so a malformed/legacy row is skipped rather
+ * than breaking the whole series. Keys are returned in first-chronological-
+ * encounter order (oldest attempt first).
+ */
+export async function getTypingMissHistory(
+  accountId: string,
+  learnerId: string,
+  limit = 200,
+): Promise<KeyMissPoint[]> {
+  return withOwnedLearner<KeyMissPoint[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select({ kind: attempt.kind, response: attempt.response })
+        .from(attempt)
+        .where(and(eq(attempt.learnerId, learnerId), inArray(attempt.kind, TYPING_MISS_KINDS)))
+        .orderBy(desc(attempt.createdAt))
+        .limit(limit);
+
+      const tally = new Map<string, { attempts: number; misses: number }>();
+      for (const { kind, response } of rows.reverse()) {
+        if (kind === "typing-keys") {
+          const parsed = typingKeysResponseSchema.safeParse(response);
+          if (!parsed.success) continue;
+          for (const prompt of parsed.data.prompts) {
+            const entry = tally.get(prompt.key) ?? { attempts: 0, misses: 0 };
+            entry.attempts += 1;
+            // One miss per prompt on which the key was missed at least once —
+            // NOT the retry count (see the doc comment above).
+            entry.misses += prompt.retries > 0 ? 1 : 0;
+            tally.set(prompt.key, entry);
+          }
+        } else if (kind === "typing-write") {
+          const parsed = typingWriteResponseSchema.safeParse(response);
+          if (parsed.success) foldMissedExpected(parsed.data.items, tally);
+        } else if (kind === "typing-race") {
+          const parsed = typingRaceResponseSchema.safeParse(response);
+          if (parsed.success) foldMissedExpected(parsed.data.words, tally);
+        } else if (kind === "typing-echo") {
+          const parsed = typingEchoResponseSchema.safeParse(response);
+          if (parsed.success) foldMissedExpected(parsed.data.sequences, tally);
+        }
+      }
+
+      return [...tally.entries()].map(([key, { misses, attempts }]) => ({
+        key,
+        misses,
+        attempts,
+      }));
+    },
+    [],
+  );
+}
+
+/**
+ * Shared tail of both word-resolution paths below: locate the activity in the
+ * given (already-resolved) tree and return its authored words only if it's
+ * really a `typing-race` and its word count agrees with what the response
+ * implies. NEVER an approximated/invented length: a tree that's missing, an
+ * activity that's since been renamed/removed/repurposed to a different kind,
+ * or a word-count mismatch, all return null and the caller skips it — the
+ * same fail-closed posture as a malformed response.
+ */
+function wordsFromTree(
+  program: Program | null | undefined,
+  activityId: string,
+  wordCount: number,
+): readonly string[] | null {
+  if (!program) return null;
+  const ctx = findActivity(program, activityId);
+  if (!ctx || ctx.activity.kind !== "typing-race") return null;
+  const words = ctx.activity.config.words;
+  return wordCount === words.length ? words : null;
+}
+
+/**
+ * Version-accurate word resolution for one `typing-race` attempt (E8). The
+ * stored response never carries each word's actual text (only
+ * i/ok/ms/retries/missedExpected), and a version bump can change a race's
+ * authored word list — so which words to resolve against depends on the
+ * attempt's OWN `programVersionId`, not on "whatever the registry says now":
+ *
+ *  - `programVersionId` set → resolved through the DB-backed version tree
+ *    for THAT EXACT version via {@link getProgramVersionAsync}, never the
+ *    current/static registry.
+ *  - `programVersionId` NULL → falls back to the CURRENT in-repo/static
+ *    registry via (programSlug, activityId), exactly as before version
+ *    pinning existed. `program_version_id` is documented in the schema as
+ *    "Nullable so pre-migration attempts remain readable" — a null pin is
+ *    an ABSENCE of version information, not evidence of a mismatch, so it
+ *    must never be skipped on that basis alone. Do not "tighten" this later
+ *    into treating null as a drifted pin.
+ *
+ * Either path's tree lookup (find the activity, check its kind, check its
+ * word count) is identical — see {@link wordsFromTree} — so the only real
+ * difference between the two branches is how the tree itself is obtained.
+ */
+async function resolveTypingRaceWordsForAttempt(
+  programSlug: string | null,
+  programVersionId: string | null,
+  activityId: string,
+  wordCount: number,
+): Promise<readonly string[] | null> {
+  if (!programVersionId) {
+    return wordsFromTree(programSlug ? getProgram(programSlug) : null, activityId, wordCount);
+  }
+  return wordsFromTree(await getProgramVersionAsync(programVersionId), activityId, wordCount);
+}
+
+/** Never chart an absurd rate: `elapsedMs` near zero (a client-timing glitch,
+ *  or a forged short round) would otherwise produce a WPM figure well beyond
+ *  any child's real typing speed and stretch the chart's whole y-axis around
+ *  it. 200 mirrors `FluencyChart`'s WCPM clamp — far above any child, well
+ *  below absurd — so a bogus in-round timing can never distort the series. */
+const MAX_CHARTED_WPM = 200;
+
+/**
+ * Typing-pace series for the parent dashboard (E7): `typing-race` attempts
+ * only — the one typing kind with a whole-round `elapsedMs` and a rate
+ * intent (Word Write/Echo `ms` values are per-item, not a rate). Real word
+ * text is resolved per-attempt via {@link resolveTypingRaceWordsForAttempt}
+ * (version-pinned when the attempt carries one, current-registry fallback
+ * when it doesn't) so the parent chart agrees with the same `wpm()` the
+ * child's live in-round pace comet already uses — never an approximation.
+ * Also skips any race response `itemsArePlausible` rejects (§8: an
+ * implausible response must never contribute a chart point either), and
+ * clamps the resulting rate to {@link MAX_CHARTED_WPM}.
+ *
+ * Returns one point per day using that day's MAX wpm, oldest→newest,
+ * mirroring `getLearnerFluency`'s bestByDay shape.
+ */
+export async function getTypingRateHistory(
+  accountId: string,
+  learnerId: string,
+  limit = 60,
+): Promise<TypingRatePoint[]> {
+  return withOwnedLearner<TypingRatePoint[]>(
+    accountId,
+    learnerId,
+    async () => {
+      const rows = await getDb()
+        .select({
+          day: attempt.day,
+          kind: attempt.kind,
+          response: attempt.response,
+          programSlug: attempt.programSlug,
+          programVersionId: attempt.programVersionId,
+          activityId: attempt.activityId,
+        })
+        .from(attempt)
+        .where(and(eq(attempt.learnerId, learnerId), eq(attempt.kind, "typing-race")))
+        .orderBy(desc(attempt.createdAt))
+        .limit(limit);
+
+      const bestByDay = new Map<string, number>();
+      for (const { day, response, programSlug, programVersionId, activityId } of rows.reverse()) {
+        const parsed = typingRaceResponseSchema.safeParse(response);
+        if (!parsed.success) continue;
+
+        const words = await resolveTypingRaceWordsForAttempt(
+          programSlug,
+          programVersionId,
+          activityId,
+          parsed.data.words.length,
+        );
+        if (words === null) continue;
+        if (!itemsArePlausible(words, parsed.data.words)) continue;
+
+        const totalChars = words.reduce((sum, word) => sum + word.length, 0);
+        const rate = Math.min(MAX_CHARTED_WPM, wpm(totalChars, parsed.data.elapsedMs));
+        const prior = bestByDay.get(day);
+        if (prior === undefined || rate > prior) bestByDay.set(day, rate);
+      }
+
+      return [...bestByDay.entries()]
+        .sort(([dayA], [dayB]) => dayA.localeCompare(dayB))
+        .map(([day, wpmValue]) => ({ day, wpm: wpmValue }));
     },
     [],
   );

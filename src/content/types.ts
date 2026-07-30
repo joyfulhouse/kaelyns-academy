@@ -18,6 +18,7 @@ import type {
   SightwordGameConfig,
   SortCategoriesConfig,
   TypingCatchConfig,
+  TypingEchoConfig,
   TypingKeysConfig,
   TypingRaceConfig,
   TypingWriteConfig,
@@ -87,6 +88,7 @@ export type Activity =
   | ActivityOf<"oral-reading", OralReadingConfig>
   | ActivityOf<"typing-keys", TypingKeysConfig>
   | ActivityOf<"typing-catch", TypingCatchConfig>
+  | ActivityOf<"typing-echo", TypingEchoConfig>
   | ActivityOf<"typing-write", TypingWriteConfig>
   | ActivityOf<"typing-race", TypingRaceConfig>;
 

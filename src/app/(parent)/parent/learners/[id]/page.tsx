@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import {
   CakeIcon,
   GearSixIcon,
+  KeyboardIcon,
   SparkleIcon,
   TrendUpIcon,
 } from "@phosphor-icons/react/dist/ssr";
@@ -18,11 +19,15 @@ import {
   getLearnerCurriculum,
   getLearnerFluency,
   getLearnerRewards,
+  getLearnerTypingInsights,
   type ActivityRow,
   type FluencySeries,
   type SkillStatus,
+  type TypingInsights,
 } from "@/app/(parent)/data";
 import { FluencyChart } from "@/components/parent/FluencyChart";
+import { KeysToPractice } from "@/components/parent/KeysToPractice";
+import { TypingRateChart } from "@/components/parent/TypingRateChart";
 import { CurriculumPanel } from "@/components/parent/CurriculumPanel";
 import { RewardsPanel } from "@/components/parent/RewardsPanel";
 import { LearnerDataControls } from "@/components/parent/LearnerDataControls";
@@ -80,12 +85,13 @@ export default async function LearnerDetailPage({
   if (unlockChallenge) return unlockChallenge;
 
   const { id } = await params;
-  // Fetch detail, curriculum, fluency, and rewards in parallel. Every read is account-scoped.
-  const [detail, curriculum, rewards, fluency] = await Promise.all([
+  // Fetch detail, curriculum, fluency, rewards, and typing insights in parallel. Every read is account-scoped.
+  const [detail, curriculum, rewards, fluency, typing] = await Promise.all([
     getLearnerDetail(id),
     getLearnerCurriculum(id),
     getLearnerRewards(id),
     getLearnerFluency(id),
+    getLearnerTypingInsights(id),
   ]);
   // 404 when the learner does not exist or is not this account's (tenancy).
   if (!detail) notFound();
@@ -158,6 +164,8 @@ export default async function LearnerDetailPage({
 
       <ReadingFluencyCard series={fluency} />
 
+      <TypingInsightsCard insights={typing} />
+
       <CheckpointResultsPanel learnerId={id} checkpoints={checkpoints} />
 
       <CurriculumPanel learnerId={id} curriculum={curriculum} />
@@ -206,6 +214,44 @@ function ReadingFluencyCard({ series }: { series: FluencySeries | null }) {
 
       <div className="mt-5 rounded-xl border border-line bg-paper-raised p-5 sm:p-6">
         <FluencyChart points={series.points} latest={series.latest} best={series.best} />
+      </div>
+    </section>
+  );
+}
+
+function TypingInsightsCard({ insights }: { insights: TypingInsights | null }) {
+  if (!insights) return null;
+
+  return (
+    <section className="mt-10" aria-labelledby="typing-insights-title">
+      <div className="flex items-start gap-3">
+        <span
+          aria-hidden
+          className="grid size-10 shrink-0 place-items-center rounded-md border border-line bg-accent/12 text-accent-deep"
+        >
+          <KeyboardIcon weight="regular" className="size-5" />
+        </span>
+        <div>
+          <h2
+            id="typing-insights-title"
+            className="font-display text-xl font-semibold tracking-tight"
+          >
+            Typing
+          </h2>
+          <p className="mt-1 max-w-prose text-sm text-ink-soft">
+            The keys most often missed across recent typing rounds — a miss count, never a
+            percentage.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-5 sm:grid-cols-2">
+        <div className="rounded-xl border border-line bg-paper-raised p-5 sm:p-6">
+          <KeysToPractice misses={insights.misses} />
+        </div>
+        <div className="rounded-xl border border-line bg-paper-raised p-5 sm:p-6">
+          <TypingRateChart points={insights.rate} />
+        </div>
       </div>
     </section>
   );

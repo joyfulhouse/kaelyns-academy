@@ -38,6 +38,15 @@ export function shouldRunOneShotEffect(
   return readAloudEnabled || essentialContentAudio;
 }
 
+/**
+ * Exposes the ambient read-aloud default directly, for a caller that must
+ * branch on it itself (e.g. deciding whether to await an utterance before
+ * continuing) rather than only gating an effect via {@link useSpeakOnce}.
+ */
+export function useReadAloudEnabled(): boolean {
+  return useContext(ReadAloudDefaultContext);
+}
+
 export function useEffectOncePerKey(
   effect: () => void,
   key: unknown = ONCE,

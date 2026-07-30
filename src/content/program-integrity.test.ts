@@ -316,14 +316,24 @@ function successfulResponse(activity: Activity): unknown {
         })),
         elapsedMs: 60_000,
       };
+    case "typing-echo":
+      return {
+        sequences: config.sequences.map((_, index) => ({
+          i: index,
+          ok: true,
+          ms: 500,
+          retries: 0,
+          missedExpected: [],
+        })),
+      };
   }
 }
 
 describe("deployed activity trust and evidence invariants", () => {
-  it("covers all 19 registered kinds with playable authored configs", () => {
+  it("covers all 20 registered kinds with playable authored configs", () => {
     const registered = allServerActivityTypes().map(({ kind }) => kind).sort();
     const deployed = [...new Set(everyActivity().map(({ activity }) => activity.kind))].sort();
-    expect(registered).toHaveLength(19);
+    expect(registered).toHaveLength(20);
     expect(deployed).toEqual(registered);
 
     for (const { program, activity } of everyActivity()) {
@@ -474,7 +484,7 @@ describe("deployed language inventory ownership", () => {
 });
 
 describe("activity schema registry", () => {
-  it("remains exhaustive across the same 19 server kinds", () => {
+  it("remains exhaustive across the same 20 server kinds", () => {
     const schemaKinds = Object.keys(ACTIVITY_CONFIG_SCHEMAS).sort() as ActivityKind[];
     const serverKinds = allServerActivityTypes().map(({ kind }) => kind).sort();
     expect(schemaKinds).toEqual(serverKinds);

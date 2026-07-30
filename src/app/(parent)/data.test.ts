@@ -19,12 +19,10 @@ const OWNED_LEARNER = {
   birthMonth: null,
 };
 
+const { withUnlockedAccount } = vi.hoisted(() => ({ withUnlockedAccount: vi.fn() }));
 vi.mock("@/lib/parent-pin-gate", async (importActual) => ({
   ...(await importActual<typeof import("@/lib/parent-pin-gate")>()),
-  withUnlockedAccount: vi.fn(
-    async (fn: (ctx: { accountId: string; userId: string }) => unknown) =>
-      fn({ accountId: "acc-1", userId: "acc-1" }),
-  ),
+  withUnlockedAccount,
 }));
 
 const { withOwnedLearner } = vi.hoisted(() => ({ withOwnedLearner: vi.fn() }));
@@ -33,18 +31,28 @@ vi.mock("@/lib/tutor/scope", async (importActual) => ({
   withOwnedLearner,
 }));
 
-const { getSkillState, getRecentAttempts, getPendingCheckpointResults, getFluencyHistory } =
-  vi.hoisted(() => ({
-    getSkillState: vi.fn(),
-    getRecentAttempts: vi.fn(),
-    getPendingCheckpointResults: vi.fn(),
-    getFluencyHistory: vi.fn(),
-  }));
+const {
+  getSkillState,
+  getRecentAttempts,
+  getPendingCheckpointResults,
+  getFluencyHistory,
+  getTypingMissHistory,
+  getTypingRateHistory,
+} = vi.hoisted(() => ({
+  getSkillState: vi.fn(),
+  getRecentAttempts: vi.fn(),
+  getPendingCheckpointResults: vi.fn(),
+  getFluencyHistory: vi.fn(),
+  getTypingMissHistory: vi.fn(),
+  getTypingRateHistory: vi.fn(),
+}));
 vi.mock("@/lib/tutor/store", () => ({
   getSkillState,
   getRecentAttempts,
   getPendingCheckpointResults,
   getFluencyHistory,
+  getTypingMissHistory,
+  getTypingRateHistory,
 }));
 
 vi.mock("@/lib/content/repository", () => ({
@@ -53,11 +61,15 @@ vi.mock("@/lib/content/repository", () => ({
   listProgramSummariesAsync: vi.fn(async () => []),
 }));
 
-import { getLearnerDetail, getLearnerFluency } from "./data";
+import { getLearnerDetail, getLearnerFluency, getLearnerTypingInsights } from "./data";
 
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-13T12:00:00"));
+  withUnlockedAccount.mockImplementation(
+    async (fn: (ctx: { accountId: string; userId: string }) => unknown) =>
+      fn({ accountId: "acc-1", userId: "acc-1" }),
+  );
   withOwnedLearner.mockImplementation(
     async (
       _accountId: string,
@@ -68,6 +80,8 @@ beforeEach(() => {
   getRecentAttempts.mockResolvedValue([]);
   getPendingCheckpointResults.mockResolvedValue([]);
   getFluencyHistory.mockResolvedValue([]);
+  getTypingMissHistory.mockResolvedValue([]);
+  getTypingRateHistory.mockResolvedValue([]);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -173,5 +187,71 @@ describe("getLearnerFluency", () => {
 
     await expect(getLearnerFluency("other-account-learner")).resolves.toBeNull();
     expect(getFluencyHistory).not.toHaveBeenCalled();
+  });
+});
+
+describe("getLearnerTypingInsights", () => {
+  it("passes through misses untouched and labels the rate series via relativeDay", async () => {
+    getTypingMissHistory.mockResolvedValue([
+      { key: "a", misses: 3, attempts: 5 },
+      { key: "b", misses: 2, attempts: 0 }, // misses-only key: no attempts source ever saw it
+    ]);
+    getTypingRateHistory.mockResolvedValue([
+      { day: "2026-07-10", wpm: 12 },
+      { day: "2026-07-12", wpm: 18 },
+    ]);
+
+    const insights = await getLearnerTypingInsights("L1");
+
+    expect(insights).toEqual({
+      learner: OWNED_LEARNER,
+      misses: [
+        { key: "a", misses: 3, attempts: 5 },
+        { key: "b", misses: 2, attempts: 0 },
+      ],
+      rate: [
+        { day: "2026-07-10", wpm: 12, label: "3 days ago" },
+        { day: "2026-07-12", wpm: 18, label: "Yesterday" },
+      ],
+    });
+    expect(getTypingMissHistory).toHaveBeenCalledWith("acc-1", "L1");
+    expect(getTypingRateHistory).toHaveBeenCalledWith("acc-1", "L1");
+  });
+
+  it("returns an owned, non-null result with empty arrays when the learner has no typing attempts", async () => {
+    await expect(getLearnerTypingInsights("L1")).resolves.toEqual({
+      learner: OWNED_LEARNER,
+      misses: [],
+      rate: [],
+    });
+  });
+
+  it("fails closed to null when the learner is not owned by the account", async () => {
+    withOwnedLearner.mockImplementationOnce(
+      async (
+        _accountId: string,
+        _learnerId: string,
+        _fn: (owned: typeof OWNED_LEARNER) => unknown,
+        fallback: unknown,
+      ) => fallback,
+    );
+
+    await expect(getLearnerTypingInsights("other-account-learner")).resolves.toBeNull();
+    expect(getTypingMissHistory).not.toHaveBeenCalled();
+    expect(getTypingRateHistory).not.toHaveBeenCalled();
+  });
+
+  it("fails closed to null when the account is locked, never partially unlocked", async () => {
+    withUnlockedAccount.mockImplementationOnce(
+      async (
+        _fn: (ctx: { accountId: string; userId: string }) => unknown,
+        options?: { lockedFallback: () => unknown },
+      ) => options?.lockedFallback(),
+    );
+
+    await expect(getLearnerTypingInsights("L1")).resolves.toBeNull();
+    expect(withOwnedLearner).not.toHaveBeenCalled();
+    expect(getTypingMissHistory).not.toHaveBeenCalled();
+    expect(getTypingRateHistory).not.toHaveBeenCalled();
   });
 });

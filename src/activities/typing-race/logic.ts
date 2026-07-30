@@ -44,6 +44,14 @@ function noEvidence(total: number): ActivityScore {
   return { correct: 0, total, stars: 1, skillEvidence: [] };
 }
 
+/** §8 opt-in server-provenance hook — see typing-write's `validateResponse`. */
+export function validateResponse(
+  config: TypingRaceConfig,
+  response: TypingRaceResponse,
+): string | null {
+  return itemsArePlausible(config.words, response.words) ? null : "implausible typing response";
+}
+
 export function score(config: TypingRaceConfig, response: TypingRaceResponse): ActivityScore {
   const expected = config.words;
   if (!itemsArePlausible(expected, response.words)) return noEvidence(expected.length);

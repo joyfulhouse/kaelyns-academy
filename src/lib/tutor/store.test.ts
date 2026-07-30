@@ -66,6 +66,10 @@ const attemptReplayRows = { value: [] as Record<string, unknown>[] };
 const generatedCompletionRows = { value: [] as Record<string, unknown>[] };
 const completedTodayRows = { value: [] as Record<string, unknown>[] };
 const generatedActivityRows = { value: [] as Record<string, unknown>[] };
+// The typing-kind rows getTypingMissHistory/getTypingRateHistory read
+// ({ day, kind, response }) — a dedicated array so it never collides with the
+// oral-reading-only attemptRows used by the getFluencyHistory tests above.
+const typingAttemptRows = { value: [] as Record<string, unknown>[] };
 const oralVerificationRows = { value: [] as Record<string, unknown>[] };
 const oralVerificationInsertResultRows = {
   value: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }] as Record<string, unknown>[],
@@ -83,6 +87,7 @@ function tableName(t: unknown): string {
  *  records the (op, table) and resolves to the canned rows for that target. */
 type Predicate =
   | { op: "eq" | "lte"; column: string | undefined; value: unknown }
+  | { op: "in"; column: string | undefined; values: unknown[] }
   | { op: "and"; conditions: Predicate[] };
 type Ordering = { direction: "asc" | "desc"; column: string | undefined };
 
@@ -91,6 +96,7 @@ function matches(row: Record<string, unknown>, predicate: Predicate | undefined)
   if (predicate.op === "and") return predicate.conditions.every((part) => matches(row, part));
   if (!predicate.column) return true;
   if (predicate.op === "eq") return row[predicate.column] === predicate.value;
+  if (predicate.op === "in") return predicate.values.includes(row[predicate.column]);
   return String(row[predicate.column]) <= String(predicate.value);
 }
 
@@ -217,7 +223,14 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
                   chain.limitValue,
                 )
             : chain.op === "select" && chain.table === "attempt"
-                ? projection && "kind" in projection
+                ? projection && "kind" in projection && "response" in projection
+                  ? applyQueryShape(
+                      typingAttemptRows.value,
+                      chain.predicate,
+                      chain.ordering,
+                      chain.limitValue,
+                    )
+                : projection && "kind" in projection
                   ? attemptReplayRows.value.map((row) => ({
                       programSlug: "kaelyn-adaptive",
                       unitKey: "unit-1",
@@ -414,11 +427,16 @@ vi.mock("drizzle-orm", () => ({
   lte: (column: { name?: string }, value: unknown) => ({ op: "lte", column: column?.name, value }),
   desc: (column: { name?: string }) => ({ direction: "desc", column: column?.name }),
   asc: (column: { name?: string }) => ({ direction: "asc", column: column?.name }),
-  inArray: (...a: unknown[]) => a,
+  inArray: (column: { name?: string }, values: unknown[]) => ({
+    op: "in",
+    column: column?.name,
+    values,
+  }),
 }));
 
 vi.mock("@/lib/content/repository", () => ({
   resolveAccountLearnerProgram: vi.fn(),
+  getProgramVersionAsync: vi.fn(),
 }));
 
 import {
@@ -431,13 +449,15 @@ import {
   getFluencyHistory,
   getPlayableGeneratedActivity,
   getPendingCheckpointResults,
+  getTypingMissHistory,
+  getTypingRateHistory,
   nextSkillRecord,
   createOralReadingVerification,
   recordAttempt,
   recordOralReadingAttempt,
   redoCheckpoint,
 } from "./store";
-import { resolveAccountLearnerProgram } from "@/lib/content/repository";
+import { getProgramVersionAsync, resolveAccountLearnerProgram } from "@/lib/content/repository";
 import type { ActivityScore, Program } from "@/content";
 
 const input = {
@@ -2065,6 +2085,609 @@ describe("getFluencyHistory (owned oral-reading history)", () => {
 
     await expect(getFluencyHistory("acct-2", "L1")).resolves.toEqual([]);
     expect(ops.filter((entry) => entry.table === "attempt")).toEqual([]);
+  });
+});
+
+describe("getTypingMissHistory (owned per-key miss/attempt tallies)", () => {
+  beforeEach(() => {
+    ops.length = 0;
+    learnerRows.value = [{ id: "L1" }];
+    typingAttemptRows.value = [];
+  });
+
+  it("folds typing-keys prompts keyed to the EXPECTED key, one miss per prompt missed at least once (not a retry count)", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-keys",
+        day: "2026-07-20",
+        response: {
+          prompts: [
+            { key: "a", ok: true, retries: 0 },
+            { key: "s", ok: true, retries: 2 },
+          ],
+        },
+        createdAt: new Date("2026-07-20T10:00:00Z"),
+      },
+    ];
+
+    // "s" was missed on exactly one prompt (2 retries within it) — misses: 1,
+    // not 2. Under the old retries-summed semantics this would have been 2.
+    await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
+      { key: "a", misses: 0, attempts: 1 },
+      { key: "s", misses: 1, attempts: 1 },
+    ]);
+  });
+
+  it("normalizes misses to ONE unit across kinds: a single typing-keys prompt with 6 retries contributes 1 miss, not 6", async () => {
+    // Discriminates the old code (misses += prompt.retries, so this fixture
+    // would have scored 6) from the fixed code (one miss per missed prompt).
+    // A single fumbled-but-since-mastered prompt must never outrank a key
+    // missed across every one of ten word-typing rounds (foldMissedExpected
+    // already contributes exactly 1 per item).
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-keys",
+        day: "2026-07-20",
+        response: {
+          prompts: [{ key: "j", ok: true, retries: 6 }],
+        },
+        createdAt: new Date("2026-07-20T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
+      { key: "j", misses: 1, attempts: 1 },
+    ]);
+  });
+
+  it("folds typing-write/typing-race/typing-echo items by missedExpected character only", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-write",
+        day: "2026-07-20",
+        response: {
+          // Schemas enforce a per-kind minimum item count; pad with clean
+          // (missedExpected: []) items so the fixture parses, and assert only
+          // on the one item that actually recorded a miss.
+          items: [
+            { i: 0, ok: true, ms: 500, retries: 0, missedExpected: [] },
+            { i: 1, ok: false, ms: 900, retries: 1, missedExpected: ["d"] },
+            { i: 2, ok: true, ms: 500, retries: 0, missedExpected: [] },
+          ],
+        },
+        createdAt: new Date("2026-07-20T11:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        response: {
+          words: [
+            { i: 0, ok: false, ms: 700, retries: 1, missedExpected: ["d"] },
+            { i: 1, ok: true, ms: 500, retries: 0, missedExpected: [] },
+            { i: 2, ok: true, ms: 500, retries: 0, missedExpected: [] },
+            { i: 3, ok: true, ms: 500, retries: 0, missedExpected: [] },
+            { i: 4, ok: true, ms: 500, retries: 0, missedExpected: [] },
+            { i: 5, ok: true, ms: 500, retries: 0, missedExpected: [] },
+          ],
+          elapsedMs: 5_000,
+        },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-echo",
+        day: "2026-07-22",
+        response: {
+          sequences: [
+            { i: 0, ok: false, ms: 400, retries: 1, missedExpected: ["f"] },
+            { i: 1, ok: true, ms: 400, retries: 0, missedExpected: [] },
+            { i: 2, ok: true, ms: 400, retries: 0, missedExpected: [] },
+          ],
+        },
+        createdAt: new Date("2026-07-22T10:00:00Z"),
+      },
+    ];
+
+    // A correctly-typed item (empty missedExpected) contributes nothing — the
+    // response never records which OTHER keys it touched, so nothing is
+    // inferred for them (§8: never a pressed key, never a guessed one either).
+    // attempts stays 0 for every key from these three kinds — none of them can
+    // prove a key was attempted-and-succeeded (only typing-keys can).
+    await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
+      { key: "d", misses: 2, attempts: 0 },
+      { key: "f", misses: 1, attempts: 0 },
+    ]);
+  });
+
+  it("keeps attempts honest: word-kind misses never fabricate an attempts count", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-write",
+        day: "2026-07-20",
+        response: {
+          items: [
+            { i: 0, ok: false, ms: 900, retries: 3, missedExpected: ["q"] },
+            { i: 1, ok: true, ms: 500, retries: 0, missedExpected: [] },
+            { i: 2, ok: true, ms: 500, retries: 0, missedExpected: [] },
+          ],
+        },
+        createdAt: new Date("2026-07-20T10:00:00Z"),
+      },
+    ];
+
+    // A word-kind attempt yields misses > 0 but attempts: 0 — it cannot prove
+    // any key (including "q") was attempted-and-succeeded, only that it was
+    // missed at least once.
+    await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
+      { key: "q", misses: 1, attempts: 0 },
+    ]);
+  });
+
+  it("skips malformed/legacy rows defensively without breaking the series", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-keys",
+        day: "2026-07-20",
+        response: { prompts: "not-an-array" },
+        createdAt: new Date("2026-07-20T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-write",
+        day: "2026-07-21",
+        response: null,
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-keys",
+        day: "2026-07-22",
+        response: { prompts: [{ key: "j", ok: true, retries: 1 }] },
+        createdAt: new Date("2026-07-22T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
+      { key: "j", misses: 1, attempts: 1 },
+    ]);
+  });
+
+  it("orders keys by first chronological encounter across mixed kinds", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-write",
+        day: "2026-07-22",
+        response: {
+          items: [
+            { i: 0, ok: false, ms: 400, retries: 1, missedExpected: ["z"] },
+            { i: 1, ok: true, ms: 400, retries: 0, missedExpected: [] },
+            { i: 2, ok: true, ms: 400, retries: 0, missedExpected: [] },
+          ],
+        },
+        createdAt: new Date("2026-07-22T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-keys",
+        day: "2026-07-20",
+        response: { prompts: [{ key: "a", ok: true, retries: 0 }] },
+        createdAt: new Date("2026-07-20T10:00:00Z"),
+      },
+    ];
+
+    // "z" was inserted into typingAttemptRows first but was recorded LATER
+    // (07-22); the fold processes oldest→newest, so "a" (07-20) leads. "z"
+    // comes from typing-write (misses-only source), so its attempts stays 0.
+    await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
+      { key: "a", misses: 0, attempts: 1 },
+      { key: "z", misses: 1, attempts: 0 },
+    ]);
+  });
+
+  it("fails closed without reading attempts when the learner is not owned", async () => {
+    learnerRows.value = [];
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-keys",
+        day: "2026-07-20",
+        response: { prompts: [{ key: "a", ok: true, retries: 0 }] },
+        createdAt: new Date(),
+      },
+    ];
+
+    await expect(getTypingMissHistory("acct-2", "L1")).resolves.toEqual([]);
+    expect(ops.filter((entry) => entry.table === "attempt")).toEqual([]);
+  });
+});
+
+describe("getTypingRateHistory (owned typing-race wpm series)", () => {
+  beforeEach(() => {
+    ops.length = 0;
+    learnerRows.value = [{ id: "L1" }];
+    typingAttemptRows.value = [];
+    // Default: an unconfigured version pin never resolves (undefined) — each
+    // test that needs a version to resolve sets its own mockResolvedValueOnce.
+    vi.mocked(getProgramVersionAsync).mockReset();
+  });
+
+  // "home-race" is a REAL authored keyboard-club activity
+  // (src/content/programs/keyboard-club/home-base.ts): words
+  // ["ask","sad","dad","fall","flask","salad"], 23 characters total. Using
+  // its actual id/words (rather than a mock) proves the reader resolves
+  // through the real content registry, and 23 chars deliberately differs
+  // from the old `words.length * 5 = 30` approximation this replaces (that
+  // would have rounded to a different, WRONG wpm — see the assertions below).
+  const HOME_RACE_WORDS = Array.from({ length: 6 }, (_, i) => ({
+    i,
+    ok: true,
+    ms: 500,
+    retries: 0,
+    missedExpected: [] as string[],
+  }));
+
+  it("computes one point per day using that day's MAX wpm, oldest→newest, from REAL authored word lengths", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+      {
+        // Same day, a faster second attempt — the day's point takes the MAX.
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 30_000 },
+        createdAt: new Date("2026-07-21T11:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-20",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-20T10:00:00Z"),
+      },
+    ];
+
+    // 23 real chars / 60s = wpm 5; 23 real chars / 30s = wpm 9. The old
+    // `words.length * 5 = 30`-char approximation would have produced 6 and 12
+    // instead — this test would fail against that approximation.
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-20", wpm: 5 },
+      { day: "2026-07-21", wpm: 9 },
+    ]);
+  });
+
+  it("excludes non-race typing kinds even though they share the attempt table", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-write",
+        day: "2026-07-21",
+        response: {
+          items: [{ i: 0, ok: true, ms: 500, retries: 0, missedExpected: [] }],
+        },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([]);
+  });
+
+  it("skips malformed/legacy race rows defensively without breaking the series", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: "not-an-array", elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-22",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-22T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-22", wpm: 5 },
+    ]);
+  });
+
+  it("skips a row with no programSlug (pre-migration attempt) without breaking the series", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: null,
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-22",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-22T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-22", wpm: 5 },
+    ]);
+  });
+
+  it("skips a row whose activityId no longer resolves (renamed/removed authored activity), never falling back to an approximation", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        activityId: "does-not-exist",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-22",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-22T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-22", wpm: 5 },
+    ]);
+  });
+
+  it("skips a row whose activityId now resolves to a DIFFERENT (non-race) authored kind", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        // "home-write" is real, but it's a typing-write activity — content
+        // could in principle repurpose an id, so this must not resolve.
+        programSlug: "keyboard-club",
+        activityId: "home-write",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([]);
+  });
+
+  it("fails closed without reading attempts when the learner is not owned", async () => {
+    learnerRows.value = [];
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date(),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-2", "L1")).resolves.toEqual([]);
+    expect(ops.filter((entry) => entry.table === "attempt")).toEqual([]);
+  });
+
+  // A minimal fake versioned Program tree, standing in for a DB-resolved
+  // historical version whose "home-race" word list DIFFERS from the current
+  // static registry's (12 chars total here, vs. the real "home-race"'s 23).
+  function fakeVersionedProgram(words: string[]): Program {
+    return {
+      slug: "keyboard-club",
+      title: "t",
+      subtitle: "",
+      ageBand: "",
+      summary: "",
+      units: [
+        {
+          id: "u1",
+          order: 1,
+          title: "U",
+          emoji: "",
+          world: "sunshine",
+          bigIdea: "",
+          phonicsFocus: "",
+          mathFocus: "",
+          project: "",
+          lessons: [
+            {
+              id: "l1",
+              order: 1,
+              title: "L",
+              activities: [
+                {
+                  id: "home-race",
+                  title: "Race",
+                  kind: "typing-race",
+                  band: "ready",
+                  skillTags: [],
+                  config: { instruction: "Race", words, pacerWpm: 10 },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  // Branch 1: programVersionId set AND resolvable → use THAT version's own
+  // word lengths, never the current static registry's.
+  it("resolves a pinned version's OWN authored word lengths, not the current registry's", async () => {
+    vi.mocked(getProgramVersionAsync).mockResolvedValueOnce(
+      fakeVersionedProgram(["aa", "bb", "cc", "dd", "ee", "ff"]), // 12 chars
+    );
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        programVersionId: "PV-2026-05",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    // 12 chars / 60s = wpm 2 — the CURRENT registry's real "home-race" (23
+    // chars) would have produced wpm 5. This fixture fails against code that
+    // ignores the pin and always resolves via the static registry.
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-21", wpm: 2 },
+    ]);
+    expect(getProgramVersionAsync).toHaveBeenCalledWith("PV-2026-05");
+  });
+
+  // Branch 2: programVersionId set but the resolved word count disagrees
+  // with what the response implies → skip, never chart it anyway.
+  it("skips a pinned version whose resolved word count disagrees with the response", async () => {
+    vi.mocked(getProgramVersionAsync).mockResolvedValueOnce(
+      fakeVersionedProgram(["aa", "bb"]), // only 2 words; the response has 6
+    );
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        programVersionId: "PV-2026-05",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([]);
+  });
+
+  // Branch 2b: programVersionId set but the version itself can't resolve at
+  // all (e.g. a repin race, or a version id that no longer exists) → skip.
+  it("skips a pinned version that cannot resolve at all", async () => {
+    // getProgramVersionAsync's default mock (reset in beforeEach) resolves
+    // to undefined — nothing further to configure.
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        programVersionId: "PV-does-not-exist",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([]);
+  });
+
+  // Branch 3: programVersionId NULL → falls back to the current in-repo
+  // registry via (programSlug, activityId), exactly as before version
+  // pinning existed. A null pin is an ABSENCE of version info, not a
+  // mismatch — it must never be skipped on that basis. (The DB schema
+  // documents this column as "Nullable so pre-migration attempts remain
+  // readable" — real pre-migration rows carry no pin at all.)
+  it("does NOT skip a null-pin (pre-migration) attempt — falls back to the current registry, exactly as before version pinning existed", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        programVersionId: null,
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-21", wpm: 5 },
+    ]);
+    expect(getProgramVersionAsync).not.toHaveBeenCalled();
+  });
+
+  it("never charts an implausible race response, even though it passes schema validation", async () => {
+    // "ask" is the real word at index 0; "x" is not one of its characters, so
+    // this could not have come from honest play. Before this fix, the series
+    // only checked safeParse and would have charted this attempt anyway.
+    const implausibleWords = [
+      { i: 0, ok: false, ms: 700, retries: 1, missedExpected: ["x"] },
+      ...HOME_RACE_WORDS.slice(1),
+    ];
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: implausibleWords, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([]);
+  });
+
+  it("clamps an absurd rate (near-zero elapsedMs) instead of charting it", async () => {
+    // 23 real chars over 1ms is a client-timing glitch, not a real typing
+    // speed — wpm() alone would compute hundreds of thousands of WPM.
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 1 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-21", wpm: 200 },
+    ]);
   });
 });
 

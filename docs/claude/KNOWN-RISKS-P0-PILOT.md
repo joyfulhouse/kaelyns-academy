@@ -110,3 +110,40 @@ child never sees an empty picker), but opening any of them now yields the
 `NotAssigned` state rather than self-enrolling. Tightening the picker itself to a
 "nothing assigned yet — ask a grown-up" tile (instead of the full catalog) is a
 cosmetic follow-up; it no longer affects what a child can actually play or record.
+
+---
+
+## Unit sequencing (pacing, not access control) — not enforced on the activity route
+
+**Where:** `src/components/learner/branching.ts` — `computeUnlockedIds`.
+
+**Vector.** `computeUnlockedIds` gates only `StudioHome`'s world-map tiles (a
+unit shows as locked/unlocked based on prior completions). The activity route
+itself (`ActivityHost` → `resolvePlayableActivity`) has no equivalent check for
+account (signed-in) learners, so an enrolled child who deep-links straight to an
+activity in a later, still-locked unit can play it — the forgiving-unlock
+pacing is a map affordance, not a gate the route enforces.
+
+**Scope / bounds.** Pacing only, not access control or curation. Everything
+`computeUnlockedIds` would eventually unlock is already curriculum the parent
+has enrolled the learner in (Kid-surface curation above still applies in full —
+`activeUnitKeys`/enrollment status still block anything the parent hasn't
+curated); this gap only lets a child reach a *later* unit of already-curated
+content sooner than the pacing intends. No PII exposure, no uncurated content.
+
+**Why accepted for P0.** Single pilot learner, parent-curated content only, and
+the worst case is a child seeing a later unit's activity earlier than the
+world-map pacing intends — not a privacy or curation violation.
+
+**Coupling to watch.** `e2e/specs/typing.spec.ts`'s Star Echo spec deep-links
+through exactly this gap (unit 4 / Big Letters is locked on the world map for a
+fresh guest, but the activity route plays it anyway) — see the spec's own
+comment above its `STAR_ECHO` constant. Closing this gap by adding a
+route-level lock check would break that spec, and the failure would look like a
+Star Echo regression rather than the sequencing fix working as intended.
+
+**Fix (deferred).** Extend the A3-style render-gating already used for
+enrollment/curation to unit sequencing on the activity route, keyed off the
+same unlocked-set the world map already computes — and update the Star Echo
+spec to unlock its way there (or move it to an already-unlocked unit) when
+that lands.

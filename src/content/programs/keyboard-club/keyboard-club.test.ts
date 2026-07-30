@@ -66,6 +66,7 @@ describe("Keyboard Club", () => {
         "typing.keys.bottom-row",
         "typing.keys.space",
         "typing.keys.shift",
+        "typing.words.familiar",
       ],
       "word-workshop": ["typing.words.familiar", "typing.fluency.rate"],
     };
@@ -102,6 +103,10 @@ describe("Keyboard Club", () => {
       } else if (activity.kind === "typing-race") {
         for (const word of activity.config.words) {
           for (const char of word) expect(isTeachableKey(char), `${word}: ${char}`).toBe(true);
+        }
+      } else if (activity.kind === "typing-echo") {
+        for (const sequence of activity.config.sequences) {
+          for (const char of sequence) expect(isTeachableKey(char), `${sequence}: ${char}`).toBe(true);
         }
       }
     }

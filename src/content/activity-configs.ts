@@ -21,6 +21,7 @@ import { seqOrderConfig } from "./activity-configs/seq-order";
 import { sightwordGameConfig } from "./activity-configs/sightword-game";
 import { sortCategoriesConfig } from "./activity-configs/sort-categories";
 import { typingCatchConfig } from "./activity-configs/typing-catch";
+import { typingEchoConfig } from "./activity-configs/typing-echo";
 import { typingKeysConfig } from "./activity-configs/typing-keys";
 import { typingRaceConfig } from "./activity-configs/typing-race";
 import { typingWriteConfig } from "./activity-configs/typing-write";
@@ -41,6 +42,7 @@ export * from "./activity-configs/seq-order";
 export * from "./activity-configs/sightword-game";
 export * from "./activity-configs/sort-categories";
 export * from "./activity-configs/typing-catch";
+export * from "./activity-configs/typing-echo";
 export * from "./activity-configs/typing-keys";
 export * from "./activity-configs/typing-race";
 export * from "./activity-configs/typing-write";
@@ -63,6 +65,7 @@ export const ACTIVITY_CONFIG_SCHEMAS = {
   "oral-reading": oralReadingConfig,
   "typing-keys": typingKeysConfig,
   "typing-catch": typingCatchConfig,
+  "typing-echo": typingEchoConfig,
   "typing-write": typingWriteConfig,
   "typing-race": typingRaceConfig,
 } as const;
