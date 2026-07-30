@@ -165,6 +165,12 @@ export function defaultConfigFor(kind: ActivityKind): unknown {
         lives: 3,
         speed: "gentle",
       };
+    case "typing-echo":
+      return {
+        instruction: "Watch the letters, then type them from memory.",
+        sequences: ["fj", "dk", "sl"],
+        flashMs: 1200,
+      };
     case "typing-write":
       return {
         instruction: "Type each word.",

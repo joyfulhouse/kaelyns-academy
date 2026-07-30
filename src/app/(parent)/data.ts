@@ -96,6 +96,7 @@ const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
   "oral-reading": "Read aloud",
   "typing-keys": "Key Camp",
   "typing-catch": "Star Catch",
+  "typing-echo": "Star Echo",
   "typing-write": "Word Write",
   "typing-race": "Rocket Race",
 };

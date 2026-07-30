@@ -30,6 +30,7 @@ import { seqOrder } from "./seq-order";
 import { oralReading } from "./oral-reading";
 import { typingKeys } from "./typing-keys";
 import { typingCatch } from "./typing-catch";
+import { typingEcho } from "./typing-echo";
 import { typingWrite } from "./typing-write";
 import { typingRace } from "./typing-race";
 
@@ -56,6 +57,7 @@ export function registerActivityTypes(): void {
   registerActivityType(oralReading);
   registerActivityType(typingKeys);
   registerActivityType(typingCatch);
+  registerActivityType(typingEcho);
   registerActivityType(typingWrite);
   registerActivityType(typingRace);
 }

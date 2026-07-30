@@ -23,6 +23,7 @@ import { seqOrderConfig as seqOrderModuleConfig } from "./activity-configs/seq-o
 import { sightwordGameConfig as sightwordGameModuleConfig } from "./activity-configs/sightword-game";
 import { sortCategoriesConfig as sortCategoriesModuleConfig } from "./activity-configs/sort-categories";
 import { typingCatchConfig as typingCatchModuleConfig } from "./activity-configs/typing-catch";
+import { typingEchoConfig as typingEchoModuleConfig } from "./activity-configs/typing-echo";
 import { typingKeysConfig as typingKeysModuleConfig } from "./activity-configs/typing-keys";
 import { typingRaceConfig as typingRaceModuleConfig } from "./activity-configs/typing-race";
 import { typingWriteConfig as typingWriteModuleConfig } from "./activity-configs/typing-write";
@@ -45,6 +46,7 @@ const PER_KIND_SCHEMAS = {
   "oral-reading": oralReadingModuleConfig,
   "typing-keys": typingKeysModuleConfig,
   "typing-catch": typingCatchModuleConfig,
+  "typing-echo": typingEchoModuleConfig,
   "typing-write": typingWriteModuleConfig,
   "typing-race": typingRaceModuleConfig,
 } satisfies Record<ActivityKind, (typeof ACTIVITY_CONFIG_SCHEMAS)[ActivityKind]>;

@@ -65,6 +65,13 @@ const VALID_RESPONSES = {
     endedBy: "time",
     elapsedMs: 45_000,
   },
+  "typing-echo": {
+    sequences: [
+      { i: 0, ok: true, ms: 900, retries: 0, missedExpected: [] },
+      { i: 1, ok: true, ms: 900, retries: 0, missedExpected: [] },
+      { i: 2, ok: true, ms: 900, retries: 0, missedExpected: [] },
+    ],
+  },
   "typing-write": {
     items: [
       { i: 0, ok: true, ms: 900, retries: 0, missedExpected: [] },
@@ -170,6 +177,15 @@ const OVER_BOUNDED_RESPONSES = {
     prompts: Array.from({ length: 121 }, () => ({ text: "a", ok: true, ms: 900 })),
     endedBy: "time",
     elapsedMs: 45_000,
+  },
+  "typing-echo": {
+    sequences: Array.from({ length: 11 }, (_, i) => ({
+      i: i % 10,
+      ok: true,
+      ms: 900,
+      retries: 0,
+      missedExpected: [],
+    })),
   },
   "typing-write": {
     items: Array.from({ length: 13 }, (_, i) => ({
