@@ -1,7 +1,7 @@
 import type { ZodType } from "zod";
 import type { Activity, ActivityKind, Program, Unit } from "@/content";
 import type { LearnerMode } from "./learnerAccess";
-import { activeUnitKeySet, playableUnitIds } from "./unitAccess";
+import { activeUnitKeySet, isSequentialProgram, playableUnitIds } from "./unitAccess";
 
 export interface PlayableActivityInput {
   mode: LearnerMode;
@@ -40,9 +40,10 @@ export function resolvePlayableActivity(
       !input.activeUnitKeys.includes(input.unitKey);
     if (!input.available || curatedOut) return { status: "blocked" };
 
-    const unit = input.program?.units.find((candidate) => candidate.id === input.unitKey);
+    const program = input.program;
+    const unit = program?.units.find((candidate) => candidate.id === input.unitKey);
     const activity = unit ? activityInUnit(unit, input.activityKey) : undefined;
-    if (!unit || !activity) return { status: "moved" };
+    if (!program || !unit || !activity) return { status: "moved" };
 
     // Sequencing (pacing, NOT access control): resolved last, so a bogus URL
     // still reads as "moved" rather than blaming the child's progress. Guest
@@ -51,9 +52,10 @@ export function resolvePlayableActivity(
     // guest gate would need. Deliberately absent from the write path: a child
     // who finishes an activity keeps the work however they arrived.
     const open = playableUnitIds(
-      input.program?.units ?? [],
+      program.units,
       activeUnitKeySet(input.activeUnitKeys),
       input.completedActivityIds,
+      { sequential: isSequentialProgram(program.slug) },
     );
     if (!open.has(unit.id)) return { status: "locked", unit };
 

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { PROGRAMS } from "@/content";
-import { playableUnitIds } from "./unitAccess";
+import { isSequentialProgram, playableUnitIds } from "./unitAccess";
 
 /**
- * The starvation guard.
+ * The starvation guard, against real curriculum.
  *
- * Sequencing now filters the hero pick, the warm-up row, and quest destinations
- * — not just the map's tiles — so that nothing is ever offered that the activity
+ * Sequencing filters the hero pick, the warm-up row, and quest destinations —
+ * not just the map's tiles — so that nothing is ever offered that the activity
  * route would then refuse. The cost of getting that wrong is the opposite
  * failure: a child with somewhere legitimate to go and nothing on offer, staring
  * at an empty "One Big GO".
@@ -14,7 +14,7 @@ import { playableUnitIds } from "./unitAccess";
  * These walk every real program the way a child does and assert that at every
  * step there is still an open unit holding unfinished work. The forgiving rule
  * (a unit opens as soon as the previous one is *started*) is what makes this
- * hold, so these tests fail loudly if that rule is ever tightened.
+ * hold for sequential programs, so these fail loudly if it is ever tightened.
  */
 
 type ProgramUnit = (typeof PROGRAMS)[number]["units"][number];
@@ -26,10 +26,13 @@ function activityIds(unit: ProgramUnit): string[] {
 
 describe.each(PROGRAMS.map((p) => [p.slug, p] as const))(
   "unit sequencing never strands a learner in %s",
-  (_slug, program) => {
+  (slug, program) => {
+    const options = { sequential: isSequentialProgram(slug) };
+    const open = (completed: ReadonlySet<string>) =>
+      playableUnitIds(program.units, null, completed, options);
+
     it("opens something to play before any progress exists", () => {
-      const open = playableUnitIds(program.units, null, new Set());
-      expect(open.size).toBeGreaterThan(0);
+      expect(open(new Set()).size).toBeGreaterThan(0);
     });
 
     it("always leaves an open unit with unfinished work, all the way through", () => {
@@ -38,46 +41,63 @@ describe.each(PROGRAMS.map((p) => [p.slug, p] as const))(
       // advance, and the one most likely to expose a gap.
       for (const unit of program.units) {
         for (const id of activityIds(unit)) {
-          const open = playableUnitIds(program.units, null, completed);
+          const openNow = open(completed);
           const hasSomethingToDo = program.units
-            .filter((candidate) => open.has(candidate.id))
+            .filter((candidate) => openNow.has(candidate.id))
             .some((candidate) => activityIds(candidate).some((a) => !completed.has(a)));
           expect(
             hasSomethingToDo,
-            `stranded before completing ${id}: open units ${[...open].join(", ") || "(none)"}`,
+            `stranded before completing ${id}: open units ${[...openNow].join(", ") || "(none)"}`,
           ).toBe(true);
           completed.add(id);
         }
       }
-      // Only once the entire program is finished may the open set hold no work.
-      const finalOpen = playableUnitIds(program.units, null, completed);
-      expect(finalOpen.size).toBeGreaterThan(0);
+      expect(open(completed).size).toBeGreaterThan(0);
     });
 
-    it("opens the next unit the moment the previous one is touched, not finished", () => {
-      if (program.units.length < 2) return;
-      const [first, second] = program.units;
-      const firstActivity = activityIds(first)[0];
-      expect(firstActivity).toBeDefined();
-      const open = playableUnitIds(program.units, null, new Set([firstActivity]));
-      expect(open.has(second.id)).toBe(true);
-    });
-
-    // Check-ins carry order 0 but sit at the END of the authored array, so
-    // position-based sequencing would bury a new learner's placement behind the
-    // whole program. Placement is the first thing they do.
-    it("never locks a checkpoint unit, even with zero progress", () => {
-      const open = playableUnitIds(program.units, null, new Set());
-      for (const unit of program.units.filter((u) => u.checkpoint)) {
-        expect(open.has(unit.id), `checkpoint ${unit.id} was locked`).toBe(true);
+    // Access is monotonic: whatever the child has played stays reachable, in any
+    // completion order — not only the tidy front-to-back one above.
+    it("never revokes a unit the learner has already played", () => {
+      for (const unit of program.units) {
+        const first = activityIds(unit)[0];
+        if (first === undefined) continue;
+        expect(
+          open(new Set([first])).has(unit.id),
+          `${unit.id} was revoked after being played`,
+        ).toBe(true);
       }
     });
 
     it("opens every single-unit curation, whatever its position", () => {
       for (const unit of program.units) {
-        const open = playableUnitIds(program.units, new Set([unit.id]), new Set());
-        expect(open.has(unit.id), `${unit.id} locked as a lone assignment`).toBe(true);
+        const only = playableUnitIds(program.units, new Set([unit.id]), new Set(), options);
+        expect(only.has(unit.id), `${unit.id} locked as a lone assignment`).toBe(true);
       }
     });
   },
 );
+
+describe("parallel-strand programs are not gated against each other", () => {
+  // The recommender's contract: "each strand advances INDEPENDENTLY … never
+  // lets a strong strand wait on a weak one" (recommend.ts, curriculum README
+  // §1). Array position is authoring order there, not pedagogy.
+  it.each(["kaelyn-adaptive", "world-languages"])("opens every unit of %s at once", (slug) => {
+    const program = PROGRAMS.find((p) => p.slug === slug);
+    expect(program, `${slug} is missing from PROGRAMS`).toBeDefined();
+    if (!program) return;
+    const open = playableUnitIds(program.units, null, new Set(), {
+      sequential: isSequentialProgram(slug),
+    });
+    expect(open.size).toBe(program.units.length);
+  });
+
+  it("still paces Keyboard Club, where order is real", () => {
+    const program = PROGRAMS.find((p) => p.slug === "keyboard-club");
+    expect(program).toBeDefined();
+    if (!program) return;
+    const open = playableUnitIds(program.units, null, new Set(), {
+      sequential: isSequentialProgram("keyboard-club"),
+    });
+    expect(open).toEqual(new Set([program.units[0].id]));
+  });
+});

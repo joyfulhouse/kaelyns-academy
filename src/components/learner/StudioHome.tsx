@@ -39,7 +39,7 @@ import { TodaysAdventures } from "./TodaysAdventures";
 import { curateAdventureCandidates } from "./adventureCandidates";
 import { computeUnitProgress, computeProgramRatio } from "./useProgress";
 import { pathLabelsByUnitId, segmentUnits } from "./branching";
-import { activeUnitKeySet, curatedUnits, playableUnitIds } from "./unitAccess";
+import { activeUnitKeySet, curatedUnits, isSequentialProgram, playableUnitIds } from "./unitAccess";
 import { ACTIVITY_META } from "./activityMeta";
 import { lockParentAreaAction } from "@/app/(parent)/pin-actions";
 import { captureNonCritical } from "@/lib/capture";
@@ -502,8 +502,10 @@ function WorldMap({
   // Empty progress until `ready`, matching the pre-read map exactly.
   const unlockedIds = useMemo(
     () =>
-      playableUnitIds(program.units, activeUnitKeys, ready ? completedIds : EMPTY_COMPLETED),
-    [program.units, activeUnitKeys, ready, completedIds],
+      playableUnitIds(program.units, activeUnitKeys, ready ? completed : EMPTY_COMPLETED, {
+        sequential: isSequentialProgram(program.slug),
+      }),
+    [program.units, program.slug, activeUnitKeys, ready, completed],
   );
 
   const globalRecommendations = useMemo(

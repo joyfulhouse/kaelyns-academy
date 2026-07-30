@@ -2,7 +2,6 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   E2E_LEARNER_PREFIX,
   addChild,
-  curateUnits,
   expectSingleHostReward,
   selectAccountLearner,
   uniqueTag,
@@ -19,11 +18,6 @@ const ACTIVITY = "/learn/kaelyn-adaptive/word-study/word-oral-the";
 const SENTENCE_ACTIVITY = "/learn/kaelyn-adaptive/word-study/word-sentence-see-cat";
 const DECODABLE_ACTIVITY =
   "/learn/kaelyn-adaptive/decodable-readers/decodable-short-a-cvc-01";
-// Both live past the first unit, so a freshly created learner cannot open them
-// until a grown-up assigns them — see `curateUnits`. Titles, not keys: the
-// parent UI labels each unit switch with its authored title.
-const WORD_STUDY_UNIT = "Word Study & Vocabulary";
-const DECODABLE_UNIT = "Decodable Readers";
 
 async function installControlledModelSpeech(
   page: Page,
@@ -327,7 +321,6 @@ test("an opted-in signed-in learner settles a check and gets one host reward", a
   await addChild(page, learnerName);
 
   try {
-    await curateUnits(page, learnerName, [WORD_STUDY_UNIT]);
     await page.getByRole("link", { name: learnerName }).first().click();
     await page
       .getByRole("navigation", { name: /^Manage/ })
@@ -458,7 +451,6 @@ test("sentence reading keeps mic denial safe and finishes through one host rewar
   await addChild(page, learnerName);
 
   try {
-    await curateUnits(page, learnerName, [WORD_STUDY_UNIT]);
     await page.getByRole("link", { name: learnerName }).first().click();
     await page
       .getByRole("navigation", { name: /^Manage/ })
@@ -576,7 +568,6 @@ test("a decodable reader finishes through one linked host reward", async ({
   await addChild(page, learnerName);
 
   try {
-    await curateUnits(page, learnerName, [DECODABLE_UNIT]);
     await page.getByRole("link", { name: learnerName }).first().click();
     await page
       .getByRole("navigation", { name: /^Manage/ })

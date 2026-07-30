@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   activeUnitKeySet,
   curatedUnits,
+  isSequentialProgram,
   playableUnitIds,
   startedUnitIds,
 } from "./unitAccess";
@@ -19,6 +20,27 @@ const PROGRAM = [
   U("three", ["c1"]),
   U("four", ["d1"]),
 ];
+
+/** Sequencing only applies to programs whose order is pedagogy. */
+const SEQ = { sequential: true } as const;
+
+describe("isSequentialProgram", () => {
+  it("sequences Keyboard Club, where home row really does come first", () => {
+    expect(isSequentialProgram("keyboard-club")).toBe(true);
+  });
+
+  // Gating these by array order would put Math behind Reading/Word Study/Writing
+  // and Korean behind Mandarin phonetics, contradicting the recommender's
+  // documented contract that each strand advances independently.
+  it("leaves parallel-strand programs unsequenced", () => {
+    expect(isSequentialProgram("kaelyn-adaptive")).toBe(false);
+    expect(isSequentialProgram("world-languages")).toBe(false);
+  });
+
+  it("defaults an unknown program to unsequenced", () => {
+    expect(isSequentialProgram("some-marketplace-program")).toBe(false);
+  });
+});
 
 describe("activeUnitKeySet", () => {
   it("treats undefined and empty as no curation (never hides the whole program)", () => {
@@ -54,53 +76,94 @@ describe("startedUnitIds", () => {
   it("ignores activity ids that belong to no unit", () => {
     expect(startedUnitIds(PROGRAM, new Set(["ghost"]))).toEqual(new Set());
   });
+  // An empty unit can never be completed, so treating it as a barrier would
+  // strand the learner behind it forever.
+  it("treats a unit with no activities as already started", () => {
+    const withEmpty = [U("empty", []), U("next", ["n1"])];
+    expect(startedUnitIds(withEmpty, new Set())).toEqual(new Set(["empty"]));
+  });
 });
 
-describe("playableUnitIds", () => {
+describe("playableUnitIds — unsequenced programs", () => {
+  it("opens every curated unit, because the units are parallel", () => {
+    expect(playableUnitIds(PROGRAM, null, new Set(), { sequential: false })).toEqual(
+      new Set(["one", "two", "three", "four"]),
+    );
+  });
+
+  it("still honours parent curation", () => {
+    expect(
+      playableUnitIds(PROGRAM, new Set(["two", "four"]), new Set(), { sequential: false }),
+    ).toEqual(new Set(["two", "four"]));
+  });
+});
+
+describe("playableUnitIds — sequential programs", () => {
   it("opens only the first unit for a learner with no progress", () => {
-    expect(playableUnitIds(PROGRAM, null, new Set())).toEqual(new Set(["one"]));
+    expect(playableUnitIds(PROGRAM, null, new Set(), SEQ)).toEqual(new Set(["one"]));
   });
 
   it("opens the next unit once the previous one is merely started", () => {
-    expect(playableUnitIds(PROGRAM, null, new Set(["a1"]))).toEqual(new Set(["one", "two"]));
+    expect(playableUnitIds(PROGRAM, null, new Set(["a1"]), SEQ)).toEqual(new Set(["one", "two"]));
   });
 
   it("never opens two units ahead", () => {
-    expect(playableUnitIds(PROGRAM, null, new Set(["a1"])).has("three")).toBe(false);
+    expect(playableUnitIds(PROGRAM, null, new Set(["a1"]), SEQ).has("three")).toBe(false);
   });
 
-  // The gate must never lock a learner out of the only thing assigned to them:
-  // sequencing runs over the CURATED list, so a lone curated unit is the first
-  // segment and therefore open.
+  // Progress may open doors; it must never close one. Without this, widening a
+  // curated assignment revokes the very unit the child has been playing —
+  // taking her replays, her due reviews and her generated shelf with it.
+  it("keeps a played unit open even when its predecessor never was", () => {
+    const playedLater = new Set(["c1"]);
+    const open = playableUnitIds(PROGRAM, null, playedLater, SEQ);
+    expect(open.has("three")).toBe(true);
+  });
+
+  it("cannot revoke a unit when the parent widens the assignment", () => {
+    const played = new Set(["b1"]);
+    const whileCurated = playableUnitIds(PROGRAM, new Set(["two"]), played, SEQ);
+    expect(whileCurated.has("two")).toBe(true);
+    const afterWidening = playableUnitIds(PROGRAM, null, played, SEQ);
+    expect(afterWidening.has("two")).toBe(true);
+  });
+
+  // The gate must never lock a learner out of the only thing assigned to them.
   it("opens a solely-curated later unit even with zero progress", () => {
-    expect(playableUnitIds(PROGRAM, new Set(["four"]), new Set())).toEqual(new Set(["four"]));
+    expect(playableUnitIds(PROGRAM, new Set(["four"]), new Set(), SEQ)).toEqual(new Set(["four"]));
   });
 
   it("sequences within the curated subset, not the full program", () => {
     const curated = new Set(["two", "four"]);
-    expect(playableUnitIds(PROGRAM, curated, new Set())).toEqual(new Set(["two"]));
+    expect(playableUnitIds(PROGRAM, curated, new Set(), SEQ)).toEqual(new Set(["two"]));
     // Starting the first curated unit opens the next CURATED one, skipping the
     // uncurated unit between them.
-    expect(playableUnitIds(PROGRAM, curated, new Set(["b1"]))).toEqual(new Set(["two", "four"]));
+    expect(playableUnitIds(PROGRAM, curated, new Set(["b1"]), SEQ)).toEqual(
+      new Set(["two", "four"]),
+    );
   });
 
   it("ignores progress in units the parent curated away", () => {
     // "one" is not curated in, so finishing it cannot open "four".
-    expect(playableUnitIds(PROGRAM, new Set(["four"]), new Set(["a1"]))).toEqual(
+    expect(playableUnitIds(PROGRAM, new Set(["four"]), new Set(["a1"]), SEQ)).toEqual(
       new Set(["four"]),
     );
   });
 
-  // The forgiving rule is what keeps the hero card from starving: whenever a
-  // learner has finished everything open to them, the next unit is open too.
   it("cannot strand a learner who has completed every open unit", () => {
     const done = new Set(["a1", "a2"]);
-    const open = playableUnitIds(PROGRAM, null, done);
+    const open = playableUnitIds(PROGRAM, null, done, SEQ);
     const everythingOpenIsDone = PROGRAM.filter((u) => open.has(u.id)).every((u) =>
       u.lessons.every((l) => l.activities.every((a) => done.has(a.id))),
     );
     expect(everythingOpenIsDone).toBe(false);
     expect(open.has("two")).toBe(true);
+  });
+
+  it("advances past an empty first unit instead of stranding behind it", () => {
+    const withEmptyFirst = [U("empty", []), U("next", ["n1"]), U("last", ["l1"])];
+    const open = playableUnitIds(withEmptyFirst, null, new Set(), SEQ);
+    expect(open.has("next")).toBe(true);
   });
 
   it("opens both branch heads together and keeps the far branch's tail shut", () => {
@@ -110,8 +173,31 @@ describe("playableUnitIds", () => {
       U("left2", ["l2"], "left"),
       U("right1", ["r1"], "right"),
     ];
-    expect(playableUnitIds(forked, null, new Set(["i1"]))).toEqual(
+    expect(playableUnitIds(forked, null, new Set(["i1"]), SEQ)).toEqual(
       new Set(["intro", "left1", "right1"]),
     );
+  });
+});
+
+describe("playableUnitIds — checkpoint phases", () => {
+  const withCheckpoints = [
+    { ...U("first", ["f1"]) },
+    { ...U("midway", ["m1"]), checkpoint: "mid" },
+    { ...U("ending", ["e1"]), checkpoint: "final" },
+    { ...U("placement", ["p1"]), checkpoint: "baseline" },
+  ];
+
+  // Baselines carry order 0 but sit at the END of the authored array, so
+  // position-based sequencing would bury a new learner's placement.
+  it("never locks a baseline check-in", () => {
+    expect(playableUnitIds(withCheckpoints, null, new Set(), SEQ).has("placement")).toBe(true);
+  });
+
+  // Mid and final check-ins are scheduled deliberately later; exempting them
+  // would open a final assessment on day one.
+  it("still sequences mid and final check-ins", () => {
+    const open = playableUnitIds(withCheckpoints, null, new Set(), SEQ);
+    expect(open.has("midway")).toBe(false);
+    expect(open.has("ending")).toBe(false);
   });
 });

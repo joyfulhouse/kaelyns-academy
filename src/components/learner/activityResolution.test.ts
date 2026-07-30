@@ -35,9 +35,9 @@ function unit(id: string, activities: Activity[]): Unit {
   };
 }
 
-function program(units: Unit[]): Program {
+function program(units: Unit[], slug = "kaelyn-adaptive"): Program {
   return {
-    slug: "kaelyn-adaptive",
+    slug,
     title: "Test",
     subtitle: "",
     ageBand: "",
@@ -144,7 +144,8 @@ describe("resolvePlayableActivity", () => {
 describe("resolvePlayableActivity — unit sequencing (pacing)", () => {
   const FIRST = unit("first-unit", [activity("first-a")]);
   const LATER = unit("later-unit", [activity("later-a")]);
-  const PINNED = program([FIRST, LATER]);
+  // Sequencing only applies to programs whose unit order is pedagogy.
+  const PINNED = program([FIRST, LATER], "keyboard-club");
 
   const at = (
     unitKey: string,
@@ -202,6 +203,25 @@ describe("resolvePlayableActivity — unit sequencing (pacing)", () => {
     expect(at("later-unit", "later-a", new Set(), { mode: "guest" })).toMatchObject({
       status: "ready",
     });
+  });
+
+  // The units of kaelyn-adaptive are parallel subject strands, not a sequence:
+  // gating them by array order would make Math wait on Reading.
+  it("does not gate a program whose unit order is only authoring order", () => {
+    expect(
+      resolvePlayableActivity({
+        mode: "account",
+        ready: true,
+        available: true,
+        program: program([FIRST, LATER], "kaelyn-adaptive"),
+        activeUnitKeys: undefined,
+        completedActivityIds: new Set<string>(),
+        unitKey: "later-unit",
+        activityKey: "later-a",
+        ssrUnit: LATER,
+        ssrActivity: LATER.lessons[0].activities[0],
+      }),
+    ).toMatchObject({ status: "ready" });
   });
 });
 
