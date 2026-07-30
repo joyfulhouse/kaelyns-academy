@@ -2261,22 +2261,30 @@ describe("getTypingRateHistory (owned typing-race wpm series)", () => {
     typingAttemptRows.value = [];
   });
 
-  it("computes one point per day using that day's MAX wpm, oldest→newest", async () => {
+  // "home-race" is a REAL authored keyboard-club activity
+  // (src/content/programs/keyboard-club/home-base.ts): words
+  // ["ask","sad","dad","fall","flask","salad"], 23 characters total. Using
+  // its actual id/words (rather than a mock) proves the reader resolves
+  // through the real content registry, and 23 chars deliberately differs
+  // from the old `words.length * 5 = 30` approximation this replaces (that
+  // would have rounded to a different, WRONG wpm — see the assertions below).
+  const HOME_RACE_WORDS = Array.from({ length: 6 }, (_, i) => ({
+    i,
+    ok: true,
+    ms: 500,
+    retries: 0,
+    missedExpected: [] as string[],
+  }));
+
+  it("computes one point per day using that day's MAX wpm, oldest→newest, from REAL authored word lengths", async () => {
     typingAttemptRows.value = [
       {
         learnerId: "L1",
         kind: "typing-race",
         day: "2026-07-21",
-        response: {
-          words: Array.from({ length: 6 }, (_, i) => ({
-            i,
-            ok: true,
-            ms: 500,
-            retries: 0,
-            missedExpected: [],
-          })),
-          elapsedMs: 60_000,
-        },
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
         createdAt: new Date("2026-07-21T10:00:00Z"),
       },
       {
@@ -2284,39 +2292,28 @@ describe("getTypingRateHistory (owned typing-race wpm series)", () => {
         learnerId: "L1",
         kind: "typing-race",
         day: "2026-07-21",
-        response: {
-          words: Array.from({ length: 6 }, (_, i) => ({
-            i,
-            ok: true,
-            ms: 500,
-            retries: 0,
-            missedExpected: [],
-          })),
-          elapsedMs: 30_000,
-        },
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 30_000 },
         createdAt: new Date("2026-07-21T11:00:00Z"),
       },
       {
         learnerId: "L1",
         kind: "typing-race",
         day: "2026-07-20",
-        response: {
-          words: Array.from({ length: 6 }, (_, i) => ({
-            i,
-            ok: true,
-            ms: 500,
-            retries: 0,
-            missedExpected: [],
-          })),
-          elapsedMs: 60_000,
-        },
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
         createdAt: new Date("2026-07-20T10:00:00Z"),
       },
     ];
 
+    // 23 real chars / 60s = wpm 5; 23 real chars / 30s = wpm 9. The old
+    // `words.length * 5 = 30`-char approximation would have produced 6 and 12
+    // instead — this test would fail against that approximation.
     await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
-      { day: "2026-07-20", wpm: 6 },
-      { day: "2026-07-21", wpm: 12 },
+      { day: "2026-07-20", wpm: 5 },
+      { day: "2026-07-21", wpm: 9 },
     ]);
   });
 
@@ -2342,6 +2339,8 @@ describe("getTypingRateHistory (owned typing-race wpm series)", () => {
         learnerId: "L1",
         kind: "typing-race",
         day: "2026-07-21",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
         response: { words: "not-an-array", elapsedMs: 60_000 },
         createdAt: new Date("2026-07-21T10:00:00Z"),
       },
@@ -2349,23 +2348,88 @@ describe("getTypingRateHistory (owned typing-race wpm series)", () => {
         learnerId: "L1",
         kind: "typing-race",
         day: "2026-07-22",
-        response: {
-          words: Array.from({ length: 6 }, (_, i) => ({
-            i,
-            ok: true,
-            ms: 500,
-            retries: 0,
-            missedExpected: [],
-          })),
-          elapsedMs: 60_000,
-        },
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
         createdAt: new Date("2026-07-22T10:00:00Z"),
       },
     ];
 
     await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
-      { day: "2026-07-22", wpm: 6 },
+      { day: "2026-07-22", wpm: 5 },
     ]);
+  });
+
+  it("skips a row with no programSlug (pre-migration attempt) without breaking the series", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: null,
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-22",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-22T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-22", wpm: 5 },
+    ]);
+  });
+
+  it("skips a row whose activityId no longer resolves (renamed/removed authored activity), never falling back to an approximation", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        activityId: "does-not-exist",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-22",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-22T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-22", wpm: 5 },
+    ]);
+  });
+
+  it("skips a row whose activityId now resolves to a DIFFERENT (non-race) authored kind", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        // "home-write" is real, but it's a typing-write activity — content
+        // could in principle repurpose an id, so this must not resolve.
+        programSlug: "keyboard-club",
+        activityId: "home-write",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([]);
   });
 
   it("fails closed without reading attempts when the learner is not owned", async () => {
@@ -2375,16 +2439,9 @@ describe("getTypingRateHistory (owned typing-race wpm series)", () => {
         learnerId: "L1",
         kind: "typing-race",
         day: "2026-07-21",
-        response: {
-          words: Array.from({ length: 6 }, (_, i) => ({
-            i,
-            ok: true,
-            ms: 500,
-            retries: 0,
-            missedExpected: [],
-          })),
-          elapsedMs: 60_000,
-        },
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
         createdAt: new Date(),
       },
     ];

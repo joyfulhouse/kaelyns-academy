@@ -23,6 +23,7 @@ import {
   verification,
 } from "@/lib/db/schema";
 import type { Activity, ActivityScore, Lesson, Program, SkillOutcome, SkillTag, Unit } from "@/content";
+import { getProgram, findActivity } from "@/content";
 import type { ActivityKind } from "@/content/activity-configs";
 import { SHELF_BATCH, SHELF_LESSON_CAP } from "./shelf";
 import { deriveOutcome, type DayKey, type SkillRecord, type SkillState } from "./mastery";
@@ -1406,17 +1407,47 @@ export async function getTypingMissHistory(
 }
 
 /**
+ * The real character count `wpm()` needs for one `typing-race` attempt, or
+ * `null` if it can't be resolved. The stored response never carries each
+ * word's actual text (only i/ok/ms/retries/missedExpected) — but typing kinds
+ * are authored-only (never AI-generated), so the real words are always
+ * reachable from the in-repo content registry via the durable
+ * (programSlug, activityId) pair the attempt itself recorded. No DB join, and
+ * NEVER an approximated/invented length: a row that can't resolve (null
+ * programSlug on a pre-migration attempt, a since-renamed/removed activity,
+ * or an id repurposed to a different kind) returns null and the caller skips
+ * it, the same fail-closed posture as a malformed response.
+ */
+function resolveTypingRaceChars(
+  programSlug: string | null,
+  activityId: string,
+  wordCount: number,
+  wordIndexes: readonly number[],
+): number | null {
+  if (!programSlug) return null;
+  const program = getProgram(programSlug);
+  if (!program) return null;
+  const ctx = findActivity(program, activityId);
+  if (!ctx || ctx.activity.kind !== "typing-race") return null;
+  const words = ctx.activity.config.words;
+  if (wordCount !== words.length) return null;
+
+  let totalChars = 0;
+  for (const index of wordIndexes) {
+    const word = words[index];
+    if (word === undefined) return null;
+    totalChars += word.length;
+  }
+  return totalChars;
+}
+
+/**
  * Typing-pace series for the parent dashboard (E7): `typing-race` attempts
  * only — the one typing kind with a whole-round `elapsedMs` and a rate
- * intent (Word Write/Echo `ms` values are per-item, not a rate).
- *
- * The stored response never carries each word's actual character count —
- * only the activity's config has that, and this reader deliberately doesn't
- * join it (parent reads stay response-only, matching `getFluencyHistory`).
- * Every item in a well-formed response DOES represent a word the child
- * finished (the race can't advance past an unfinished word), so each is
- * approximated at the standard 5-character "word" `wpm()` itself already
- * assumes (see its doc comment) rather than inventing a fake per-word length.
+ * intent (Word Write/Echo `ms` values are per-item, not a rate). Real
+ * character counts are resolved via {@link resolveTypingRaceChars} so the
+ * parent chart agrees with the same `wpm()` the child's live in-round pace
+ * comet already uses — never an approximation.
  *
  * Returns one point per day using that day's MAX wpm, oldest→newest,
  * mirroring `getLearnerFluency`'s bestByDay shape.
@@ -1431,18 +1462,30 @@ export async function getTypingRateHistory(
     learnerId,
     async () => {
       const rows = await getDb()
-        .select({ day: attempt.day, kind: attempt.kind, response: attempt.response })
+        .select({
+          day: attempt.day,
+          kind: attempt.kind,
+          response: attempt.response,
+          programSlug: attempt.programSlug,
+          activityId: attempt.activityId,
+        })
         .from(attempt)
         .where(and(eq(attempt.learnerId, learnerId), eq(attempt.kind, "typing-race")))
         .orderBy(desc(attempt.createdAt))
         .limit(limit);
 
       const bestByDay = new Map<string, number>();
-      for (const { day, response } of rows.reverse()) {
+      for (const { day, response, programSlug, activityId } of rows.reverse()) {
         const parsed = typingRaceResponseSchema.safeParse(response);
         if (!parsed.success) continue;
-        const approxChars = parsed.data.words.length * 5;
-        const rate = wpm(approxChars, parsed.data.elapsedMs);
+        const totalChars = resolveTypingRaceChars(
+          programSlug,
+          activityId,
+          parsed.data.words.length,
+          parsed.data.words.map((word) => word.i),
+        );
+        if (totalChars === null) continue;
+        const rate = wpm(totalChars, parsed.data.elapsedMs);
         const prior = bestByDay.get(day);
         if (prior === undefined || rate > prior) bestByDay.set(day, rate);
       }
