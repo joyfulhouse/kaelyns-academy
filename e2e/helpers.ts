@@ -193,6 +193,76 @@ export async function addChild(page: Page, name: string): Promise<void> {
   await expect(page.getByRole("link", { name }).first()).toBeVisible({ timeout: 30_000 });
 }
 
+/**
+ * Restrict a learner's enrolment to exactly these units, by title, on the
+ * learner's parent page.
+ *
+ * This is how a signed-in journey reaches a unit that isn't first in the
+ * program. Unit sequencing runs INSIDE parent curation and always opens the
+ * first curated segment, so assigning a unit makes it immediately playable for
+ * a learner with no completions — the same skip-ahead lever a real grown-up
+ * uses. Without it, a freshly created learner can only open unit 1 (plus the
+ * check-ins, which are never sequenced), and a deep link anywhere else lands on
+ * "Not open yet!".
+ *
+ * Leaves every other unit off, so pass every unit the test will visit.
+ */
+export async function curateUnits(
+  page: Page,
+  learnerName: string,
+  unitTitles: string[],
+): Promise<void> {
+  await page.goto("/parent/learners");
+  await page.getByRole("link", { name: learnerName }).first().click();
+
+  const wanted = new Set(unitTitles);
+  const section = page
+    .locator("div")
+    .filter({ has: page.getByText("Active units", { exact: true }) })
+    .last();
+  // `count()` does not auto-wait, so it would read 0 while the client-side
+  // navigation to the learner page is still in flight. Anchor on a real
+  // expectation first.
+  await expect(section.getByText("Active units", { exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  const switches = section.getByRole("switch");
+  const count = await switches.count();
+  if (count === 0) throw new Error("No unit switches found on the learner page");
+
+  const seen: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const toggle = switches.nth(index);
+    // Switch labels its button with aria-labelledby pointing at a sibling span,
+    // so the name is on neither aria-label nor the button's own text.
+    const label = (
+      await toggle.evaluate((node) => {
+        const id = node.getAttribute("aria-labelledby");
+        return (id && node.ownerDocument.getElementById(id)?.textContent) || "";
+      })
+    ).trim();
+    seen.push(label);
+    const shouldBeOn = wanted.has(label);
+    const isOn = (await toggle.getAttribute("aria-checked")) === "true";
+    if (isOn !== shouldBeOn) await toggle.click();
+  }
+
+  const missing = unitTitles.filter((title) => !seen.includes(title));
+  if (missing.length > 0) {
+    throw new Error(`No unit switch named ${missing.join(", ")}; saw: ${seen.join(", ")}`);
+  }
+
+  await page.getByRole("button", { name: "Save config" }).click();
+  await expect(page.getByText("Saved.", { exact: true })).toBeVisible({ timeout: 30_000 });
+
+  // Leave the caller where it started — on the learners list — so this can be
+  // dropped into an existing journey without shifting the steps after it.
+  await page.goto("/parent/learners");
+  await expect(page.getByRole("link", { name: learnerName }).first()).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
 /** Seed the account learner choice deterministically before entering kid routes. */
 export async function selectAccountLearner(page: Page, displayName: string): Promise<void> {
   const href = await page.getByRole("link", { name: displayName }).first().getAttribute("href");
