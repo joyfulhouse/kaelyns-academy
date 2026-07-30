@@ -6,11 +6,13 @@ const {
   getLearnerCurriculum,
   getLearnerRewards,
   getLearnerFluency,
+  getLearnerTypingInsights,
 } = vi.hoisted(() => ({
   getLearnerDetail: vi.fn(),
   getLearnerCurriculum: vi.fn(),
   getLearnerRewards: vi.fn(),
   getLearnerFluency: vi.fn(),
+  getLearnerTypingInsights: vi.fn(),
 }));
 
 vi.mock("@/app/(parent)/data", () => ({
@@ -18,6 +20,7 @@ vi.mock("@/app/(parent)/data", () => ({
   getLearnerCurriculum,
   getLearnerRewards,
   getLearnerFluency,
+  getLearnerTypingInsights,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -73,6 +76,7 @@ beforeEach(() => {
     latest: 21,
     best: 21,
   });
+  getLearnerTypingInsights.mockResolvedValue(null);
 });
 
 describe("LearnerDetailPage reading fluency", () => {
@@ -93,5 +97,53 @@ describe("LearnerDetailPage reading fluency", () => {
   it("keeps child PII out of page metadata", () => {
     expect(metadata.title).toBe("Learner");
     expect(JSON.stringify(metadata)).not.toContain(LEARNER.displayName);
+  });
+});
+
+describe("LearnerDetailPage typing insights", () => {
+  it("renders nothing when the reader returns null (locked or unowned)", async () => {
+    getLearnerTypingInsights.mockResolvedValue(null);
+
+    const html = renderToStaticMarkup(
+      await LearnerDetailPage({ params: Promise.resolve({ id: "L1" }) }),
+    );
+
+    expect(getLearnerTypingInsights).toHaveBeenCalledWith("L1");
+    expect(html).not.toContain("Typing");
+  });
+
+  it("renders the section with the components' own empty states when arrays are empty", async () => {
+    getLearnerTypingInsights.mockResolvedValue({
+      learner: LEARNER,
+      misses: [],
+      rate: [],
+    });
+
+    const html = renderToStaticMarkup(
+      await LearnerDetailPage({ params: Promise.resolve({ id: "L1" }) }),
+    );
+
+    expect(html).toContain("Typing");
+    expect(html).toContain("No Key Camp practice yet");
+    expect(html).toContain("No typing speed yet");
+    expect(html.indexOf("Reading fluency")).toBeLessThan(html.indexOf("Typing"));
+    expect(html.indexOf("Typing")).toBeLessThan(html.indexOf("Check-in results marker"));
+  });
+
+  it("does not pass the learner's name into either typing component", async () => {
+    getLearnerTypingInsights.mockResolvedValue({
+      learner: LEARNER,
+      misses: [{ key: "a", misses: 3, attempts: 5 }],
+      rate: [{ day: "2026-07-12", wpm: 12, label: "Yesterday" }],
+    });
+
+    const html = renderToStaticMarkup(
+      await LearnerDetailPage({ params: Promise.resolve({ id: "L1" }) }),
+    );
+
+    const typingSectionStart = html.indexOf('id="typing-insights-title"');
+    const typingSectionEnd = html.indexOf("</section>", typingSectionStart);
+    const typingSectionHtml = html.slice(typingSectionStart, typingSectionEnd);
+    expect(typingSectionHtml).not.toContain(LEARNER.displayName);
   });
 });
