@@ -76,11 +76,9 @@ describe("startedUnitIds", () => {
   it("ignores activity ids that belong to no unit", () => {
     expect(startedUnitIds(PROGRAM, new Set(["ghost"]))).toEqual(new Set());
   });
-  // An empty unit can never be completed, so treating it as a barrier would
-  // strand the learner behind it forever.
-  it("treats a unit with no activities as already started", () => {
+  it("does not count an empty unit as started (playableUnitIds owns that rule)", () => {
     const withEmpty = [U("empty", []), U("next", ["n1"])];
-    expect(startedUnitIds(withEmpty, new Set())).toEqual(new Set(["empty"]));
+    expect(startedUnitIds(withEmpty, new Set())).toEqual(new Set());
   });
 });
 
@@ -164,6 +162,24 @@ describe("playableUnitIds — sequential programs", () => {
     const withEmptyFirst = [U("empty", []), U("next", ["n1"]), U("last", ["l1"])];
     const open = playableUnitIds(withEmptyFirst, null, new Set(), SEQ);
     expect(open.has("next")).toBe(true);
+    expect(open.has("last")).toBe(false);
+  });
+
+  it("advances past consecutive empty units (needs a fixed point)", () => {
+    const units = [U("e1", []), U("e2", []), U("real", ["r1"]), U("after", ["a1"])];
+    const open = playableUnitIds(units, null, new Set(), SEQ);
+    expect(open.has("real")).toBe(true);
+    expect(open.has("after")).toBe(false);
+  });
+
+  // An empty unit must not BLOCK, but must not pre-OPEN either: a unit emptied
+  // by a bad edit (assembly silently drops invalid activities) would otherwise
+  // open itself and its successor on day one, straight past the locked units
+  // in between — exactly the skip sequencing exists to prevent.
+  it("does not punch a hole through the middle of the sequence", () => {
+    const units = [U("one", ["a1"]), U("two", ["b1"]), U("gap", []), U("four", ["d1"])];
+    const open = playableUnitIds(units, null, new Set(), SEQ);
+    expect(open).toEqual(new Set(["one"]));
   });
 
   it("opens both branch heads together and keeps the far branch's tail shut", () => {

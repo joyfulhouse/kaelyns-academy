@@ -79,11 +79,6 @@ export function curatedUnits<T extends CuratableUnit>(
  * A unit is "started" once ANY activity in it has been completed — the forgiving
  * posture the map has always used. Key presence counts, so a 0-star finish still
  * opens what comes next.
- *
- * A unit with NO activities counts as started: it can never be completed, so
- * treating it as a barrier would strand the learner behind it forever. Authored
- * trees can legitimately contain one (the DB editor allows empty lessons, and a
- * malformed activity can be dropped during assembly).
  */
 export function startedUnitIds<T extends CompletableUnit>(
   units: readonly T[],
@@ -91,17 +86,17 @@ export function startedUnitIds<T extends CompletableUnit>(
 ): Set<string> {
   const started = new Set<string>();
   for (const unit of units) {
-    let hasActivity = false;
-    let touched = false;
-    for (const lesson of unit.lessons) {
-      for (const activity of lesson.activities) {
-        hasActivity = true;
-        if (completedActivityIds.has(activity.id)) touched = true;
-      }
-    }
-    if (touched || !hasActivity) started.add(unit.id);
+    const touched = unit.lessons.some((lesson) =>
+      lesson.activities.some((activity) => completedActivityIds.has(activity.id)),
+    );
+    if (touched) started.add(unit.id);
   }
   return started;
+}
+
+/** A unit holding no activities at all — nothing in it can ever be completed. */
+function isEmpty<T extends CompletableUnit>(unit: T): boolean {
+  return unit.lessons.every((lesson) => lesson.activities.length === 0);
 }
 
 /**
@@ -136,9 +131,25 @@ export function playableUnitIds<T extends CompletableUnit>(
   const visible = curatedUnits(units, activeUnitKeys);
   if (!options.sequential) return new Set(visible.map((unit) => unit.id));
 
-  const started = startedUnitIds(visible, completedActivityIds);
-  const open = computeUnlockedIds(visible, started);
-  for (const id of started) open.add(id);
+  const played = startedUnitIds(visible, completedActivityIds);
+  // An empty unit can never be completed, so it must not BLOCK what follows —
+  // but it must not pre-OPEN it either. Treating it as started unconditionally
+  // would punch a hole straight through the sequence, opening the empty unit and
+  // its successor on day one while the units between stayed locked. That is
+  // reachable in production: content is DB-preferred and assembly silently drops
+  // an activity row that fails validation. So an empty unit only counts as
+  // started once it is itself open, which needs a fixed point — each pass can
+  // open another empty unit, which can in turn open the next.
+  const empty = visible.filter(isEmpty).map((unit) => unit.id);
+  const started = new Set(played);
+  let open: Set<string>;
+  for (;;) {
+    open = computeUnlockedIds(visible, started);
+    for (const id of played) open.add(id);
+    const advanced = empty.filter((id) => open.has(id) && !started.has(id));
+    if (advanced.length === 0) break;
+    for (const id of advanced) started.add(id);
+  }
   for (const unit of visible) {
     if (unit.checkpoint === "baseline") open.add(unit.id);
   }

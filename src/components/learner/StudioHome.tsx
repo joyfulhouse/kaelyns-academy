@@ -466,17 +466,13 @@ function WorldMap({
 
   // Canonicalize the completed set once so every tutor view (map ratio, rung,
   // hero, and generated shelf) advances from the same durable activity ids.
-  const completedKey = [...completed].sort().join("|");
-  const completedIds = useMemo(
-    () => new Set(completedKey ? completedKey.split("|") : []),
-    [completedKey],
-  );
+
 
   // The tutor's per-strand state + ranked next-best. Both derive purely from the
   // engine, so they only become meaningful once state is read (ready).
   const strands = useMemo(
-    () => (ready ? strandProgress(program, skillState, completedIds) : []),
-    [completedIds, program, skillState, ready],
+    () => (ready ? strandProgress(program, skillState, completed) : []),
+    [completed, program, skillState, ready],
   );
   const strandByUnitId = useMemo(
     () => new Map(strands.map((s) => [s.unit.id, s])),
@@ -509,8 +505,8 @@ function WorldMap({
   );
 
   const globalRecommendations = useMemo(
-    () => (ready ? nextBest(program, skillState, completedIds) : []),
-    [completedIds, program, skillState, ready],
+    () => (ready ? nextBest(program, skillState, completed) : []),
+    [completed, program, skillState, ready],
   );
   const {
     recommendations,
@@ -539,7 +535,7 @@ function WorldMap({
   // so there's always a warm next thing. `completed` already includes played
   // shelf ids (durable credit), so a done generated item is never re-offered.
   // Empty in guest mode (generatedShelf is always []), so guests see no card here.
-  const questGeneratedPick = nextGeneratedPick(curatedGeneratedShelf, completedIds);
+  const questGeneratedPick = nextGeneratedPick(curatedGeneratedShelf, completed);
   const generatedPick = topPick ? undefined : questGeneratedPick;
   const authoredQuestCandidates = useMemo(
     () => buildAuthoredQuestCandidates(program, unlockedIds),
@@ -561,7 +557,7 @@ function WorldMap({
     return [
       ...rankedAuthoredQuestCandidates,
       ...curatedGeneratedShelf
-        .filter((item) => !completedIds.has(item.id))
+        .filter((item) => !completed.has(item.id))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
         .map((item) => ({
           href: `/learn/${program.slug}/generated/${item.id}`,
@@ -572,7 +568,7 @@ function WorldMap({
         (candidate) => !rankedAuthoredHrefs.has(candidate.href),
       ),
     ];
-  }, [authoredQuestCandidates, completedIds, curatedGeneratedShelf, program.slug, rankedAuthoredQuestCandidates]);
+  }, [authoredQuestCandidates, completed, curatedGeneratedShelf, program.slug, rankedAuthoredQuestCandidates]);
 
   // Fork rendering v1 (spec §4.4): a single-column path, plus a "choose your
   // path" divider and a small "Path N" pill per branch. Segment once and derive
@@ -763,7 +759,13 @@ function WorldMap({
 
       <div className="mt-10 flex flex-col items-center gap-2 text-center">
         <Mascot mood="happy" size={64} />
-        <p className="text-base text-ink-faint">More worlds open as you play.</p>
+        {/* Only true where worlds actually unlock in order. On a parallel-strand
+            map every world is already open, so this would be a small lie. */}
+        <p className="text-base text-ink-faint">
+          {isSequentialProgram(program.slug)
+            ? "More worlds open as you play."
+            : "Pick any world you like."}
+        </p>
       </div>
     </AppShellKid>
   );

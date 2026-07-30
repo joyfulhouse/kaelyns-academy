@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Activity, Program } from "@/content";
 import { getProgram } from "@/content";
 import type { SkillState } from "@/lib/tutor";
@@ -177,6 +177,18 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   // active program's slug is all guest mode needs to keep worlds separate.
   const guestSkill = useSkillState(guestLearnerId, programSlug);
   const guestProgress = useProgress(guestLearnerId, programSlug);
+  // A stable `completed` set for guest mode. Rebuilding it per render would give
+  // every downstream memo a new identity (unit unlock, adventure curation, quest
+  // candidates), so key it on a collision-free JSON serialization of the sorted
+  // ids — never a delimiter join, which an id containing that delimiter would
+  // silently corrupt.
+  const guestCompletedKey = JSON.stringify(
+    guestProgress.ready ? [...completedFromProgress(guestProgress, programSlug)].sort() : [],
+  );
+  const guestCompleted = useMemo(
+    () => new Set(JSON.parse(guestCompletedKey) as string[]),
+    [guestCompletedKey],
+  );
   // These callbacks are stable (each guest hook memoizes them), so depending on
   // them keeps `record`'s identity stable across renders.
   const { record: guestRecord } = guestSkill;
@@ -472,14 +484,9 @@ export function useLearnerState(guestLearnerId: string, programSlug: string): Us
   }
 
   if (mode === "guest") {
-    const completed = new Set<string>();
-    if (guestProgress.ready) {
-      // useProgress tracks completion via key presence; surface it as a set.
-      for (const id of completedFromProgress(guestProgress, programSlug)) completed.add(id);
-    }
     return {
       skillState: guestSkill.skillState,
-      completed,
+      completed: guestCompleted,
       getStars: guestProgress.getStars,
       ready: guestSkill.ready && guestProgress.ready,
       mode,

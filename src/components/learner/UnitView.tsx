@@ -113,8 +113,10 @@ export function UnitView({
   // Only for a unit that came FROM the pinned tree: `effectiveUnit` falls back to
   // the published `ssrUnit` when the key is absent from the learner's version
   // (Fix-E), and that unit is by construction not in `program.units`, so gating it
-  // would always read "locked" — a lie, since no amount of play opens it. The
-  // activity route calls that case "moved"; this must agree.
+  // would always read "locked" — a lie, since no amount of play opens it. That
+  // drifted case keeps its pre-existing Fix-E behavior (the published unit still
+  // renders, and its activities resolve to "moved" individually); sequencing
+  // simply has nothing to say about it.
   const pinnedUnit = program ? getUnit(program, unitKey) : undefined;
   if (
     mode === "account" &&
