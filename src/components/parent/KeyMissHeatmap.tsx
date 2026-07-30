@@ -18,26 +18,29 @@ const ROW_PADDING: Record<(typeof ROW_ORDER)[number], string> = {
   bottom: "pl-6",
 };
 
-type HeatTier = "none" | "low" | "mid" | "high" | "peak";
+type HeatTier = "none" | "low" | "mid" | "peak";
 
 /**
- * Static class map — Tailwind's JIT cannot see constructed strings. Every
- * tone reaches >=3:1 against the paper page background and keeps its glyph
- * >=4.5:1 against its own fill, verified with a spec-validated OKLCH ->
- * linear-sRGB -> WCAG-relative-luminance implementation (canonical check:
- * oklch(62.8% 0.25768 29.23) round-trips to srgb 255,0,0):
- * ink/honey 8.24:1, ink/honey-deep 5.71:1, ink/coral 4.66:1,
- * paper/coral-deep 4.88:1. Ink reads on the three lighter tiers; only the
- * deepest tier is dark enough to need paper-coloured text — paper on
- * honey-deep (2.63:1) and paper on coral (3.22:1) both fail 4.5:1 and must
- * never be used. Tiers also step up in font-weight so a colour-blind parent
- * can tell "a lot" from "a little" without relying on hue alone.
+ * Static class map — Tailwind's JIT cannot see constructed strings. Four
+ * tiers, not five: `honey-deep` was dropped after an adjacent-tier audit
+ * found honey-deep/coral only 1.23:1 apart on lightness alone, below the
+ * 1.3:1 bar every other step clears. Every remaining tone reaches >=3:1
+ * against the paper page background, keeps its glyph >=4.5:1 against its
+ * own fill, AND is now >=1.3:1 apart from its neighbours on the ladder —
+ * verified with a spec-validated OKLCH -> linear-sRGB -> WCAG-relative-
+ * luminance implementation (canonical check: oklch(62.8% 0.25768 29.23)
+ * round-trips to srgb 255,0,0): glyphs ink/honey 8.24:1, ink/coral 4.66:1,
+ * paper/coral-deep 4.88:1; adjacent fills paper-sunk/honey 1.56:1,
+ * honey/coral 1.77:1, coral/coral-deep 1.51:1. Ink reads on the two lighter
+ * tiers; only the deepest tier is dark enough to need paper-coloured text —
+ * paper on honey (1.82:1) and paper on coral (3.22:1) both fail 4.5:1 and
+ * must never be used. Tiers also step up in font-weight so a colour-blind
+ * parent can tell "a lot" from "a little" without relying on hue alone.
  */
 const HEAT_TONE: Record<HeatTier, string> = {
   none: "bg-paper-sunk text-ink",
   low: "bg-honey text-ink font-medium",
-  mid: "bg-honey-deep text-ink font-semibold",
-  high: "bg-coral text-ink font-bold",
+  mid: "bg-coral text-ink font-bold",
   peak: "bg-coral-deep text-paper font-black",
 };
 
@@ -59,15 +62,15 @@ function keyName(char: string): string {
  * siblings. A child who missed one key twice and nothing else must read as
  * nearly cool, not the same alarming deep-coral as a child struggling badly.
  * Cut points are tuned for a young typist's practice volume (a session is a
- * handful of prompts, not hundreds): 1-2 misses is an ordinary slip, 11+ is
- * a key worth a parent's attention. The raw count is always available in
- * the cell title and the container's aria-label, never lost to the tier.
+ * handful of prompts, not hundreds): 1-2 misses is an ordinary slip, 6+ is
+ * already the actionable signal for a key worth a parent's attention — the
+ * exact count is never lost, it stays in the cell title and the container's
+ * aria-label regardless of which tier it lands in.
  */
 function heatTier(misses: number): HeatTier {
   if (misses <= 0) return "none";
   if (misses <= 2) return "low";
   if (misses <= 5) return "mid";
-  if (misses <= 10) return "high";
   return "peak";
 }
 

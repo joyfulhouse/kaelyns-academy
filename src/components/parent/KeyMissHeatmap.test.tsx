@@ -13,6 +13,13 @@ const MISSES = [
  * only fixture shape that can catch a regression to relative scaling. */
 const LOW_PEAK_MISSES = [{ key: "s", misses: 2, attempts: 10 }];
 
+/** Pins the collapsed four-tier boundary: 6 is the new floor of "peak"
+ * (the old five-tier scale put 6-10 in a separate "high" tier). */
+const SIX_AND_TWELVE_MISSES = [
+  { key: "d", misses: 6, attempts: 20 },
+  { key: "a", misses: 12, attempts: 40 },
+];
+
 function tagFor(html: string, key: string): string {
   const match = html.match(new RegExp(`<span[^>]*data-key="${key}"[^>]*>`));
   if (!match) throw new Error(`no cell rendered for key "${key}"`);
@@ -58,6 +65,17 @@ describe("KeyMissHeatmap", () => {
     expect(cell).toContain("bg-honey");
     expect(cell).not.toContain("bg-coral-deep");
     expect(cell).not.toContain("font-black");
+  });
+
+  it("puts both a 6-miss key and a 12-miss key at the peak tone, the collapsed four-tier boundary", () => {
+    const html = renderToStaticMarkup(<KeyMissHeatmap misses={SIX_AND_TWELVE_MISSES} />);
+    const six = tagFor(html, "d");
+    const twelve = tagFor(html, "a");
+
+    expect(six).toContain("bg-coral-deep");
+    expect(six).toContain("font-black");
+    expect(twelve).toContain("bg-coral-deep");
+    expect(twelve).toContain("font-black");
   });
 
   it("renders an honest empty state with no fabricated heat when there is no data", () => {
