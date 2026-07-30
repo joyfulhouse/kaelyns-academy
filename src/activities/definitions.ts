@@ -33,6 +33,17 @@ export interface ServerActivityDefinition<Config = unknown, Response = unknown> 
   score: (config: Config, response: Response) => ActivityScore;
   skillsAffected: (config: Config) => SkillTag[];
   validateGenerated?: (config: Config) => string | null;
+  /**
+   * Optional server-only provenance check, run after the response schema
+   * parses and before scoring: returns a reason string when the response
+   * could not have come from honest play, else null. Opt-in — kinds that omit
+   * it (oral-reading's never-red design, journal-prompt, etc.) are completely
+   * unaffected. Exists because fail-closed SCORING (a kind's own `score`
+   * quietly downgrading an implausible response to zero evidence) does not
+   * protect STORAGE: `parseAndScoreActivity` still returned `ok: true` for a
+   * schema-valid-but-implausible response, so the caller persisted it.
+   */
+  validateResponse?: (config: Config, response: Response) => string | null;
 }
 
 type ServerActivityLogic<Config, Response> = Omit<
@@ -53,6 +64,7 @@ function defineServerActivity<Config, Response>(
     score: logic.score,
     skillsAffected: logic.skillsAffected,
     ...(logic.validateGenerated ? { validateGenerated: logic.validateGenerated } : {}),
+    ...(logic.validateResponse ? { validateResponse: logic.validateResponse } : {}),
   };
   return definition as unknown as ServerActivityDefinition;
 }

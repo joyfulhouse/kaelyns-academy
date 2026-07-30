@@ -26,7 +26,7 @@ import {
   type TypingInsights,
 } from "@/app/(parent)/data";
 import { FluencyChart } from "@/components/parent/FluencyChart";
-import { KeyMissHeatmap } from "@/components/parent/KeyMissHeatmap";
+import { KeysToPractice } from "@/components/parent/KeysToPractice";
 import { TypingRateChart } from "@/components/parent/TypingRateChart";
 import { CurriculumPanel } from "@/components/parent/CurriculumPanel";
 import { RewardsPanel } from "@/components/parent/RewardsPanel";
@@ -239,15 +239,15 @@ function TypingInsightsCard({ insights }: { insights: TypingInsights | null }) {
             Typing
           </h2>
           <p className="mt-1 max-w-prose text-sm text-ink-soft">
-            The keys still finding their fingers, shown as a miss count, not a percentage, since
-            only Key Camp tracks attempts per key.
+            The keys most often missed across recent typing rounds — a miss count, never a
+            percentage.
           </p>
         </div>
       </div>
 
       <div className="mt-5 grid gap-5 sm:grid-cols-2">
         <div className="rounded-xl border border-line bg-paper-raised p-5 sm:p-6">
-          <KeyMissHeatmap misses={insights.misses} />
+          <KeysToPractice misses={insights.misses} />
         </div>
         <div className="rounded-xl border border-line bg-paper-raised p-5 sm:p-6">
           <TypingRateChart points={insights.rate} />

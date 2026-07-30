@@ -436,6 +436,7 @@ vi.mock("drizzle-orm", () => ({
 
 vi.mock("@/lib/content/repository", () => ({
   resolveAccountLearnerProgram: vi.fn(),
+  getProgramVersionAsync: vi.fn(),
 }));
 
 import {
@@ -456,7 +457,7 @@ import {
   recordOralReadingAttempt,
   redoCheckpoint,
 } from "./store";
-import { resolveAccountLearnerProgram } from "@/lib/content/repository";
+import { getProgramVersionAsync, resolveAccountLearnerProgram } from "@/lib/content/repository";
 import type { ActivityScore, Program } from "@/content";
 
 const input = {
@@ -2094,7 +2095,7 @@ describe("getTypingMissHistory (owned per-key miss/attempt tallies)", () => {
     typingAttemptRows.value = [];
   });
 
-  it("folds typing-keys prompts keyed to the EXPECTED key, retries as misses", async () => {
+  it("folds typing-keys prompts keyed to the EXPECTED key, one miss per prompt missed at least once (not a retry count)", async () => {
     typingAttemptRows.value = [
       {
         learnerId: "L1",
@@ -2110,9 +2111,34 @@ describe("getTypingMissHistory (owned per-key miss/attempt tallies)", () => {
       },
     ];
 
+    // "s" was missed on exactly one prompt (2 retries within it) — misses: 1,
+    // not 2. Under the old retries-summed semantics this would have been 2.
     await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
       { key: "a", misses: 0, attempts: 1 },
-      { key: "s", misses: 2, attempts: 1 },
+      { key: "s", misses: 1, attempts: 1 },
+    ]);
+  });
+
+  it("normalizes misses to ONE unit across kinds: a single typing-keys prompt with 6 retries contributes 1 miss, not 6", async () => {
+    // Discriminates the old code (misses += prompt.retries, so this fixture
+    // would have scored 6) from the fixed code (one miss per missed prompt).
+    // A single fumbled-but-since-mastered prompt must never outrank a key
+    // missed across every one of ten word-typing rounds (foldMissedExpected
+    // already contributes exactly 1 per item).
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-keys",
+        day: "2026-07-20",
+        response: {
+          prompts: [{ key: "j", ok: true, retries: 6 }],
+        },
+        createdAt: new Date("2026-07-20T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
+      { key: "j", misses: 1, attempts: 1 },
     ]);
   });
 
@@ -2287,6 +2313,9 @@ describe("getTypingRateHistory (owned typing-race wpm series)", () => {
     ops.length = 0;
     learnerRows.value = [{ id: "L1" }];
     typingAttemptRows.value = [];
+    // Default: an unconfigured version pin never resolves (undefined) — each
+    // test that needs a version to resolve sets its own mockResolvedValueOnce.
+    vi.mocked(getProgramVersionAsync).mockReset();
   });
 
   // "home-race" is a REAL authored keyboard-club activity
@@ -2476,6 +2505,189 @@ describe("getTypingRateHistory (owned typing-race wpm series)", () => {
 
     await expect(getTypingRateHistory("acct-2", "L1")).resolves.toEqual([]);
     expect(ops.filter((entry) => entry.table === "attempt")).toEqual([]);
+  });
+
+  // A minimal fake versioned Program tree, standing in for a DB-resolved
+  // historical version whose "home-race" word list DIFFERS from the current
+  // static registry's (12 chars total here, vs. the real "home-race"'s 23).
+  function fakeVersionedProgram(words: string[]): Program {
+    return {
+      slug: "keyboard-club",
+      title: "t",
+      subtitle: "",
+      ageBand: "",
+      summary: "",
+      units: [
+        {
+          id: "u1",
+          order: 1,
+          title: "U",
+          emoji: "",
+          world: "sunshine",
+          bigIdea: "",
+          phonicsFocus: "",
+          mathFocus: "",
+          project: "",
+          lessons: [
+            {
+              id: "l1",
+              order: 1,
+              title: "L",
+              activities: [
+                {
+                  id: "home-race",
+                  title: "Race",
+                  kind: "typing-race",
+                  band: "ready",
+                  skillTags: [],
+                  config: { instruction: "Race", words, pacerWpm: 10 },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  // Branch 1: programVersionId set AND resolvable → use THAT version's own
+  // word lengths, never the current static registry's.
+  it("resolves a pinned version's OWN authored word lengths, not the current registry's", async () => {
+    vi.mocked(getProgramVersionAsync).mockResolvedValueOnce(
+      fakeVersionedProgram(["aa", "bb", "cc", "dd", "ee", "ff"]), // 12 chars
+    );
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        programVersionId: "PV-2026-05",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    // 12 chars / 60s = wpm 2 — the CURRENT registry's real "home-race" (23
+    // chars) would have produced wpm 5. This fixture fails against code that
+    // ignores the pin and always resolves via the static registry.
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-21", wpm: 2 },
+    ]);
+    expect(getProgramVersionAsync).toHaveBeenCalledWith("PV-2026-05");
+  });
+
+  // Branch 2: programVersionId set but the resolved word count disagrees
+  // with what the response implies → skip, never chart it anyway.
+  it("skips a pinned version whose resolved word count disagrees with the response", async () => {
+    vi.mocked(getProgramVersionAsync).mockResolvedValueOnce(
+      fakeVersionedProgram(["aa", "bb"]), // only 2 words; the response has 6
+    );
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        programVersionId: "PV-2026-05",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([]);
+  });
+
+  // Branch 2b: programVersionId set but the version itself can't resolve at
+  // all (e.g. a repin race, or a version id that no longer exists) → skip.
+  it("skips a pinned version that cannot resolve at all", async () => {
+    // getProgramVersionAsync's default mock (reset in beforeEach) resolves
+    // to undefined — nothing further to configure.
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        programVersionId: "PV-does-not-exist",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([]);
+  });
+
+  // Branch 3: programVersionId NULL → falls back to the current in-repo
+  // registry via (programSlug, activityId), exactly as before version
+  // pinning existed. A null pin is an ABSENCE of version info, not a
+  // mismatch — it must never be skipped on that basis. (The DB schema
+  // documents this column as "Nullable so pre-migration attempts remain
+  // readable" — real pre-migration rows carry no pin at all.)
+  it("does NOT skip a null-pin (pre-migration) attempt — falls back to the current registry, exactly as before version pinning existed", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        programVersionId: null,
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-21", wpm: 5 },
+    ]);
+    expect(getProgramVersionAsync).not.toHaveBeenCalled();
+  });
+
+  it("never charts an implausible race response, even though it passes schema validation", async () => {
+    // "ask" is the real word at index 0; "x" is not one of its characters, so
+    // this could not have come from honest play. Before this fix, the series
+    // only checked safeParse and would have charted this attempt anyway.
+    const implausibleWords = [
+      { i: 0, ok: false, ms: 700, retries: 1, missedExpected: ["x"] },
+      ...HOME_RACE_WORDS.slice(1),
+    ];
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: implausibleWords, elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([]);
+  });
+
+  it("clamps an absurd rate (near-zero elapsedMs) instead of charting it", async () => {
+    // 23 real chars over 1ms is a client-timing glitch, not a real typing
+    // speed — wpm() alone would compute hundreds of thousands of WPM.
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        programSlug: "keyboard-club",
+        activityId: "home-race",
+        response: { words: HOME_RACE_WORDS, elapsedMs: 1 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-21", wpm: 200 },
+    ]);
   });
 });
 

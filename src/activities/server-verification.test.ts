@@ -215,6 +215,74 @@ describe("parseAndScoreActivity", () => {
     ).toEqual({ ok: false, reason: "unauthorized-skill" });
   });
 
+  it("§8: rejects a forged lowercase miss against a capital target instead of persisting zero-evidence storage (typing-echo)", () => {
+    // Codex repro: target "Fj", forged missedExpected ["f"] (lowercase) — "Fj"
+    // never contains lowercase "f", so this could not have come from honest
+    // play. Before the validateResponse hook, scoring alone silently
+    // downgraded this to zero evidence but parseAndScoreActivity still
+    // returned ok:true, so the caller persisted the forged item.
+    const config = {
+      instruction: "Type these.",
+      sequences: ["Fj", "as", "kl"],
+    };
+    const response = {
+      sequences: [
+        { i: 0, ok: false, ms: 500, retries: 1, missedExpected: ["f"] },
+        { i: 1, ok: true, ms: 400, retries: 0, missedExpected: [] },
+        { i: 2, ok: true, ms: 400, retries: 0, missedExpected: [] },
+      ],
+    };
+
+    expect(
+      parseAndScoreActivity("typing-echo", config, response, ["typing.words.familiar"]),
+    ).toEqual({ ok: false, reason: "invalid-response" });
+  });
+
+  it("§8: still accepts an honest corrected item (real retry, real miss) for typing-echo", () => {
+    const config = {
+      instruction: "Type these.",
+      sequences: ["Fj", "as", "kl"],
+    };
+    const response = {
+      sequences: [
+        { i: 0, ok: false, ms: 500, retries: 1, missedExpected: ["F"] },
+        { i: 1, ok: true, ms: 400, retries: 0, missedExpected: [] },
+        { i: 2, ok: true, ms: 400, retries: 0, missedExpected: [] },
+      ],
+    };
+
+    expect(
+      parseAndScoreActivity("typing-echo", config, response, ["typing.words.familiar"]),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("§8: leaves oral-reading's never-red participated-unverified path untouched (opt-in hook, not global)", () => {
+    expect(
+      parseAndScoreActivity(
+        "oral-reading",
+        {
+          presentation: "cold",
+          instruction: "Read.",
+          target: "cat",
+          skillTag: "phonics.decode.short-a-cvc",
+        },
+        { attempts: 0, results: [], status: "participated-unverified" },
+        ["phonics.decode.short-a-cvc"],
+      ),
+    ).toEqual({
+      ok: true,
+      config: {
+        presentation: "cold",
+        instruction: "Read.",
+        target: "cat",
+        skillTag: "phonics.decode.short-a-cvc",
+        mode: "word",
+      },
+      response: { attempts: 0, results: [], status: "participated-unverified" },
+      score: { correct: 0, total: 0, stars: 1, skillEvidence: [] },
+    });
+  });
+
   it("rejects an invalid score returned by plugin logic", () => {
     const definition = getServerActivityType("math-tenframe");
     vi.spyOn(definition, "score").mockReturnValue({

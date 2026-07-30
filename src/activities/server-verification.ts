@@ -57,6 +57,14 @@ export function parseAndScoreActivity(
   const parsedResponse = definition.responseSchema.safeParse(rawResponse);
   if (!parsedResponse.success) return { ok: false, reason: "invalid-response" };
 
+  // §8: an opt-in provenance check, ahead of scoring — schema-valid shape is
+  // not the same as honest play. A kind that omits this hook (oral-reading,
+  // journal-prompt) behaves exactly as before.
+  if (definition.validateResponse) {
+    const reason = definition.validateResponse(parsedConfig.data, parsedResponse.data);
+    if (reason !== null) return { ok: false, reason: "invalid-response" };
+  }
+
   const allowedSkills = new Set(allowedSkillTags);
   let affectedSkills: SkillTag[];
   let rawScore: ActivityScore;

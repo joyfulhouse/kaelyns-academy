@@ -35,6 +35,7 @@ import {
   type LearnerSettings,
 } from "@/lib/content/config";
 import { getPublishedVersionId } from "@/lib/content/store";
+import { getProgramVersionAsync } from "@/lib/content/repository";
 import { earnedStarsForAttempt } from "@/lib/rewards/logic";
 import { computePlacement, outcomeToRate, type PlacementVerdict } from "@/lib/placement/placement";
 import { canTransitionStatus, type EnrollmentDetail, type EnrollmentStatus } from "./enrollment";
@@ -47,7 +48,10 @@ import { unitSkills } from "./recommend";
 import { nextSchedule, type ReviewScheduleState } from "./schedule";
 import { responseSchema as oralReadingResponseSchema } from "@/activities/oral-reading/logic";
 import { responseSchema as typingKeysResponseSchema } from "@/activities/typing-keys/logic";
-import { responseSchema as typingWriteResponseSchema } from "@/activities/typing-write/logic";
+import {
+  itemsArePlausible,
+  responseSchema as typingWriteResponseSchema,
+} from "@/activities/typing-write/logic";
 import { responseSchema as typingRaceResponseSchema } from "@/activities/typing-race/logic";
 import { responseSchema as typingEchoResponseSchema } from "@/activities/typing-echo/logic";
 import { wpm } from "@/activities/_shared/typing/wpm";
@@ -1360,8 +1364,15 @@ function foldMissedExpected(
  * simply not recorded), so inventing an `attempts` count for them would
  * misrepresent the child's typing to their parent — those three kinds
  * contribute `misses` only, and a key that appears solely from them always
- * carries `attempts: 0`. Task 7's heatmap must therefore visualize absolute
- * `misses`, not a misses/attempts rate, wherever `attempts` is 0.
+ * carries `attempts: 0`.
+ *
+ * `misses` is ONE UNIT throughout: the number of prompts/items in which the
+ * key was missed at least once — never a raw retry-keystroke count. A
+ * `typing-keys` prompt with `retries: 6` contributes 1 miss (one prompt on
+ * which the key was missed), matching how `foldMissedExpected` already counts
+ * one miss per item regardless of how many characters diverged within it.
+ * Summing raw retries would let one fumbled prompt on an otherwise-mastered
+ * key outrank a key the child cannot type at all.
  *
  * Each stored response is re-parsed with its OWN kind's `responseSchema` (the
  * `getFluencyHistory` precedent) so a malformed/legacy row is skipped rather
@@ -1392,7 +1403,9 @@ export async function getTypingMissHistory(
           for (const prompt of parsed.data.prompts) {
             const entry = tally.get(prompt.key) ?? { attempts: 0, misses: 0 };
             entry.attempts += 1;
-            entry.misses += prompt.retries;
+            // One miss per prompt on which the key was missed at least once —
+            // NOT the retry count (see the doc comment above).
+            entry.misses += prompt.retries > 0 ? 1 : 0;
             tally.set(prompt.key, entry);
           }
         } else if (kind === "typing-write") {
@@ -1418,47 +1431,88 @@ export async function getTypingMissHistory(
 }
 
 /**
- * The real character count `wpm()` needs for one `typing-race` attempt, or
- * `null` if it can't be resolved. The stored response never carries each
- * word's actual text (only i/ok/ms/retries/missedExpected) — but typing kinds
- * are authored-only (never AI-generated), so the real words are always
- * reachable from the in-repo content registry via the durable
- * (programSlug, activityId) pair the attempt itself recorded. No DB join, and
- * NEVER an approximated/invented length: a row that can't resolve (null
- * programSlug on a pre-migration attempt, a since-renamed/removed activity,
- * or an id repurposed to a different kind) returns null and the caller skips
- * it, the same fail-closed posture as a malformed response.
+ * The REAL authored words `wpm()` needs for one `typing-race` attempt, or
+ * `null` if they can't be resolved, from the CURRENT in-repo/static content
+ * registry via the durable (programSlug, activityId) pair the attempt itself
+ * recorded. Used only for the no-pin fallback path (see
+ * {@link resolveTypingRaceWordsForAttempt}) — never for a pinned attempt,
+ * since the registry only ever reflects "now". NEVER an approximated/
+ * invented length: a row that can't resolve (unknown programSlug, a since-
+ * renamed/removed activity, an id repurposed to a different kind, or a
+ * word-count mismatch) returns null and the caller skips it, the same
+ * fail-closed posture as a malformed response.
  */
-function resolveTypingRaceChars(
-  programSlug: string | null,
+function resolveTypingRaceWords(
+  programSlug: string,
   activityId: string,
   wordCount: number,
-  wordIndexes: readonly number[],
-): number | null {
-  if (!programSlug) return null;
+): readonly string[] | null {
   const program = getProgram(programSlug);
   if (!program) return null;
   const ctx = findActivity(program, activityId);
   if (!ctx || ctx.activity.kind !== "typing-race") return null;
   const words = ctx.activity.config.words;
   if (wordCount !== words.length) return null;
-
-  let totalChars = 0;
-  for (const index of wordIndexes) {
-    const word = words[index];
-    if (word === undefined) return null;
-    totalChars += word.length;
-  }
-  return totalChars;
+  return words;
 }
+
+/**
+ * Version-accurate word resolution for one `typing-race` attempt (E8). The
+ * stored response never carries each word's actual text (only
+ * i/ok/ms/retries/missedExpected), and a version bump can change a race's
+ * authored word list — so which words to resolve against depends on the
+ * attempt's OWN `programVersionId`, not on "whatever the registry says now":
+ *
+ *  - `programVersionId` set → resolved through the DB-backed version tree
+ *    for THAT EXACT version via {@link getProgramVersionAsync}, never the
+ *    current/static registry. A version that can't resolve, an activity that
+ *    isn't found or isn't a typing-race kind, or a resolved word count that
+ *    disagrees with what the response implies, all return null (skip —
+ *    never chart a value that can't be justified).
+ *  - `programVersionId` NULL → falls back to the current in-repo/static
+ *    registry via (programSlug, activityId), exactly as before version
+ *    pinning existed. `program_version_id` is documented in the schema as
+ *    "Nullable so pre-migration attempts remain readable" — a null pin is
+ *    an ABSENCE of version information, not evidence of a mismatch, so it
+ *    must never be skipped on that basis alone. Do not "tighten" this later
+ *    into treating null as a drifted pin.
+ */
+async function resolveTypingRaceWordsForAttempt(
+  programSlug: string | null,
+  programVersionId: string | null,
+  activityId: string,
+  wordCount: number,
+): Promise<readonly string[] | null> {
+  if (!programVersionId) {
+    return programSlug ? resolveTypingRaceWords(programSlug, activityId, wordCount) : null;
+  }
+  const program = await getProgramVersionAsync(programVersionId);
+  if (!program) return null;
+  const ctx = findActivity(program, activityId);
+  if (!ctx || ctx.activity.kind !== "typing-race") return null;
+  const words = ctx.activity.config.words;
+  if (wordCount !== words.length) return null;
+  return words;
+}
+
+/** Never chart an absurd rate: `elapsedMs` near zero (a client-timing glitch,
+ *  or a forged short round) would otherwise produce a WPM figure well beyond
+ *  any child's real typing speed and stretch the chart's whole y-axis around
+ *  it. 200 mirrors `FluencyChart`'s WCPM clamp — far above any child, well
+ *  below absurd — so a bogus in-round timing can never distort the series. */
+const MAX_CHARTED_WPM = 200;
 
 /**
  * Typing-pace series for the parent dashboard (E7): `typing-race` attempts
  * only — the one typing kind with a whole-round `elapsedMs` and a rate
- * intent (Word Write/Echo `ms` values are per-item, not a rate). Real
- * character counts are resolved via {@link resolveTypingRaceChars} so the
- * parent chart agrees with the same `wpm()` the child's live in-round pace
- * comet already uses — never an approximation.
+ * intent (Word Write/Echo `ms` values are per-item, not a rate). Real word
+ * text is resolved per-attempt via {@link resolveTypingRaceWordsForAttempt}
+ * (version-pinned when the attempt carries one, current-registry fallback
+ * when it doesn't) so the parent chart agrees with the same `wpm()` the
+ * child's live in-round pace comet already uses — never an approximation.
+ * Also skips any race response `itemsArePlausible` rejects (§8: an
+ * implausible response must never contribute a chart point either), and
+ * clamps the resulting rate to {@link MAX_CHARTED_WPM}.
  *
  * Returns one point per day using that day's MAX wpm, oldest→newest,
  * mirroring `getLearnerFluency`'s bestByDay shape.
@@ -1478,6 +1532,7 @@ export async function getTypingRateHistory(
           kind: attempt.kind,
           response: attempt.response,
           programSlug: attempt.programSlug,
+          programVersionId: attempt.programVersionId,
           activityId: attempt.activityId,
         })
         .from(attempt)
@@ -1486,17 +1541,21 @@ export async function getTypingRateHistory(
         .limit(limit);
 
       const bestByDay = new Map<string, number>();
-      for (const { day, response, programSlug, activityId } of rows.reverse()) {
+      for (const { day, response, programSlug, programVersionId, activityId } of rows.reverse()) {
         const parsed = typingRaceResponseSchema.safeParse(response);
         if (!parsed.success) continue;
-        const totalChars = resolveTypingRaceChars(
+
+        const words = await resolveTypingRaceWordsForAttempt(
           programSlug,
+          programVersionId,
           activityId,
           parsed.data.words.length,
-          parsed.data.words.map((word) => word.i),
         );
-        if (totalChars === null) continue;
-        const rate = wpm(totalChars, parsed.data.elapsedMs);
+        if (words === null) continue;
+        if (!itemsArePlausible(words, parsed.data.words)) continue;
+
+        const totalChars = words.reduce((sum, word) => sum + word.length, 0);
+        const rate = Math.min(MAX_CHARTED_WPM, wpm(totalChars, parsed.data.elapsedMs));
         const prior = bestByDay.get(day);
         if (prior === undefined || rate > prior) bestByDay.set(day, rate);
       }

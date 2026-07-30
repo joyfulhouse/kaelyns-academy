@@ -105,7 +105,7 @@ kaelyns-academy/
 │       ├── parent/                       # DashboardShellParent, AddChildForm, EnrollmentConfigForm,
 │       │                                 #   MarketplaceGrid, ProgramCard, CurriculumPanel, ActivityRowItem,
 │       │                                 #   AssignProgramControl, LearnerDataControls, ProgressReportCard,
-│       │                                 #   KeyMissHeatmap, TypingRateChart (typing insights section)
+│       │                                 #   KeysToPractice, TypingRateChart (typing insights section)
 │       ├── admin/                        # AdminShell, CreateProgramForm, ProgramLifecycleControls,
 │       │                                 #   editor/ (ProgramEditor + Unit/Lesson/Activity/Config fields)
 │       └── pwa/IosInstallHint.tsx        # iOS add-to-home hint (role=status, dismissible)

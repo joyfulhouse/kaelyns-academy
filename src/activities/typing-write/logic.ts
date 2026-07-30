@@ -65,6 +65,20 @@ export function itemsArePlausible(
   });
 }
 
+/**
+ * §8: the opt-in server-provenance hook (see `ServerActivityDefinition`) —
+ * rejects a schema-valid response outright when it could not have come from
+ * honest play, so `parseAndScoreActivity` never persists it. `score` below
+ * keeps its own `itemsArePlausible` check too (defense in depth for direct
+ * callers), but this hook is what stops storage, not just scoring.
+ */
+export function validateResponse(
+  config: TypingWriteConfig,
+  response: TypingWriteResponse,
+): string | null {
+  return itemsArePlausible(config.items, response.items) ? null : "implausible typing response";
+}
+
 export function score(config: TypingWriteConfig, response: TypingWriteResponse): ActivityScore {
   const expected = config.items;
   if (!itemsArePlausible(expected, response.items)) return noEvidence(expected.length);
