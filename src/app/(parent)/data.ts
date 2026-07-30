@@ -11,13 +11,17 @@ import {
   getPendingCheckpointResults,
   getRecentAttempts,
   getSkillState,
+  getTypingMissHistory,
+  getTypingRateHistory,
   listGeneratedAttempts,
   listLearners,
   listEnrollmentsDetailed,
   skillOutcomeCounts,
+  type KeyMissPoint,
   type LearnerRow,
   type PendingCheckpoint,
   type RecentAttempt,
+  type TypingRatePoint,
 } from "@/lib/tutor/store";
 import { withOwnedLearner } from "@/lib/tutor/scope";
 import { getLearnerInterests, listPublishedInterests, type InterestView } from "@/lib/interests/store";
@@ -444,6 +448,49 @@ export async function getLearnerFluency(learnerId: string): Promise<FluencySerie
         };
       },
       null,
+      ),
+    { lockedFallback: () => null },
+  );
+}
+
+/** Parent-ready typing evidence: per-key miss tally plus a dated pace series. */
+export interface TypingInsights {
+  learner: LearnerRow;
+  misses: KeyMissPoint[];
+  rate: (TypingRatePoint & { label: string })[];
+}
+
+/**
+ * Read and shape one owned learner's typing evidence. The nested ownership
+ * gate keeps the parent wrapper fail-closed before the store readers run; each
+ * store reader applies the same gate again at its own boundary (defense in
+ * depth, not redundancy — see `getLearnerFluency` above for why both layers
+ * are load-bearing). `misses` and `attempts` pass through untouched: a key can
+ * legitimately show `misses > 0, attempts: 0` (see `getTypingMissHistory`),
+ * and computing a rate here would misrepresent that. A learner with no typing
+ * attempts yet still gets a real (non-null) object with empty arrays, so the
+ * parent widgets can render their own honest empty states rather than the
+ * whole section silently disappearing.
+ */
+export async function getLearnerTypingInsights(learnerId: string): Promise<TypingInsights | null> {
+  return withUnlockedAccount(
+    ({ accountId }) =>
+      withOwnedLearner<TypingInsights | null>(
+        accountId,
+        learnerId,
+        async (learner) => {
+          const [misses, rate] = await Promise.all([
+            getTypingMissHistory(accountId, learnerId),
+            getTypingRateHistory(accountId, learnerId),
+          ]);
+
+          return {
+            learner,
+            misses,
+            rate: rate.map((point) => ({ ...point, label: relativeDay(point.day) })),
+          };
+        },
+        null,
       ),
     { lockedFallback: () => null },
   );
