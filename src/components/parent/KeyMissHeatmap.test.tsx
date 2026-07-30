@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { KeyMissHeatmap } from "./KeyMissHeatmap";
 
 const MISSES = [
-  { key: "a", misses: 8, attempts: 40 },
+  { key: "a", misses: 12, attempts: 40 },
+  { key: "s", misses: 2, attempts: 10 },
   { key: "q", misses: 0, attempts: 12 },
 ];
 
@@ -33,6 +34,18 @@ describe("KeyMissHeatmap", () => {
     expect(cold).not.toContain("font-black");
   });
 
+  it("pins fixed absolute thresholds so heat means the same thing every time, not a dataset-relative scale", () => {
+    const html = renderToStaticMarkup(<KeyMissHeatmap misses={MISSES} />);
+    const fewMisses = tagFor(html, "s"); // 2 misses: an ordinary slip
+    const manyMisses = tagFor(html, "a"); // 12 misses: worth a parent's attention
+
+    expect(fewMisses).not.toContain("bg-coral-deep");
+    expect(fewMisses).not.toContain("font-black");
+    expect(fewMisses).toContain("bg-honey");
+    expect(manyMisses).toContain("bg-coral-deep");
+    expect(manyMisses).toContain("font-black");
+  });
+
   it("renders an honest empty state with no fabricated heat when there is no data", () => {
     const html = renderToStaticMarkup(<KeyMissHeatmap misses={[]} />);
 
@@ -46,7 +59,7 @@ describe("KeyMissHeatmap", () => {
     const html = renderToStaticMarkup(<KeyMissHeatmap misses={MISSES} />);
 
     expect(html).toContain('role="img"');
-    expect(html).toMatch(/aria-label="Keyboard heat map: 31 keys, most missed are A\."/);
+    expect(html).toMatch(/aria-label="Keyboard heat map: 31 keys, most missed are A, S\."/);
 
     const hiddenCount = (html.match(/aria-hidden="true"/g) ?? []).length;
     expect(hiddenCount).toBe(31);

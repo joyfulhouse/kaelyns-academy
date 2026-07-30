@@ -50,18 +50,20 @@ function keyName(char: string): string {
 }
 
 /**
- * Heat is relative to the worst key IN THIS DATASET, not to attempts — the
- * word-game kinds can prove a key was missed but never that it was attempted
- * (only Key Camp names the expected key), so a miss/attempt ratio would
- * misrepresent the child's typing. Scaling by the dataset's own peak keeps
- * the map readable whether a learner has 3 misses total or 300.
+ * Fixed absolute thresholds, NOT scaled to this dataset's own peak — the
+ * colour has to mean the same thing every time a parent looks, and across
+ * siblings. A child who missed one key twice and nothing else must read as
+ * nearly cool, not the same alarming deep-coral as a child struggling badly.
+ * Cut points are tuned for a young typist's practice volume (a session is a
+ * handful of prompts, not hundreds): 1-2 misses is an ordinary slip, 11+ is
+ * a key worth a parent's attention. The raw count is always available in
+ * the cell title and the container's aria-label, never lost to the tier.
  */
-function heatTier(misses: number, peakMisses: number): HeatTier {
+function heatTier(misses: number): HeatTier {
   if (misses <= 0) return "none";
-  const ratio = misses / peakMisses;
-  if (ratio <= 0.25) return "low";
-  if (ratio <= 0.5) return "mid";
-  if (ratio <= 0.75) return "high";
+  if (misses <= 2) return "low";
+  if (misses <= 5) return "mid";
+  if (misses <= 10) return "high";
   return "peak";
 }
 
@@ -131,7 +133,6 @@ export function KeyMissHeatmap({ misses }: KeyMissHeatmapProps) {
     ...ROW_ORDER.flatMap((row) => TYPING_ROWS[row].map((char) => ({ row, char }))),
     { row: "space" as const, char: " " },
   ].map(({ row, char }) => ({ row, char, ...lookup(char) }));
-  const peakMisses = Math.max(0, ...cells.map((cell) => cell.misses));
 
   return (
     <div
@@ -147,7 +148,7 @@ export function KeyMissHeatmap({ misses }: KeyMissHeatmapProps) {
               <Cell
                 key={cell.char}
                 char={cell.char}
-                tier={heatTier(cell.misses, peakMisses)}
+                tier={heatTier(cell.misses)}
                 misses={cell.misses}
                 attempts={cell.attempts}
               />
@@ -161,7 +162,7 @@ export function KeyMissHeatmap({ misses }: KeyMissHeatmapProps) {
             <Cell
               key={cell.char}
               char={cell.char}
-              tier={heatTier(cell.misses, peakMisses)}
+              tier={heatTier(cell.misses)}
               misses={cell.misses}
               attempts={cell.attempts}
             />
