@@ -1322,10 +1322,13 @@ export interface TypingRatePoint {
 const TYPING_MISS_KINDS = ["typing-keys", "typing-write", "typing-race", "typing-echo"] as const;
 
 /** Shared by typing-write/typing-race/typing-echo (identical item shape): fold
- *  each item's `missedExpected` characters into the tally. A clean item
- *  (empty `missedExpected`) never touches the tally — the response doesn't
- *  record which OTHER keys it typed correctly, so nothing is inferred for
- *  them (§8: only a key that was actually MISSED is ever known here). */
+ *  each item's `missedExpected` characters into the tally as MISSES ONLY. A
+ *  clean item (empty `missedExpected`) never touches the tally — the response
+ *  doesn't record which OTHER keys it typed correctly, so nothing is inferred
+ *  for them (§8: only a key that was actually MISSED is ever known here).
+ *  `attempts` is deliberately NOT incremented here — see the doc comment on
+ *  {@link getTypingMissHistory} for why these three kinds can never prove a
+ *  key was attempted-and-succeeded. */
 function foldMissedExpected(
   items: readonly { missedExpected: readonly string[] }[],
   tally: Map<string, { attempts: number; misses: number }>,
@@ -1333,7 +1336,6 @@ function foldMissedExpected(
   for (const item of items) {
     for (const ch of item.missedExpected) {
       const entry = tally.get(ch) ?? { attempts: 0, misses: 0 };
-      entry.attempts += 1;
       entry.misses += 1;
       tally.set(ch, entry);
     }
@@ -1351,6 +1353,15 @@ function foldMissedExpected(
  *  2. `typing-write`/`typing-race`/`typing-echo` items only ever record the
  *     EXPECTED characters missed on a diverged item's first episode — a key
  *     appears from this source only when it was actually missed at least once.
+ *
+ * `attempts` therefore ONLY ever accrues from source 1: a `typing-write`/
+ * `typing-race`/`typing-echo` response can prove a character was MISSED but
+ * never that it was attempted-and-succeeded (a clean item's other keys are
+ * simply not recorded), so inventing an `attempts` count for them would
+ * misrepresent the child's typing to their parent — those three kinds
+ * contribute `misses` only, and a key that appears solely from them always
+ * carries `attempts: 0`. Task 7's heatmap must therefore visualize absolute
+ * `misses`, not a misses/attempts rate, wherever `attempts` is 0.
  *
  * Each stored response is re-parsed with its OWN kind's `responseSchema` (the
  * `getFluencyHistory` precedent) so a malformed/legacy row is skipped rather

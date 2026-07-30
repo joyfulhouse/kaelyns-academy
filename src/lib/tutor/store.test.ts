@@ -2169,9 +2169,36 @@ describe("getTypingMissHistory (owned per-key miss/attempt tallies)", () => {
     // A correctly-typed item (empty missedExpected) contributes nothing — the
     // response never records which OTHER keys it touched, so nothing is
     // inferred for them (§8: never a pressed key, never a guessed one either).
+    // attempts stays 0 for every key from these three kinds — none of them can
+    // prove a key was attempted-and-succeeded (only typing-keys can).
     await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
-      { key: "d", misses: 2, attempts: 2 },
-      { key: "f", misses: 1, attempts: 1 },
+      { key: "d", misses: 2, attempts: 0 },
+      { key: "f", misses: 1, attempts: 0 },
+    ]);
+  });
+
+  it("keeps attempts honest: word-kind misses never fabricate an attempts count", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-write",
+        day: "2026-07-20",
+        response: {
+          items: [
+            { i: 0, ok: false, ms: 900, retries: 3, missedExpected: ["q"] },
+            { i: 1, ok: true, ms: 500, retries: 0, missedExpected: [] },
+            { i: 2, ok: true, ms: 500, retries: 0, missedExpected: [] },
+          ],
+        },
+        createdAt: new Date("2026-07-20T10:00:00Z"),
+      },
+    ];
+
+    // A word-kind attempt yields misses > 0 but attempts: 0 — it cannot prove
+    // any key (including "q") was attempted-and-succeeded, only that it was
+    // missed at least once.
+    await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
+      { key: "q", misses: 1, attempts: 0 },
     ]);
   });
 
@@ -2230,10 +2257,11 @@ describe("getTypingMissHistory (owned per-key miss/attempt tallies)", () => {
     ];
 
     // "z" was inserted into typingAttemptRows first but was recorded LATER
-    // (07-22); the fold processes oldest→newest, so "a" (07-20) leads.
+    // (07-22); the fold processes oldest→newest, so "a" (07-20) leads. "z"
+    // comes from typing-write (misses-only source), so its attempts stays 0.
     await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
       { key: "a", misses: 0, attempts: 1 },
-      { key: "z", misses: 1, attempts: 1 },
+      { key: "z", misses: 1, attempts: 0 },
     ]);
   });
 
