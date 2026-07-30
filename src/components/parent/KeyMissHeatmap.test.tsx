@@ -34,6 +34,11 @@ describe("KeyMissHeatmap", () => {
     expect(tagFor(html, " ")).toBeTruthy();
   });
 
+  it("never renders the retired honey-deep tone, collapsed into the four-tier scale", () => {
+    const html = renderToStaticMarkup(<KeyMissHeatmap misses={[...MISSES, ...SIX_AND_TWELVE_MISSES]} />);
+    expect(html).not.toContain("bg-honey-deep");
+  });
+
   it("gives a heavily-missed key a visibly different, heavier static tone than an unmissed key", () => {
     const html = renderToStaticMarkup(<KeyMissHeatmap misses={MISSES} />);
     const hot = tagFor(html, "a");
