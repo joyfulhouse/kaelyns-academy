@@ -239,8 +239,8 @@ function TypingInsightsCard({ insights }: { insights: TypingInsights | null }) {
             Typing
           </h2>
           <p className="mt-1 max-w-prose text-sm text-ink-soft">
-            The keys she reaches for most often, and the ones still finding their fingers — shown
-            as a miss count, not a percentage, since only Key Camp tracks attempts per key.
+            The keys still finding their fingers, shown as a miss count, not a percentage, since
+            only Key Camp tracks attempts per key.
           </p>
         </div>
       </div>

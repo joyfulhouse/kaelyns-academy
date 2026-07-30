@@ -1378,7 +1378,7 @@ export async function getTypingMissHistory(
     learnerId,
     async () => {
       const rows = await getDb()
-        .select({ day: attempt.day, kind: attempt.kind, response: attempt.response })
+        .select({ kind: attempt.kind, response: attempt.response })
         .from(attempt)
         .where(and(eq(attempt.learnerId, learnerId), inArray(attempt.kind, TYPING_MISS_KINDS)))
         .orderBy(desc(attempt.createdAt))

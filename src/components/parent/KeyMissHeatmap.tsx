@@ -129,7 +129,7 @@ export function KeyMissHeatmap({ misses }: KeyMissHeatmapProps) {
   if (misses.length === 0) {
     return (
       <div className="rounded-lg bg-paper-sunk/50 px-5 py-6 text-center">
-        <p className="font-medium text-ink-soft">No Key Camp practice yet</p>
+        <p className="font-medium text-ink-soft">No typing practice yet</p>
         <p className="mt-1 text-sm text-ink-faint">
           Missed keys will show up here after a few typing sessions.
         </p>
@@ -137,7 +137,14 @@ export function KeyMissHeatmap({ misses }: KeyMissHeatmapProps) {
     );
   }
 
-  const byKey = new Map(misses.map((point) => [point.key.toLowerCase(), point]));
+  const byKey = new Map<string, { misses: number; attempts: number }>();
+  for (const point of misses) {
+    const lower = point.key.toLowerCase();
+    const entry = byKey.get(lower) ?? { misses: 0, attempts: 0 };
+    entry.misses += point.misses;
+    entry.attempts += point.attempts;
+    byKey.set(lower, entry);
+  }
   const lookup = (char: string) => byKey.get(char.toLowerCase()) ?? { misses: 0, attempts: 0 };
   const cells = [
     ...ROW_ORDER.flatMap((row) => TYPING_ROWS[row].map((char) => ({ row, char }))),

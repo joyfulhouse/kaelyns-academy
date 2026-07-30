@@ -27,6 +27,17 @@ describe("TypingRateChart", () => {
     expect(html).not.toContain("<svg");
   });
 
+  /** `getTypingRateHistory` filters to `typing-race` attempts only (E7) — Key
+   *  Camp and Star Catch never contribute a point, so the empty state must
+   *  not tell a parent that grinding those kinds will populate this chart. */
+  it("names Rocket Race, the only kind that feeds this chart, in the empty state", () => {
+    const html = renderToStaticMarkup(<TypingRateChart points={[]} />);
+
+    expect(html).toContain("Rocket Race");
+    expect(html).not.toContain("Key Camp");
+    expect(html).not.toContain("Star Catch");
+  });
+
   it("summarizes latest, best, and trend accessibly without child PII", () => {
     const html = renderToStaticMarkup(<TypingRateChart points={POINTS} />);
 

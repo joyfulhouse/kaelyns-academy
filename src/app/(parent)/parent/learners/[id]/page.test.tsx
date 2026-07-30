@@ -124,7 +124,7 @@ describe("LearnerDetailPage typing insights", () => {
     );
 
     expect(html).toContain("Typing");
-    expect(html).toContain("No Key Camp practice yet");
+    expect(html).toContain("No typing practice yet");
     expect(html).toContain("No typing speed yet");
     expect(html.indexOf("Reading fluency")).toBeLessThan(html.indexOf("Typing"));
     expect(html.indexOf("Typing")).toBeLessThan(html.indexOf("Check-in results marker"));

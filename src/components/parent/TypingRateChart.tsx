@@ -73,7 +73,7 @@ export function TypingRateChart({ points }: TypingRateChartProps) {
       <div className="rounded-lg bg-paper-sunk/50 px-5 py-6 text-center">
         <p className="font-medium text-ink-soft">No typing speed yet</p>
         <p className="mt-1 text-sm text-ink-faint">
-          Typing speed will appear here after a few Key Camp or Star Catch sessions.
+          Typing speed will appear here after a few Rocket Race sessions.
         </p>
       </div>
     );

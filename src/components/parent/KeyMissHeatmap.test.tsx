@@ -86,7 +86,7 @@ describe("KeyMissHeatmap", () => {
   it("renders an honest empty state with no fabricated heat when there is no data", () => {
     const html = renderToStaticMarkup(<KeyMissHeatmap misses={[]} />);
 
-    expect(html).toContain("No Key Camp practice yet");
+    expect(html).toContain("No typing practice yet");
     expect(html).not.toContain('role="img"');
     expect(html).not.toContain("bg-honey");
     expect(html).not.toContain("bg-coral");
@@ -105,5 +105,43 @@ describe("KeyMissHeatmap", () => {
   it("never renders a child's display name", () => {
     const html = renderToStaticMarkup(<KeyMissHeatmap misses={MISSES} />);
     expect(html).not.toContain("Kaelyn");
+  });
+
+  /** `getTypingMissHistory` tallies by EXACT character, so "F" and "f" arrive
+   *  as two separate points (typing-keys authors capitals, lowercase units
+   *  drill the same letter). A physical heat map has one F key — the two
+   *  points must be summed, not last-write-wins, and the sum must not depend
+   *  on which case happened to come first in the array. */
+  const MIXED_CASE_F = [
+    { key: "f", misses: 4, attempts: 6 },
+    { key: "F", misses: 1, attempts: 2 },
+  ];
+
+  it("sums misses and attempts across case variants of the same physical key", () => {
+    const html = renderToStaticMarkup(<KeyMissHeatmap misses={MIXED_CASE_F} />);
+    const cell = tagFor(html, "f");
+
+    expect(cell).toContain("5 misses");
+    expect(cell).toContain("8 tracked attempts");
+  });
+
+  it("sums case variants the same way regardless of array order", () => {
+    const forward = renderToStaticMarkup(<KeyMissHeatmap misses={MIXED_CASE_F} />);
+    const reversed = renderToStaticMarkup(
+      <KeyMissHeatmap misses={[...MIXED_CASE_F].reverse()} />,
+    );
+
+    expect(tagFor(forward, "f")).toBe(tagFor(reversed, "f"));
+    expect(tagFor(forward, "f")).toContain("5 misses");
+  });
+
+  it("ranks the aria-label's most-missed keys by summed totals, not a single case's count", () => {
+    // "f" sums to 5 (4+1), higher than "s" at 2 — but neither individual "f"
+    // entry (4, then 1) would outrank "s" if the fold discarded one of them.
+    const html = renderToStaticMarkup(
+      <KeyMissHeatmap misses={[...MIXED_CASE_F, { key: "s", misses: 2, attempts: 5 }]} />,
+    );
+
+    expect(html).toMatch(/aria-label="Keyboard heat map: 31 keys, most missed are F, S\."/);
   });
 });
