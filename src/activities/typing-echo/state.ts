@@ -15,7 +15,7 @@ import type { TypingEchoResponse } from "./logic";
  * buffer/retry/missedExpected logic is delegated to `wordType.ts`; this file
  * only owns the phase clock and the sequence-to-sequence handoff.
  */
-export type EchoPhase = "flash" | "recall";
+type EchoPhase = "flash" | "recall";
 
 export interface EchoState {
   index: number;

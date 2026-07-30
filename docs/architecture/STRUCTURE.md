@@ -83,10 +83,10 @@ kaelyns-academy/
 │   │   │                                 #   useAudio/useSpeech/useReducedMotion/useSpeakOnce/useManagedTimeout/
 │   │   │                                 #   useWrongShake/useActivity/useMultipleChoice, voiceUtils (Player DRY kit);
 │   │   │                                 #   typing/: word-typing engine (wordType, WordTiles, PauseOverlay,
-│   │   │                                 #   roundPause, wpm) shared by typing-write/typing-race
+│   │   │                                 #   roundPause, wpm) shared by typing-write/typing-race/typing-echo
 │   │   └── <kind>/{index,logic,Player}.tsx   # math-array, math-tenframe, phonics-wordbuild,
 │   │                                     #   sightword-game, reading-comprehension, journal-prompt,
-│   │                                     #   lang-listen-match, lang-symbol-intro, typing-write, typing-race
+│   │                                     #   lang-listen-match, lang-symbol-intro, typing-write, typing-race, typing-echo
 │   │
 │   └── components/                       # Wonder Studio component vocabulary
 │       ├── ui/                           # Button, Field, TextInput, Select, Switch, Pill, ProgressRing,
@@ -104,7 +104,8 @@ kaelyns-academy/
 │       │                                 #   useSkillState, localStore, narrate, speak)
 │       ├── parent/                       # DashboardShellParent, AddChildForm, EnrollmentConfigForm,
 │       │                                 #   MarketplaceGrid, ProgramCard, CurriculumPanel, ActivityRowItem,
-│       │                                 #   AssignProgramControl, LearnerDataControls, ProgressReportCard
+│       │                                 #   AssignProgramControl, LearnerDataControls, ProgressReportCard,
+│       │                                 #   KeyMissHeatmap, TypingRateChart (typing insights section)
 │       ├── admin/                        # AdminShell, CreateProgramForm, ProgramLifecycleControls,
 │       │                                 #   editor/ (ProgramEditor + Unit/Lesson/Activity/Config fields)
 │       └── pwa/IosInstallHint.tsx        # iOS add-to-home hint (role=status, dismissible)
