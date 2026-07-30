@@ -14,6 +14,9 @@ vi.mock("react", async (importActual) => ({
   useEffect: (effect: () => void | (() => void)) => {
     hookHarness.effects.push(effect);
   },
+  // This harness re-invokes the hook directly rather than rendering, so memo
+  // identity across renders isn't modelled — just evaluate the factory.
+  useMemo: (factory: () => unknown) => factory(),
   useRef: (initial: unknown) => ({ current: initial }),
   useState: (initial: unknown) => {
     const index = hookHarness.index++;

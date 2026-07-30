@@ -1,6 +1,7 @@
 import type { ZodType } from "zod";
 import type { Activity, ActivityKind, Program, Unit } from "@/content";
 import type { LearnerMode } from "./learnerAccess";
+import { activeUnitKeySet, isSequentialProgram, playableUnitIds } from "./unitAccess";
 
 export interface PlayableActivityInput {
   mode: LearnerMode;
@@ -8,6 +9,8 @@ export interface PlayableActivityInput {
   available: boolean;
   program: Program | null;
   activeUnitKeys: string[] | undefined;
+  /** Authored activity ids this learner has completed — drives the pacing gate. */
+  completedActivityIds: ReadonlySet<string>;
   unitKey: string;
   activityKey: string;
   ssrUnit: Unit | null;
@@ -18,6 +21,7 @@ export type PlayableActivityResolution =
   | { status: "loading" }
   | { status: "blocked" }
   | { status: "moved" }
+  | { status: "locked"; unit: Unit }
   | { status: "ready"; unit: Unit; activity: Activity };
 
 export function resolvePlayableActivity(
@@ -36,9 +40,26 @@ export function resolvePlayableActivity(
       !input.activeUnitKeys.includes(input.unitKey);
     if (!input.available || curatedOut) return { status: "blocked" };
 
-    const unit = input.program?.units.find((candidate) => candidate.id === input.unitKey);
+    const program = input.program;
+    const unit = program?.units.find((candidate) => candidate.id === input.unitKey);
     const activity = unit ? activityInUnit(unit, input.activityKey) : undefined;
-    return unit && activity ? { status: "ready", unit, activity } : { status: "moved" };
+    if (!program || !unit || !activity) return { status: "moved" };
+
+    // Sequencing (pacing, NOT access control): resolved last, so a bogus URL
+    // still reads as "moved" rather than blaming the child's progress. Guest
+    // mode is exempt below — it has no enrollment whose pacing could be
+    // circumvented, and the route is never handed the published unit graph a
+    // guest gate would need. Deliberately absent from the write path: a child
+    // who finishes an activity keeps the work however they arrived.
+    const open = playableUnitIds(
+      program.units,
+      activeUnitKeySet(input.activeUnitKeys),
+      input.completedActivityIds,
+      { sequential: isSequentialProgram(program.slug) },
+    );
+    if (!open.has(unit.id)) return { status: "locked", unit };
+
+    return { status: "ready", unit, activity };
   }
 
   const unit = input.ssrUnit?.id === input.unitKey ? input.ssrUnit : null;

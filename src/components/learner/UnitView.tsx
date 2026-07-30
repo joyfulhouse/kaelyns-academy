@@ -25,6 +25,8 @@ import { useLearnerState } from "./useLearnerState";
 import { ACTIVITY_META } from "./activityMeta";
 import { accountLearnerSelectionRequired } from "./learnerAccess";
 import { AccountLearnerPicker } from "./AccountLearnerPicker";
+import { UnitLocked } from "./UnitLocked";
+import { activeUnitKeySet, isSequentialProgram, playableUnitIds } from "./unitAccess";
 import { AccountSessionError } from "./AccountSessionError";
 
 /**
@@ -102,6 +104,31 @@ export function UnitView({
     return <UnitMoved programSlug={programSlug} />;
   }
   const unit = effectiveUnit;
+
+  // Sequencing gate, same set the map locks tiles with. Gated here as well as on
+  // the activity route because a locked world would otherwise render its full
+  // activity list and bounce the child off every single tile — one clear message
+  // beats a shelf of dead ends.
+  //
+  // Only for a unit that came FROM the pinned tree: `effectiveUnit` falls back to
+  // the published `ssrUnit` when the key is absent from the learner's version
+  // (Fix-E), and that unit is by construction not in `program.units`, so gating it
+  // would always read "locked" — a lie, since no amount of play opens it. That
+  // drifted case keeps its pre-existing Fix-E behavior (the published unit still
+  // renders, and its activities resolve to "moved" individually); sequencing
+  // simply has nothing to say about it.
+  const pinnedUnit = program ? getUnit(program, unitKey) : undefined;
+  if (
+    mode === "account" &&
+    ready &&
+    program &&
+    pinnedUnit &&
+    !playableUnitIds(program.units, activeUnitKeySet(config.activeUnitKeys), completed, {
+      sequential: isSequentialProgram(programSlug),
+    }).has(pinnedUnit.id)
+  ) {
+    return <UnitLocked programSlug={programSlug} unitTitle={pinnedUnit.title} />;
+  }
 
   const readAloud = `${unit.title}. ${unit.bigIdea} Pick something to do.`;
 

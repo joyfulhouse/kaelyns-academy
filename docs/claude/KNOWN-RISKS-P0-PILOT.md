@@ -113,37 +113,79 @@ cosmetic follow-up; it no longer affects what a child can actually play or recor
 
 ---
 
-## Unit sequencing (pacing, not access control) — not enforced on the activity route
+## Unit sequencing (pacing, not access control) — enforced for sequential programs
 
-**Where:** `src/components/learner/branching.ts` — `computeUnlockedIds`.
+**Where:** `src/components/learner/unitAccess.ts` — `playableUnitIds`, the one
+derivation the world map, the unit route, the activity route, and every offered
+destination (hero pick, warm-up row, quest) now share.
 
-**Vector.** `computeUnlockedIds` gates only `StudioHome`'s world-map tiles (a
-unit shows as locked/unlocked based on prior completions). The activity route
-itself (`ActivityHost` → `resolvePlayableActivity`) has no equivalent check for
-account (signed-in) learners, so an enrolled child who deep-links straight to an
-activity in a later, still-locked unit can play it — the forgiving-unlock
-pacing is a map affordance, not a gate the route enforces.
+**Status: closed for account learners on sequential programs.**
 
-**Scope / bounds.** Pacing only, not access control or curation. Everything
-`computeUnlockedIds` would eventually unlock is already curriculum the parent
-has enrolled the learner in (Kid-surface curation above still applies in full —
-`activeUnitKeys`/enrollment status still block anything the parent hasn't
-curated); this gap only lets a child reach a *later* unit of already-curated
-content sooner than the pacing intends. No PII exposure, no uncurated content.
+Previously `computeUnlockedIds` gated only `StudioHome`'s world-map tiles, so an
+enrolled child who deep-linked into a later, still-locked unit played it anyway.
+A signed-in learner resolving a locked unit now gets `UnitLocked` ("Not open
+yet!") on both the unit and activity routes, and the tutor no longer *offers*
+locked destinations it would then refuse.
 
-**Why accepted for P0.** Single pilot learner, parent-curated content only, and
-the worst case is a child seeing a later unit's activity earlier than the
-world-map pacing intends — not a privacy or curation violation.
+**Only programs whose unit ORDER is pedagogy are sequenced.** `computeUnlockedIds`
+sequences by array position, so enforcing it only makes sense where position
+means something — `keyboard-club` (home row before top row). It does not for the
+other served programs, and enforcing it there was actively wrong:
 
-**Coupling to watch.** `e2e/specs/typing.spec.ts`'s Star Echo spec deep-links
-through exactly this gap (unit 4 / Big Letters is locked on the world map for a
-fresh guest, but the activity route plays it anyway) — see the spec's own
-comment above its `STAR_ECHO` constant. Closing this gap by adding a
-route-level lock check would break that spec, and the failure would look like a
-Star Echo regression rather than the sequencing fix working as intended.
+- `kaelyn-adaptive`'s units are seven parallel SUBJECT STRANDS. Array order put
+  Math behind Reading → Word Study → Writing, contradicting the recommender's
+  documented contract that "each strand advances INDEPENDENTLY … never lets a
+  strong strand wait on a weak one" (`src/lib/tutor/recommend.ts`).
+- `world-languages`' units are four INDEPENDENT languages. Array order put
+  Korean behind Mandarin phonetics.
 
-**Fix (deferred).** Extend the A3-style render-gating already used for
-enrollment/curation to unit sequencing on the activity route, keyed off the
-same unlocked-set the world map already computes — and update the Star Echo
-spec to unlock its way there (or move it to an already-unlocked unit) when
-that lands.
+This also fixes a pre-existing MAP bug: those programs were already *displaying*
+those units as locked. The tiles were lying; now they aren't.
+
+The flag lives in code keyed by slug, not as a `Program` field, because the
+DB-assembled tree is built from explicit columns (`src/lib/content/store.ts`) —
+a new field would arrive `undefined` for DB-served programs, and content is
+DB-preferred in production, which would silently disable this everywhere it
+matters. When marketplace programs need to declare their own pacing, it becomes
+a real column with an explicit default.
+
+**Access is monotonic.** Every started unit stays open. `computeUnlockedIds`
+alone only opens a unit whose PREDECESSOR is started, so it could revoke a unit
+a child was mid-way through: assign only one unit, let her play it, then widen
+the assignment, and array-order sequencing would lock it — taking her replays,
+her due reviews, and her generated shelf with it. Progress may open doors; it
+must never close one.
+
+**A unit with no activities counts as started.** It can never be completed, so
+treating it as a barrier would strand the learner behind it forever. Authored
+trees can legitimately contain one.
+
+**Only BASELINE check-ins are exempt from sequencing.** They carry `order: 0`
+but sit at the END of the authored array, so position-based sequencing would
+bury a new learner's placement behind the entire program. `mid` and `final`
+check-ins are deliberately scheduled later and stay sequenced — exempting them
+would open a final assessment on day one.
+
+**Still open, by design — guest mode.** A guest has no enrollment whose pacing
+could be circumvented, and the activity route is never handed the published unit
+graph the gate needs (it receives only the single SSR unit). `e2e/specs/typing.spec.ts`
+deep-links through this exemption and is expected to keep working.
+
+**Deliberately absent from the write path.** `recordAttemptAction` still checks
+enrollment, curation, and the version pin — but NOT sequencing. Pacing must
+never cost a child work they finished. Curation stays enforced there because it
+is access control; sequencing is not.
+
+**Parent skip-ahead still works.** Sequencing runs INSIDE curation and the first
+curated segment is always open, so assigning only unit 7 opens unit 7. Note that
+`applyPlacement` seeds *skills* solid (skipping spaced review); it never marks
+units complete, so it does not and is not meant to move a learner forward on the
+map.
+
+**Residuals.**
+- `resolveGeneratedPractice` is not sequence-gated (reachable only by
+  deep-linking a generated-practice UUID; curation still applies).
+- During the account-load window the unit route still renders published SSR
+  content before `ready`, so a tile tapped in that window can resolve to
+  `UnitLocked` afterwards. Pre-existing anti-flicker behavior (Fix-E), not
+  introduced here.

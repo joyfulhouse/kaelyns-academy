@@ -38,10 +38,14 @@ import { useQuests } from "./useQuests";
 import { TodaysAdventures } from "./TodaysAdventures";
 import { curateAdventureCandidates } from "./adventureCandidates";
 import { computeUnitProgress, computeProgramRatio } from "./useProgress";
-import { computeUnlockedIds, pathLabelsByUnitId, segmentUnits } from "./branching";
+import { pathLabelsByUnitId, segmentUnits } from "./branching";
+import { activeUnitKeySet, curatedUnits, isSequentialProgram, playableUnitIds } from "./unitAccess";
 import { ACTIVITY_META } from "./activityMeta";
 import { lockParentAreaAction } from "@/app/(parent)/pin-actions";
 import { captureNonCritical } from "@/lib/capture";
+
+/** Stable empty set, so the unlock memo doesn't churn before state is read. */
+const EMPTY_COMPLETED: ReadonlySet<string> = new Set();
 
 /**
  * The studio home: pick-a-learner, then the program as a world map. Units are
@@ -462,17 +466,13 @@ function WorldMap({
 
   // Canonicalize the completed set once so every tutor view (map ratio, rung,
   // hero, and generated shelf) advances from the same durable activity ids.
-  const completedKey = [...completed].sort().join("|");
-  const completedIds = useMemo(
-    () => new Set(completedKey ? completedKey.split("|") : []),
-    [completedKey],
-  );
+
 
   // The tutor's per-strand state + ranked next-best. Both derive purely from the
   // engine, so they only become meaningful once state is read (ready).
   const strands = useMemo(
-    () => (ready ? strandProgress(program, skillState, completedIds) : []),
-    [completedIds, program, skillState, ready],
+    () => (ready ? strandProgress(program, skillState, completed) : []),
+    [completed, program, skillState, ready],
   );
   const strandByUnitId = useMemo(
     () => new Map(strands.map((s) => [s.unit.id, s])),
@@ -481,19 +481,32 @@ function WorldMap({
   // activeUnitKeys curation applies to every playable surface: path tiles,
   // hero picks, generated fallbacks, and quest destinations.
   const activeUnitKeys = useMemo(
-    () =>
-      config.activeUnitKeys && config.activeUnitKeys.length > 0
-        ? new Set(config.activeUnitKeys)
-        : null,
+    () => activeUnitKeySet(config.activeUnitKeys),
     [config.activeUnitKeys],
   );
-  const visibleUnits = activeUnitKeys
-    ? program.units.filter((u) => activeUnitKeys.has(u.id))
-    : program.units;
+  const visibleUnits = curatedUnits(program.units, activeUnitKeys);
+  // Fork-aware unlock (spec §4.4): a unit is "started" once it has any
+  // completion — the same "forgiving" posture as the old prevDone gate, routed
+  // through the pure branching model so fork groups open both paths together
+  // and a fully linear program unlocks identically to before (guarded by
+  // branching.test.ts's "fully linear" case).
+  //
+  // Computed HERE, above the adventure curation below, because the tutor ranks
+  // by skill need and will happily surface an activity in a unit the map shows
+  // as locked. Offering that as the hero/warm-up/quest would point the child at
+  // a door the activity route then closes, so both are filtered by this one set.
+  // Empty progress until `ready`, matching the pre-read map exactly.
+  const unlockedIds = useMemo(
+    () =>
+      playableUnitIds(program.units, activeUnitKeys, ready ? completed : EMPTY_COMPLETED, {
+        sequential: isSequentialProgram(program.slug),
+      }),
+    [program.units, program.slug, activeUnitKeys, ready, completed],
+  );
 
   const globalRecommendations = useMemo(
-    () => (ready ? nextBest(program, skillState, completedIds) : []),
-    [completedIds, program, skillState, ready],
+    () => (ready ? nextBest(program, skillState, completed) : []),
+    [completed, program, skillState, ready],
   );
   const {
     recommendations,
@@ -504,10 +517,10 @@ function WorldMap({
       curateAdventureCandidates(
         globalRecommendations,
         generatedShelf,
-        activeUnitKeys,
+        unlockedIds,
         dueReviews,
       ),
-    [activeUnitKeys, dueReviews, generatedShelf, globalRecommendations],
+    [unlockedIds, dueReviews, generatedShelf, globalRecommendations],
   );
   const topPick = recommendations[0];
   // A skill that regressed to non-solid can be recommended as the "needs work"
@@ -522,11 +535,11 @@ function WorldMap({
   // so there's always a warm next thing. `completed` already includes played
   // shelf ids (durable credit), so a done generated item is never re-offered.
   // Empty in guest mode (generatedShelf is always []), so guests see no card here.
-  const questGeneratedPick = nextGeneratedPick(curatedGeneratedShelf, completedIds);
+  const questGeneratedPick = nextGeneratedPick(curatedGeneratedShelf, completed);
   const generatedPick = topPick ? undefined : questGeneratedPick;
   const authoredQuestCandidates = useMemo(
-    () => buildAuthoredQuestCandidates(program, activeUnitKeys),
-    [program, activeUnitKeys],
+    () => buildAuthoredQuestCandidates(program, unlockedIds),
+    [program, unlockedIds],
   );
   const rankedAuthoredQuestCandidates = useMemo(
     () =>
@@ -544,7 +557,7 @@ function WorldMap({
     return [
       ...rankedAuthoredQuestCandidates,
       ...curatedGeneratedShelf
-        .filter((item) => !completedIds.has(item.id))
+        .filter((item) => !completed.has(item.id))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
         .map((item) => ({
           href: `/learn/${program.slug}/generated/${item.id}`,
@@ -555,17 +568,7 @@ function WorldMap({
         (candidate) => !rankedAuthoredHrefs.has(candidate.href),
       ),
     ];
-  }, [authoredQuestCandidates, completedIds, curatedGeneratedShelf, program.slug, rankedAuthoredQuestCandidates]);
-
-  // Fork-aware unlock (spec §4.4): a unit is "started" once it has any
-  // completion, same "forgiving" posture as the old prevDone gate — but routed
-  // through the pure branching model so fork groups open both paths together
-  // and a fully linear program (no branchKey anywhere) unlocks identically to
-  // before (guarded by branching.test.ts's "fully linear" case).
-  const startedIds = new Set(
-    visibleUnits.filter((u) => computeUnitProgress(u, progressMap).completed > 0).map((u) => u.id),
-  );
-  const unlockedIds = computeUnlockedIds(visibleUnits, startedIds);
+  }, [authoredQuestCandidates, completed, curatedGeneratedShelf, program.slug, rankedAuthoredQuestCandidates]);
 
   // Fork rendering v1 (spec §4.4): a single-column path, plus a "choose your
   // path" divider and a small "Path N" pill per branch. Segment once and derive
@@ -756,7 +759,13 @@ function WorldMap({
 
       <div className="mt-10 flex flex-col items-center gap-2 text-center">
         <Mascot mood="happy" size={64} />
-        <p className="text-base text-ink-faint">More worlds open as you play.</p>
+        {/* Only true where worlds actually unlock in order. On a parallel-strand
+            map every world is already open, so this would be a small lie. */}
+        <p className="text-base text-ink-faint">
+          {isSequentialProgram(program.slug)
+            ? "More worlds open as you play."
+            : "Pick any world you like."}
+        </p>
       </div>
     </AppShellKid>
   );

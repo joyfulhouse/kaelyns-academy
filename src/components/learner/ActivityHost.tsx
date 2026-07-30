@@ -21,6 +21,7 @@ import { AppShellKid } from "./AppShellKid";
 import { useActiveLearner } from "./learners";
 import { useLearnerState } from "./useLearnerState";
 import { NotAssigned } from "./UnitView";
+import { UnitLocked } from "./UnitLocked";
 import { ACTIVITY_META } from "./activityMeta";
 import { stopSpeaking } from "./speak";
 import { ReadAloudDefaultProvider } from "@/activities/_shared/useSpeakOnce";
@@ -94,7 +95,7 @@ export function ActivityHost({
   // is scoped to the active program by its slug, and `program` is the learner's
   // RESOLVED (version-pinned) tree (null in guest/loading).
   const learnerState = useLearnerState(learner.id, programSlug);
-  const { record, signedIn, config, selectedLearnerId, program, mode, available, ready } =
+  const { record, signedIn, config, selectedLearnerId, program, mode, available, ready, completed } =
     learnerState;
   const [phase, setPhase] = useState<Phase>({ kind: "play" });
   const completionClaimRef = useRef<CompletionClaim | null>(null);
@@ -109,6 +110,7 @@ export function ActivityHost({
     available,
     program,
     activeUnitKeys: config.activeUnitKeys,
+    completedActivityIds: completed,
     unitKey,
     activityKey,
     ssrUnit,
@@ -217,6 +219,13 @@ export function ActivityHost({
 
   if (resolution.status === "blocked") {
     return <NotAssigned programSlug={programSlug} />;
+  }
+
+  // Pacing, not a fail state: the child arrived somewhere real (bookmark, shared
+  // link, history) that their map hasn't opened yet. Same promise the locked map
+  // tile makes — "play the world before to open" — never "you can't".
+  if (resolution.status === "locked") {
+    return <UnitLocked programSlug={programSlug} unitTitle={resolution.unit.title} />;
   }
 
   // Missing exact-unit content and malformed plugin config share one calm
