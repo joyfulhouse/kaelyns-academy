@@ -81,8 +81,25 @@ export const INSTRUCTION_HARD_CEILING_MS = 4_000;
  * that wait via the same deadline-in-loop mechanism as
  * `INSTRUCTION_HARD_CEILING_MS` (see its doc comment) — not a `setTimeout`
  * that a replay could strand.
+ *
+ * CALIBRATION (round-4 follow-up, live-browser measurement): this ceiling's
+ * only job is to bound a HUNG engine, so it must have real headroom above
+ * anything real content can legitimately take — a tight ceiling truncates a
+ * blind child's audio exactly as badly as no ceiling at all, just silently.
+ * Measured: a 4-letter, no-capitals sequence ("f, then i, then s, then h")
+ * already took 2746ms — 91% of the old 3000ms ceiling, essentially no
+ * margin — and each `capital ` prefix (`announceSequence`) adds roughly
+ * 500ms on top. `typingEchoConfig.sequences` schema-caps each sequence at 4
+ * characters, so the worst authorable case (4 capitals) is bounded at
+ * roughly 2746 + 4*500 ≈ 4746ms. Raised to a flat 6000ms — comfortable
+ * headroom over that worst case — rather than deriving the ceiling from
+ * character count: the 4-character cap is a hard schema invariant today
+ * (`z.string().min(2).max(4)`), so a fixed constant calibrated against it is
+ * simpler than plumbing per-sequence length through the deadline, with no
+ * real robustness cost unless that cap changes (in which case this
+ * calibration should be revisited alongside it).
  */
-const SEQUENCE_SPEECH_HARD_CEILING_MS = 3_000;
+const SEQUENCE_SPEECH_HARD_CEILING_MS = 6_000;
 
 export function TypingEchoPlayer(
   props: ActivityPlayerProps<TypingEchoConfig, TypingEchoResponse>,

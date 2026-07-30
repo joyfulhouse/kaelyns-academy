@@ -226,11 +226,12 @@ test("Star Echo flashes the sequence, then hides it during recall", async ({ pag
   // one: this exact gap hung this assertion under `CI=1` before the ceiling
   // was added. On top of that, the flash -> recall transition itself now
   // also waits for the sequence's OWN essential-content speech to settle
-  // (`SEQUENCE_SPEECH_HARD_CEILING_MS`, 3000ms) rather than truncating it —
-  // a blind child's only channel for the sequence must not be cut short by
-  // a visual-only `flashMs`. Budget = instruction ceiling + sequence
-  // ceiling + flashMs + margin.
-  await expect(expectedTiles).toHaveCount(0, { timeout: 12_000 });
+  // (`SEQUENCE_SPEECH_HARD_CEILING_MS`, 6000ms as of the round-4 recalibration
+  // — see its doc comment in Player.tsx) rather than truncating it — a blind
+  // child's only channel for the sequence must not be cut short by a
+  // visual-only `flashMs`. Budget = instruction ceiling (4000) + sequence
+  // ceiling (6000) + flashMs (1400) + margin ≈ 16s.
+  await expect(expectedTiles).toHaveCount(0, { timeout: 16_000 });
 
   // "F" is capital in the authored sequence — matchesTypingTarget requires
   // shiftKey, so reaching for Shift is part of what's being exercised, not
