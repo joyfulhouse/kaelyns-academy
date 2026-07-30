@@ -23,17 +23,21 @@ type HeatTier = "none" | "low" | "mid" | "high" | "peak";
 /**
  * Static class map — Tailwind's JIT cannot see constructed strings. Every
  * tone reaches >=3:1 against the paper page background and keeps its glyph
- * >=4.5:1 against its own fill (audited against globals.css oklch values:
- * honey 3.08:1/ink 6.07:1, honey-deep 5.53:1/paper 5.53:1, coral 5.13:1/
- * paper 5.13:1, coral-deep 8.60:1/paper 8.60:1). Tiers also step up in
- * font-weight so a colour-blind parent can tell "a lot" from "a little"
- * without relying on hue alone.
+ * >=4.5:1 against its own fill, verified with a spec-validated OKLCH ->
+ * linear-sRGB -> WCAG-relative-luminance implementation (canonical check:
+ * oklch(62.8% 0.25768 29.23) round-trips to srgb 255,0,0):
+ * ink/honey 8.24:1, ink/honey-deep 5.71:1, ink/coral 4.66:1,
+ * paper/coral-deep 4.88:1. Ink reads on the three lighter tiers; only the
+ * deepest tier is dark enough to need paper-coloured text — paper on
+ * honey-deep (2.63:1) and paper on coral (3.22:1) both fail 4.5:1 and must
+ * never be used. Tiers also step up in font-weight so a colour-blind parent
+ * can tell "a lot" from "a little" without relying on hue alone.
  */
 const HEAT_TONE: Record<HeatTier, string> = {
   none: "bg-paper-sunk text-ink",
   low: "bg-honey text-ink font-medium",
-  mid: "bg-honey-deep text-paper font-semibold",
-  high: "bg-coral text-paper font-bold",
+  mid: "bg-honey-deep text-ink font-semibold",
+  high: "bg-coral text-ink font-bold",
   peak: "bg-coral-deep text-paper font-black",
 };
 

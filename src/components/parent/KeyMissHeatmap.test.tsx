@@ -8,6 +8,11 @@ const MISSES = [
   { key: "q", misses: 0, attempts: 12 },
 ];
 
+/** The dataset's own worst key has only 2 misses. Under the old
+ * misses/peakMisses ratio, 2/2 = 1.0 would classify this as "peak" — the
+ * only fixture shape that can catch a regression to relative scaling. */
+const LOW_PEAK_MISSES = [{ key: "s", misses: 2, attempts: 10 }];
+
 function tagFor(html: string, key: string): string {
   const match = html.match(new RegExp(`<span[^>]*data-key="${key}"[^>]*>`));
   if (!match) throw new Error(`no cell rendered for key "${key}"`);
@@ -44,6 +49,15 @@ describe("KeyMissHeatmap", () => {
     expect(fewMisses).toContain("bg-honey");
     expect(manyMisses).toContain("bg-coral-deep");
     expect(manyMisses).toContain("font-black");
+  });
+
+  it("keeps a 2-miss key at the low tone even when it is the dataset's worst key (guards against reverting to relative scaling)", () => {
+    const html = renderToStaticMarkup(<KeyMissHeatmap misses={LOW_PEAK_MISSES} />);
+    const cell = tagFor(html, "s");
+
+    expect(cell).toContain("bg-honey");
+    expect(cell).not.toContain("bg-coral-deep");
+    expect(cell).not.toContain("font-black");
   });
 
   it("renders an honest empty state with no fabricated heat when there is no data", () => {
