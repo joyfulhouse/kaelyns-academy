@@ -40,12 +40,12 @@ import { curateAdventureCandidates } from "./adventureCandidates";
 import { computeUnitProgress, computeProgramRatio } from "./useProgress";
 import { pathLabelsByUnitId, segmentUnits } from "./branching";
 import { activeUnitKeySet, curatedUnits, playableUnitIds } from "./unitAccess";
-
-/** Stable empty set, so the unlock memo doesn't churn before state is read. */
-const EMPTY_COMPLETED: ReadonlySet<string> = new Set();
 import { ACTIVITY_META } from "./activityMeta";
 import { lockParentAreaAction } from "@/app/(parent)/pin-actions";
 import { captureNonCritical } from "@/lib/capture";
+
+/** Stable empty set, so the unlock memo doesn't churn before state is read. */
+const EMPTY_COMPLETED: ReadonlySet<string> = new Set();
 
 /**
  * The studio home: pick-a-learner, then the program as a world map. Units are

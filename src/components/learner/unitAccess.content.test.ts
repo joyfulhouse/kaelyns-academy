@@ -17,11 +17,12 @@ import { playableUnitIds } from "./unitAccess";
  * hold, so these tests fail loudly if that rule is ever tightened.
  */
 
+type ProgramUnit = (typeof PROGRAMS)[number]["units"][number];
+
 /** Every activity id in a unit, in authored order. */
-function activityIds(unit: PROGRAM_UNIT): string[] {
+function activityIds(unit: ProgramUnit): string[] {
   return unit.lessons.flatMap((lesson) => lesson.activities.map((a) => a.id));
 }
-type PROGRAM_UNIT = (typeof PROGRAMS)[number]["units"][number];
 
 describe.each(PROGRAMS.map((p) => [p.slug, p] as const))(
   "unit sequencing never strands a learner in %s",
