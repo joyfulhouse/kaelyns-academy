@@ -133,5 +133,40 @@ export const wordWorkshopUnit: Unit = {
         },
       ],
     },
+    {
+      id: "ww-echo",
+      order: 5,
+      title: "Star Echo: words",
+      activities: [
+        {
+          id: "ww-echo-short",
+          kind: "typing-echo",
+          title: "Star Echo: short words",
+          blurb: "A little word flashes, then hides. Hold it in your head and type it back.",
+          estMinutes: 4,
+          band: "ready",
+          skillTags: ["typing.words.familiar"],
+          config: {
+            instruction: "Watch the word flash, then type it back from memory.",
+            sequences: ["at", "in", "up", "on"],
+            flashMs: 1200,
+          },
+        },
+        {
+          id: "ww-echo-long",
+          kind: "typing-echo",
+          title: "Star Echo: longer words",
+          blurb: "A longer word flashes fast — hold every letter in your head.",
+          estMinutes: 5,
+          band: "stretch",
+          skillTags: ["typing.words.familiar"],
+          config: {
+            instruction: "Watch the word flash, then type it back from memory.",
+            sequences: ["cat", "sun", "fish", "jump"],
+            flashMs: 1000,
+          },
+        },
+      ],
+    },
   ],
 };

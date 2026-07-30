@@ -73,5 +73,26 @@ export const bigLettersUnit: Unit = {
         },
       ],
     },
+    {
+      id: "big-echo",
+      order: 3,
+      title: "Star Echo: big letters",
+      activities: [
+        {
+          id: "big-echo-caps",
+          kind: "typing-echo",
+          title: "Star Echo: hold the shape",
+          blurb: "A big letter flashes, then hides. Hold it in your head and type it back.",
+          estMinutes: 4,
+          band: "stretch",
+          skillTags: ["typing.words.familiar"],
+          config: {
+            instruction: "Watch the letters flash, then type them back from memory.",
+            sequences: ["Fj", "Dk", "Sl"],
+            flashMs: 1400,
+          },
+        },
+      ],
+    },
   ],
 };
