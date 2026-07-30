@@ -66,6 +66,10 @@ const attemptReplayRows = { value: [] as Record<string, unknown>[] };
 const generatedCompletionRows = { value: [] as Record<string, unknown>[] };
 const completedTodayRows = { value: [] as Record<string, unknown>[] };
 const generatedActivityRows = { value: [] as Record<string, unknown>[] };
+// The typing-kind rows getTypingMissHistory/getTypingRateHistory read
+// ({ day, kind, response }) — a dedicated array so it never collides with the
+// oral-reading-only attemptRows used by the getFluencyHistory tests above.
+const typingAttemptRows = { value: [] as Record<string, unknown>[] };
 const oralVerificationRows = { value: [] as Record<string, unknown>[] };
 const oralVerificationInsertResultRows = {
   value: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }] as Record<string, unknown>[],
@@ -83,6 +87,7 @@ function tableName(t: unknown): string {
  *  records the (op, table) and resolves to the canned rows for that target. */
 type Predicate =
   | { op: "eq" | "lte"; column: string | undefined; value: unknown }
+  | { op: "in"; column: string | undefined; values: unknown[] }
   | { op: "and"; conditions: Predicate[] };
 type Ordering = { direction: "asc" | "desc"; column: string | undefined };
 
@@ -91,6 +96,7 @@ function matches(row: Record<string, unknown>, predicate: Predicate | undefined)
   if (predicate.op === "and") return predicate.conditions.every((part) => matches(row, part));
   if (!predicate.column) return true;
   if (predicate.op === "eq") return row[predicate.column] === predicate.value;
+  if (predicate.op === "in") return predicate.values.includes(row[predicate.column]);
   return String(row[predicate.column]) <= String(predicate.value);
 }
 
@@ -217,7 +223,14 @@ function builder(op: string, table: string, projection?: Record<string, unknown>
                   chain.limitValue,
                 )
             : chain.op === "select" && chain.table === "attempt"
-                ? projection && "kind" in projection
+                ? projection && "kind" in projection && "response" in projection
+                  ? applyQueryShape(
+                      typingAttemptRows.value,
+                      chain.predicate,
+                      chain.ordering,
+                      chain.limitValue,
+                    )
+                : projection && "kind" in projection
                   ? attemptReplayRows.value.map((row) => ({
                       programSlug: "kaelyn-adaptive",
                       unitKey: "unit-1",
@@ -414,7 +427,11 @@ vi.mock("drizzle-orm", () => ({
   lte: (column: { name?: string }, value: unknown) => ({ op: "lte", column: column?.name, value }),
   desc: (column: { name?: string }) => ({ direction: "desc", column: column?.name }),
   asc: (column: { name?: string }) => ({ direction: "asc", column: column?.name }),
-  inArray: (...a: unknown[]) => a,
+  inArray: (column: { name?: string }, values: unknown[]) => ({
+    op: "in",
+    column: column?.name,
+    values,
+  }),
 }));
 
 vi.mock("@/lib/content/repository", () => ({
@@ -431,6 +448,8 @@ import {
   getFluencyHistory,
   getPlayableGeneratedActivity,
   getPendingCheckpointResults,
+  getTypingMissHistory,
+  getTypingRateHistory,
   nextSkillRecord,
   createOralReadingVerification,
   recordAttempt,
@@ -2064,6 +2083,313 @@ describe("getFluencyHistory (owned oral-reading history)", () => {
     ];
 
     await expect(getFluencyHistory("acct-2", "L1")).resolves.toEqual([]);
+    expect(ops.filter((entry) => entry.table === "attempt")).toEqual([]);
+  });
+});
+
+describe("getTypingMissHistory (owned per-key miss/attempt tallies)", () => {
+  beforeEach(() => {
+    ops.length = 0;
+    learnerRows.value = [{ id: "L1" }];
+    typingAttemptRows.value = [];
+  });
+
+  it("folds typing-keys prompts keyed to the EXPECTED key, retries as misses", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-keys",
+        day: "2026-07-20",
+        response: {
+          prompts: [
+            { key: "a", ok: true, retries: 0 },
+            { key: "s", ok: true, retries: 2 },
+          ],
+        },
+        createdAt: new Date("2026-07-20T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
+      { key: "a", misses: 0, attempts: 1 },
+      { key: "s", misses: 2, attempts: 1 },
+    ]);
+  });
+
+  it("folds typing-write/typing-race/typing-echo items by missedExpected character only", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-write",
+        day: "2026-07-20",
+        response: {
+          // Schemas enforce a per-kind minimum item count; pad with clean
+          // (missedExpected: []) items so the fixture parses, and assert only
+          // on the one item that actually recorded a miss.
+          items: [
+            { i: 0, ok: true, ms: 500, retries: 0, missedExpected: [] },
+            { i: 1, ok: false, ms: 900, retries: 1, missedExpected: ["d"] },
+            { i: 2, ok: true, ms: 500, retries: 0, missedExpected: [] },
+          ],
+        },
+        createdAt: new Date("2026-07-20T11:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        response: {
+          words: [
+            { i: 0, ok: false, ms: 700, retries: 1, missedExpected: ["d"] },
+            { i: 1, ok: true, ms: 500, retries: 0, missedExpected: [] },
+            { i: 2, ok: true, ms: 500, retries: 0, missedExpected: [] },
+            { i: 3, ok: true, ms: 500, retries: 0, missedExpected: [] },
+            { i: 4, ok: true, ms: 500, retries: 0, missedExpected: [] },
+            { i: 5, ok: true, ms: 500, retries: 0, missedExpected: [] },
+          ],
+          elapsedMs: 5_000,
+        },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-echo",
+        day: "2026-07-22",
+        response: {
+          sequences: [
+            { i: 0, ok: false, ms: 400, retries: 1, missedExpected: ["f"] },
+            { i: 1, ok: true, ms: 400, retries: 0, missedExpected: [] },
+            { i: 2, ok: true, ms: 400, retries: 0, missedExpected: [] },
+          ],
+        },
+        createdAt: new Date("2026-07-22T10:00:00Z"),
+      },
+    ];
+
+    // A correctly-typed item (empty missedExpected) contributes nothing — the
+    // response never records which OTHER keys it touched, so nothing is
+    // inferred for them (§8: never a pressed key, never a guessed one either).
+    await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
+      { key: "d", misses: 2, attempts: 2 },
+      { key: "f", misses: 1, attempts: 1 },
+    ]);
+  });
+
+  it("skips malformed/legacy rows defensively without breaking the series", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-keys",
+        day: "2026-07-20",
+        response: { prompts: "not-an-array" },
+        createdAt: new Date("2026-07-20T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-write",
+        day: "2026-07-21",
+        response: null,
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-keys",
+        day: "2026-07-22",
+        response: { prompts: [{ key: "j", ok: true, retries: 1 }] },
+        createdAt: new Date("2026-07-22T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
+      { key: "j", misses: 1, attempts: 1 },
+    ]);
+  });
+
+  it("orders keys by first chronological encounter across mixed kinds", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-write",
+        day: "2026-07-22",
+        response: {
+          items: [
+            { i: 0, ok: false, ms: 400, retries: 1, missedExpected: ["z"] },
+            { i: 1, ok: true, ms: 400, retries: 0, missedExpected: [] },
+            { i: 2, ok: true, ms: 400, retries: 0, missedExpected: [] },
+          ],
+        },
+        createdAt: new Date("2026-07-22T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-keys",
+        day: "2026-07-20",
+        response: { prompts: [{ key: "a", ok: true, retries: 0 }] },
+        createdAt: new Date("2026-07-20T10:00:00Z"),
+      },
+    ];
+
+    // "z" was inserted into typingAttemptRows first but was recorded LATER
+    // (07-22); the fold processes oldest→newest, so "a" (07-20) leads.
+    await expect(getTypingMissHistory("acct-1", "L1")).resolves.toEqual([
+      { key: "a", misses: 0, attempts: 1 },
+      { key: "z", misses: 1, attempts: 1 },
+    ]);
+  });
+
+  it("fails closed without reading attempts when the learner is not owned", async () => {
+    learnerRows.value = [];
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-keys",
+        day: "2026-07-20",
+        response: { prompts: [{ key: "a", ok: true, retries: 0 }] },
+        createdAt: new Date(),
+      },
+    ];
+
+    await expect(getTypingMissHistory("acct-2", "L1")).resolves.toEqual([]);
+    expect(ops.filter((entry) => entry.table === "attempt")).toEqual([]);
+  });
+});
+
+describe("getTypingRateHistory (owned typing-race wpm series)", () => {
+  beforeEach(() => {
+    ops.length = 0;
+    learnerRows.value = [{ id: "L1" }];
+    typingAttemptRows.value = [];
+  });
+
+  it("computes one point per day using that day's MAX wpm, oldest→newest", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        response: {
+          words: Array.from({ length: 6 }, (_, i) => ({
+            i,
+            ok: true,
+            ms: 500,
+            retries: 0,
+            missedExpected: [],
+          })),
+          elapsedMs: 60_000,
+        },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+      {
+        // Same day, a faster second attempt — the day's point takes the MAX.
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        response: {
+          words: Array.from({ length: 6 }, (_, i) => ({
+            i,
+            ok: true,
+            ms: 500,
+            retries: 0,
+            missedExpected: [],
+          })),
+          elapsedMs: 30_000,
+        },
+        createdAt: new Date("2026-07-21T11:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-20",
+        response: {
+          words: Array.from({ length: 6 }, (_, i) => ({
+            i,
+            ok: true,
+            ms: 500,
+            retries: 0,
+            missedExpected: [],
+          })),
+          elapsedMs: 60_000,
+        },
+        createdAt: new Date("2026-07-20T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-20", wpm: 6 },
+      { day: "2026-07-21", wpm: 12 },
+    ]);
+  });
+
+  it("excludes non-race typing kinds even though they share the attempt table", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-write",
+        day: "2026-07-21",
+        response: {
+          items: [{ i: 0, ok: true, ms: 500, retries: 0, missedExpected: [] }],
+        },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([]);
+  });
+
+  it("skips malformed/legacy race rows defensively without breaking the series", async () => {
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        response: { words: "not-an-array", elapsedMs: 60_000 },
+        createdAt: new Date("2026-07-21T10:00:00Z"),
+      },
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-22",
+        response: {
+          words: Array.from({ length: 6 }, (_, i) => ({
+            i,
+            ok: true,
+            ms: 500,
+            retries: 0,
+            missedExpected: [],
+          })),
+          elapsedMs: 60_000,
+        },
+        createdAt: new Date("2026-07-22T10:00:00Z"),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-1", "L1")).resolves.toEqual([
+      { day: "2026-07-22", wpm: 6 },
+    ]);
+  });
+
+  it("fails closed without reading attempts when the learner is not owned", async () => {
+    learnerRows.value = [];
+    typingAttemptRows.value = [
+      {
+        learnerId: "L1",
+        kind: "typing-race",
+        day: "2026-07-21",
+        response: {
+          words: Array.from({ length: 6 }, (_, i) => ({
+            i,
+            ok: true,
+            ms: 500,
+            retries: 0,
+            missedExpected: [],
+          })),
+          elapsedMs: 60_000,
+        },
+        createdAt: new Date(),
+      },
+    ];
+
+    await expect(getTypingRateHistory("acct-2", "L1")).resolves.toEqual([]);
     expect(ops.filter((entry) => entry.table === "attempt")).toEqual([]);
   });
 });
