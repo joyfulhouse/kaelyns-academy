@@ -57,6 +57,9 @@ function summaryLabel(ranked: readonly { char: string; misses: number }[]): stri
  *     identical styling regardless of rank — only descending order plus the
  *     printed count communicate degree, so nothing is lost for a colour-blind
  *     parent and no heat-tier colour ramp should ever be reintroduced here.
+ *     The uniform badge fill is `ink` (a calm, neutral chip), not
+ *     `coral-deep` — that token was the heat map's retired peak-alarm tier,
+ *     and a single miss on one key shouldn't read as maximally alarming.
  */
 export function KeysToPractice({ misses }: KeysToPracticeProps) {
   const byKey = new Map<string, number>();
@@ -75,7 +78,8 @@ export function KeysToPractice({ misses }: KeysToPracticeProps) {
       <div className="rounded-lg bg-paper-sunk/50 px-5 py-6 text-center">
         <p className="font-medium text-ink-soft">No missed keys recorded yet.</p>
         <p className="mt-1 text-sm text-ink-faint">
-          Missed keys will show up here after a few typing sessions.
+          Missed keys will show up here once any come up — an empty list just means nothing has
+          been missed yet, not that she hasn&rsquo;t practiced.
         </p>
       </div>
     );
@@ -96,7 +100,7 @@ export function KeysToPractice({ misses }: KeysToPracticeProps) {
             <span className="flex items-center gap-2.5">
               <span
                 aria-hidden
-                className="grid size-7 shrink-0 place-items-center rounded-sm border-2 border-ink bg-coral-deep text-sm font-black text-paper"
+                className="grid h-7 w-auto min-w-7 shrink-0 place-items-center rounded-sm border-2 border-ink bg-ink px-1.5 text-sm font-black text-paper"
               >
                 {keyGlyph(entry.char)}
               </span>
@@ -114,7 +118,7 @@ export function KeysToPractice({ misses }: KeysToPracticeProps) {
         </p>
       )}
       <p className="text-xs text-ink-faint">
-        Counted from the last 200 activities. Misses only — not a percentage.
+        Counted from the last 200 typing rounds. Misses only — not a percentage.
       </p>
     </div>
   );

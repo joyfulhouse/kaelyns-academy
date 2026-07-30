@@ -10,7 +10,7 @@ import { StarShape } from "@/components/ui/Stars";
 import { Prompt, ProgressHint } from "../_shared/ActivityChrome";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
-import { shouldRunOneShotEffect, useReadAloudEnabled, useSpeakOnce } from "../_shared/useSpeakOnce";
+import { shouldRunOneShotEffect, useReadAloudEnabled } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
 import { PauseOverlay } from "../_shared/typing/PauseOverlay";
@@ -41,6 +41,34 @@ const TICK_MS = 100;
  * speech that will never arrive (ITEM 1).
  */
 export const INSTRUCTION_SETTLE_FALLBACK_MS = 900;
+
+/**
+ * `speech.speak()`'s contract promises to settle "only after delivery ends,
+ * fails, or is explicitly superseded" — but a headless/voiceless browser
+ * speech engine can leave an utterance queued forever, firing neither `onend`
+ * nor `onerror` (a real, observed headless-Chromium quirk, not a hypothetical
+ * one). `INSTRUCTION_SETTLE_FALLBACK_MS` only covers a promise that DOES
+ * resolve, just unfavorably — this is the independent backstop for one that
+ * never resolves at all. Audio is an enhancement, never required: this must
+ * win eventually regardless of what the speech engine does.
+ */
+export const INSTRUCTION_HARD_CEILING_MS = 4_000;
+
+/**
+ * Judgment call (ITEM 4 follow-up): truncating mid-utterance is the right
+ * call for a SIGHTED child — she still has the tiles. It is the WRONG call
+ * for a blind child, for whom this utterance is the only channel that ever
+ * conveys the sequence at all (the tiles are `aria-hidden`). Accepting
+ * truncation would mean this activity's stated accessibility guarantee is
+ * false whenever a sequence's spoken form runs longer than its authored
+ * `flashMs` — which is real: "capital F, then j" already approaches
+ * `big-echo-caps`'s 1400ms budget. So `flashMs` does NOT get to silently
+ * truncate this; recall begins at max(flashMs elapsed, this episode's
+ * speech settled) — see the tick effect below. This ceiling is the bound on
+ * that wait, so a hung speech engine (same failure mode as
+ * INSTRUCTION_HARD_CEILING_MS) can't strand the round a second way.
+ */
+const SEQUENCE_SPEECH_HARD_CEILING_MS = 3_000;
 
 export function TypingEchoPlayer(
   props: ActivityPlayerProps<TypingEchoConfig, TypingEchoResponse>,
@@ -79,6 +107,25 @@ function announceSequence(sequence: string): string {
 
 function watchAnnouncement(sequence: string): string {
   return `Watch: ${announceSequence(sequence)}`;
+}
+
+/**
+ * Whether a flash -> recall transition `tickEcho` just computed should be
+ * held back one more tick because this episode's essential-content speech
+ * hasn't settled yet — the judgment call documented at
+ * `SEQUENCE_SPEECH_HARD_CEILING_MS`: a fixed `flashMs` must not silently
+ * truncate a blind child's only channel for the sequence. Exported as a
+ * pure function (rather than inlined in the interval callback) so it's
+ * directly unit-testable — the real interval is a no-op in this suite's
+ * window-less test environment, the same reason `tickEcho` itself lives in
+ * `state.ts` as a pure, clock-injected function.
+ */
+export function holdForSequenceSpeech(
+  prevPhase: EchoState["phase"],
+  nextPhase: EchoState["phase"],
+  speechSettled: boolean,
+): boolean {
+  return prevPhase === "flash" && nextPhase === "recall" && !speechSettled;
 }
 
 export function EchoRound({
@@ -121,38 +168,88 @@ export function EchoRound({
     if (!shouldRunOneShotEffect(readAloudEnabled, false)) return;
     let active = true;
     let fallback: ReturnType<typeof setTimeout> | null = null;
+    const settle = (): void => {
+      if (active) setInstructionSettled(true);
+    };
+    // Independent backstop, started alongside the speak() call rather than
+    // chained off its outcome: covers a promise that never settles at all
+    // (see INSTRUCTION_HARD_CEILING_MS), not just one that settles
+    // unfavorably. `settle` is idempotent, so racing this against the
+    // outcome-driven paths below is safe — whichever fires first wins.
+    const hardCeiling = setTimeout(settle, INSTRUCTION_HARD_CEILING_MS);
     void speech.speak(parsed.instruction).then((outcome) => {
       if (!active) return;
+      clearTimeout(hardCeiling);
       if (outcome !== "unavailable") {
-        setInstructionSettled(true);
+        settle();
         return;
       }
       // Nothing is actually playing (unsupported engine, no voice) — a real
       // wait would never end, so stand in with a short, finite beat instead.
-      fallback = setTimeout(() => {
-        if (active) setInstructionSettled(true);
-      }, INSTRUCTION_SETTLE_FALLBACK_MS);
+      fallback = setTimeout(settle, INSTRUCTION_SETTLE_FALLBACK_MS);
     });
     return () => {
       active = false;
+      clearTimeout(hardCeiling);
       if (fallback !== null) clearTimeout(fallback);
     };
   }, [readAloudEnabled, speech, parsed.instruction]);
 
-  // ITEM 4: the sequence IS the puzzle content, so it's spoken via essential
-  // content audio (plays even with read-aloud off) — the only reliable
-  // channel for a blind child, independent of the live region's DOM-timing
-  // race. Keyed on index+phaseStartedMs so a reflash (a fresh flash of the
-  // SAME sequence) speaks again, not just the first presentation. Gated on
+  // ITEM 4: the sequence IS the puzzle content — for a blind child it's the
+  // ONLY channel that ever conveys it (the tiles are `aria-hidden`), so it's
+  // spoken unconditionally (essential content plays regardless of the
+  // read-aloud toggle — no gating needed, unlike the instruction above).
+  // Keyed on index+phaseStartedMs so a reflash (a fresh flash of the SAME
+  // sequence) speaks again, not just the first presentation. Gated on
   // `instructionSettled` so it can never talk over the instruction, and on
   // `phase === "flash"` so recall — the §8 leak boundary — never speaks it.
-  const sequenceAnnouncement =
+  const sequenceKey =
     current !== null && state.phase === "flash" && instructionSettled
-      ? announceSequence(current)
+      ? `${state.index}:${state.phaseStartedMs}`
       : null;
-  useSpeakOnce(speech.speak, sequenceAnnouncement, `${state.index}:${state.phaseStartedMs}`, {
-    essentialContentAudio: true,
-  });
+  const sequenceAnnouncement = sequenceKey !== null ? announceSequence(current!) : null;
+  // Spoken directly rather than via `useSpeakOnce`: the tick effect below
+  // needs the SETTLE signal (not just the fire) to hold flash -> recall at
+  // max(flashMs elapsed, this episode's speech settled) — see
+  // SEQUENCE_SPEECH_HARD_CEILING_MS's doc comment for why a fixed `flashMs`
+  // is not allowed to silently truncate a blind child's only channel.
+  const sequenceSpeechSettledRef = useRef(true);
+  const sequenceSpokenKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (sequenceKey === null || sequenceAnnouncement === null) return;
+    if (sequenceSpokenKeyRef.current === sequenceKey) return;
+    sequenceSpokenKeyRef.current = sequenceKey;
+    sequenceSpeechSettledRef.current = false;
+    let active = true;
+    const settle = (): void => {
+      if (active) sequenceSpeechSettledRef.current = true;
+    };
+    const hardCeiling = setTimeout(settle, SEQUENCE_SPEECH_HARD_CEILING_MS);
+    void speech.speak(sequenceAnnouncement).then(() => {
+      if (!active) return;
+      clearTimeout(hardCeiling);
+      settle();
+    });
+    return () => {
+      active = false;
+      clearTimeout(hardCeiling);
+    };
+  }, [sequenceKey, sequenceAnnouncement, speech]);
+
+  // `useSpeakOnce`-style dedup only guards against STARTING a new utterance
+  // during recall — it does nothing about one already in flight. A slow or
+  // queued flash utterance (or one that legitimately outran flashMs and hit
+  // SEQUENCE_SPEECH_HARD_CEILING_MS above) would otherwise keep speaking the
+  // hidden answer into recall, after the tiles are gone. Cancel it explicitly
+  // at the flash→recall transition itself (the same move `PauseOverlay`
+  // makes on its own resume), not in a cleanup that only fires on unmount.
+  // `state.phase` alone is a sufficient dependency: every entry into recall
+  // is necessarily preceded by a commit where phase was "flash" (the initial
+  // flash or a reflash), so this fires again on a reflash's own exit too.
+  useEffect(() => {
+    if (state.phase !== "recall") return;
+    speech.cancel();
+  }, [state.phase, speech]);
 
   // Opens a wall-clock segment for exactly as long as the round is truly
   // live; its cleanup folds the segment's duration into accumulatedRef the
@@ -176,7 +273,15 @@ export function EchoRound({
       const now = Math.round(
         currentElapsedMs(accumulatedRef.current, segmentStartRef.current, performance.now()),
       );
-      setState((prev) => tickEcho(prev, parsed.flashMs, now));
+      setState((prev) => {
+        const next = tickEcho(prev, parsed.flashMs, now);
+        // The next tick (100ms later) re-checks and applies the transition
+        // the moment the speech settles (or its own ceiling forces it to).
+        if (holdForSequenceSpeech(prev.phase, next.phase, sequenceSpeechSettledRef.current)) {
+          return prev;
+        }
+        return next;
+      });
     }, TICK_MS);
     return () => {
       window.clearInterval(id);

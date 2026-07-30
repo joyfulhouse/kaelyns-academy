@@ -218,7 +218,19 @@ test("Star Echo flashes the sequence, then hides it during recall", async ({ pag
   // is memory recall, so the sequence must be gone from the DOM once typing
   // is expected, not merely visually hidden. `pressEchoKey` also ignores
   // keystrokes during flash, so this can't be a race against phase timing.
-  await expect(expectedTiles).toHaveCount(0, { timeout: 5_000 });
+  //
+  // The flash clock itself doesn't open until the instruction utterance
+  // settles (ITEM 1) — worst case that's `INSTRUCTION_HARD_CEILING_MS`
+  // (4000ms, Player.tsx), a real backstop for a headless-Chromium speech
+  // engine that never fires `onend`/`onerror` at all, not a hypothetical
+  // one: this exact gap hung this assertion under `CI=1` before the ceiling
+  // was added. On top of that, the flash -> recall transition itself now
+  // also waits for the sequence's OWN essential-content speech to settle
+  // (`SEQUENCE_SPEECH_HARD_CEILING_MS`, 3000ms) rather than truncating it —
+  // a blind child's only channel for the sequence must not be cut short by
+  // a visual-only `flashMs`. Budget = instruction ceiling + sequence
+  // ceiling + flashMs + margin.
+  await expect(expectedTiles).toHaveCount(0, { timeout: 12_000 });
 
   // "F" is capital in the authored sequence — matchesTypingTarget requires
   // shiftKey, so reaching for Shift is part of what's being exercised, not

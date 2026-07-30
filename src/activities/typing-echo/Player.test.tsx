@@ -31,7 +31,6 @@ const fixtures = vi.hoisted(() => ({
     speak: vi.fn(() => Promise.resolve<SpeechPlaybackOutcome>("completed")),
     cancel: vi.fn(),
   },
-  speakOnce: vi.fn(),
   wrongShake: {
     trigger: vi.fn(),
     shakeProps: vi.fn(() => ({ animate: { x: 0 }, transition: { duration: 0.4 } })),
@@ -77,12 +76,13 @@ vi.mock("../_shared/useSpeech", () => ({
   useSpeech: () => fixtures.speech,
 }));
 vi.mock("../_shared/useSpeakOnce", async (importActual) => ({
-  // `shouldRunOneShotEffect` is a hookless pure function — kept real. Only
-  // the two hooks are swapped: `useSpeakOnce` for a spy, `useReadAloudEnabled`
-  // for a controllable fixture (no <ReadAloudDefaultProvider> exists in this
-  // suite's tree, since `EchoRound` is invoked directly, not rendered).
+  // `shouldRunOneShotEffect` is a hookless pure function — kept real (Player
+  // no longer calls `useSpeakOnce` itself, round 3: both the instruction and
+  // the sequence speak via manual effects that need the SETTLE signal, not
+  // just the fire). Only `useReadAloudEnabled` is swapped, for a controllable
+  // fixture (no <ReadAloudDefaultProvider> exists in this suite's tree, since
+  // `EchoRound` is invoked directly, not rendered).
   ...(await importActual<typeof import("../_shared/useSpeakOnce")>()),
-  useSpeakOnce: (...args: unknown[]) => fixtures.speakOnce(...args),
   useReadAloudEnabled: () => fixtures.readAloudEnabled,
 }));
 vi.mock("../_shared/useWrongShake", () => ({
@@ -109,7 +109,13 @@ vi.mock("../_shared/useReducedMotion", () => ({
 }));
 
 import { TypingStage } from "../_shared/typing/TypingStage";
-import { EchoRound, INSTRUCTION_SETTLE_FALLBACK_MS, TypingEchoPlayer } from "./Player";
+import {
+  EchoRound,
+  holdForSequenceSpeech,
+  INSTRUCTION_HARD_CEILING_MS,
+  INSTRUCTION_SETTLE_FALLBACK_MS,
+  TypingEchoPlayer,
+} from "./Player";
 
 function renderRound(
   config: TypingEchoConfig,
@@ -232,16 +238,22 @@ describe("Star Echo instruction-gated first flash (ITEM 1)", () => {
     expect(fixtures.speech.speak).toHaveBeenCalledWith(CONFIG.instruction);
   });
 
+  /**
+   * Round-3 refactor note: the sequence is now spoken by a manual effect
+   * that calls `speech.speak()` directly (not via the mocked `useSpeakOnce`)
+   * — see `holdForSequenceSpeech`'s doc comment — so these assertions read
+   * `fixtures.speech.speak`'s OWN call list rather than `fixtures.speakOnce`.
+   */
   it("does not speak the sequence's essential-content audio until the instruction resolves", async () => {
     const onComplete = vi.fn();
     renderRound(CONFIG, onComplete);
 
-    // Synchronously after mount, the instruction's `.then()` hasn't run yet —
-    // the flash's own speech must stay gated (null text), not race it.
-    expect(fixtures.speakOnce.mock.calls.at(-1)?.[1]).toBeNull();
+    // Synchronously after mount, the instruction hasn't settled yet — the
+    // sequence's own speech must stay gated, not race it.
+    expect(fixtures.speech.speak).not.toHaveBeenCalledWith("f, then j");
 
     await settleInstruction(onComplete);
-    expect(fixtures.speakOnce.mock.calls.at(-1)?.[1]).toBe("f, then j");
+    expect(fixtures.speech.speak).toHaveBeenCalledWith("f, then j");
   });
 
   it("still starts the round, via a short fallback, when speech resolves unavailable (unsupported engine)", async () => {
@@ -253,12 +265,40 @@ describe("Star Echo instruction-gated first flash (ITEM 1)", () => {
 
       await settleInstruction(onComplete);
       // The "unavailable" branch schedules a fallback timer rather than
-      // settling immediately — nothing has spoken yet.
-      expect(fixtures.speakOnce.mock.calls.at(-1)?.[1]).toBeNull();
+      // settling immediately — the sequence hasn't been asked to speak yet.
+      expect(fixtures.speech.speak).not.toHaveBeenCalledWith("f, then j");
 
       await vi.advanceTimersByTimeAsync(INSTRUCTION_SETTLE_FALLBACK_MS);
       renderRound(CONFIG, onComplete);
-      expect(fixtures.speakOnce.mock.calls.at(-1)?.[1]).toBe("f, then j");
+      expect(fixtures.speech.speak).toHaveBeenCalledWith("f, then j");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * Round-3 follow-up: a real headless-Chromium `speechSynthesis` engine can
+   * leave an utterance queued forever, firing neither `onend` nor `onerror` —
+   * `speech.speak()`'s promise then never settles at all (this exact gap
+   * hung the e2e gate under `CI=1`). `INSTRUCTION_SETTLE_FALLBACK_MS` cannot
+   * help here since it only runs once the promise DOES resolve. Without
+   * `INSTRUCTION_HARD_CEILING_MS`'s independent timer, this round never
+   * starts.
+   */
+  it("still starts the round, via a hard ceiling, when speech never settles at all", async () => {
+    vi.useFakeTimers();
+    try {
+      fixtures.speech.speak = vi.fn(() => new Promise<SpeechPlaybackOutcome>(() => {}));
+      const onComplete = vi.fn();
+      renderRound(CONFIG, onComplete);
+
+      await vi.advanceTimersByTimeAsync(INSTRUCTION_HARD_CEILING_MS - 1);
+      renderRound(CONFIG, onComplete);
+      expect(fixtures.speech.speak).not.toHaveBeenCalledWith("f, then j");
+
+      await vi.advanceTimersByTimeAsync(1);
+      renderRound(CONFIG, onComplete);
+      expect(fixtures.speech.speak).toHaveBeenCalledWith("f, then j");
     } finally {
       vi.useRealTimers();
     }
@@ -270,10 +310,35 @@ describe("Star Echo instruction-gated first flash (ITEM 1)", () => {
     renderRound(CONFIG, onComplete);
     await settleInstruction(onComplete);
 
-    expect(fixtures.speech.speak).not.toHaveBeenCalled();
+    expect(fixtures.speech.speak).not.toHaveBeenCalledWith(CONFIG.instruction);
     // Gated only on `instructionSettled` now, which resolved synchronously —
     // the essential-content flash speech (unaffected by the toggle) fires.
-    expect(fixtures.speakOnce.mock.calls.at(-1)?.[1]).toBe("f, then j");
+    expect(fixtures.speech.speak).toHaveBeenCalledWith("f, then j");
+  });
+});
+
+describe("Star Echo essential-content flash speech settling (ITEM 4 judgment call)", () => {
+  /**
+   * The judgment call, made concrete: truncation is unacceptable for a
+   * blind child, so `flashMs` alone must not end the flash. `tickEcho`
+   * itself doesn't know about speech — the Player holds the transition via
+   * `holdForSequenceSpeech`, a pure function kept separate exactly so this
+   * decision is testable without a real interval (a no-op in this suite).
+   */
+  it("holds a flash -> recall transition when the episode's speech hasn't settled", () => {
+    expect(holdForSequenceSpeech("flash", "recall", false)).toBe(true);
+  });
+
+  it("lets a flash -> recall transition through once speech has settled", () => {
+    expect(holdForSequenceSpeech("flash", "recall", true)).toBe(false);
+  });
+
+  it("never holds a tick that doesn't cross into recall (nothing to guard yet)", () => {
+    expect(holdForSequenceSpeech("flash", "flash", false)).toBe(false);
+  });
+
+  it("never holds a transition that didn't start in flash (recall -> flash, e.g. a completed item)", () => {
+    expect(holdForSequenceSpeech("recall", "flash", false)).toBe(false);
   });
 });
 
@@ -335,13 +400,46 @@ describe("Star Echo recall phase — the leak guard (§8, req 3, 5)", () => {
     renderRound(CONFIG, onComplete);
     await settleInstruction(onComplete); // lets the essential-content flash speech open
 
-    const duringFlash = fixtures.speakOnce.mock.calls.at(-1);
-    expect(duringFlash?.[1]).toBe("f, then j");
-    expect(duringFlash?.[3]).toEqual({ essentialContentAudio: true });
+    expect(fixtures.speech.speak).toHaveBeenCalledWith("f, then j");
+
+    fixtures.speech.speak.mockClear();
+    advanceToRecall(onComplete);
+    expect(fixtures.speech.speak).not.toHaveBeenCalledWith("f, then j");
+  });
+
+  /**
+   * Round-3 follow-up: `useSpeakOnce` above only guards against a NEW
+   * utterance starting during recall — it says nothing about one already
+   * in flight finishing its sentence into recall (a slow/queued TTS route
+   * is the normal case, not an edge case). This is the actual §8 leak fix:
+   * without the `speech.cancel()` effect, this test fails, because nothing
+   * else in this suite ever calls `fixtures.speech.cancel`.
+   */
+  it("cancels any in-flight flash speech the instant phase flips flash -> recall", () => {
+    const onComplete = vi.fn();
+    renderRound(CONFIG, onComplete);
+    fixtures.speech.cancel.mockClear();
+    expect(fixtures.speech.cancel).not.toHaveBeenCalled();
 
     advanceToRecall(onComplete);
-    const duringRecall = fixtures.speakOnce.mock.calls.at(-1);
-    expect(duringRecall?.[1]).toBeNull();
+
+    expect(fixtures.speech.cancel).toHaveBeenCalled();
+  });
+
+  it("cancels again on a re-flash's own flash -> recall exit, not just the first one", () => {
+    const onComplete = vi.fn();
+    renderRound(CONFIG, onComplete);
+    advanceToRecall(onComplete);
+    fixtures.speech.cancel.mockClear();
+
+    // Simulate a reflash (ITEM 2): back to flash for the same sequence —
+    // nothing to cancel yet, since recall hasn't been (re-)entered.
+    fixtures.stateValues[0] = { ...(fixtures.stateValues[0] as EchoState), phase: "flash" as const };
+    renderRound(CONFIG, onComplete);
+    expect(fixtures.speech.cancel).not.toHaveBeenCalled();
+
+    advanceToRecall(onComplete); // the reflash's own flash -> recall exit
+    expect(fixtures.speech.cancel).toHaveBeenCalled();
   });
 });
 

@@ -30,9 +30,16 @@ describe("KeysToPractice", () => {
     expect(html).not.toMatch(/title="/);
   });
 
-  it("discloses the reader window and that counts are misses, not a percentage", () => {
+  /**
+   * Round-3 honesty fix: `getTypingMissHistory`'s 200-row limit applies to the
+   * last 200 ATTEMPTS filtered to the four typing kinds, not to "activities"
+   * broadly — a parent reading "activities" would reasonably assume it counts
+   * reading/math too. "typing rounds" says exactly what's counted.
+   */
+  it("discloses the reader window as typing rounds, not activities broadly, and that counts are misses, not a percentage", () => {
     const html = renderToStaticMarkup(<KeysToPractice misses={MISSES} />);
-    expect(html).toContain("last 200 activities");
+    expect(html).toContain("last 200 typing rounds");
+    expect(html).not.toContain("last 200 activities");
     expect(html).toMatch(/not a percentage/i);
   });
 
@@ -53,6 +60,19 @@ describe("KeysToPractice", () => {
       <KeysToPractice misses={[{ key: "a", misses: 0, attempts: 5 }]} />,
     );
     expect(html).toContain("No missed keys recorded yet.");
+  });
+
+  /**
+   * Round-3 copy fix: the subcopy previously read "after a few typing
+   * sessions", which reads as "no practice yet" — wrong for a child who HAS
+   * practiced (Star-Catch-only, which tracks no misses at all, or a perfect
+   * Key Camp week with zero misses). The headline was already accurate; the
+   * subcopy must land the same "nothing missed", not "no practice", claim.
+   */
+  it("phrases the empty-state subcopy as 'nothing missed yet', not 'no practice yet'", () => {
+    const html = renderToStaticMarkup(<KeysToPractice misses={[]} />);
+    expect(html).not.toMatch(/after a few typing sessions/i);
+    expect(html).toMatch(/nothing.*missed yet/i);
   });
 
   it("never renders a child's display name", () => {
@@ -128,5 +148,40 @@ describe("KeysToPractice", () => {
     const classes = rows.map(badgeClass);
     expect(classes.every((c) => c !== undefined)).toBe(true);
     expect(new Set(classes).size).toBe(1); // identical across the highest- and lowest-ranked rows
+  });
+
+  /**
+   * Round-3 layout fix: `keyGlyph(" ")` renders the word "Space" (5 chars) —
+   * a fixed `size-7` (28px) square badge measured `scrollWidth` 44 vs
+   * `clientWidth` 24, a 20px overspill with no `overflow:hidden` to clip it,
+   * breaking the uniform badge grid. Reachable in practice: `ww-sentences`
+   * ships "The fat cat sat.", and `pressWordKey` records `expected[pos]`
+   * (including a literal space) into `missedExpected` at divergence, so " "
+   * genuinely enters the tally and can rank into the top eight.
+   */
+  it("lets the space-bar badge grow to fit 'Space' instead of the fixed size-7 square overflowing", () => {
+    const withSpace = [
+      { key: " ", misses: 8, attempts: 0 },
+      { key: "f", misses: 5, attempts: 0 },
+    ];
+    const html = renderToStaticMarkup(<KeysToPractice misses={withSpace} />);
+    const rows = listItems(html);
+    const spaceRow = rows.find((row) => row.includes(">Space<"));
+
+    expect(spaceRow).toBeDefined();
+    expect(spaceRow).not.toMatch(/class="[^"]*\bsize-7\b/);
+    expect(spaceRow).toMatch(/class="[^"]*\bh-7\b[^"]*\bw-auto\b/);
+  });
+
+  /**
+   * Round-3 tone fix: every badge previously shared `bg-coral-deep` — the
+   * heat map's retired PEAK-ALARM tier — so a single miss on one key read as
+   * maximally alarming, the same red as a 17-miss key. Uniform styling
+   * regardless of rank is correct and must stay (see the addendum above);
+   * the fix is the colour chosen for that uniform fill, not the uniformity.
+   */
+  it("fills the badge with a calm neutral tone, not the retired peak-alarm coral-deep", () => {
+    const html = renderToStaticMarkup(<KeysToPractice misses={MISSES} />);
+    expect(html).not.toContain("bg-coral-deep");
   });
 });
