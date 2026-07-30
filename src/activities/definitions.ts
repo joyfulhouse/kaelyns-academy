@@ -17,6 +17,7 @@ import * as sortCategories from "./sort-categories/logic";
 import * as seqOrder from "./seq-order/logic";
 import * as oralReading from "./oral-reading/logic";
 import * as typingCatch from "./typing-catch/logic";
+import * as typingEcho from "./typing-echo/logic";
 import * as typingKeys from "./typing-keys/logic";
 import * as typingRace from "./typing-race/logic";
 import * as typingWrite from "./typing-write/logic";
@@ -90,6 +91,7 @@ const SERVER_ACTIVITY_TYPES = {
   "oral-reading": defineServerActivity("oral-reading", oralReading, "server-witness"),
   "typing-keys": defineServerActivity("typing-keys", typingKeys, "full-score"),
   "typing-catch": defineServerActivity("typing-catch", typingCatch, "response-validated"),
+  "typing-echo": defineServerActivity("typing-echo", typingEcho, "response-validated"),
   "typing-write": defineServerActivity("typing-write", typingWrite, "response-validated"),
   "typing-race": defineServerActivity("typing-race", typingRace, "response-validated"),
 } satisfies Record<ActivityKind, ServerActivityDefinition>;
