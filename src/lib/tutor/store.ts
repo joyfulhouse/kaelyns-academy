@@ -1431,29 +1431,24 @@ export async function getTypingMissHistory(
 }
 
 /**
- * The REAL authored words `wpm()` needs for one `typing-race` attempt, or
- * `null` if they can't be resolved, from the CURRENT in-repo/static content
- * registry via the durable (programSlug, activityId) pair the attempt itself
- * recorded. Used only for the no-pin fallback path (see
- * {@link resolveTypingRaceWordsForAttempt}) — never for a pinned attempt,
- * since the registry only ever reflects "now". NEVER an approximated/
- * invented length: a row that can't resolve (unknown programSlug, a since-
- * renamed/removed activity, an id repurposed to a different kind, or a
- * word-count mismatch) returns null and the caller skips it, the same
- * fail-closed posture as a malformed response.
+ * Shared tail of both word-resolution paths below: locate the activity in the
+ * given (already-resolved) tree and return its authored words only if it's
+ * really a `typing-race` and its word count agrees with what the response
+ * implies. NEVER an approximated/invented length: a tree that's missing, an
+ * activity that's since been renamed/removed/repurposed to a different kind,
+ * or a word-count mismatch, all return null and the caller skips it — the
+ * same fail-closed posture as a malformed response.
  */
-function resolveTypingRaceWords(
-  programSlug: string,
+function wordsFromTree(
+  program: Program | null | undefined,
   activityId: string,
   wordCount: number,
 ): readonly string[] | null {
-  const program = getProgram(programSlug);
   if (!program) return null;
   const ctx = findActivity(program, activityId);
   if (!ctx || ctx.activity.kind !== "typing-race") return null;
   const words = ctx.activity.config.words;
-  if (wordCount !== words.length) return null;
-  return words;
+  return wordCount === words.length ? words : null;
 }
 
 /**
@@ -1465,17 +1460,18 @@ function resolveTypingRaceWords(
  *
  *  - `programVersionId` set → resolved through the DB-backed version tree
  *    for THAT EXACT version via {@link getProgramVersionAsync}, never the
- *    current/static registry. A version that can't resolve, an activity that
- *    isn't found or isn't a typing-race kind, or a resolved word count that
- *    disagrees with what the response implies, all return null (skip —
- *    never chart a value that can't be justified).
- *  - `programVersionId` NULL → falls back to the current in-repo/static
+ *    current/static registry.
+ *  - `programVersionId` NULL → falls back to the CURRENT in-repo/static
  *    registry via (programSlug, activityId), exactly as before version
  *    pinning existed. `program_version_id` is documented in the schema as
  *    "Nullable so pre-migration attempts remain readable" — a null pin is
  *    an ABSENCE of version information, not evidence of a mismatch, so it
  *    must never be skipped on that basis alone. Do not "tighten" this later
  *    into treating null as a drifted pin.
+ *
+ * Either path's tree lookup (find the activity, check its kind, check its
+ * word count) is identical — see {@link wordsFromTree} — so the only real
+ * difference between the two branches is how the tree itself is obtained.
  */
 async function resolveTypingRaceWordsForAttempt(
   programSlug: string | null,
@@ -1484,15 +1480,9 @@ async function resolveTypingRaceWordsForAttempt(
   wordCount: number,
 ): Promise<readonly string[] | null> {
   if (!programVersionId) {
-    return programSlug ? resolveTypingRaceWords(programSlug, activityId, wordCount) : null;
+    return wordsFromTree(programSlug ? getProgram(programSlug) : null, activityId, wordCount);
   }
-  const program = await getProgramVersionAsync(programVersionId);
-  if (!program) return null;
-  const ctx = findActivity(program, activityId);
-  if (!ctx || ctx.activity.kind !== "typing-race") return null;
-  const words = ctx.activity.config.words;
-  if (wordCount !== words.length) return null;
-  return words;
+  return wordsFromTree(await getProgramVersionAsync(programVersionId), activityId, wordCount);
 }
 
 /** Never chart an absurd rate: `elapsedMs` near zero (a client-timing glitch,
