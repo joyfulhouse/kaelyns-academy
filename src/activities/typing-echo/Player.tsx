@@ -10,11 +10,12 @@ import { StarShape } from "@/components/ui/Stars";
 import { Prompt, ProgressHint } from "../_shared/ActivityChrome";
 import { useActivity } from "../_shared/useActivity";
 import { useReducedMotion } from "../_shared/useReducedMotion";
-import { useSpeakOnce } from "../_shared/useSpeakOnce";
+import { shouldRunOneShotEffect, useReadAloudEnabled, useSpeakOnce } from "../_shared/useSpeakOnce";
 import { useSpeech } from "../_shared/useSpeech";
 import { useWrongShake } from "../_shared/useWrongShake";
 import { PauseOverlay } from "../_shared/typing/PauseOverlay";
 import { TypingStage } from "../_shared/typing/TypingStage";
+import { isCapitalKey } from "../_shared/typing/keys";
 import { useRoundPaused } from "../_shared/typing/roundPause";
 import { useTypingKeys } from "../_shared/typing/useTypingKeys";
 import { BufferTiles, ExpectedTiles } from "../_shared/typing/WordTiles";
@@ -31,6 +32,15 @@ import {
 
 /** The flash/recall clock's tick cadence, matching typing-catch/typing-race. */
 const TICK_MS = 100;
+
+/**
+ * When the instruction utterance can't actually be delivered (unsupported
+ * engine, no voice, cancelled), the first flash still shouldn't pop open the
+ * instant the round mounts — the child has no cue at all yet. A short,
+ * finite beat stands in for the utterance rather than waiting forever on
+ * speech that will never arrive (ITEM 1).
+ */
+export const INSTRUCTION_SETTLE_FALLBACK_MS = 900;
 
 export function TypingEchoPlayer(
   props: ActivityPlayerProps<TypingEchoConfig, TypingEchoResponse>,
@@ -54,8 +64,21 @@ function currentElapsedMs(
   return accumulatedMs + (segmentStartMs === null ? 0 : Math.max(0, nowMs - segmentStartMs));
 }
 
+/**
+ * Screen readers don't convey case by default, but `matchesTypingTarget`
+ * requires Shift for a capital — so case has to be spelled out in words for
+ * both the spoken and the announced form (ITEM 4), not left to the
+ * `aria-hidden` tiles that a screen-reader user never sees.
+ */
+function announceSequence(sequence: string): string {
+  return sequence
+    .split("")
+    .map((ch) => (isCapitalKey(ch) ? `capital ${ch}` : ch))
+    .join(", then ");
+}
+
 function watchAnnouncement(sequence: string): string {
-  return `Watch: ${sequence.split("").join(" ")}`;
+  return `Watch: ${announceSequence(sequence)}`;
 }
 
 export function EchoRound({
@@ -65,10 +88,19 @@ export function EchoRound({
   const parsed = useActivity(schema, config);
   const sequences = parsed.sequences;
   const speech = useSpeech();
+  const readAloudEnabled = useReadAloudEnabled();
   const reducedMotion = useReducedMotion();
   const shake = useWrongShake();
   const paused = useRoundPaused();
   const [state, setState] = useState<EchoState>(() => initialEchoState(0));
+  // Lazy initial value (not an effect-driven setState — react-hooks forbids
+  // calling setState synchronously inside an effect body): when nothing will
+  // actually be spoken, there is nothing to wait for, so the round starts
+  // already settled.
+  const [instructionSettled, setInstructionSettled] = useState(
+    () => !shouldRunOneShotEffect(readAloudEnabled, false),
+  );
+  const instructionStarted = useRef(false);
   const reported = useRef(false);
   const accumulatedRef = useRef(0);
   const segmentStartRef = useRef<number | null>(null);
@@ -76,14 +108,58 @@ export function EchoRound({
   const finished = isEchoComplete(state, sequences.length);
   const current = finished ? null : (sequences[state.index] ?? null);
 
-  useSpeakOnce(speech.speak, parsed.instruction);
+  // ITEM 1: a pre-reader's eyes are on the keyboard, not the screen, while
+  // she's being told what to do — audio is PRODUCT.md §1's PRIMARY channel.
+  // The very first flash must not open (and its letters must not vanish)
+  // while that instruction is still being spoken. Once settled, this stays
+  // true for the rest of the round — every later flash and reflash is free
+  // to open immediately, since by then the child has already heard it once.
+  useEffect(() => {
+    if (instructionStarted.current) return;
+    instructionStarted.current = true;
+    // Nothing will be spoken (see the lazy initializer above) — already settled.
+    if (!shouldRunOneShotEffect(readAloudEnabled, false)) return;
+    let active = true;
+    let fallback: ReturnType<typeof setTimeout> | null = null;
+    void speech.speak(parsed.instruction).then((outcome) => {
+      if (!active) return;
+      if (outcome !== "unavailable") {
+        setInstructionSettled(true);
+        return;
+      }
+      // Nothing is actually playing (unsupported engine, no voice) — a real
+      // wait would never end, so stand in with a short, finite beat instead.
+      fallback = setTimeout(() => {
+        if (active) setInstructionSettled(true);
+      }, INSTRUCTION_SETTLE_FALLBACK_MS);
+    });
+    return () => {
+      active = false;
+      if (fallback !== null) clearTimeout(fallback);
+    };
+  }, [readAloudEnabled, speech, parsed.instruction]);
+
+  // ITEM 4: the sequence IS the puzzle content, so it's spoken via essential
+  // content audio (plays even with read-aloud off) — the only reliable
+  // channel for a blind child, independent of the live region's DOM-timing
+  // race. Keyed on index+phaseStartedMs so a reflash (a fresh flash of the
+  // SAME sequence) speaks again, not just the first presentation. Gated on
+  // `instructionSettled` so it can never talk over the instruction, and on
+  // `phase === "flash"` so recall — the §8 leak boundary — never speaks it.
+  const sequenceAnnouncement =
+    current !== null && state.phase === "flash" && instructionSettled
+      ? announceSequence(current)
+      : null;
+  useSpeakOnce(speech.speak, sequenceAnnouncement, `${state.index}:${state.phaseStartedMs}`, {
+    essentialContentAudio: true,
+  });
 
   // Opens a wall-clock segment for exactly as long as the round is truly
   // live; its cleanup folds the segment's duration into accumulatedRef the
   // instant the round pauses, finishes, or unmounts, so a blurred tab never
   // shortens (or lengthens) the flash a child actually sees.
   useEffect(() => {
-    if (paused || finished) {
+    if (paused || finished || !instructionSettled) {
       // Fold any EVENT-OPENED segment too: a keystroke and a pause can land
       // in the same commit, in which case this effect's live branch (and its
       // cleanup) never ran for that segment — without this fold, resume's
@@ -109,25 +185,28 @@ export function EchoRound({
         segmentStartRef.current = null;
       }
     };
-  }, [paused, finished, parsed.flashMs]);
+  }, [paused, finished, parsed.flashMs, instructionSettled]);
 
-  // The listener detaches the instant the round completes (Key Camp's
-  // pattern) — pressEchoKey's `expected === undefined` branch is otherwise
-  // unreachable, since there is no way to type past the final sequence.
+  // The listener detaches the instant the round completes or pauses (Key
+  // Camp's pattern, ITEM 9: matches typing-race/typing-catch's
+  // `!finished && !paused` — a future pause path that keeps focus must not
+  // accept recall keystrokes under the overlay). pressEchoKey's
+  // `expected === undefined` branch is otherwise unreachable, since there is
+  // no way to type past the final sequence.
   useTypingKeys((intent) => {
+    const now = Math.round(
+      currentElapsedMs(accumulatedRef.current, segmentStartRef.current, performance.now()),
+    );
     if (intent.type === "backspace") {
-      setState((prev) => pressEchoBackspace(prev));
+      setState((prev) => pressEchoBackspace(prev, now));
       return;
     }
     if (intent.type !== "char") return;
     if (state.phase === "recall" && current !== null && wordKeyWillBeWrong(state.progress, current, intent)) {
       shake.trigger();
     }
-    const now = Math.round(
-      currentElapsedMs(accumulatedRef.current, segmentStartRef.current, performance.now()),
-    );
     setState((prev) => pressEchoKey(prev, sequences, intent, now));
-  }, !finished);
+  }, !finished && !paused);
 
   // Completion is reported after React commits the final transition (mirrors
   // Word Write): the ref guards against reporting twice under StrictMode.

@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TypingEchoConfig } from "@/content/activity-configs";
+import type { SpeechPlaybackOutcome } from "../_shared/useSpeech";
 import type { KeyIntent } from "../_shared/typing/typingKey";
 import type { TypingEchoResponse } from "./logic";
 import { initialEchoState, type EchoState } from "./state";
@@ -27,7 +28,7 @@ const fixtures = vi.hoisted(() => ({
   speech: {
     supported: true,
     hasVoice: true,
-    speak: vi.fn(() => Promise.resolve("completed" as const)),
+    speak: vi.fn(() => Promise.resolve<SpeechPlaybackOutcome>("completed")),
     cancel: vi.fn(),
   },
   speakOnce: vi.fn(),
@@ -39,6 +40,7 @@ const fixtures = vi.hoisted(() => ({
   paused: false,
   documentHidden: false,
   reducedMotion: false,
+  readAloudEnabled: true,
 }));
 
 vi.mock("react", async (importActual) => ({
@@ -74,8 +76,14 @@ vi.mock("../_shared/useActivity", () => ({
 vi.mock("../_shared/useSpeech", () => ({
   useSpeech: () => fixtures.speech,
 }));
-vi.mock("../_shared/useSpeakOnce", () => ({
+vi.mock("../_shared/useSpeakOnce", async (importActual) => ({
+  // `shouldRunOneShotEffect` is a hookless pure function — kept real. Only
+  // the two hooks are swapped: `useSpeakOnce` for a spy, `useReadAloudEnabled`
+  // for a controllable fixture (no <ReadAloudDefaultProvider> exists in this
+  // suite's tree, since `EchoRound` is invoked directly, not rendered).
+  ...(await importActual<typeof import("../_shared/useSpeakOnce")>()),
   useSpeakOnce: (...args: unknown[]) => fixtures.speakOnce(...args),
+  useReadAloudEnabled: () => fixtures.readAloudEnabled,
 }));
 vi.mock("../_shared/useWrongShake", () => ({
   useWrongShake: () => ({ wrong: false, ...fixtures.wrongShake }),
@@ -101,7 +109,7 @@ vi.mock("../_shared/useReducedMotion", () => ({
 }));
 
 import { TypingStage } from "../_shared/typing/TypingStage";
-import { EchoRound, TypingEchoPlayer } from "./Player";
+import { EchoRound, INSTRUCTION_SETTLE_FALLBACK_MS, TypingEchoPlayer } from "./Player";
 
 function renderRound(
   config: TypingEchoConfig,
@@ -138,6 +146,16 @@ function advanceToRecall(onComplete: (response: TypingEchoResponse) => void): vo
   renderRound(CONFIG, onComplete);
 }
 
+/** Lets the instruction-settle effect's queued microtask run (ITEM 1), then
+ *  re-renders so the Player's next pass sees `instructionSettled`. One
+ *  `await` is enough: `speech.speak(...).then(cb)` queues `cb` the instant
+ *  `renderRound` runs (the mocked `useEffect` executes synchronously), ahead
+ *  of this `await`'s own continuation in the microtask queue. */
+async function settleInstruction(onComplete: (response: TypingEchoResponse) => void): Promise<void> {
+  await Promise.resolve();
+  renderRound(CONFIG, onComplete);
+}
+
 const CONFIG: TypingEchoConfig = {
   instruction: "Watch, then type what you saw.",
   sequences: ["fj", "dk", "sl"],
@@ -152,7 +170,9 @@ beforeEach(() => {
   fixtures.paused = false;
   fixtures.documentHidden = false;
   fixtures.reducedMotion = false;
+  fixtures.readAloudEnabled = true;
   fixtures.onIntent = null;
+  fixtures.speech.speak = vi.fn(() => Promise.resolve<SpeechPlaybackOutcome>("completed"));
   vi.clearAllMocks();
 });
 
@@ -178,7 +198,7 @@ describe("Star Echo flash phase", () => {
     expect(markup).toContain("data-expected-word-group");
     expect(markup).toMatch(/>f</);
     expect(markup).toMatch(/>j</);
-    expect(markup).toContain("Watch: f j");
+    expect(markup).toContain("Watch: f, then j");
     expect(markup).not.toContain("Now type what you saw");
   });
 
@@ -202,6 +222,58 @@ describe("Star Echo flash phase", () => {
       /<span aria-hidden="true" class="flex flex-wrap items-center justify-center gap-1.5">/,
     );
     expect(markup).toContain("1 of 3");
+  });
+});
+
+describe("Star Echo instruction-gated first flash (ITEM 1)", () => {
+  it("speaks the instruction on mount, before anything else", () => {
+    renderRound(CONFIG, () => undefined);
+
+    expect(fixtures.speech.speak).toHaveBeenCalledWith(CONFIG.instruction);
+  });
+
+  it("does not speak the sequence's essential-content audio until the instruction resolves", async () => {
+    const onComplete = vi.fn();
+    renderRound(CONFIG, onComplete);
+
+    // Synchronously after mount, the instruction's `.then()` hasn't run yet —
+    // the flash's own speech must stay gated (null text), not race it.
+    expect(fixtures.speakOnce.mock.calls.at(-1)?.[1]).toBeNull();
+
+    await settleInstruction(onComplete);
+    expect(fixtures.speakOnce.mock.calls.at(-1)?.[1]).toBe("f, then j");
+  });
+
+  it("still starts the round, via a short fallback, when speech resolves unavailable (unsupported engine)", async () => {
+    vi.useFakeTimers();
+    try {
+      fixtures.speech.speak = vi.fn(() => Promise.resolve<SpeechPlaybackOutcome>("unavailable"));
+      const onComplete = vi.fn();
+      renderRound(CONFIG, onComplete);
+
+      await settleInstruction(onComplete);
+      // The "unavailable" branch schedules a fallback timer rather than
+      // settling immediately — nothing has spoken yet.
+      expect(fixtures.speakOnce.mock.calls.at(-1)?.[1]).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(INSTRUCTION_SETTLE_FALLBACK_MS);
+      renderRound(CONFIG, onComplete);
+      expect(fixtures.speakOnce.mock.calls.at(-1)?.[1]).toBe("f, then j");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not wait at all when the read-aloud default is off (nothing will be spoken)", async () => {
+    fixtures.readAloudEnabled = false;
+    const onComplete = vi.fn();
+    renderRound(CONFIG, onComplete);
+    await settleInstruction(onComplete);
+
+    expect(fixtures.speech.speak).not.toHaveBeenCalled();
+    // Gated only on `instructionSettled` now, which resolved synchronously —
+    // the essential-content flash speech (unaffected by the toggle) fires.
+    expect(fixtures.speakOnce.mock.calls.at(-1)?.[1]).toBe("f, then j");
   });
 });
 
@@ -257,6 +329,20 @@ describe("Star Echo recall phase — the leak guard (§8, req 3, 5)", () => {
     type("x");
     expect(fixtures.wrongShake.trigger).toHaveBeenCalledTimes(1);
   });
+
+  it("extends the leak guard to the speech mock (ITEM 4): the sequence speaks during flash but never during recall", async () => {
+    const onComplete = vi.fn();
+    renderRound(CONFIG, onComplete);
+    await settleInstruction(onComplete); // lets the essential-content flash speech open
+
+    const duringFlash = fixtures.speakOnce.mock.calls.at(-1);
+    expect(duringFlash?.[1]).toBe("f, then j");
+    expect(duringFlash?.[3]).toEqual({ essentialContentAudio: true });
+
+    advanceToRecall(onComplete);
+    const duringRecall = fixtures.speakOnce.mock.calls.at(-1);
+    expect(duringRecall?.[1]).toBeNull();
+  });
 });
 
 describe("Star Echo pause (req 2)", () => {
@@ -265,6 +351,18 @@ describe("Star Echo pause (req 2)", () => {
     const markup = toMarkup(CONFIG, () => undefined);
 
     expect(markup).toContain("Paused — click to keep playing");
+  });
+
+  it("detaches the key listener while paused, matching typing-race/typing-catch (ITEM 9)", () => {
+    const onComplete = vi.fn();
+    renderRound(CONFIG, onComplete);
+    advanceToRecall(onComplete);
+    expect(fixtures.onIntent).not.toBeNull();
+
+    fixtures.paused = true;
+    renderRound(CONFIG, onComplete);
+
+    expect(fixtures.onIntent).toBeNull();
   });
 });
 

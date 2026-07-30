@@ -49,10 +49,10 @@ function formatWpm(value: number): string {
 
 function chartLabel(
   points: readonly TypingRateChartPoint[],
-  latest: number,
+  recentBest: number,
   best: number,
 ): string {
-  const delta = latest - points[0].wpm;
+  const delta = recentBest - points[0].wpm;
   const trend =
     delta > 0
       ? `Up ${formatWpm(delta)} WPM`
@@ -60,7 +60,7 @@ function chartLabel(
         ? `Down ${formatWpm(Math.abs(delta))} WPM`
         : "Holding steady";
   const dayWord = points.length === 1 ? "day" : "days";
-  return `Typing speed chart. Latest ${formatWpm(latest)} WPM. Best ${formatWpm(best)} WPM. ${trend} across ${points.length} typing ${dayWord}.`;
+  return `Typing speed chart. Recent best ${formatWpm(recentBest)} WPM. Best ${formatWpm(best)} WPM. ${trend} across ${points.length} typing ${dayWord}.`;
 }
 
 /** Parent-only, deterministic typing-speed chart. Mirrors FluencyChart's
@@ -79,7 +79,10 @@ export function TypingRateChart({ points }: TypingRateChartProps) {
     );
   }
 
-  const latest = points.at(-1)!.wpm;
+  // `getTypingRateHistory` folds each day to its best race (§ITEM 7) — the
+  // most recent POINT is therefore her best-of-day, not her literal last
+  // race. "Recent best" says exactly that instead of overclaiming "Latest".
+  const recentBest = points.at(-1)!.wpm;
   const best = Math.max(...points.map((point) => point.wpm));
   const ceiling = ceilingFor(points);
   const polylinePoints = points
@@ -94,29 +97,53 @@ export function TypingRateChart({ points }: TypingRateChartProps) {
     <div>
       <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
         <div className="flex items-baseline gap-2">
-          <dt className="text-ink-faint">Latest</dt>
-          <dd className="font-semibold text-ink">{formatWpm(latest)} WPM</dd>
+          <dt className="text-ink-faint">Recent best</dt>
+          <dd className="font-semibold text-ink">{formatWpm(recentBest)} WPM</dd>
         </div>
         <div className="flex items-baseline gap-2">
           <dt className="text-ink-faint">Best</dt>
           <dd className="font-semibold text-ink">{formatWpm(best)} WPM</dd>
         </div>
       </dl>
+      <p className="mt-1 text-xs text-ink-faint">Rocket Race speed, best run of each day.</p>
 
       <svg
         viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`}
         role="img"
-        aria-label={chartLabel(points, latest, best)}
+        aria-label={chartLabel(points, recentBest, best)}
         className="mt-4 h-auto w-full overflow-visible"
       >
         <text x={PLOT_LEFT} y={PLOT_TOP - 8} fill="var(--color-ink-faint)" className="text-[11px]">
           words per minute
         </text>
 
+        {/* ITEM 5: the y-axis scales to this learner's own data (no vetted
+            "typical" WPM band exists to anchor it, unlike FluencyChart), so
+            without printed ticks a mid-height line is unreadable — it could
+            be 10 WPM or 40. Two labels, top and bottom, are enough. */}
+        <text
+          x={PLOT_LEFT - 8}
+          y={PLOT_BOTTOM + 4}
+          textAnchor="end"
+          fill="var(--color-ink-faint)"
+          className="text-[11px]"
+        >
+          0
+        </text>
+        <text
+          x={PLOT_LEFT - 8}
+          y={PLOT_TOP + 4}
+          textAnchor="end"
+          fill="var(--color-ink-faint)"
+          className="text-[11px]"
+        >
+          {ceiling}
+        </text>
+
         <polyline
           points={polylinePoints}
           fill="none"
-          stroke="var(--color-accent-deep)"
+          stroke="var(--color-coral-deep)"
           strokeWidth="4"
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -132,7 +159,7 @@ export function TypingRateChart({ points }: TypingRateChartProps) {
               cy={y}
               r="5"
               fill="var(--color-paper)"
-              stroke="var(--color-accent-deep)"
+              stroke="var(--color-coral-deep)"
               strokeWidth="3"
             >
               <title>{`${point.label}: ${formatWpm(point.wpm)} WPM`}</title>

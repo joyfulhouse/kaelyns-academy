@@ -163,7 +163,11 @@ export const wordWorkshopUnit: Unit = {
           config: {
             instruction: "Watch the word flash, then type it back from memory.",
             sequences: ["cat", "sun", "fish", "jump"],
-            flashMs: 1000,
+            // 2000 is the schema's cap (activity-configs/typing-echo.ts):
+            // 500ms/char for the 4-letter words here — the best available,
+            // still short of the other echo activities' ~600-700ms/char, but
+            // no longer the WORST-funded of the three (was 250ms/char).
+            flashMs: 2_000,
           },
         },
       ],
