@@ -20,6 +20,14 @@ const KEY_CAMP = "/learn/keyboard-club/home-base/home-fj"; // keys ["f","j"], re
 const STAR_CATCH = "/learn/keyboard-club/home-base/home-catch-gentle"; // pool a-s-d-f-j-k-l, gentle (8s fall)
 const WORD_WRITE = "/learn/keyboard-club/home-base/home-write"; // items ["sad","dad","ask","fall","salad"]
 const ROCKET_RACE = "/learn/keyboard-club/home-base/home-race"; // words ["ask","sad","dad","fall","flask","salad"], pacerWpm 8
+// Star Echo lives in unit 4 (Big Letters), which the world map shows as
+// LOCKED for a fresh guest (no completions yet in home-base). That lock is a
+// StudioHome-only affordance over `computeUnlockedIds` — the activity route
+// itself (ActivityHost → resolvePlayableActivity) has no progress/lock check
+// for guest mode, so this deep link is genuinely playable, not a workaround.
+// Confirmed live against the gate server: 200, gate opens, flash/recall/
+// completion all behave identically with and without reduced motion.
+const STAR_ECHO = "/learn/keyboard-club/big-letters/big-echo-caps"; // sequences ["Fj","Dk","Sl"], flashMs 1400
 
 /**
  * Open the keyboard gate. The gate proves a physical keyboard by listening for a
@@ -190,6 +198,34 @@ test("Rocket Race hops the rocket forward as words finish", async ({ page }) => 
   // (The rocket's hop-per-completed-word geometry is unit-tested; the "word 2
   // of 6" assertion above is what proves the hop wired up end to end.)
   await expect(page.locator("[data-race-track]")).toBeVisible();
+});
+
+test("Star Echo flashes the sequence, then hides it during recall", async ({ page }) => {
+  await openGate(page, STAR_ECHO);
+
+  // Flash phase: the first authored sequence ("Fj") is shown as tiles.
+  const expectedTiles = page.locator("[data-expected-position]");
+  await expect(expectedTiles).toHaveCount(2);
+  await expect(expectedTiles.nth(0)).toHaveText("F");
+  await expect(expectedTiles.nth(1)).toHaveText("j");
+
+  const progress = page.getByText(/^\d+ of 3$/);
+  const before = await progress.textContent();
+
+  // Recall phase: `tickEcho` flips flash → recall once flashMs (1400) elapses,
+  // at which point the Player swaps `ExpectedTiles` for an eye icon + typed
+  // buffer — that swap, not a fixed wait, is the actual exercise: the drill
+  // is memory recall, so the sequence must be gone from the DOM once typing
+  // is expected, not merely visually hidden. `pressEchoKey` also ignores
+  // keystrokes during flash, so this can't be a race against phase timing.
+  await expect(expectedTiles).toHaveCount(0, { timeout: 5_000 });
+
+  // "F" is capital in the authored sequence — matchesTypingTarget requires
+  // shiftKey, so reaching for Shift is part of what's being exercised, not
+  // an artifact of the test.
+  await page.keyboard.press("Shift+F");
+  await page.keyboard.press("j");
+  await expect(progress).not.toHaveText(before!);
 });
 
 /**
