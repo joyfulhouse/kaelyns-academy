@@ -114,13 +114,23 @@ export function skillsForTargets(targets: readonly string[]): SkillTag[] {
   return [...new Set(targets.map(skillForKey))].sort();
 }
 
-/** True when every letter of every target rests on the home row (space is free —
- *  the thumb never leaves it, so it does not make a word a reach). */
+/**
+ * True when every character of every target rests on the home row. Space is
+ * free — the thumb never leaves it — and a capital is judged by its letter,
+ * since shift is tracked separately as its own skill.
+ *
+ * Deliberately does NOT use `rowOf`, which throws on anything it doesn't teach.
+ * This runs over authored words and whole sentences (and, through
+ * `skillsAffected`, over generated practice), so a comma or an exclamation mark
+ * must classify, not explode. Anything that isn't a home-row letter is a reach —
+ * which is also true of punctuation, since reaching for it leaves home.
+ */
 function targetsStayOnHomeRow(targets: readonly string[]): boolean {
+  const home = TYPING_ROWS.home as readonly string[];
   return targets.every((target) =>
     [...target].every((char) => {
-      const row = rowOf(char);
-      return row === "home" || row === "space";
+      const lower = char.toLowerCase();
+      return lower === " " || home.includes(lower);
     }),
   );
 }
