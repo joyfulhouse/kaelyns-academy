@@ -2,10 +2,15 @@ import type { Unit } from "../../types";
 
 // ── Unit 5 · Word Workshop ────────────────────────────────────────────
 // Every row is reachable now, so the drills stop asking for single keys and
-// start asking for whole words: `skillsForTargets` resolves any multi-char
-// target to exactly ["typing.words.familiar"], and Rocket Race adds
-// "typing.fluency.rate" alongside it — the same routing rule as Home Base's
-// word lesson, just with a full unit of practice behind it.
+// start asking for whole words. These words leave the home row — "cat", "jump",
+// "swim" — so `skillsForTargets` resolves them to ["typing.words.reach"], not
+// the ["typing.words.familiar"] that Home Base's home-row-only words earn.
+// Rocket Race adds "typing.fluency.rate" alongside.
+//
+// The split is load-bearing, not cosmetic: while both units claimed the same
+// word tag, this unit's skills were a strict SUBSET of Home Base's, so a child
+// who finished Home Base read as done with word typing and the tutor never
+// offered her this unit at all.
 export const wordWorkshopUnit: Unit = {
   id: "word-workshop",
   order: 5,
@@ -29,7 +34,7 @@ export const wordWorkshopUnit: Unit = {
           blurb: "Cat, map, sat — short-a words your fingers already know.",
           estMinutes: 4,
           band: "ready",
-          skillTags: ["typing.words.familiar"],
+          skillTags: ["typing.words.reach"],
           config: {
             instruction: "Type each word, one letter at a time. Watch it appear!",
             mode: "see",
@@ -44,7 +49,7 @@ export const wordWorkshopUnit: Unit = {
           blurb: "Hen, pig, dog, sun — every vowel gets a turn.",
           estMinutes: 4,
           band: "ready",
-          skillTags: ["typing.words.familiar"],
+          skillTags: ["typing.words.reach"],
           config: {
             instruction: "Type each word, one letter at a time. Watch it appear!",
             mode: "see",
@@ -66,7 +71,7 @@ export const wordWorkshopUnit: Unit = {
           blurb: "Hear the word, then type it from memory.",
           estMinutes: 5,
           band: "ready",
-          skillTags: ["typing.words.familiar"],
+          skillTags: ["typing.words.reach"],
           config: {
             instruction: "Listen to the word, then type it one letter at a time.",
             mode: "hear",
@@ -88,7 +93,7 @@ export const wordWorkshopUnit: Unit = {
           blurb: "Type each word before the friendly comet catches up.",
           estMinutes: 4,
           band: "ready",
-          skillTags: ["typing.fluency.rate", "typing.words.familiar"],
+          skillTags: ["typing.fluency.rate", "typing.words.reach"],
           config: {
             instruction: "Type each word, one letter at a time. The rocket hops when you finish a word!",
             words: ["cat", "hen", "pig", "sun", "map", "bug"],
@@ -102,7 +107,7 @@ export const wordWorkshopUnit: Unit = {
           blurb: "Longer words, a quicker comet — keep those fingers moving.",
           estMinutes: 5,
           band: "stretch",
-          skillTags: ["typing.fluency.rate", "typing.words.familiar"],
+          skillTags: ["typing.fluency.rate", "typing.words.reach"],
           config: {
             instruction: "Type each word, one letter at a time. The rocket hops when you finish a word!",
             words: ["fish", "ship", "chat", "jump", "help", "play", "swim", "sand"],
@@ -123,7 +128,7 @@ export const wordWorkshopUnit: Unit = {
           blurb: "A big letter to start, a period to finish — a whole sentence!",
           estMinutes: 6,
           band: "stretch",
-          skillTags: ["typing.words.familiar"],
+          skillTags: ["typing.words.reach"],
           config: {
             instruction: "Type the whole sentence. Start with a big letter and end with a period.",
             mode: "see",
@@ -145,7 +150,7 @@ export const wordWorkshopUnit: Unit = {
           blurb: "A little word flashes, then hides. Hold it in your head and type it back.",
           estMinutes: 4,
           band: "ready",
-          skillTags: ["typing.words.familiar"],
+          skillTags: ["typing.words.reach"],
           config: {
             instruction: "Watch the word flash, then type it back from memory.",
             sequences: ["at", "in", "up", "on"],
@@ -159,7 +164,7 @@ export const wordWorkshopUnit: Unit = {
           blurb: "A longer word flashes fast — hold every letter in your head.",
           estMinutes: 5,
           band: "stretch",
-          skillTags: ["typing.words.familiar"],
+          skillTags: ["typing.words.reach"],
           config: {
             instruction: "Watch the word flash, then type it back from memory.",
             sequences: ["cat", "sun", "fish", "jump"],

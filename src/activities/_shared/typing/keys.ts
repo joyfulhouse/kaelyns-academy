@@ -94,8 +94,33 @@ export function skillForKey(char: string): SkillTag {
  * The single skill-derivation rule both typing kinds use, so a config and its
  * authored `skillTags` can be checked against one another. Multi-character
  * targets are word typing; the individual letters are assumed by then.
+ *
+ * Word typing splits by what the hands actually have to do. "sad" and "flask"
+ * never move a finger off its resting key; "jump" and "fish" mean reaching to
+ * the top and bottom rows and finding home again. One shared tag made the
+ * harder unit a strict subset of the easier one, so a child who had only typed
+ * home-row words read as done with word typing and the tutor stopped offering
+ * her the unit that teaches the reaches. Derived from the letters rather than
+ * authored, so `skillTags` and `skillsAffected` cannot drift apart.
+ *
+ * A set containing ANY reach is a reaching set: the easy words in it are
+ * warm-up, and crediting the home-row skill for them would re-open the same
+ * subset hole from the other side.
  */
 export function skillsForTargets(targets: readonly string[]): SkillTag[] {
-  if (targets.some((target) => target.length !== 1)) return ["typing.words.familiar"];
+  if (targets.some((target) => target.length !== 1)) {
+    return [targetsStayOnHomeRow(targets) ? "typing.words.familiar" : "typing.words.reach"];
+  }
   return [...new Set(targets.map(skillForKey))].sort();
+}
+
+/** True when every letter of every target rests on the home row (space is free —
+ *  the thumb never leaves it, so it does not make a word a reach). */
+function targetsStayOnHomeRow(targets: readonly string[]): boolean {
+  return targets.every((target) =>
+    [...target].every((char) => {
+      const row = rowOf(char);
+      return row === "home" || row === "space";
+    }),
+  );
 }

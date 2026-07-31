@@ -24,7 +24,7 @@ describe("Science & Nature skills", () => {
 });
 
 describe("Keyboard Club skills", () => {
-  it("registers the seven typing rungs under the typing domain", () => {
+  it("registers the eight typing rungs under the typing domain", () => {
     const expectedSlugs = [
       "typing.keys.home-row",
       "typing.keys.top-row",
@@ -32,6 +32,7 @@ describe("Keyboard Club skills", () => {
       "typing.keys.space",
       "typing.keys.shift",
       "typing.words.familiar",
+      "typing.words.reach",
       "typing.fluency.rate",
     ];
     expect(SKILLS.filter((skill) => skill.domain === "typing").map((skill) => skill.slug)).toEqual(

@@ -18,10 +18,10 @@ const perfect = {
 };
 
 describe("typing-write scoring", () => {
-  it("scores a perfect round 3 stars with words.familiar evidence", () => {
+  it("scores a perfect round 3 stars with words.reach evidence", () => {
     const result = score(CONFIG, perfect);
     expect(result).toMatchObject({ correct: 3, total: 3, stars: 3 });
-    expect(result.skillEvidence.map((e) => e.skill)).toEqual(["typing.words.familiar"]);
+    expect(result.skillEvidence.map((e) => e.skill)).toEqual(["typing.words.reach"]);
   });
 
   it("a corrected item is complete but not first-try", () => {
@@ -163,8 +163,23 @@ describe("typing-write scoring", () => {
 });
 
 describe("typing-write derivation", () => {
-  it("skills are exactly words.familiar", () => {
-    expect(skillsAffected(CONFIG)).toEqual(["typing.words.familiar"]);
+  it("skills are exactly words.reach for whole-keyboard words", () => {
+    // "cat"/"map"/"sat" all leave the home row.
+    expect(skillsAffected(CONFIG)).toEqual(["typing.words.reach"]);
+  });
+
+  it("skills are exactly words.familiar for home-row-only words", () => {
+    expect(skillsAffected({ ...CONFIG, items: ["sad", "dad", "flask"] })).toEqual([
+      "typing.words.familiar",
+    ]);
+  });
+
+  // One reach makes the whole set a reaching set — otherwise the easy words in
+  // a mixed set would credit the home-row skill and re-open the subset hole.
+  it("treats a mixed set as reaching", () => {
+    expect(skillsAffected({ ...CONFIG, items: ["sad", "cat"] })).toEqual([
+      "typing.words.reach",
+    ]);
   });
 
   it("validateGenerated rejects untaught characters", () => {

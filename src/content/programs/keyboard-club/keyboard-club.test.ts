@@ -68,12 +68,35 @@ describe("Keyboard Club", () => {
         "typing.keys.shift",
         "typing.words.familiar",
       ],
-      "word-workshop": ["typing.words.familiar", "typing.fluency.rate"],
+      // Whole-keyboard words, NOT the home-row-only word skill: sharing that
+      // tag made this unit a strict subset of Home Base and retired it.
+      "word-workshop": ["typing.words.reach", "typing.fluency.rate"],
     };
     for (const { unit, activity } of activities()) {
       for (const tag of activity.skillTags) {
         expect(allowed[unit.id], `${activity.id} → ${tag}`).toContain(tag);
       }
+    }
+  });
+
+  // A unit whose skills are all taught by EARLIER units retires itself: the
+  // child masters them upstream, the strand reads complete, and the tutor never
+  // offers the unit at all. Word Workshop did exactly this while it shared
+  // "typing.words.familiar" with Home Base — its whole skill set was a subset of
+  // what came before, so a child who finished Home Base was silently done with
+  // it without ever typing a word from it.
+  it("gives every unit at least one skill no earlier unit already teaches", () => {
+    const seen = new Set<string>();
+    for (const unit of keyboardClub.units) {
+      const own = new Set(
+        unit.lessons.flatMap((lesson) => lesson.activities.flatMap((a) => a.skillTags)),
+      );
+      const fresh = [...own].filter((tag) => !seen.has(tag));
+      expect(
+        fresh.length,
+        `${unit.id} teaches nothing new (${[...own].join(", ")}) — it will read complete before it is played`,
+      ).toBeGreaterThan(0);
+      for (const tag of own) seen.add(tag);
     }
   });
 

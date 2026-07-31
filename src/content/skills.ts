@@ -468,9 +468,21 @@ export const SKILLS: Skill[] = [
   {
     slug: "typing.words.familiar",
     domain: "typing",
-    label: "Typing familiar words",
-    readyIndicator: "Types words she can already read and spell, letter for letter",
+    label: "Typing home-row words",
+    readyIndicator: "Types words she can already read and spell without leaving the home row",
     stretchIndicator: "Notices a typo as she makes it and fixes it without being told",
+  },
+  {
+    // Distinct from the home-row word skill on purpose. Typing "sad" never
+    // moves a finger off its resting key; typing "jump" means reaching up and
+    // down and coming back. Folding both into one tag let a child who had only
+    // typed home-row words read as done with word typing altogether, so the
+    // tutor stopped offering the unit that teaches the reaches.
+    slug: "typing.words.reach",
+    domain: "typing",
+    label: "Typing whole-keyboard words",
+    readyIndicator: "Types words that need the top and bottom rows, returning to home between reaches",
+    stretchIndicator: "Keeps her fingers anchored on home row instead of hunting after each reach",
   },
   {
     slug: "typing.fluency.rate",
