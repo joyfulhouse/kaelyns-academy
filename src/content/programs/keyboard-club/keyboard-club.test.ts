@@ -4,6 +4,7 @@ import { exactSkillRoutingIssue } from "@/activities/skill-routing";
 import { keyboardClub } from "../keyboard-club";
 import { nextBest } from "@/lib/tutor";
 import { isTeachableKey } from "@/activities/_shared/typing/keys";
+import type { Activity } from "@/content";
 import type { ActivityKind } from "@/content/activity-configs";
 
 function activities() {
@@ -124,16 +125,23 @@ describe("Keyboard Club reachability", () => {
     outcome: "solid" as const,
   });
 
+  /** Mark one activity completed and its skills solid. */
+  function markDone(
+    completed: Set<string>,
+    state: Record<string, ReturnType<typeof solid>>,
+    activity: Activity,
+  ): void {
+    completed.add(activity.id);
+    for (const tag of activity.skillTags) state[tag] = solid(tag);
+  }
+
   /** Finish every activity in the named units and mark their skills solid. */
   function after(unitIds: string[]) {
     const completed = new Set<string>();
     const state: Record<string, ReturnType<typeof solid>> = {};
     for (const unit of keyboardClub.units.filter((u) => unitIds.includes(u.id))) {
       for (const lesson of unit.lessons) {
-        for (const activity of lesson.activities) {
-          completed.add(activity.id);
-          for (const tag of activity.skillTags) state[tag] = solid(tag);
-        }
+        for (const activity of lesson.activities) markDone(completed, state, activity);
       }
     }
     return { completed, state };
@@ -153,10 +161,7 @@ describe("Keyboard Club reachability", () => {
     const { completed, state } = after(["home-base", "sky-row", "under-ground"]);
     for (const lesson of keyboardClub.units.find((u) => u.id === "big-letters")!.lessons) {
       if (lesson.id === "big-echo") continue;
-      for (const activity of lesson.activities) {
-        completed.add(activity.id);
-        for (const tag of activity.skillTags) state[tag] = solid(tag);
-      }
+      for (const activity of lesson.activities) markDone(completed, state, activity);
     }
     const recs = nextBest(keyboardClub, state, completed);
     expect(recs.some((r) => r.activity.id === "big-echo-caps")).toBe(true);

@@ -197,9 +197,10 @@ export function nextBest(
   // Strands with unmet gates come first: mastery still steers what she does
   // next. A satisfied strand is offered only once nothing is actually pending,
   // so this never turns "you don't need this" into "do it anyway".
-  recs.sort((a, b) =>
-    a.satisfied === b.satisfied ? a.done - b.done : Number(a.satisfied) - Number(b.satisfied),
-  );
+  recs.sort((a, b) => {
+    if (a.satisfied !== b.satisfied) return Number(a.satisfied) - Number(b.satisfied);
+    return a.done - b.done;
+  });
   return recs.map((r) => r.rec);
 }
 
