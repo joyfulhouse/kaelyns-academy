@@ -174,16 +174,23 @@ export function nextBest(
     );
     if (currentLesson) {
       const rec = strandNext(unit, currentLesson, state, completed);
-      if (rec) recs.push({ rec, done, satisfied: false });
-      continue;
+      if (rec) {
+        recs.push({ rec, done, satisfied: false });
+        continue;
+      }
+      // The current rung has nothing to give — an authored lesson with no
+      // activities pins itself as `currentLesson` forever (no skills and no
+      // journals means no gate to meet), and `strandNext` finds neither fresh
+      // work nor practice there. Falling through rather than dropping the
+      // strand keeps the rest of the unit visible behind that dead rung.
     }
-    // Every gate in this strand is met, but authored activities remain that she
-    // has NEVER played. Mastery is allowed to spare her a grind; it is not
-    // allowed to make content invisible. Two units shipped in exactly this
-    // state — Word Workshop's skills were a subset of Home Base's, and Big
-    // Letters' Star Echo lesson claims only a skill Home Base teaches — so both
-    // read complete and vanished from every offer the moment she mastered the
-    // earlier unit, without her ever seeing them.
+    // Either every gate is met, or the current rung is a dead end — and
+    // authored activities remain that she has NEVER played. Mastery is allowed
+    // to spare her a grind; it is not allowed to make content invisible. Two
+    // units shipped in exactly this state: Word Workshop's skills were a subset
+    // of Home Base's, and Big Letters' Star Echo lesson claims only a skill
+    // Home Base teaches, so both vanished from every offer the moment she
+    // mastered the earlier unit, without her ever seeing them.
     const unseen = firstUnplayed(unit, completed);
     if (unseen) recs.push({ rec: unseen, done, satisfied: true });
   }
@@ -196,8 +203,19 @@ export function nextBest(
   return recs.map((r) => r.rec);
 }
 
-/** The first authored activity in a fully-gated unit the learner has never played. */
+/**
+ * The first authored activity in this unit the learner has never played.
+ *
+ * Never a check-in. A checkpoint unit's attempts route to `checkpoint_result`
+ * instead of `skill_state` (`recordAttempt`), so its evidence is a cold
+ * placement read a grown-up schedules and interprets — not casual content to
+ * fill a gap with. Offering one post-mastery would spend the instrument on a
+ * child who has already been taught the material, and raise a pending placement
+ * row in the parent's panel that nobody asked for. `getDueReviews` and
+ * `ensureLessonPractice` already exclude checkpoint units for the same reason.
+ */
 function firstUnplayed(unit: Unit, completed: ReadonlySet<string>): Recommendation | null {
+  if (unit.checkpoint) return null;
   for (const lesson of unit.lessons) {
     const activity = lesson.activities.find((candidate) => !completed.has(candidate.id));
     if (activity) {

@@ -195,6 +195,42 @@ describe("recommender", () => {
     expect(nextBest(shared, s, done).some((r) => r.unit.id === "u2")).toBe(false);
   });
 
+  // A check-in's attempts route to checkpoint_result instead of skill_state, so
+  // its evidence is a cold placement read a grown-up schedules — not content to
+  // fill a gap with. Offering one post-mastery would spend the instrument on a
+  // child already taught the material and raise a pending placement row nobody
+  // asked for. getDueReviews and ensureLessonPractice exclude them for the same
+  // reason.
+  it("never offers a checkpoint unit as something new once its skills are solid", () => {
+    let s: SkillState = {};
+    const withCheckIn = twoUnits(
+      [{ id: "u1l1", order: 1, title: "R1", activities: [act("u1l1a1", ["shared.x"])] }],
+      [{ id: "u2l1", order: 1, title: "M1", activities: [act("u2l1a1", ["shared.x"])] }],
+    );
+    withCheckIn.units[1].checkpoint = "baseline";
+    for (const day of ["d1", "d2"]) {
+      s = applyEvidence(s, [{ skill: "shared.x", outcome: "solid" }], day);
+    }
+    const recs = nextBest(withCheckIn, s, new Set(["u1l1a1"]));
+    expect(recs.some((r) => r.unit.id === "u2")).toBe(false);
+  });
+
+  // An authored lesson with no activities has no skills and no journals, so it
+  // has no gate to meet: lessonIsComplete stays false and it pins itself as
+  // currentLesson forever, while strandNext finds nothing there to offer. The
+  // rest of the unit must stay visible behind that dead rung.
+  it("sees past a lesson with no activities instead of losing the unit", () => {
+    const withDeadRung = twoUnits(
+      [{ id: "u1l1", order: 1, title: "R1", activities: [act("u1l1a1", ["rs.a"])] }],
+      [
+        { id: "u2l0", order: 1, title: "Empty", activities: [] },
+        { id: "u2l1", order: 2, title: "M1", activities: [act("u2l1a1", ["ms.a"])] },
+      ],
+    );
+    const recs = nextBest(withDeadRung, {}, new Set());
+    expect(recs.find((r) => r.unit.id === "u2")?.activity.id).toBe("u2l1a1");
+  });
+
   it("ranks a satisfied strand behind every strand with work still pending", () => {
     let s: SkillState = {};
     const shared = twoUnits(
