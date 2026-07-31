@@ -133,6 +133,100 @@ describe("recommender", () => {
     expect(recs.some((r) => r.unit.id === "u2")).toBe(false);
   });
 
+  /** Two strands, so a satisfied one can be ranked against a pending one. */
+  const twoUnits = (
+    u1: Program["units"][number]["lessons"],
+    u2: Program["units"][number]["lessons"],
+  ): Program => ({
+    slug: "shared",
+    title: "Shared",
+    subtitle: "",
+    ageBand: "",
+    summary: "",
+    units: [
+      { id: "u1", order: 1, title: "Reading", emoji: "📖", world: "sunshine",
+        bigIdea: "", phonicsFocus: "", mathFocus: "", project: "", lessons: u1 },
+      { id: "u2", order: 2, title: "Math", emoji: "🔢", world: "bigtop",
+        bigIdea: "", phonicsFocus: "", mathFocus: "", project: "", lessons: u2 },
+    ],
+  });
+
+  // Mastery may spare her a grind; it must not make content invisible. A unit
+  // whose skills are all taught upstream would otherwise read complete and
+  // vanish from every offer without her ever seeing it — which is exactly how
+  // Keyboard Club's Word Workshop and Star Echo lesson shipped.
+  it("still offers a satisfied strand that holds activities she has never played", () => {
+    let s: SkillState = {};
+    // "shared.x" is taught in u1 and is the ONLY skill u2 claims, so finishing
+    // u1 marks u2 complete before it is touched.
+    const shared = twoUnits(
+      [{ id: "u1l1", order: 1, title: "R1", activities: [act("u1l1a1", ["shared.x"])] }],
+      [
+        { id: "u2l1", order: 1, title: "M1", activities: [act("u2l1a1", ["shared.x"])] },
+        { id: "u2l2", order: 2, title: "M2", activities: [act("u2l2a1", ["shared.x"])] },
+      ],
+    );
+    for (const day of ["d1", "d2"]) {
+      s = applyEvidence(s, [{ skill: "shared.x", outcome: "solid" }], day);
+    }
+    const recs = nextBest(shared, s, new Set(["u1l1a1"]));
+    const second = recs.find((r) => r.unit.id === "u2");
+    expect(second?.activity.id).toBe("u2l1a1");
+    expect(second?.isPractice).toBe(false);
+    expect(second?.reason).toMatch(/Something new/);
+  });
+
+  it("walks a satisfied strand through the rest of its activities", () => {
+    let s: SkillState = {};
+    const shared = twoUnits(
+      [{ id: "u1l1", order: 1, title: "R1", activities: [act("u1l1a1", ["shared.x"])] }],
+      [
+        { id: "u2l1", order: 1, title: "M1", activities: [act("u2l1a1", ["shared.x"])] },
+        { id: "u2l2", order: 2, title: "M2", activities: [act("u2l2a1", ["shared.x"])] },
+      ],
+    );
+    for (const day of ["d1", "d2"]) {
+      s = applyEvidence(s, [{ skill: "shared.x", outcome: "solid" }], day);
+    }
+    const done = new Set(["u1l1a1", "u2l1a1"]);
+    expect(nextBest(shared, s, done).find((r) => r.unit.id === "u2")?.activity.id).toBe("u2l2a1");
+    done.add("u2l2a1");
+    // Nothing left unplayed — now it really is finished and drops out again.
+    expect(nextBest(shared, s, done).some((r) => r.unit.id === "u2")).toBe(false);
+  });
+
+  it("ranks a satisfied strand behind every strand with work still pending", () => {
+    let s: SkillState = {};
+    const shared = twoUnits(
+      [{ id: "u1l1", order: 1, title: "R1", activities: [act("u1l1a1", ["shared.x"])] }],
+      [
+        { id: "u2l1", order: 1, title: "M1", activities: [act("u2l1a1", ["shared.x"])] },
+        { id: "u2l2", order: 2, title: "M2", activities: [act("u2l2a1", ["shared.x"])] },
+      ],
+    );
+    for (const day of ["d1", "d2"]) {
+      s = applyEvidence(s, [{ skill: "shared.x", outcome: "solid" }], day);
+    }
+    // u1 has an unmet gate (a second, unsolid skill); u2 is satisfied. Even
+    // though u2 has fewer completions, the pending strand must lead.
+    const withPending = {
+      ...shared,
+      units: [
+        {
+          ...shared.units[0],
+          lessons: [
+            ...shared.units[0].lessons,
+            { id: "u1l2", order: 2, title: "R2", activities: [act("u1l2a1", ["rs.pending"])] },
+          ],
+        },
+        shared.units[1],
+      ],
+    };
+    const recs = nextBest(withPending, s, new Set(["u1l1a1"]));
+    expect(recs[0].unit.id).toBe("u1");
+    expect(recs[recs.length - 1].unit.id).toBe("u2");
+  });
+
   it("keeps an incomplete journal rung current without changing skill state", () => {
     const state: SkillState = {};
     const journalProgram = programWithLessons([

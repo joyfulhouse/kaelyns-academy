@@ -166,17 +166,49 @@ export function nextBest(
   state: SkillState,
   completed: Set<string>,
 ): Recommendation[] {
-  const recs: { rec: Recommendation; done: number }[] = [];
+  const recs: { rec: Recommendation; done: number; satisfied: boolean }[] = [];
   for (const { unit, currentLesson } of strandProgress(program, state, completed)) {
-    if (!currentLesson) continue; // strand progression gates are complete
-    const rec = strandNext(unit, currentLesson, state, completed);
-    if (!rec) continue;
     const done = unit.lessons.reduce(
       (n, l) => n + l.activities.filter((a) => completed.has(a.id)).length,
       0,
     );
-    recs.push({ rec, done });
+    if (currentLesson) {
+      const rec = strandNext(unit, currentLesson, state, completed);
+      if (rec) recs.push({ rec, done, satisfied: false });
+      continue;
+    }
+    // Every gate in this strand is met, but authored activities remain that she
+    // has NEVER played. Mastery is allowed to spare her a grind; it is not
+    // allowed to make content invisible. Two units shipped in exactly this
+    // state — Word Workshop's skills were a subset of Home Base's, and Big
+    // Letters' Star Echo lesson claims only a skill Home Base teaches — so both
+    // read complete and vanished from every offer the moment she mastered the
+    // earlier unit, without her ever seeing them.
+    const unseen = firstUnplayed(unit, completed);
+    if (unseen) recs.push({ rec: unseen, done, satisfied: true });
   }
-  recs.sort((a, b) => a.done - b.done);
+  // Strands with unmet gates come first: mastery still steers what she does
+  // next. A satisfied strand is offered only once nothing is actually pending,
+  // so this never turns "you don't need this" into "do it anyway".
+  recs.sort((a, b) =>
+    a.satisfied === b.satisfied ? a.done - b.done : Number(a.satisfied) - Number(b.satisfied),
+  );
   return recs.map((r) => r.rec);
+}
+
+/** The first authored activity in a fully-gated unit the learner has never played. */
+function firstUnplayed(unit: Unit, completed: ReadonlySet<string>): Recommendation | null {
+  for (const lesson of unit.lessons) {
+    const activity = lesson.activities.find((candidate) => !completed.has(candidate.id));
+    if (activity) {
+      return {
+        activity,
+        unit,
+        lesson,
+        reason: `Something new in ${unit.title}`,
+        isPractice: false,
+      };
+    }
+  }
+  return null;
 }

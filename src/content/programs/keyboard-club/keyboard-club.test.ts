@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getServerActivityType } from "@/activities/definitions";
 import { exactSkillRoutingIssue } from "@/activities/skill-routing";
 import { keyboardClub } from "../keyboard-club";
+import { nextBest } from "@/lib/tutor";
 import { isTeachableKey } from "@/activities/_shared/typing/keys";
 import type { ActivityKind } from "@/content/activity-configs";
 
@@ -110,5 +111,75 @@ describe("Keyboard Club", () => {
         }
       }
     }
+  });
+});
+
+describe("Keyboard Club reachability", () => {
+  const solid = (tag: string) => ({
+    tag,
+    history: [
+      { day: "2026-07-31", outcome: "solid" as const },
+      { day: "2026-07-30", outcome: "solid" as const },
+    ],
+    outcome: "solid" as const,
+  });
+
+  /** Finish every activity in the named units and mark their skills solid. */
+  function after(unitIds: string[]) {
+    const completed = new Set<string>();
+    const state: Record<string, ReturnType<typeof solid>> = {};
+    for (const unit of keyboardClub.units.filter((u) => unitIds.includes(u.id))) {
+      for (const lesson of unit.lessons) {
+        for (const activity of lesson.activities) {
+          completed.add(activity.id);
+          for (const tag of activity.skillTags) state[tag] = solid(tag);
+        }
+      }
+    }
+    return { completed, state };
+  }
+
+  // Word Workshop's skills are a subset of Home Base's, so finishing Home Base
+  // used to mark it complete and drop it from every offer, unplayed.
+  it("still offers Word Workshop to a child who has only finished Home Base", () => {
+    const { completed, state } = after(["home-base"]);
+    const recs = nextBest(keyboardClub, state, completed);
+    expect(recs.map((r) => r.unit.id)).toContain("word-workshop");
+  });
+
+  // Same mechanism one level down: the Star Echo lesson claims only a skill
+  // Home Base already teaches.
+  it("still offers Star Echo once the rest of Big Letters is done", () => {
+    const { completed, state } = after(["home-base", "sky-row", "under-ground"]);
+    for (const lesson of keyboardClub.units.find((u) => u.id === "big-letters")!.lessons) {
+      if (lesson.id === "big-echo") continue;
+      for (const activity of lesson.activities) {
+        completed.add(activity.id);
+        for (const tag of activity.skillTags) state[tag] = solid(tag);
+      }
+    }
+    const recs = nextBest(keyboardClub, state, completed);
+    expect(recs.some((r) => r.activity.id === "big-echo-caps")).toBe(true);
+  });
+
+  it("can walk every Word Workshop activity, not just the first", () => {
+    const { completed, state } = after([
+      "home-base",
+      "sky-row",
+      "under-ground",
+      "big-letters",
+    ]);
+    const unit = keyboardClub.units.find((u) => u.id === "word-workshop")!;
+    const total = unit.lessons.flatMap((l) => l.activities).length;
+    const offered: string[] = [];
+    for (let i = 0; i < total + 1; i += 1) {
+      const rec = nextBest(keyboardClub, state, completed).find(
+        (r) => r.unit.id === "word-workshop",
+      );
+      if (!rec) break;
+      offered.push(rec.activity.id);
+      completed.add(rec.activity.id);
+    }
+    expect(offered).toHaveLength(total);
   });
 });
