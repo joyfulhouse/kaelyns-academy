@@ -209,6 +209,44 @@ describe("recommender", () => {
     expect(recs.find((r) => r.unit.id === "u2")?.activity.id).toBe("u2l1a1");
   });
 
+  // A rung she has replayed without going solid pins the strand on practice,
+  // and practice counts as pending — so an EARLIER rung that mastery marked
+  // complete before she ever opened it stayed invisible for as long as she was
+  // stuck. Offer the skipped-past activity instead of a third grind.
+  it("offers an activity skipped past by mastery rather than grinding a stuck rung", () => {
+    const stuck = twoUnits(
+      [
+        // Mastered from elsewhere, so this rung reads complete — unplayed.
+        { id: "u1l1", order: 1, title: "R1", activities: [act("u1l1a1", ["shared.x"])] },
+        // Played, but its skill will not go solid: the strand pins here.
+        { id: "u1l2", order: 2, title: "R2", activities: [act("u1l2a1", ["rs.stuck"])] },
+      ],
+      SHARED_U2,
+    );
+    let state = solidOn("shared.x");
+    state = applyEvidence(state, [{ skill: "rs.stuck", outcome: "solid" }], "d3"); // 1 day → emerging
+    const rec = nextBest(stuck, state, new Set(["u1l2a1"])).find((r) => r.unit.id === "u1");
+    expect(rec?.activity.id).toBe("u1l1a1");
+    expect(rec?.isPractice).toBe(false);
+  });
+
+  // …but only BACKWARD. An unplayed activity on a LATER rung must stay behind
+  // the mastery gate: jumping her ahead of a rung she has not mastered is
+  // exactly the laddering the recommender exists to enforce.
+  it("does not jump ahead to a later rung while the current one is unmastered", () => {
+    const ahead = twoUnits(
+      [
+        { id: "u1l1", order: 1, title: "R1", activities: [act("u1l1a1", ["rs.stuck"])] },
+        { id: "u1l2", order: 2, title: "R2", activities: [act("u1l2a1", ["rs.later"])] },
+      ],
+      SHARED_U2,
+    );
+    const state = applyEvidence({}, [{ skill: "rs.stuck", outcome: "solid" }], "d1");
+    const rec = nextBest(ahead, state, new Set(["u1l1a1"])).find((r) => r.unit.id === "u1");
+    expect(rec?.activity.id).toBe("u1l1a1"); // practice the stuck rung, not the next one
+    expect(rec?.isPractice).toBe(true);
+  });
+
   // Walking past a dead rung must not relabel what lies beyond it as optional
   // extras: u2 still has an unmet gate, so it outranks a genuinely satisfied
   // strand even though that strand has fewer completions.

@@ -182,7 +182,13 @@ function strandPending(
 }
 
 /**
- * The first authored activity in this unit the learner has never played.
+ * The first authored activity in this unit the learner has never played,
+ * searching rungs up to and including `throughLessonIndex` (default: all).
+ *
+ * The bound is what keeps this from becoming a ladder bypass. Called without
+ * one, the unit has no gate left to meet and the whole thing is fair game.
+ * Called with the stuck rung's index, it can only ever reach BACKWARD, at
+ * material she has already been judged ready for.
  *
  * Never a check-in. A checkpoint unit's attempts route to `checkpoint_result`
  * instead of `skill_state` (`recordAttempt`), so its evidence is a cold
@@ -192,9 +198,13 @@ function strandPending(
  * row in the parent's panel that nobody asked for. `getDueReviews` and
  * `ensureLessonPractice` already exclude checkpoint units for the same reason.
  */
-function firstUnplayed(unit: Unit, completed: ReadonlySet<string>): Recommendation | null {
+function firstUnplayed(
+  unit: Unit,
+  completed: ReadonlySet<string>,
+  throughLessonIndex: number = unit.lessons.length - 1,
+): Recommendation | null {
   if (unit.checkpoint) return null;
-  for (const lesson of unit.lessons) {
+  for (const lesson of unit.lessons.slice(0, throughLessonIndex + 1)) {
     const activity = lesson.activities.find((candidate) => !completed.has(candidate.id));
     if (activity) {
       return {
@@ -228,7 +238,17 @@ export function nextBest(
     );
     const pending = currentLesson ? strandPending(unit, currentLesson, state, completed) : null;
     if (pending) {
-      recs.push({ rec: pending, done, satisfied: false });
+      // A rung she has replayed without going solid pins the strand on practice
+      // indefinitely. If mastery earned elsewhere marked an EARLIER rung
+      // complete before she ever opened it, that activity would stay invisible
+      // for exactly as long as she stays stuck — the same "mastery hid content"
+      // failure, reached from the other direction. Prefer the skipped-past
+      // activity over a third grind: it is unseen, it is easier, and it cannot
+      // bypass the ladder because the search stops at the stuck rung.
+      const skipped = pending.isPractice
+        ? firstUnplayed(unit, completed, unit.lessons.indexOf(pending.lesson))
+        : null;
+      recs.push({ rec: skipped ?? pending, done, satisfied: false });
       continue;
     }
     // Every gate this unit can still offer is met — and yet authored activities
