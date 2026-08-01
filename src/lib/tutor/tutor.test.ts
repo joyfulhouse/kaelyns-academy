@@ -209,6 +209,84 @@ describe("recommender", () => {
     expect(recs.find((r) => r.unit.id === "u2")?.activity.id).toBe("u2l1a1");
   });
 
+  // A rung she has replayed without going solid pins the strand on practice,
+  // and practice counts as pending — so an EARLIER rung that mastery marked
+  // complete before she ever opened it stayed invisible for as long as she was
+  // stuck. Offer the skipped-past activity instead of a third grind.
+  it("offers an activity skipped past by mastery rather than grinding a stuck rung", () => {
+    const stuck = twoUnits(
+      [
+        // Mastered from elsewhere, so this rung reads complete — unplayed.
+        { id: "u1l1", order: 1, title: "R1", activities: [act("u1l1a1", ["shared.x"])] },
+        // Played, but its skill will not go solid: the strand pins here.
+        { id: "u1l2", order: 2, title: "R2", activities: [act("u1l2a1", ["rs.stuck"])] },
+      ],
+      SHARED_U2,
+    );
+    // shared.x solid, but one day of rs.stuck is only emerging — R2 never goes solid.
+    const state = applyEvidence(solidOn("shared.x"), [{ skill: "rs.stuck", outcome: "solid" }], "d3");
+    const rec = nextBest(stuck, state, new Set(["u1l2a1"])).find((r) => r.unit.id === "u1");
+    expect(rec?.activity.id).toBe("u1l1a1");
+    expect(rec?.isPractice).toBe(false);
+  });
+
+  // ACCEPTED TRADEOFF, pinned deliberately so a future change has to argue with
+  // it rather than drift through it. The swap is NOT one-off: while the rung
+  // stays stuck, every recompute interposes the NEXT skipped activity, so a unit
+  // holding several defers the needed practice by that many sessions (on
+  // production Keyboard Club content, four). The deferral is bounded only by how
+  // many unplayed activities sit in already-complete lessons, which authored
+  // content does not cap. Chosen over grinding: each interposed activity is
+  // content she has never seen, at material she has been judged ready for, and
+  // practice is not her only route to mastery (the spaced-repetition scheduler
+  // and the generated shelf surface it independently). Revisit if a unit ever
+  // authors a long tail of skippable early content.
+  it("works through EVERY skipped activity before practice returns", () => {
+    const backlog = twoUnits(
+      [
+        // Three rungs mastered from elsewhere, none of them ever opened.
+        { id: "u1l1", order: 1, title: "R1", activities: [act("u1l1a1", ["shared.x"])] },
+        { id: "u1l2", order: 2, title: "R2", activities: [act("u1l2a1", ["shared.x"])] },
+        { id: "u1l3", order: 3, title: "R3", activities: [act("u1l3a1", ["shared.x"])] },
+        // Played, but its skill will not go solid: the strand pins here.
+        { id: "u1l4", order: 4, title: "R4", activities: [act("u1l4a1", ["rs.stuck"])] },
+      ],
+      SHARED_U2,
+    );
+    const state = applyEvidence(solidOn("shared.x"), [{ skill: "rs.stuck", outcome: "solid" }], "d3");
+    const completed = new Set(["u1l4a1"]);
+
+    const offered: string[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const rec = nextBest(backlog, state, completed).find((r) => r.unit.id === "u1")!;
+      offered.push(`${rec.activity.id}${rec.isPractice ? " (practice)" : ""}`);
+      completed.add(rec.activity.id);
+    }
+    expect(offered).toEqual([
+      "u1l1a1",
+      "u1l2a1",
+      "u1l3a1",
+      "u1l4a1 (practice)", // only now does the stuck rung come back
+    ]);
+  });
+
+  // …but only BACKWARD. An unplayed activity on a LATER rung must stay behind
+  // the mastery gate: jumping her ahead of a rung she has not mastered is
+  // exactly the laddering the recommender exists to enforce.
+  it("does not jump ahead to a later rung while the current one is unmastered", () => {
+    const ahead = twoUnits(
+      [
+        { id: "u1l1", order: 1, title: "R1", activities: [act("u1l1a1", ["rs.stuck"])] },
+        { id: "u1l2", order: 2, title: "R2", activities: [act("u1l2a1", ["rs.later"])] },
+      ],
+      SHARED_U2,
+    );
+    const state = applyEvidence({}, [{ skill: "rs.stuck", outcome: "solid" }], "d1");
+    const rec = nextBest(ahead, state, new Set(["u1l1a1"])).find((r) => r.unit.id === "u1");
+    expect(rec?.activity.id).toBe("u1l1a1"); // practice the stuck rung, not the next one
+    expect(rec?.isPractice).toBe(true);
+  });
+
   // Walking past a dead rung must not relabel what lies beyond it as optional
   // extras: u2 still has an unmet gate, so it outranks a genuinely satisfied
   // strand even though that strand has fewer completions.
