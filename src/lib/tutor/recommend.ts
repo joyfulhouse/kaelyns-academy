@@ -243,8 +243,15 @@ export function nextBest(
       // complete before she ever opened it, that activity would stay invisible
       // for exactly as long as she stays stuck — the same "mastery hid content"
       // failure, reached from the other direction. Prefer the skipped-past
-      // activity over a third grind: it is unseen, it is easier, and it cannot
-      // bypass the ladder because the search stops at the stuck rung.
+      // activity: it is unseen, it is material she has been judged ready for,
+      // and it cannot bypass the ladder because the search stops at the stuck
+      // rung — `throughLessonIndex` only ever reaches BACKWARD.
+      //
+      // This is deliberately not a one-off. While the rung stays stuck each
+      // recompute interposes the NEXT skipped activity, so a unit holding
+      // several defers the practice by that many sessions — an accepted
+      // tradeoff, pinned by "works through EVERY skipped activity before
+      // practice returns" in tutor.test.ts. Read that test before changing this.
       const skipped = pending.isPractice
         ? firstUnplayed(unit, completed, unit.lessons.indexOf(pending.lesson))
         : null;

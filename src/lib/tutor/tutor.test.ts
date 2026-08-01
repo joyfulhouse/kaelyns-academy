@@ -223,11 +223,51 @@ describe("recommender", () => {
       ],
       SHARED_U2,
     );
-    let state = solidOn("shared.x");
-    state = applyEvidence(state, [{ skill: "rs.stuck", outcome: "solid" }], "d3"); // 1 day → emerging
+    // shared.x solid, but one day of rs.stuck is only emerging — R2 never goes solid.
+    const state = applyEvidence(solidOn("shared.x"), [{ skill: "rs.stuck", outcome: "solid" }], "d3");
     const rec = nextBest(stuck, state, new Set(["u1l2a1"])).find((r) => r.unit.id === "u1");
     expect(rec?.activity.id).toBe("u1l1a1");
     expect(rec?.isPractice).toBe(false);
+  });
+
+  // ACCEPTED TRADEOFF, pinned deliberately so a future change has to argue with
+  // it rather than drift through it. The swap is NOT one-off: while the rung
+  // stays stuck, every recompute interposes the NEXT skipped activity, so a unit
+  // holding several defers the needed practice by that many sessions (on
+  // production Keyboard Club content, four). The deferral is bounded only by how
+  // many unplayed activities sit in already-complete lessons, which authored
+  // content does not cap. Chosen over grinding: each interposed activity is
+  // content she has never seen, at material she has been judged ready for, and
+  // practice is not her only route to mastery (the spaced-repetition scheduler
+  // and the generated shelf surface it independently). Revisit if a unit ever
+  // authors a long tail of skippable early content.
+  it("works through EVERY skipped activity before practice returns", () => {
+    const backlog = twoUnits(
+      [
+        // Three rungs mastered from elsewhere, none of them ever opened.
+        { id: "u1l1", order: 1, title: "R1", activities: [act("u1l1a1", ["shared.x"])] },
+        { id: "u1l2", order: 2, title: "R2", activities: [act("u1l2a1", ["shared.x"])] },
+        { id: "u1l3", order: 3, title: "R3", activities: [act("u1l3a1", ["shared.x"])] },
+        // Played, but its skill will not go solid: the strand pins here.
+        { id: "u1l4", order: 4, title: "R4", activities: [act("u1l4a1", ["rs.stuck"])] },
+      ],
+      SHARED_U2,
+    );
+    const state = applyEvidence(solidOn("shared.x"), [{ skill: "rs.stuck", outcome: "solid" }], "d3");
+    const completed = new Set(["u1l4a1"]);
+
+    const offered: string[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const rec = nextBest(backlog, state, completed).find((r) => r.unit.id === "u1")!;
+      offered.push(`${rec.activity.id}${rec.isPractice ? " (practice)" : ""}`);
+      completed.add(rec.activity.id);
+    }
+    expect(offered).toEqual([
+      "u1l1a1",
+      "u1l2a1",
+      "u1l3a1",
+      "u1l4a1 (practice)", // only now does the stuck rung come back
+    ]);
   });
 
   // …but only BACKWARD. An unplayed activity on a LATER rung must stay behind
