@@ -156,6 +156,60 @@ function strandNext(
 }
 
 /**
+ * The next rung at or after her current one that has something to give.
+ *
+ * Normally that IS her current rung. But an authored lesson with no activities
+ * pins itself as `currentLesson` forever — no skills and no journals means no
+ * gate to meet — and `strandNext` finds neither fresh work nor practice there.
+ * Walking past a dead rung keeps the rest of the unit reachable, and keeps what
+ * it finds ranked as PENDING: an unmet gate further up the ladder is real work,
+ * not filler, and must not sort below another strand's optional extras. Empty
+ * lessons are production-reachable — assembly drops activity rows that fail
+ * validation (`src/lib/content/store.ts`), which can empty a lesson outright.
+ */
+function strandPending(
+  unit: Unit,
+  from: Lesson,
+  state: SkillState,
+  completed: Set<string>,
+): Recommendation | null {
+  for (const lesson of unit.lessons.slice(unit.lessons.indexOf(from))) {
+    if (lessonIsComplete(lesson, state, completed)) continue;
+    const rec = strandNext(unit, lesson, state, completed);
+    if (rec) return rec;
+  }
+  return null;
+}
+
+/**
+ * The first authored activity in this unit the learner has never played.
+ *
+ * Never a check-in. A checkpoint unit's attempts route to `checkpoint_result`
+ * instead of `skill_state` (`recordAttempt`), so its evidence is a cold
+ * placement read a grown-up schedules and interprets — not casual content to
+ * fill a gap with. Offering one post-mastery would spend the instrument on a
+ * child who has already been taught the material, and raise a pending placement
+ * row in the parent's panel that nobody asked for. `getDueReviews` and
+ * `ensureLessonPractice` already exclude checkpoint units for the same reason.
+ */
+function firstUnplayed(unit: Unit, completed: ReadonlySet<string>): Recommendation | null {
+  if (unit.checkpoint) return null;
+  for (const lesson of unit.lessons) {
+    const activity = lesson.activities.find((candidate) => !completed.has(candidate.id));
+    if (activity) {
+      return {
+        activity,
+        unit,
+        lesson,
+        reason: `Something new in ${unit.title}`,
+        isPractice: false,
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * Ranked next-best recommendations, one per strand that has work left. Ranked to
  * encourage breadth: the strand with the fewest completed activities comes first,
  * so she rotates across reading / words / writing / math rather than grinding one.
@@ -166,17 +220,33 @@ export function nextBest(
   state: SkillState,
   completed: Set<string>,
 ): Recommendation[] {
-  const recs: { rec: Recommendation; done: number }[] = [];
+  const recs: { rec: Recommendation; done: number; satisfied: boolean }[] = [];
   for (const { unit, currentLesson } of strandProgress(program, state, completed)) {
-    if (!currentLesson) continue; // strand progression gates are complete
-    const rec = strandNext(unit, currentLesson, state, completed);
-    if (!rec) continue;
     const done = unit.lessons.reduce(
       (n, l) => n + l.activities.filter((a) => completed.has(a.id)).length,
       0,
     );
-    recs.push({ rec, done });
+    const pending = currentLesson ? strandPending(unit, currentLesson, state, completed) : null;
+    if (pending) {
+      recs.push({ rec: pending, done, satisfied: false });
+      continue;
+    }
+    // Every gate this unit can still offer is met — and yet authored activities
+    // remain that she has NEVER played. Mastery is allowed to spare her a
+    // grind; it is not allowed to make content invisible. Two units shipped in
+    // exactly this state: Word Workshop's skills were a subset of Home Base's,
+    // and Big Letters' Star Echo lesson claims only a skill Home Base teaches,
+    // so both vanished from every offer the moment she mastered the earlier
+    // unit, without her ever seeing them.
+    const unseen = firstUnplayed(unit, completed);
+    if (unseen) recs.push({ rec: unseen, done, satisfied: true });
   }
-  recs.sort((a, b) => a.done - b.done);
+  // Strands with unmet gates come first: mastery still steers what she does
+  // next. A satisfied strand is offered only once nothing is actually pending,
+  // so this never turns "you don't need this" into "do it anyway".
+  recs.sort((a, b) => {
+    if (a.satisfied !== b.satisfied) return Number(a.satisfied) - Number(b.satisfied);
+    return a.done - b.done;
+  });
   return recs.map((r) => r.rec);
 }
