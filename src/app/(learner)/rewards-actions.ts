@@ -115,6 +115,18 @@ function today(): string {
  * never be minted into — or left sitting in — territory the world map hides and
  * the activity route refuses. `playableUnitIds` is the same function backing
  * both of those surfaces.
+ *
+ * KNOWN NARROWER THAN THE CLIENT, deliberately. `StudioHome`'s `questCandidates`
+ * is ranked authored + UNSPENT GENERATED SHELF + remaining authored, while this
+ * reads authored only. A quest whose sole destination is a generated practice
+ * item is therefore dropped here and refused by activation even though the UI
+ * could route it — a false drop, and the wrong direction of wrong. It needs
+ * assembly to have dropped a lesson's authored activities while its shelf rows
+ * survive (a content-integrity failure), and it resolves itself the moment the
+ * content is fixed. Accepted over reading the shelf on every quest fetch: that
+ * costs a query on a path the learner home hits on mount and on every window
+ * focus, and would fork the client's shelf-curation rules into a second place
+ * to drift. Revisit if generated items ever become a primary quest destination.
  */
 async function resolveQuestAccess(
   accountId: string,
