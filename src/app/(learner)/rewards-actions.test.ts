@@ -32,7 +32,7 @@ vi.mock("@/lib/quests/store", () => ({
 }));
 
 vi.mock("@/lib/content/repository", () => ({
-  resolveAccountLearnerProgram: vi.fn(),
+  resolveProgramForEnrollmentVersion: vi.fn(),
 }));
 
 vi.mock("@/lib/rewards/store", () => ({ getStarBalance: vi.fn() }));
@@ -51,7 +51,7 @@ const { getEnrollmentForGate, getSkillState, getCompletedActivityIds } = await i
 );
 const { assignDailyQuests, listPublishedQuestTemplates, getDailyQuests, activateQuest } =
   await import("@/lib/quests/store");
-const { resolveAccountLearnerProgram } = await import("@/lib/content/repository");
+const { resolveProgramForEnrollmentVersion } = await import("@/lib/content/repository");
 const { getDailyQuestsAction, activateQuestAction } = await import("./rewards-actions");
 
 /** The four Keyboard Club units before Word Workshop, in authored order. */
@@ -101,7 +101,7 @@ const TEMPLATES = [
 describe("getDailyQuestsAction unit access", () => {
   beforeEach(() => {
     vi.mocked(listPublishedQuestTemplates).mockResolvedValue(TEMPLATES);
-    vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(keyboardClub);
+    vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(keyboardClub);
     vi.mocked(assignDailyQuests).mockClear();
     vi.mocked(activateQuest).mockClear();
     vi.mocked(getDailyQuests).mockResolvedValue([]);
@@ -146,39 +146,67 @@ describe("getDailyQuestsAction unit access", () => {
   // write path would refuse. It is not deleted, so re-widening brings it back.
   describe("a quest that access has moved out from under", () => {
     /** A day's menu already on disk, drawn before the parent narrowed access. */
-    function existingMenu() {
+    beforeEach(() => {
       vi.mocked(getDailyQuests).mockResolvedValue([
         { id: "q-try", title: "Try Word Workshop", kind: "try_strand",
           target: { count: 1, unitId: "word-workshop" }, progress: { done: 0 },
           rewardStars: 3, status: "offered" },
+        { id: "q-skill", title: "Practice top row", kind: "practice_skill",
+          target: { count: 2, skill: "typing.keys.top-row" }, progress: { done: 0 },
+          rewardStars: 2, status: "offered" },
         { id: "q-any", title: "Finish 2 things", kind: "complete_n",
           target: { count: 2 }, progress: { done: 0 }, rewardStars: 2, status: "offered" },
       ]);
       const { completed, state } = after(THROUGH_BIG_LETTERS);
       vi.mocked(getSkillState).mockResolvedValue(state);
       vi.mocked(getCompletedActivityIds).mockResolvedValue(completed);
-    }
+    });
 
     it("disappears from the menu, leaving the reachable ones", async () => {
-      existingMenu();
       gateWith(THROUGH_BIG_LETTERS); // Word Workshop curated away after the draw
       const quests = await getDailyQuestsAction("learner-1", "keyboard-club");
-      expect(quests.map((q) => q.id)).toEqual(["q-any"]);
+      // Only the Word Workshop row goes: the top-row skill is still taught by
+      // Sky Row, which is curated in, so each kind is judged on its own target.
+      expect(quests.map((q) => q.id)).toEqual(["q-skill", "q-any"]);
       // Dropped, never regenerated — the menu is short for the rest of the day.
       expect(vi.mocked(assignDailyQuests)).not.toHaveBeenCalled();
     });
 
     it("stays while she can still reach it", async () => {
-      existingMenu();
       gateWith(undefined);
       const quests = await getDailyQuestsAction("learner-1", "keyboard-club");
-      expect(quests.map((q) => q.id)).toEqual(["q-try", "q-any"]);
+      expect(quests.map((q) => q.id)).toEqual(["q-try", "q-skill", "q-any"]);
+    });
+
+    // The skill-shaped half of the guard. "typing.keys.top-row" is taught only
+    // by Sky Row, so curating down to Home Base strands the quest exactly as a
+    // unit-shaped one: questActivityHref finds no playable activity for it.
+    it("drops a practice quest whose skill is no longer taught anywhere she can go", async () => {
+      gateWith(["home-base"]);
+      const quests = await getDailyQuestsAction("learner-1", "keyboard-club");
+      expect(quests.map((q) => q.id)).not.toContain("q-skill");
+      expect(quests.map((q) => q.id)).toContain("q-any");
+    });
+
+    // A pinned version that fails closed leaves us unable to judge reachability
+    // at all. Filtering exists to drop a dead row, not to swallow the day —
+    // including quests she has already finished and been paid for.
+    it("keeps the day intact when the program cannot be resolved", async () => {
+      vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(undefined);
+      gateWith(THROUGH_BIG_LETTERS);
+      const quests = await getDailyQuestsAction("learner-1", "keyboard-club");
+      expect(quests.map((q) => q.id)).toEqual(["q-try", "q-skill", "q-any"]);
+    });
+
+    it("cannot activate a practice quest whose skill is out of reach", async () => {
+      gateWith(["home-base"]);
+      expect(await activateQuestAction("learner-1", "keyboard-club", "q-skill")).toEqual({ ok: false });
+      expect(vi.mocked(activateQuest)).not.toHaveBeenCalled();
     });
 
     // She already earned those stars; hiding the row would read as the reward
     // being taken back.
     it("still shows it once she has finished it", async () => {
-      existingMenu();
       vi.mocked(getDailyQuests).mockResolvedValue([
         { id: "q-try", title: "Try Word Workshop", kind: "try_strand",
           target: { count: 1, unitId: "word-workshop" }, progress: { done: 1 },
@@ -193,14 +221,12 @@ describe("getDailyQuestsAction unit access", () => {
     // currently-active quest before promoting its target, so a stale client
     // could knock her off the quest she is actually working on.
     it("cannot be activated by a client that still has the row", async () => {
-      existingMenu();
       gateWith(THROUGH_BIG_LETTERS);
       expect(await activateQuestAction("learner-1", "keyboard-club", "q-try")).toEqual({ ok: false });
       expect(vi.mocked(activateQuest)).not.toHaveBeenCalled();
     });
 
     it("activates normally while still reachable", async () => {
-      existingMenu();
       gateWith(undefined);
       expect(await activateQuestAction("learner-1", "keyboard-club", "q-try")).toEqual({ ok: true });
       expect(vi.mocked(activateQuest)).toHaveBeenCalled();

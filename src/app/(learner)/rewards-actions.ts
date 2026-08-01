@@ -41,7 +41,7 @@ import {
   isSequentialProgram,
   playableUnitIds,
 } from "@/components/learner/unitAccess";
-import { resolveAccountLearnerProgram } from "@/lib/content/repository";
+import { resolveProgramForEnrollmentVersion } from "@/lib/content/repository";
 import type { Program } from "@/content";
 
 /**
@@ -118,16 +118,23 @@ async function resolveQuestAccess(
   accountId: string,
   learnerId: string,
   programSlug: string,
-  gate: { config: { activeUnitKeys?: string[] } },
+  gate: { config: { activeUnitKeys?: string[] }; programVersionId: string | null },
 ): Promise<{
   program: Program;
   completedIds: Set<string>;
   playable: ReadonlySet<string>;
   playableSkills: ReadonlySet<string>;
 } | null> {
-  const program = await resolveAccountLearnerProgram(accountId, learnerId, programSlug);
+  // Resolve from the version pin the GATE already read rather than re-reading
+  // the enrollment: one query fewer on a path the learner home hits on mount
+  // and on every window focus, and the tree can no longer disagree with the
+  // authorization decision made two lines earlier if a repin lands between them
+  // (`actions.ts` uses this same seam for exactly that reason).
+  const [program, completed] = await Promise.all([
+    resolveProgramForEnrollmentVersion(programSlug, gate.programVersionId),
+    getCompletedActivityIds(accountId, learnerId),
+  ]);
   if (!program) return null;
-  const completed = await getCompletedActivityIds(accountId, learnerId);
   const completedIds = new Set(completed.map((c) => c.activityId));
   const playable = playableUnitIds(
     program.units,
@@ -135,7 +142,12 @@ async function resolveQuestAccess(
     completedIds,
     { sequential: isSequentialProgram(programSlug) },
   );
-  return { program, completedIds, playable, playableSkills: skillsInPlayableUnits(program, playable) };
+  return {
+    program,
+    completedIds,
+    playable,
+    playableSkills: skillsInPlayableUnits(program, playable),
+  };
 }
 
 /**
@@ -154,9 +166,11 @@ export async function getDailyQuestsAction(
       if (gate?.status !== "active" || !gate.configValid) return [];
       const day = today();
 
-      const access = await resolveQuestAccess(accountId, learnerId, programSlug, gate);
-      if (!access) return [];
-      const { program, completedIds, playable, playableSkills } = access;
+      // Independent reads: the day's menu does not depend on the access sets.
+      const [access, existing] = await Promise.all([
+        resolveQuestAccess(accountId, learnerId, programSlug, gate),
+        getDailyQuests(accountId, learnerId, programSlug, day),
+      ]);
 
       // Access is re-derived on every read, not just at generation. A parent can
       // narrow the assignment after the day's menu is drawn, and a quest that
@@ -164,13 +178,20 @@ export async function getDailyQuestsAction(
       // day: untappable to any purpose, since `recordAttempt` refuses the write.
       // A finished quest always stays — she earned those stars, and hiding them
       // would read as the reward being taken back.
-      const existing = await getDailyQuests(accountId, learnerId, programSlug, day);
       if (existing.length > 0) {
+        // An unresolvable program (a pinned version that fails closed) means we
+        // cannot judge reachability at all. Show the day as it stands rather
+        // than blanking it: filtering is meant to drop a dead row, never to
+        // swallow quests she has already finished and been paid for.
+        if (!access) return existing;
         return existing.filter(
           (quest) =>
-            quest.status === "done" || questIsReachable(quest, playable, playableSkills),
+            quest.status === "done" ||
+            questIsReachable(quest, access.playable, access.playableSkills),
         );
       }
+      if (!access) return [];
+      const { program, completedIds, playable, playableSkills } = access;
 
       const [state, templates] = await Promise.all([
         getSkillState(accountId, learnerId),
@@ -230,12 +251,12 @@ export async function activateQuestAction(
       const gate = await getEnrollmentForGate(accountId, learnerId, programSlug);
       if (gate?.status !== "active" || !gate.configValid) return { ok: false };
       const day = today();
-      const quest = (await getDailyQuests(accountId, learnerId, programSlug, day)).find(
-        (q) => q.id === questId,
-      );
-      if (!quest) return { ok: false };
-      const access = await resolveQuestAccess(accountId, learnerId, programSlug, gate);
-      if (!access || !questIsReachable(quest, access.playable, access.playableSkills)) {
+      const [menu, access] = await Promise.all([
+        getDailyQuests(accountId, learnerId, programSlug, day),
+        resolveQuestAccess(accountId, learnerId, programSlug, gate),
+      ]);
+      const quest = menu.find((q) => q.id === questId);
+      if (!quest || !access || !questIsReachable(quest, access.playable, access.playableSkills)) {
         return { ok: false };
       }
       return { ok: await activateQuest(accountId, learnerId, questId, day) };

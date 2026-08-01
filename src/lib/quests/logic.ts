@@ -79,8 +79,11 @@ export function questActivityHref(
  * unreachable by the afternoon: the world map hides the unit, `questActivityHref`
  * resolves no destination, and `recordAttempt` would refuse the write anyway.
  * The row is dropped from the menu rather than replaced; the day simply offers
- * fewer quests. It is not deleted, so re-widening the assignment brings it back
- * with whatever progress it had.
+ * fewer quests. It is not deleted, so widening the assignment again can bring it
+ * back with whatever progress it had — though not always: `playableUnitIds` also
+ * applies sequencing, so widening can leave a unit that was open as the first
+ * visible segment sitting behind a new predecessor. The quest tracks the world
+ * map exactly, which is the point.
  *
  * `complete_n` is always reachable — any completed activity counts, so there is
  * no unit or skill for access to take away.
