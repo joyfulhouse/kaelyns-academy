@@ -209,14 +209,24 @@ export async function getDailyQuestsAction(
       // away still reads emerging — and `questActivityHref` would find no
       // playable activity teaching it, leaving another dead row.
       const emerging = [...reach.skills].filter((s) => outcomeOf(state, s) === "emerging");
-      const drafts = selectDailyQuests(templates, recs, emerging);
+      // `complete_n` carries no unit and no skill, so nothing upstream of here
+      // constrains it: `selectDailyQuests` mints "Finish 2 things" from the
+      // template alone, even for a program with no playable destination at all.
+      // Minting one would persist a row the very next read has to delete, and
+      // with no href the child cannot even tap it into the refusal path.
+      const drafts = selectDailyQuests(templates, recs, emerging).filter((draft) =>
+        questIsReachable(draft, reach),
+      );
       // Friendly label for the practice_skill title (the pure layer used the slug).
       for (const d of drafts) {
         if (d.kind === "practice_skill" && d.target.skill) {
           d.title = d.title.replace(d.target.skill, await skillLabel(d.target.skill));
         }
       }
-      return assignDailyQuests(accountId, learnerId, programSlug, day, drafts);
+      // The insert re-reads the whole day, so a racing generator's rows arrive
+      // here too — hold them to the same bar rather than trusting our drafts.
+      const assigned = await assignDailyQuests(accountId, learnerId, programSlug, day, drafts);
+      return assigned.filter((quest) => questIsReachable(quest, reach));
     });
   } catch (error) {
     if (!(error instanceof UnauthenticatedError)) {

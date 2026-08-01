@@ -81,6 +81,14 @@ function after(unitIds: string[]) {
 
 const TEMPLATES = [
   {
+    id: "tpl-any",
+    slug: "complete-n",
+    title: "Finish {count} things",
+    kind: "complete_n" as const,
+    params: { count: 2 },
+    rewardStars: 1,
+  },
+  {
     id: "tpl-try",
     slug: "try-strand",
     title: "Try {focus}",
@@ -124,7 +132,7 @@ describe("getDailyQuestsAction unit access", () => {
     vi.mocked(getCompletedActivityIds).mockResolvedValue(completed);
     await getDailyQuestsAction("learner-1", "keyboard-club");
     const drafts = vi.mocked(assignDailyQuests).mock.calls[0]?.[4] ?? [];
-    return drafts.map((d) => d.target.unitId);
+    return drafts.filter((d) => d.kind === "try_strand").map((d) => d.target.unitId);
   }
 
   // With no curation, Word Workshop is both recommended and open — the fix must
@@ -296,6 +304,25 @@ describe("getDailyQuestsAction unit access", () => {
       expect(await activateQuestAction("learner-1", "keyboard-club", "q-try")).toEqual({ ok: true });
       expect(vi.mocked(activateQuest)).toHaveBeenCalled();
     });
+  });
+
+  // Nothing upstream constrains complete_n: selectDailyQuests mints it from the
+  // template alone. Generating one for a program with no playable destination
+  // would persist a row the next read has to delete — and with no href the
+  // child cannot even tap it into the refusal path.
+  it("generates no quest at all when nothing is playable", async () => {
+    vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue({
+      ...keyboardClub,
+      units: keyboardClub.units.map((u) => ({
+        ...u,
+        lessons: u.lessons.map((l) => ({ ...l, activities: [] })),
+      })),
+    });
+    vi.mocked(getSkillState).mockResolvedValue({});
+    vi.mocked(getCompletedActivityIds).mockResolvedValue([]);
+    gateWith(undefined);
+    await getDailyQuestsAction("learner-1", "keyboard-club");
+    expect(vi.mocked(assignDailyQuests).mock.calls[0]?.[4]).toEqual([]);
   });
 
   // A skill goes "emerging" by being ATTEMPTED, so it outlives access: practise
