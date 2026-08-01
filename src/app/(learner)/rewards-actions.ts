@@ -32,6 +32,11 @@ import {
   getEnrollmentForGate,
   getSkillState,
 } from "@/lib/tutor/store";
+import {
+  activeUnitKeySet,
+  isSequentialProgram,
+  playableUnitIds,
+} from "@/components/learner/unitAccess";
 import { resolveAccountLearnerProgram } from "@/lib/content/repository";
 import { skillTagsForProgram } from "@/content";
 
@@ -123,10 +128,21 @@ export async function getDailyQuestsAction(
         getCompletedActivityIds(accountId, learnerId),
         listPublishedQuestTemplates(),
       ]);
-      const recs = nextBest(program, state, new Set(completed.map((c) => c.activityId))).map((r) => ({
-        unitId: r.unit.id,
-        unitTitle: r.unit.title,
-      }));
+      const completedIds = new Set(completed.map((c) => c.activityId));
+      // `nextBest` reasons about the whole program; quests must only ever point
+      // at a unit she can actually open. Resolve the same access derivation the
+      // world map and the activity route use — otherwise a curated-out or
+      // sequence-locked unit becomes a "Try …" quest she can never finish (the
+      // write path refuses the attempt), quietly burning a slot every day.
+      const playable = playableUnitIds(
+        program.units,
+        activeUnitKeySet(gate.config.activeUnitKeys),
+        completedIds,
+        { sequential: isSequentialProgram(programSlug) },
+      );
+      const recs = nextBest(program, state, completedIds)
+        .filter((r) => playable.has(r.unit.id))
+        .map((r) => ({ unitId: r.unit.id, unitTitle: r.unit.title }));
       const emerging = [...skillTagsForProgram(program)].filter(
         (s) => outcomeOf(state, s) === "emerging",
       );

@@ -231,6 +231,29 @@ describe("recommender", () => {
     expect(recs.find((r) => r.unit.id === "u2")?.activity.id).toBe("u2l1a1");
   });
 
+  // Walking past a dead rung must not relabel what lies beyond it as optional
+  // extras: u2 still has an unmet gate, so it outranks a genuinely satisfied
+  // strand even though that strand has fewer completions.
+  it("ranks work found past a dead rung as pending, not as filler", () => {
+    const s = solidOn("shared.x");
+    const mixed = twoUnits(
+      // u1: satisfied — its skill is solid — and nothing played, so it sorts
+      // FIRST on completion count. Only the pending/satisfied split can beat it.
+      [{ id: "u1l1", order: 1, title: "R1", activities: [act("u1l1a1", ["shared.x"])] }],
+      // u2: dead rung, one activity played, then real pending work behind it.
+      [
+        { id: "u2l0", order: 1, title: "Empty", activities: [] },
+        { id: "u2l1", order: 2, title: "M1", activities: [act("u2l1a1", ["shared.x"])] },
+        { id: "u2l2", order: 3, title: "M2", activities: [act("u2l2a1", ["ms.pending"])] },
+      ],
+    );
+    const recs = nextBest(mixed, s, new Set(["u2l1a1"]));
+    expect(recs[0].unit.id).toBe("u2");
+    expect(recs[0].activity.id).toBe("u2l2a1");
+    expect(recs[0].reason).not.toMatch(/Something new/);
+    expect(recs[recs.length - 1].unit.id).toBe("u1");
+  });
+
   it("ranks a satisfied strand behind every strand with work still pending", () => {
     const shared = sharedSkillProgram();
     const s = solidOn("shared.x");

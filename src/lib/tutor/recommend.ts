@@ -156,6 +156,32 @@ function strandNext(
 }
 
 /**
+ * The next rung at or after her current one that has something to give.
+ *
+ * Normally that IS her current rung. But an authored lesson with no activities
+ * pins itself as `currentLesson` forever — no skills and no journals means no
+ * gate to meet — and `strandNext` finds neither fresh work nor practice there.
+ * Walking past a dead rung keeps the rest of the unit reachable, and keeps what
+ * it finds ranked as PENDING: an unmet gate further up the ladder is real work,
+ * not filler, and must not sort below another strand's optional extras. Empty
+ * lessons are production-reachable — assembly drops activity rows that fail
+ * validation (`src/lib/content/store.ts`), which can empty a lesson outright.
+ */
+function strandPending(
+  unit: Unit,
+  from: Lesson,
+  state: SkillState,
+  completed: Set<string>,
+): Recommendation | null {
+  for (const lesson of unit.lessons.slice(unit.lessons.indexOf(from))) {
+    if (lessonIsComplete(lesson, state, completed)) continue;
+    const rec = strandNext(unit, lesson, state, completed);
+    if (rec) return rec;
+  }
+  return null;
+}
+
+/**
  * Ranked next-best recommendations, one per strand that has work left. Ranked to
  * encourage breadth: the strand with the fewest completed activities comes first,
  * so she rotates across reading / words / writing / math rather than grinding one.
@@ -172,25 +198,18 @@ export function nextBest(
       (n, l) => n + l.activities.filter((a) => completed.has(a.id)).length,
       0,
     );
-    if (currentLesson) {
-      const rec = strandNext(unit, currentLesson, state, completed);
-      if (rec) {
-        recs.push({ rec, done, satisfied: false });
-        continue;
-      }
-      // The current rung has nothing to give — an authored lesson with no
-      // activities pins itself as `currentLesson` forever (no skills and no
-      // journals means no gate to meet), and `strandNext` finds neither fresh
-      // work nor practice there. Falling through rather than dropping the
-      // strand keeps the rest of the unit visible behind that dead rung.
+    const pending = currentLesson ? strandPending(unit, currentLesson, state, completed) : null;
+    if (pending) {
+      recs.push({ rec: pending, done, satisfied: false });
+      continue;
     }
-    // Either every gate is met, or the current rung is a dead end — and
-    // authored activities remain that she has NEVER played. Mastery is allowed
-    // to spare her a grind; it is not allowed to make content invisible. Two
-    // units shipped in exactly this state: Word Workshop's skills were a subset
-    // of Home Base's, and Big Letters' Star Echo lesson claims only a skill
-    // Home Base teaches, so both vanished from every offer the moment she
-    // mastered the earlier unit, without her ever seeing them.
+    // Every gate this unit can still offer is met — and yet authored activities
+    // remain that she has NEVER played. Mastery is allowed to spare her a
+    // grind; it is not allowed to make content invisible. Two units shipped in
+    // exactly this state: Word Workshop's skills were a subset of Home Base's,
+    // and Big Letters' Star Echo lesson claims only a skill Home Base teaches,
+    // so both vanished from every offer the moment she mastered the earlier
+    // unit, without her ever seeing them.
     const unseen = firstUnplayed(unit, completed);
     if (unseen) recs.push({ rec: unseen, done, satisfied: true });
   }

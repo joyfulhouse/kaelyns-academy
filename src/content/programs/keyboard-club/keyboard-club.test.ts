@@ -3,6 +3,7 @@ import { getServerActivityType } from "@/activities/definitions";
 import { exactSkillRoutingIssue } from "@/activities/skill-routing";
 import { keyboardClub } from "../keyboard-club";
 import { nextBest } from "@/lib/tutor";
+import { isSequentialProgram, playableUnitIds } from "@/components/learner/unitAccess";
 import { isTeachableKey } from "@/activities/_shared/typing/keys";
 import type { Activity } from "@/content";
 import type { ActivityKind } from "@/content/activity-configs";
@@ -165,6 +166,23 @@ describe("Keyboard Club reachability", () => {
     }
     const recs = nextBest(keyboardClub, state, completed);
     expect(recs.some((r) => r.activity.id === "big-echo-caps")).toBe(true);
+  });
+
+  // Quest generation maps `nextBest` onto "Try <unit>" quests, and `nextBest`
+  // reasons about the whole program. A parent who assigned only the first four
+  // units would otherwise get a daily quest for Word Workshop that the learner
+  // can never open and the write path refuses — an inert row burning a slot.
+  // `getDailyQuestsAction` composes the same filter this asserts.
+  it("drops a curated-out unit from anything quests could offer", () => {
+    const assigned = ["home-base", "sky-row", "under-ground", "big-letters"];
+    const { completed, state } = after(assigned);
+    const offered = nextBest(keyboardClub, state, completed);
+    expect(offered.map((r) => r.unit.id)).toContain("word-workshop");
+
+    const playable = playableUnitIds(keyboardClub.units, new Set(assigned), completed, {
+      sequential: isSequentialProgram(keyboardClub.slug),
+    });
+    expect(offered.filter((r) => playable.has(r.unit.id))).toEqual([]);
   });
 
   it("can walk every Word Workshop activity, not just the first", () => {
