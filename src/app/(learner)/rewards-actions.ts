@@ -20,9 +20,11 @@ import {
   type QuestView,
 } from "@/lib/quests/store";
 import {
+  authoredQuestCandidates,
   questIsReachable,
+  questReach,
   selectDailyQuests,
-  skillsInPlayableUnits,
+  type QuestReach,
 } from "@/lib/quests/logic";
 import {
   getLearnerInterests,
@@ -122,8 +124,7 @@ async function resolveQuestAccess(
 ): Promise<{
   program: Program;
   completedIds: Set<string>;
-  playable: ReadonlySet<string>;
-  playableSkills: ReadonlySet<string>;
+  reach: QuestReach;
 } | null> {
   // Resolve from the version pin the GATE already read rather than re-reading
   // the enrollment: one query fewer on a path the learner home hits on mount
@@ -142,12 +143,7 @@ async function resolveQuestAccess(
     completedIds,
     { sequential: isSequentialProgram(programSlug) },
   );
-  return {
-    program,
-    completedIds,
-    playable,
-    playableSkills: skillsInPlayableUnits(program, playable),
-  };
+  return { program, completedIds, reach: questReach(authoredQuestCandidates(program, playable)) };
 }
 
 /**
@@ -167,8 +163,13 @@ export async function getDailyQuestsAction(
       const day = today();
 
       // Independent reads: the day's menu does not depend on the access sets.
-      const [access, existing] = await Promise.all([
-        resolveQuestAccess(accountId, learnerId, programSlug, gate),
+      // Settled rather than all, so a failure to resolve access degrades to
+      // "no access evidence" instead of taking the whole menu down with it.
+      const [accessResult, existing] = await Promise.all([
+        resolveQuestAccess(accountId, learnerId, programSlug, gate).catch((error) => {
+          captureNonCritical("quest access resolution failed", error);
+          return null;
+        }),
         getDailyQuests(accountId, learnerId, programSlug, day),
       ]);
 
@@ -179,19 +180,18 @@ export async function getDailyQuestsAction(
       // A finished quest always stays — she earned those stars, and hiding them
       // would read as the reward being taken back.
       if (existing.length > 0) {
-        // An unresolvable program (a pinned version that fails closed) means we
-        // cannot judge reachability at all. Show the day as it stands rather
-        // than blanking it: filtering is meant to drop a dead row, never to
-        // swallow quests she has already finished and been paid for.
-        if (!access) return existing;
+        // Without access evidence only a FINISHED quest is safe to show. Her
+        // stars are already banked, so hiding those rows would read as the
+        // reward being taken back — but an offered/active row whose
+        // reachability is simply unknown would render a Start button that
+        // activation then refuses, forever. Done-only is the honest middle.
+        if (!accessResult) return existing.filter((quest) => quest.status === "done");
         return existing.filter(
-          (quest) =>
-            quest.status === "done" ||
-            questIsReachable(quest, access.playable, access.playableSkills),
+          (quest) => quest.status === "done" || questIsReachable(quest, accessResult.reach),
         );
       }
-      if (!access) return [];
-      const { program, completedIds, playable, playableSkills } = access;
+      if (!accessResult) return [];
+      const { program, completedIds, reach } = accessResult;
 
       const [state, templates] = await Promise.all([
         getSkillState(accountId, learnerId),
@@ -202,13 +202,13 @@ export async function getDailyQuestsAction(
       // sequence-locked unit becomes a "Try …" quest she can never finish,
       // quietly burning a slot every day.
       const recs = nextBest(program, state, completedIds)
-        .filter((r) => playable.has(r.unit.id))
+        .filter((r) => reach.units.has(r.unit.id))
         .map((r) => ({ unitId: r.unit.id, unitTitle: r.unit.title }));
       // Same rule for the skill-shaped quests. A skill only goes "emerging" by
       // being attempted, so a strand she practiced and a parent later curated
       // away still reads emerging — and `questActivityHref` would find no
       // playable activity teaching it, leaving another dead row.
-      const emerging = [...playableSkills].filter((s) => outcomeOf(state, s) === "emerging");
+      const emerging = [...reach.skills].filter((s) => outcomeOf(state, s) === "emerging");
       const drafts = selectDailyQuests(templates, recs, emerging);
       // Friendly label for the practice_skill title (the pure layer used the slug).
       for (const d of drafts) {
@@ -256,7 +256,7 @@ export async function activateQuestAction(
         resolveQuestAccess(accountId, learnerId, programSlug, gate),
       ]);
       const quest = menu.find((q) => q.id === questId);
-      if (!quest || !access || !questIsReachable(quest, access.playable, access.playableSkills)) {
+      if (!quest || !access || !questIsReachable(quest, access.reach)) {
         return { ok: false };
       }
       return { ok: await activateQuest(accountId, learnerId, questId, day) };

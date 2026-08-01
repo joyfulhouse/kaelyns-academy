@@ -189,13 +189,78 @@ describe("getDailyQuestsAction unit access", () => {
     });
 
     // A pinned version that fails closed leaves us unable to judge reachability
-    // at all. Filtering exists to drop a dead row, not to swallow the day —
-    // including quests she has already finished and been paid for.
-    it("keeps the day intact when the program cannot be resolved", async () => {
+    // at all. Show only what she has already been PAID for: hiding a done row
+    // would read as the reward being taken back, but showing an offered row of
+    // unknown reachability renders a Start button activation then refuses.
+    it("keeps only finished quests when the program cannot be resolved", async () => {
+      vi.mocked(getDailyQuests).mockResolvedValue([
+        { id: "q-done", title: "Finished", kind: "try_strand",
+          target: { count: 1, unitId: "word-workshop" }, progress: { done: 1 },
+          rewardStars: 3, status: "done" },
+        { id: "q-try", title: "Try Word Workshop", kind: "try_strand",
+          target: { count: 1, unitId: "word-workshop" }, progress: { done: 0 },
+          rewardStars: 3, status: "offered" },
+      ]);
       vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue(undefined);
       gateWith(THROUGH_BIG_LETTERS);
-      const quests = await getDailyQuestsAction("learner-1", "keyboard-club");
-      expect(quests.map((q) => q.id)).toEqual(["q-try", "q-skill", "q-any"]);
+      expect(
+        (await getDailyQuestsAction("learner-1", "keyboard-club")).map((q) => q.id),
+      ).toEqual(["q-done"]);
+    });
+
+    // A thrown resolution must degrade the same way, not take the menu with it.
+    it("keeps only finished quests when access resolution throws", async () => {
+      vi.mocked(getDailyQuests).mockResolvedValue([
+        { id: "q-done", title: "Finished", kind: "complete_n",
+          target: { count: 1 }, progress: { done: 1 }, rewardStars: 3, status: "done" },
+        { id: "q-any", title: "Finish 2 things", kind: "complete_n",
+          target: { count: 2 }, progress: { done: 0 }, rewardStars: 2, status: "offered" },
+      ]);
+      vi.mocked(resolveProgramForEnrollmentVersion).mockRejectedValue(new Error("pin gone"));
+      gateWith(undefined);
+      expect(
+        (await getDailyQuestsAction("learner-1", "keyboard-club")).map((q) => q.id),
+      ).toEqual(["q-done"]);
+    });
+
+    // Unit membership is not a destination. An assembled unit can hold zero
+    // activities (assembly drops rows that fail validation), and a quest
+    // pointing at one resolves no href — a row she can tap to no effect.
+    it("drops a strand quest whose unit has no activities left to offer", async () => {
+      vi.mocked(getDailyQuests).mockResolvedValue([
+        { id: "q-try", title: "Try Word Workshop", kind: "try_strand",
+          target: { count: 1, unitId: "word-workshop" }, progress: { done: 0 },
+          rewardStars: 3, status: "offered" },
+      ]);
+      vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue({
+        ...keyboardClub,
+        units: keyboardClub.units.map((u) =>
+          u.id === "word-workshop"
+            ? { ...u, lessons: u.lessons.map((l) => ({ ...l, activities: [] })) }
+            : u,
+        ),
+      });
+      gateWith(undefined); // curated in, sequenced open — and still nothing to do
+      expect(await getDailyQuestsAction("learner-1", "keyboard-club")).toEqual([]);
+    });
+
+    // "Finish 2 things" needs no unit and no skill, but it still needs SOMEWHERE
+    // to go: questActivityHref falls back to the first candidate, so with no
+    // playable destination at all its CTA resolves to null like any other.
+    it("drops even an untargeted quest when nothing at all is playable", async () => {
+      vi.mocked(getDailyQuests).mockResolvedValue([
+        { id: "q-any", title: "Finish 2 things", kind: "complete_n",
+          target: { count: 2 }, progress: { done: 0 }, rewardStars: 2, status: "offered" },
+      ]);
+      vi.mocked(resolveProgramForEnrollmentVersion).mockResolvedValue({
+        ...keyboardClub,
+        units: keyboardClub.units.map((u) => ({
+          ...u,
+          lessons: u.lessons.map((l) => ({ ...l, activities: [] })),
+        })),
+      });
+      gateWith(undefined);
+      expect(await getDailyQuestsAction("learner-1", "keyboard-club")).toEqual([]);
     });
 
     it("cannot activate a practice quest whose skill is out of reach", async () => {

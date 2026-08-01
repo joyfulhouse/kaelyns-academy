@@ -94,34 +94,44 @@ export function questActivityHref(
  */
 export function questIsReachable(
   quest: { kind: QuestKind; target: QuestTarget },
-  playableUnitIds: ReadonlySet<string>,
-  playableSkills: ReadonlySet<string>,
+  reach: QuestReach,
 ): boolean {
   switch (quest.kind) {
     case "complete_n":
-      return true;
+      return reach.any;
     case "try_strand":
-      return quest.target.unitId !== undefined && playableUnitIds.has(quest.target.unitId);
+      return quest.target.unitId !== undefined && reach.units.has(quest.target.unitId);
     case "practice_skill":
-      return quest.target.skill !== undefined && playableSkills.has(quest.target.skill);
+      return quest.target.skill !== undefined && reach.skills.has(quest.target.skill);
   }
 }
 
-/** Every skill tag taught by an activity inside one of the playable units. */
-export function skillsInPlayableUnits(
-  program: Program,
-  playableUnitIds: ReadonlySet<string>,
-): Set<string> {
+/**
+ * What today's quests can actually point at, derived from real DESTINATIONS
+ * rather than from unit membership.
+ *
+ * Unit membership is nearly right and quietly wrong at the edges: a playable
+ * unit holding no activities offers nothing to tap, and assembly drops activity
+ * rows that fail validation, so an empty unit is reachable in production
+ * (`src/lib/content/store.ts`). Deriving from `authoredQuestCandidates` — the
+ * same list `questActivityHref` resolves a quest's CTA against — means a quest
+ * survives the filter exactly when the UI can send her somewhere.
+ */
+export interface QuestReach {
+  /** Any playable destination at all, which is all `complete_n` needs. */
+  any: boolean;
+  units: ReadonlySet<string>;
+  skills: ReadonlySet<string>;
+}
+
+export function questReach(candidates: readonly QuestHrefCandidate[]): QuestReach {
+  const units = new Set<string>();
   const skills = new Set<string>();
-  for (const unit of program.units) {
-    if (!playableUnitIds.has(unit.id)) continue;
-    for (const lesson of unit.lessons) {
-      for (const activity of lesson.activities) {
-        for (const tag of activity.skillTags) skills.add(tag);
-      }
-    }
+  for (const candidate of candidates) {
+    if (candidate.unitId !== null) units.add(candidate.unitId);
+    for (const skill of candidate.skills) skills.add(skill);
   }
-  return skills;
+  return { any: candidates.length > 0, units, skills };
 }
 
 export function attemptMatchesQuest(
