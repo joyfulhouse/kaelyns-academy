@@ -87,6 +87,14 @@ const TEMPLATES = [
     params: {},
     rewardStars: 3,
   },
+  {
+    id: "tpl-practice",
+    slug: "practice-skill",
+    title: "Practice {focus}",
+    kind: "practice_skill" as const,
+    params: {},
+    rewardStars: 2,
+  },
 ];
 
 describe("getDailyQuestsAction unit access", () => {
@@ -127,5 +135,28 @@ describe("getDailyQuestsAction unit access", () => {
   // point there. The menu degrades to fewer quests rather than a broken one.
   it("mints no quest for a unit the learner cannot open", async () => {
     expect(await questedUnitIds(THROUGH_BIG_LETTERS)).toEqual([]);
+  });
+
+  // A skill goes "emerging" by being ATTEMPTED, so it outlives access: practise
+  // Sky Row, then have a parent narrow the assignment to Home Base, and the
+  // top-row skill still reads emerging with no playable activity teaching it.
+  // A quest pointing there resolves to no href — another row she cannot finish.
+  it("mints no practice quest for a skill only taught outside her access", async () => {
+    const skyRow = keyboardClub.units.find((u) => u.id === "sky-row")!;
+    const topRowSkill = skyRow.lessons
+      .flatMap((l) => l.activities)
+      .flatMap((a) => a.skillTags)
+      .find((tag) => tag === "typing.keys.top-row")!;
+
+    gateWith(["home-base"]);
+    // One solid day only → emerging, not solid.
+    vi.mocked(getSkillState).mockResolvedValue({
+      [topRowSkill]: { history: [{ day: "2026-07-30", outcome: "solid" }] },
+    });
+    vi.mocked(getCompletedActivityIds).mockResolvedValue([]);
+
+    await getDailyQuestsAction("learner-1", "keyboard-club");
+    const drafts = vi.mocked(assignDailyQuests).mock.calls[0]?.[4] ?? [];
+    expect(drafts.filter((d) => d.kind === "practice_skill")).toEqual([]);
   });
 });

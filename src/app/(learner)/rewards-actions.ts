@@ -38,7 +38,6 @@ import {
   playableUnitIds,
 } from "@/components/learner/unitAccess";
 import { resolveAccountLearnerProgram } from "@/lib/content/repository";
-import { skillTagsForProgram } from "@/content";
 
 /**
  * Learner rewards/quests actions. Same posture as (learner)/actions.ts:
@@ -143,9 +142,22 @@ export async function getDailyQuestsAction(
       const recs = nextBest(program, state, completedIds)
         .filter((r) => playable.has(r.unit.id))
         .map((r) => ({ unitId: r.unit.id, unitTitle: r.unit.title }));
-      const emerging = [...skillTagsForProgram(program)].filter(
-        (s) => outcomeOf(state, s) === "emerging",
-      );
+      // Same rule for the skill-shaped quests. A skill only goes "emerging" by
+      // being attempted, so a strand she practiced and a parent later curated
+      // away still reads emerging — and `questActivityHref` would find no
+      // playable activity teaching it, leaving another dead row. Draw the
+      // candidates from the playable units instead of the whole program.
+      const emerging = [
+        ...new Set(
+          program.units
+            .filter((unit) => playable.has(unit.id))
+            .flatMap((unit) =>
+              unit.lessons.flatMap((lesson) =>
+                lesson.activities.flatMap((activity) => activity.skillTags),
+              ),
+            ),
+        ),
+      ].filter((s) => outcomeOf(state, s) === "emerging");
       const drafts = selectDailyQuests(templates, recs, emerging);
       // Friendly label for the practice_skill title (the pure layer used the slug).
       for (const d of drafts) {
