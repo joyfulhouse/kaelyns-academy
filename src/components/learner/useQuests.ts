@@ -46,11 +46,11 @@ export function useQuests(learnerId: string | null, programSlug: string) {
   const activate = useCallback(
     async (id: string) => {
       if (!learnerId) return;
-      const result = await activateQuestAction(learnerId, id);
+      const result = await activateQuestAction(learnerId, programSlug, id);
       if (!result.ok) throw new Error("Quest activation was not confirmed");
       await refresh();
     },
-    [learnerId, refresh],
+    [learnerId, programSlug, refresh],
   );
 
   // "No learner → no quests" and "learner/program switch reads as

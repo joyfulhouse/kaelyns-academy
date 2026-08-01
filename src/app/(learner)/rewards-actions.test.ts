@@ -27,7 +27,7 @@ vi.mock("@/lib/quests/store", () => ({
   getDailyQuests: vi.fn(async () => []),
   listPublishedQuestTemplates: vi.fn(),
   assignDailyQuests: vi.fn(async () => []),
-  activateQuest: vi.fn(),
+  activateQuest: vi.fn(async () => true),
   skillLabel: vi.fn(async (slug: string) => slug),
 }));
 
@@ -49,9 +49,10 @@ vi.mock("@/lib/interests/store", () => ({
 const { getEnrollmentForGate, getSkillState, getCompletedActivityIds } = await import(
   "@/lib/tutor/store"
 );
-const { assignDailyQuests, listPublishedQuestTemplates } = await import("@/lib/quests/store");
+const { assignDailyQuests, listPublishedQuestTemplates, getDailyQuests, activateQuest } =
+  await import("@/lib/quests/store");
 const { resolveAccountLearnerProgram } = await import("@/lib/content/repository");
-const { getDailyQuestsAction } = await import("./rewards-actions");
+const { getDailyQuestsAction, activateQuestAction } = await import("./rewards-actions");
 
 /** The four Keyboard Club units before Word Workshop, in authored order. */
 const THROUGH_BIG_LETTERS = ["home-base", "sky-row", "under-ground", "big-letters"];
@@ -102,6 +103,8 @@ describe("getDailyQuestsAction unit access", () => {
     vi.mocked(listPublishedQuestTemplates).mockResolvedValue(TEMPLATES);
     vi.mocked(resolveAccountLearnerProgram).mockResolvedValue(keyboardClub);
     vi.mocked(assignDailyQuests).mockClear();
+    vi.mocked(activateQuest).mockClear();
+    vi.mocked(getDailyQuests).mockResolvedValue([]);
   });
 
   function gateWith(activeUnitKeys: string[] | undefined) {
@@ -135,6 +138,73 @@ describe("getDailyQuestsAction unit access", () => {
   // point there. The menu degrades to fewer quests rather than a broken one.
   it("mints no quest for a unit the learner cannot open", async () => {
     expect(await questedUnitIds(THROUGH_BIG_LETTERS)).toEqual([]);
+  });
+
+  // A quest is drawn once per day, but a parent can narrow the assignment
+  // afterwards. The row is DROPPED rather than replaced — the day just offers
+  // fewer quests — because it points into a unit the map now hides and the
+  // write path would refuse. It is not deleted, so re-widening brings it back.
+  describe("a quest that access has moved out from under", () => {
+    /** A day's menu already on disk, drawn before the parent narrowed access. */
+    function existingMenu() {
+      vi.mocked(getDailyQuests).mockResolvedValue([
+        { id: "q-try", title: "Try Word Workshop", kind: "try_strand",
+          target: { count: 1, unitId: "word-workshop" }, progress: { done: 0 },
+          rewardStars: 3, status: "offered" },
+        { id: "q-any", title: "Finish 2 things", kind: "complete_n",
+          target: { count: 2 }, progress: { done: 0 }, rewardStars: 2, status: "offered" },
+      ]);
+      const { completed, state } = after(THROUGH_BIG_LETTERS);
+      vi.mocked(getSkillState).mockResolvedValue(state);
+      vi.mocked(getCompletedActivityIds).mockResolvedValue(completed);
+    }
+
+    it("disappears from the menu, leaving the reachable ones", async () => {
+      existingMenu();
+      gateWith(THROUGH_BIG_LETTERS); // Word Workshop curated away after the draw
+      const quests = await getDailyQuestsAction("learner-1", "keyboard-club");
+      expect(quests.map((q) => q.id)).toEqual(["q-any"]);
+      // Dropped, never regenerated — the menu is short for the rest of the day.
+      expect(vi.mocked(assignDailyQuests)).not.toHaveBeenCalled();
+    });
+
+    it("stays while she can still reach it", async () => {
+      existingMenu();
+      gateWith(undefined);
+      const quests = await getDailyQuestsAction("learner-1", "keyboard-club");
+      expect(quests.map((q) => q.id)).toEqual(["q-try", "q-any"]);
+    });
+
+    // She already earned those stars; hiding the row would read as the reward
+    // being taken back.
+    it("still shows it once she has finished it", async () => {
+      existingMenu();
+      vi.mocked(getDailyQuests).mockResolvedValue([
+        { id: "q-try", title: "Try Word Workshop", kind: "try_strand",
+          target: { count: 1, unitId: "word-workshop" }, progress: { done: 1 },
+          rewardStars: 3, status: "done" },
+      ]);
+      gateWith(THROUGH_BIG_LETTERS);
+      const quests = await getDailyQuestsAction("learner-1", "keyboard-club");
+      expect(quests.map((q) => q.id)).toEqual(["q-try"]);
+    });
+
+    // Dropping the row is not enough on its own: activateQuest demotes the
+    // currently-active quest before promoting its target, so a stale client
+    // could knock her off the quest she is actually working on.
+    it("cannot be activated by a client that still has the row", async () => {
+      existingMenu();
+      gateWith(THROUGH_BIG_LETTERS);
+      expect(await activateQuestAction("learner-1", "keyboard-club", "q-try")).toEqual({ ok: false });
+      expect(vi.mocked(activateQuest)).not.toHaveBeenCalled();
+    });
+
+    it("activates normally while still reachable", async () => {
+      existingMenu();
+      gateWith(undefined);
+      expect(await activateQuestAction("learner-1", "keyboard-club", "q-try")).toEqual({ ok: true });
+      expect(vi.mocked(activateQuest)).toHaveBeenCalled();
+    });
   });
 
   // A skill goes "emerging" by being ATTEMPTED, so it outlives access: practise

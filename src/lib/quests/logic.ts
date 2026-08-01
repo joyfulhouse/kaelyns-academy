@@ -71,6 +71,56 @@ export function questActivityHref(
   }
 }
 
+/**
+ * Can this quest still be finished with the access the learner has RIGHT NOW?
+ *
+ * A quest is drawn once per day, but a parent can narrow the assignment at any
+ * point after that — so a "Try Word Workshop" minted this morning can become
+ * unreachable by the afternoon: the world map hides the unit, `questActivityHref`
+ * resolves no destination, and `recordAttempt` would refuse the write anyway.
+ * The row is dropped from the menu rather than replaced; the day simply offers
+ * fewer quests. It is not deleted, so re-widening the assignment brings it back
+ * with whatever progress it had.
+ *
+ * `complete_n` is always reachable — any completed activity counts, so there is
+ * no unit or skill for access to take away.
+ *
+ * Kind dispatch as a RETURNING switch with no `default`, the same TS2366 net
+ * `attemptMatchesQuest` and `buildDraft` rely on: a new QuestKind fails to
+ * compile here rather than silently defaulting to "reachable".
+ */
+export function questIsReachable(
+  quest: { kind: QuestKind; target: QuestTarget },
+  playableUnitIds: ReadonlySet<string>,
+  playableSkills: ReadonlySet<string>,
+): boolean {
+  switch (quest.kind) {
+    case "complete_n":
+      return true;
+    case "try_strand":
+      return quest.target.unitId !== undefined && playableUnitIds.has(quest.target.unitId);
+    case "practice_skill":
+      return quest.target.skill !== undefined && playableSkills.has(quest.target.skill);
+  }
+}
+
+/** Every skill tag taught by an activity inside one of the playable units. */
+export function skillsInPlayableUnits(
+  program: Program,
+  playableUnitIds: ReadonlySet<string>,
+): Set<string> {
+  const skills = new Set<string>();
+  for (const unit of program.units) {
+    if (!playableUnitIds.has(unit.id)) continue;
+    for (const lesson of unit.lessons) {
+      for (const activity of lesson.activities) {
+        for (const tag of activity.skillTags) skills.add(tag);
+      }
+    }
+  }
+  return skills;
+}
+
 export function attemptMatchesQuest(
   kind: QuestKind,
   target: QuestTarget,
