@@ -46,11 +46,17 @@ export function useQuests(learnerId: string | null, programSlug: string) {
   const activate = useCallback(
     async (id: string) => {
       if (!learnerId) return;
-      const result = await activateQuestAction(learnerId, id);
-      if (!result.ok) throw new Error("Quest activation was not confirmed");
+      const result = await activateQuestAction(learnerId, programSlug, id);
+      if (!result.ok) {
+        // The server may have refused because access moved out from under this
+        // quest since the menu was drawn. Resync first so the dead row actually
+        // leaves the screen instead of waiting for the next focus event.
+        await refresh();
+        throw new Error("Quest activation was not confirmed");
+      }
       await refresh();
     },
-    [learnerId, refresh],
+    [learnerId, programSlug, refresh],
   );
 
   // "No learner → no quests" and "learner/program switch reads as

@@ -71,6 +71,69 @@ export function questActivityHref(
   }
 }
 
+/**
+ * Can this quest still be finished with the access the learner has RIGHT NOW?
+ *
+ * A quest is drawn once per day, but a parent can narrow the assignment at any
+ * point after that — so a "Try Word Workshop" minted this morning can become
+ * unreachable by the afternoon: the world map hides the unit, `questActivityHref`
+ * resolves no destination, and `recordAttempt` would refuse the write anyway.
+ * The row is dropped from the menu rather than replaced; the day simply offers
+ * fewer quests. It is not deleted, so widening the assignment again can bring it
+ * back with whatever progress it had — though not always: `playableUnitIds` also
+ * applies sequencing, so widening can leave a unit that was open as the first
+ * visible segment sitting behind a new predecessor. The quest tracks the world
+ * map exactly, which is the point.
+ *
+ * `complete_n` is always reachable — any completed activity counts, so there is
+ * no unit or skill for access to take away.
+ *
+ * Kind dispatch as a RETURNING switch with no `default`, the same TS2366 net
+ * `attemptMatchesQuest` and `buildDraft` rely on: a new QuestKind fails to
+ * compile here rather than silently defaulting to "reachable".
+ */
+export function questIsReachable(
+  quest: { kind: QuestKind; target: QuestTarget },
+  reach: QuestReach,
+): boolean {
+  switch (quest.kind) {
+    case "complete_n":
+      return reach.any;
+    case "try_strand":
+      return quest.target.unitId !== undefined && reach.units.has(quest.target.unitId);
+    case "practice_skill":
+      return quest.target.skill !== undefined && reach.skills.has(quest.target.skill);
+  }
+}
+
+/**
+ * What today's quests can actually point at, derived from real DESTINATIONS
+ * rather than from unit membership.
+ *
+ * Unit membership is nearly right and quietly wrong at the edges: a playable
+ * unit holding no activities offers nothing to tap, and assembly drops activity
+ * rows that fail validation, so an empty unit is reachable in production
+ * (`src/lib/content/store.ts`). Deriving from `authoredQuestCandidates` — the
+ * same list `questActivityHref` resolves a quest's CTA against — means a quest
+ * survives the filter exactly when the UI can send her somewhere.
+ */
+export interface QuestReach {
+  /** Any playable destination at all, which is all `complete_n` needs. */
+  any: boolean;
+  units: ReadonlySet<string>;
+  skills: ReadonlySet<string>;
+}
+
+export function questReach(candidates: readonly QuestHrefCandidate[]): QuestReach {
+  const units = new Set<string>();
+  const skills = new Set<string>();
+  for (const candidate of candidates) {
+    if (candidate.unitId !== null) units.add(candidate.unitId);
+    for (const skill of candidate.skills) skills.add(skill);
+  }
+  return { any: candidates.length > 0, units, skills };
+}
+
 export function attemptMatchesQuest(
   kind: QuestKind,
   target: QuestTarget,
