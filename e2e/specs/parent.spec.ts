@@ -10,8 +10,12 @@ import { uniqueTag, E2E_LEARNER_PREFIX, addChild } from "../helpers";
 test("dashboard is reachable when authenticated", async ({ page }) => {
   await page.goto("/parent");
   await expect(page).toHaveURL(/\/parent/);
-  await expect(page.getByRole("link", { name: "Learners" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
+  // `exact` matters: the dashboard also renders an "All N learners" shortcut,
+  // which a substring match resolves to alongside the nav link — a strict-mode
+  // violation that only appears once the account has more than one learner, so
+  // it fails on data rather than on code.
+  await expect(page.getByRole("link", { name: "Learners", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Settings", exact: true })).toBeVisible();
 });
 
 test("create a learner, export its data, then delete it", async ({ page }) => {
