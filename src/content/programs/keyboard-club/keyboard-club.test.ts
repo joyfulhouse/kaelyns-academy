@@ -5,8 +5,8 @@ import { keyboardClub } from "../keyboard-club";
 import { nextBest } from "@/lib/tutor";
 import { isSequentialProgram, playableUnitIds } from "@/components/learner/unitAccess";
 import { isTeachableKey } from "@/activities/_shared/typing/keys";
-import type { Activity } from "@/content";
 import type { ActivityKind } from "@/content/activity-configs";
+import type { SkillRecord, SkillState } from "@/lib/tutor/mastery";
 
 function activities() {
   return keyboardClub.units.flatMap((unit) =>
@@ -117,32 +117,32 @@ describe("Keyboard Club", () => {
 });
 
 describe("Keyboard Club reachability", () => {
-  const solid = (tag: string) => ({
-    tag,
+  /** Solid on two distinct days — the mastery gate, met. */
+  const SOLID: SkillRecord = {
     history: [
-      { day: "2026-07-31", outcome: "solid" as const },
-      { day: "2026-07-30", outcome: "solid" as const },
+      { day: "2026-07-30", outcome: "solid" },
+      { day: "2026-07-31", outcome: "solid" },
     ],
-    outcome: "solid" as const,
-  });
+  };
 
-  /** Mark one activity completed and its skills solid. */
-  function markDone(
-    completed: Set<string>,
-    state: Record<string, ReturnType<typeof solid>>,
-    activity: Activity,
-  ): void {
-    completed.add(activity.id);
-    for (const tag of activity.skillTags) state[tag] = solid(tag);
-  }
+  /** The four units before Word Workshop, in authored order. */
+  const THROUGH_BIG_LETTERS = ["home-base", "sky-row", "under-ground", "big-letters"];
 
-  /** Finish every activity in the named units and mark their skills solid. */
-  function after(unitIds: string[]) {
+  /**
+   * Finish every activity in the named units and mark their skills solid,
+   * skipping any lesson in `exceptLessons`.
+   */
+  function after(unitIds: string[], exceptLessons: string[] = []) {
     const completed = new Set<string>();
-    const state: Record<string, ReturnType<typeof solid>> = {};
+    const state: SkillState = {};
+    const skip = new Set(exceptLessons);
     for (const unit of keyboardClub.units.filter((u) => unitIds.includes(u.id))) {
       for (const lesson of unit.lessons) {
-        for (const activity of lesson.activities) markDone(completed, state, activity);
+        if (skip.has(lesson.id)) continue;
+        for (const activity of lesson.activities) {
+          completed.add(activity.id);
+          for (const tag of activity.skillTags) state[tag] = SOLID;
+        }
       }
     }
     return { completed, state };
@@ -159,11 +159,7 @@ describe("Keyboard Club reachability", () => {
   // Same mechanism one level down: the Star Echo lesson claims only a skill
   // Home Base already teaches.
   it("still offers Star Echo once the rest of Big Letters is done", () => {
-    const { completed, state } = after(["home-base", "sky-row", "under-ground"]);
-    for (const lesson of keyboardClub.units.find((u) => u.id === "big-letters")!.lessons) {
-      if (lesson.id === "big-echo") continue;
-      for (const activity of lesson.activities) markDone(completed, state, activity);
-    }
+    const { completed, state } = after(THROUGH_BIG_LETTERS, ["big-echo"]);
     const recs = nextBest(keyboardClub, state, completed);
     expect(recs.some((r) => r.activity.id === "big-echo-caps")).toBe(true);
   });
@@ -174,28 +170,23 @@ describe("Keyboard Club reachability", () => {
   // can never open and the write path refuses — an inert row burning a slot.
   // `getDailyQuestsAction` composes the same filter this asserts.
   it("drops a curated-out unit from anything quests could offer", () => {
-    const assigned = ["home-base", "sky-row", "under-ground", "big-letters"];
-    const { completed, state } = after(assigned);
+    const { completed, state } = after(THROUGH_BIG_LETTERS);
     const offered = nextBest(keyboardClub, state, completed);
     expect(offered.map((r) => r.unit.id)).toContain("word-workshop");
 
-    const playable = playableUnitIds(keyboardClub.units, new Set(assigned), completed, {
+    const playable = playableUnitIds(keyboardClub.units, new Set(THROUGH_BIG_LETTERS), completed, {
       sequential: isSequentialProgram(keyboardClub.slug),
     });
     expect(offered.filter((r) => playable.has(r.unit.id))).toEqual([]);
   });
 
   it("can walk every Word Workshop activity, not just the first", () => {
-    const { completed, state } = after([
-      "home-base",
-      "sky-row",
-      "under-ground",
-      "big-letters",
-    ]);
+    const { completed, state } = after(THROUGH_BIG_LETTERS);
     const unit = keyboardClub.units.find((u) => u.id === "word-workshop")!;
     const total = unit.lessons.flatMap((l) => l.activities).length;
     const offered: string[] = [];
-    for (let i = 0; i < total + 1; i += 1) {
+    // Bounded by `total` so a recommender that never runs out cannot hang the suite.
+    while (offered.length <= total) {
       const rec = nextBest(keyboardClub, state, completed).find(
         (r) => r.unit.id === "word-workshop",
       );

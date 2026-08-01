@@ -182,6 +182,34 @@ function strandPending(
 }
 
 /**
+ * The first authored activity in this unit the learner has never played.
+ *
+ * Never a check-in. A checkpoint unit's attempts route to `checkpoint_result`
+ * instead of `skill_state` (`recordAttempt`), so its evidence is a cold
+ * placement read a grown-up schedules and interprets — not casual content to
+ * fill a gap with. Offering one post-mastery would spend the instrument on a
+ * child who has already been taught the material, and raise a pending placement
+ * row in the parent's panel that nobody asked for. `getDueReviews` and
+ * `ensureLessonPractice` already exclude checkpoint units for the same reason.
+ */
+function firstUnplayed(unit: Unit, completed: ReadonlySet<string>): Recommendation | null {
+  if (unit.checkpoint) return null;
+  for (const lesson of unit.lessons) {
+    const activity = lesson.activities.find((candidate) => !completed.has(candidate.id));
+    if (activity) {
+      return {
+        activity,
+        unit,
+        lesson,
+        reason: `Something new in ${unit.title}`,
+        isPractice: false,
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * Ranked next-best recommendations, one per strand that has work left. Ranked to
  * encourage breadth: the strand with the fewest completed activities comes first,
  * so she rotates across reading / words / writing / math rather than grinding one.
@@ -221,32 +249,4 @@ export function nextBest(
     return a.done - b.done;
   });
   return recs.map((r) => r.rec);
-}
-
-/**
- * The first authored activity in this unit the learner has never played.
- *
- * Never a check-in. A checkpoint unit's attempts route to `checkpoint_result`
- * instead of `skill_state` (`recordAttempt`), so its evidence is a cold
- * placement read a grown-up schedules and interprets — not casual content to
- * fill a gap with. Offering one post-mastery would spend the instrument on a
- * child who has already been taught the material, and raise a pending placement
- * row in the parent's panel that nobody asked for. `getDueReviews` and
- * `ensureLessonPractice` already exclude checkpoint units for the same reason.
- */
-function firstUnplayed(unit: Unit, completed: ReadonlySet<string>): Recommendation | null {
-  if (unit.checkpoint) return null;
-  for (const lesson of unit.lessons) {
-    const activity = lesson.activities.find((candidate) => !completed.has(candidate.id));
-    if (activity) {
-      return {
-        activity,
-        unit,
-        lesson,
-        reason: `Something new in ${unit.title}`,
-        isPractice: false,
-      };
-    }
-  }
-  return null;
 }
