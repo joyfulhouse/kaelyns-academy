@@ -1,5 +1,10 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
-import { addChild, signUp, uniqueTag } from "../helpers";
+import {
+  addChild,
+  learnerCardLink,
+  signUp,
+  uniqueTag,
+} from "../helpers";
 
 const PIN = "8642";
 const PASSWORD = "e2e-pin-parent-pw-8642";
@@ -141,11 +146,7 @@ async function freshPinParent(page: Page): Promise<void> {
 async function startHandoff(page: Page): Promise<string> {
   await addChild(page, LEARNER);
 
-  const learnerLink = page
-    .locator('a[href^="/parent/learners/"]')
-    .filter({ hasText: LEARNER })
-    .first();
-  const href = await learnerLink.getAttribute("href");
+  const href = await learnerCardLink(page, LEARNER).first().getAttribute("href");
   const learnerId = href?.match(/\/parent\/learners\/([^/?#]+)$/)?.[1];
   if (!learnerId) throw new Error("Could not resolve the handoff learner id.");
 

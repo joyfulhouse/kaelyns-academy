@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import {
   E2E_PERSISTENT_LEARNER_NAME,
   ensurePersistentLearner,
+  learnerCardLink,
   selectAccountLearner,
 } from "../helpers";
 
@@ -76,11 +77,9 @@ test("parent learner settings shows the Interests card", async ({ page }) => {
   await ensurePersistentLearner(page);
 
   await page.goto("/parent/learners");
-  // .first(): the list-card link's accessible name CONTAINS the learner name
-  // (plus its stats), so this is a substring match; if a stray same-named row
-  // exists it would be ambiguous. The test only needs to reach a learner detail
-  // page, so the first match is correct.
-  await page.getByRole("link", { name: E2E_PERSISTENT_LEARNER_NAME }).first().click();
+  // .first(): a stray same-named row would make this ambiguous, and the test
+  // only needs to reach a learner detail page, so the first match is correct.
+  await learnerCardLink(page, E2E_PERSISTENT_LEARNER_NAME).first().click();
   await expect(page).toHaveURL(/\/parent\/learners\/[^/]+$/);
 
   await page
