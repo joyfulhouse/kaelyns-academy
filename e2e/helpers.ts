@@ -135,6 +135,22 @@ export async function dragPointer(page: Page, source: Locator, target: Locator):
 }
 
 /**
+ * The learner card link for exactly `name`.
+ *
+ * A card's accessible name is its heading PLUS the program line and the stat
+ * pills ("E2E Learner Kaelyn's Adventure · 7 strands 0 solid …"), so
+ * `getByRole("link", { name })` is a SUBSTRING match and `exact: true` cannot
+ * be used to tighten it. Filtering the card anchor by its exact `h3` is the
+ * only way to name one learner and mean it — otherwise a learner whose name
+ * merely contains another's silently wins.
+ */
+export function learnerCardLink(page: Page, name: string) {
+  return page
+    .locator('a[href^="/parent/learners/"]')
+    .filter({ has: page.getByRole("heading", { name, exact: true }) });
+}
+
+/**
  * Find-or-create the persistent motivation-suite learner on `/parent/learners`.
  * Idempotent: a second (or Nth) call across reruns finds the existing row and
  * does nothing. Creating a learner here auto-enrolls them in the adaptive
@@ -143,8 +159,15 @@ export async function dragPointer(page: Page, source: Locator, target: Locator):
  */
 export async function ensurePersistentLearner(page: Page): Promise<void> {
   await page.goto("/parent/learners");
-  const existing = page.getByRole("link", { name: E2E_PERSISTENT_LEARNER_NAME });
-  if ((await existing.count()) > 0) return;
+  // `count()` does NOT auto-wait. Counting straight after `goto` can read 0
+  // while the list is still arriving, and this helper then "helpfully" creates
+  // a learner that already exists — which is how the seeded account ended up
+  // with two rows both named "E2E Learner" (2026-08-01). Two identical names
+  // then make every downstream `.first()` pick between them arbitrarily, so the
+  // suite silently asserts against whichever learner won. Anchor on the
+  // always-present add form so the page is genuinely rendered before counting.
+  await expect(page.getByLabel("Child's name", { exact: true })).toBeVisible();
+  if ((await learnerCardLink(page, E2E_PERSISTENT_LEARNER_NAME).count()) > 0) return;
 
   await addChild(page, E2E_PERSISTENT_LEARNER_NAME);
 }
@@ -190,12 +213,12 @@ export async function addChild(page: Page, name: string): Promise<void> {
   await page.getByRole("button", { name: "Add a child" }).click();
   await expect(page.getByRole("status")).toContainText(/enrolled/i);
   await page.goto("/parent/learners");
-  await expect(page.getByRole("link", { name }).first()).toBeVisible({ timeout: 30_000 });
+  await expect(learnerCardLink(page, name).first()).toBeVisible({ timeout: 30_000 });
 }
 
 /** Seed the account learner choice deterministically before entering kid routes. */
 export async function selectAccountLearner(page: Page, displayName: string): Promise<void> {
-  const href = await page.getByRole("link", { name: displayName }).first().getAttribute("href");
+  const href = await learnerCardLink(page, displayName).first().getAttribute("href");
   const learnerId = href?.match(/\/parent\/learners\/([^/?#]+)$/)?.[1];
   if (!learnerId) throw new Error(`Could not resolve learner id for ${displayName}`);
   await page.evaluate((id) => localStorage.setItem("ka:account-learner", id), learnerId);

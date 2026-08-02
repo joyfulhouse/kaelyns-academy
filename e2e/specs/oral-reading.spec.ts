@@ -3,6 +3,7 @@ import {
   E2E_LEARNER_PREFIX,
   addChild,
   expectSingleHostReward,
+  learnerCardLink,
   selectAccountLearner,
   uniqueTag,
 } from "../helpers";
@@ -321,7 +322,7 @@ test("an opted-in signed-in learner settles a check and gets one host reward", a
   await addChild(page, learnerName);
 
   try {
-    await page.getByRole("link", { name: learnerName }).first().click();
+    await learnerCardLink(page, learnerName).first().click();
     await page
       .getByRole("navigation", { name: /^Manage/ })
       .getByRole("link", { name: "Settings" })
@@ -371,7 +372,7 @@ test("an opted-in signed-in learner settles a check and gets one host reward", a
   } finally {
     await context.clearPermissions();
     await page.goto("/parent/learners");
-    await page.getByRole("link", { name: learnerName }).first().click();
+    await learnerCardLink(page, learnerName).first().click();
     await page.getByRole("button", { name: /Delete .*profile/ }).click();
     await page.getByRole("button", { name: "Confirm delete" }).click();
     await page.waitForURL("**/parent/learners", { timeout: 30_000 });
@@ -451,7 +452,7 @@ test("sentence reading keeps mic denial safe and finishes through one host rewar
   await addChild(page, learnerName);
 
   try {
-    await page.getByRole("link", { name: learnerName }).first().click();
+    await learnerCardLink(page, learnerName).first().click();
     await page
       .getByRole("navigation", { name: /^Manage/ })
       .getByRole("link", { name: "Settings" })
@@ -503,7 +504,7 @@ test("sentence reading keeps mic denial safe and finishes through one host rewar
   } finally {
     await context.clearPermissions();
     await page.goto("/parent/learners");
-    await page.getByRole("link", { name: learnerName }).first().click();
+    await learnerCardLink(page, learnerName).first().click();
     await page.getByRole("button", { name: /Delete .*profile/ }).click();
     await page.getByRole("button", { name: "Confirm delete" }).click();
     await page.waitForURL("**/parent/learners", { timeout: 30_000 });
@@ -568,7 +569,7 @@ test("a decodable reader finishes through one linked host reward", async ({
   await addChild(page, learnerName);
 
   try {
-    await page.getByRole("link", { name: learnerName }).first().click();
+    await learnerCardLink(page, learnerName).first().click();
     await page
       .getByRole("navigation", { name: /^Manage/ })
       .getByRole("link", { name: "Settings" })
@@ -602,7 +603,7 @@ test("a decodable reader finishes through one linked host reward", async ({
   } finally {
     await context.clearPermissions();
     await page.goto("/parent/learners");
-    await page.getByRole("link", { name: learnerName }).first().click();
+    await learnerCardLink(page, learnerName).first().click();
     await page.getByRole("button", { name: /Delete .*profile/ }).click();
     await page.getByRole("button", { name: "Confirm delete" }).click();
     await page.waitForURL("**/parent/learners", { timeout: 30_000 });
