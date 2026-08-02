@@ -144,7 +144,7 @@ export async function dragPointer(page: Page, source: Locator, target: Locator):
  * only way to name one learner and mean it — otherwise a learner whose name
  * merely contains another's silently wins.
  */
-export function learnerCardLink(page: Page, name: string) {
+export function learnerCardLink(page: Page, name: string): Locator {
   return page
     .locator('a[href^="/parent/learners/"]')
     .filter({ has: page.getByRole("heading", { name, exact: true }) });
@@ -166,6 +166,14 @@ export async function ensurePersistentLearner(page: Page): Promise<void> {
   // then make every downstream `.first()` pick between them arbitrarily, so the
   // suite silently asserts against whichever learner won. Anchor on the
   // always-present add form so the page is genuinely rendered before counting.
+  //
+  // Still a check-then-create, deliberately. Two SIMULTANEOUS suite invocations
+  // against the same account could both observe zero and insert; a unique key or
+  // seeded fixture id would close that. Not worth it here: playwright.config
+  // pins `fullyParallel: false, workers: 1`, a retry re-enters this helper and
+  // takes the find branch, and AddChildForm guards re-entrancy with
+  // `if (pending) return` — so nothing the suite itself does can duplicate once
+  // the count above actually waits.
   await expect(page.getByLabel("Child's name", { exact: true })).toBeVisible();
   if ((await learnerCardLink(page, E2E_PERSISTENT_LEARNER_NAME).count()) > 0) return;
 
@@ -214,6 +222,18 @@ export async function addChild(page: Page, name: string): Promise<void> {
   await expect(page.getByRole("status")).toContainText(/enrolled/i);
   await page.goto("/parent/learners");
   await expect(learnerCardLink(page, name).first()).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * Delete a throwaway learner via the two-click confirm on their detail page.
+ * Teardown counterpart to `addChild`; returns once the list has reloaded.
+ */
+export async function deleteLearner(page: Page, name: string): Promise<void> {
+  await page.goto("/parent/learners");
+  await learnerCardLink(page, name).first().click();
+  await page.getByRole("button", { name: /Delete .*profile/ }).click();
+  await page.getByRole("button", { name: "Confirm delete" }).click();
+  await page.waitForURL("**/parent/learners", { timeout: 30_000 });
 }
 
 /** Seed the account learner choice deterministically before entering kid routes. */
