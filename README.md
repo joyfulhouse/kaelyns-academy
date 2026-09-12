@@ -2,6 +2,8 @@
 
 An interactive learning website designed for young children. Features colorful animations, engaging visualizations, and progressive learning modules for math, reading, and more.
 
+[![Built with Omnigent][omnigent-shield]][omnigent]
+
 ## Features
 
 - **Number Places**: Learn about thousands, hundreds, tens, and ones with visual blocks
@@ -79,3 +81,14 @@ Sessions persist for 30 days.
 - Tailwind CSS v4 with CSS variable theming
 - Bun runtime (Node.js compatible)
 - Signed cookie sessions for persistence
+
+---
+
+<p align="center">
+  <a href="https://github.com/omnigent-ai/omnigent"><img src="https://raw.githubusercontent.com/joyfulhouse/.github/main/assets/badges/built-with-omnigent.svg" alt="Built with Omnigent"></a>
+  <br>
+  <sub>Built with <a href="https://github.com/omnigent-ai/omnigent">Omnigent</a> — the open-source AI agent framework and meta-harness.</sub>
+</p>
+
+[omnigent-shield]: https://raw.githubusercontent.com/joyfulhouse/.github/main/assets/badges/built-with-omnigent.svg
+[omnigent]: https://github.com/omnigent-ai/omnigent
